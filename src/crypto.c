@@ -163,7 +163,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   char hout[1024];
   struct Db *pDb = &db->aDb[nDb];
   
-  if(nKey && zKey &&  pDb->pBt) {
+  if(nKey && zKey && pDb->pBt) {
     codec_ctx *ctx;
     int rc;
     MemPage *pPage1;
@@ -186,9 +186,16 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     ctx->buffer = sqlite3_malloc(sqlite3BtreeGetPageSize(ctx->pBt));
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
-    
+         
+    /* when key size is exactly the same size as nKey then we assume
+       we've recieved raw key data (i.e. through the attach of another
+       database */
+    if(nKey == ctx->key_sz) {
+      ctx->key = sqlite3_malloc(ctx->key_sz);
+      memcpy(ctx->key, zKey, nKey);
+ 
     /* if key string starts with x' then assume this is a blob literal key*/
-    if(sqlite3StrNICmp(zKey,"x'", 2) == 0) { 
+    } else if (sqlite3StrNICmp(zKey,"x'", 2) == 0) { 
       int n = nKey - 3; /* adjust for leading x' and tailing ' */
       const char *z = zKey + 2; /* adjust lead offset of x' */
       
