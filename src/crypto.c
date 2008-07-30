@@ -168,7 +168,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     int rc;
     MemPage *pPage1;
 
-    ctx = sqlite3_malloc(sizeof(codec_ctx));
+    ctx = sqlite3DbMallocRaw(db, sizeof(codec_ctx));
+    if(ctx == NULL) return SQLITE_NOMEM;
     
     ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
     
@@ -176,14 +177,17 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
        if this is a new database file. If an existing database file is
        attached this will just be overwritten when the first page is
        read from disk */
-    ctx->rand = sqlite3_malloc(16);
+    ctx->rand = sqlite3DbMallocRaw(db, 16);
+    if(ctx->rand == NULL) return SQLITE_NOMEM;
+    
     RAND_pseudo_bytes(ctx->rand, 16);
     
     
     /* pre-allocate a page buffer of PageSize bytes. This will
        be used as a persistent buffer for encryption and decryption 
        operations to avoid overhead of multiple memory allocations*/
-    ctx->buffer = sqlite3_malloc(sqlite3BtreeGetPageSize(ctx->pBt));
+    ctx->buffer = sqlite3DbMallocRaw(db, sqlite3BtreeGetPageSize(ctx->pBt));
+    if(ctx->buffer == NULL) return SQLITE_NOMEM;
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
          
@@ -191,7 +195,9 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
        we've recieved raw key data (i.e. through the attach of another
        database */
     if(nKey == ctx->key_sz) {
-      ctx->key = sqlite3_malloc(ctx->key_sz);
+      ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
+      if(ctx->key == NULL) return SQLITE_NOMEM;
+      
       memcpy(ctx->key, zKey, nKey);
  
     /* if key string starts with x' then assume this is a blob literal key*/
@@ -205,7 +211,9 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* otherwise the key is provided as a string so hash it to get key data */
     } else {
       int key_sz;
-      ctx->key = sqlite3_malloc(ctx->key_sz);
+      ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
+      if(ctx->key == NULL) return SQLITE_NOMEM;
+      
       codec_passphrase_hash(zKey, nKey, ctx->key, &key_sz);
       assert(key_sz == ctx->key_sz);
     } 
