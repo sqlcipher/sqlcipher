@@ -207,6 +207,10 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   }
 }
 
+void sqlite3_activate_see(const char* in) {
+  /* do nothing, security enhancements are always active */
+}
+
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
   if(db) {
     int i;
