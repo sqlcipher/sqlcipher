@@ -13,6 +13,20 @@ Dynamic linking
 ./configure --disable-amalgamation CFLAGS="-DSQLITE_HAS_CODEC -lcrypto"
 make
 
+SQLite Cipher was developed by Stephen Lombardo at Zetetic LLC. 
+sjlombardo at zetetic.net
+http://zetetic.net
+
+This code is released under the same public domain terms as SQLite itself.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
 == End Introduction ==
 
 This directory contains source code to 
