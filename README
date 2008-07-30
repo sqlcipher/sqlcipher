@@ -1,3 +1,20 @@
+== SQLite Cipher Introduction ==
+
+SQLite Cipher is an SQLite extension that provides transparent 256 bit AES encryption of database files. 
+Pages are encrypted before being written to disk and are decrypted when read back. 
+
+Encryption is provided by the OpenSSL crypto library.
+
+Static linking (replace /opt/local/lib with the path to libcrypto.a)
+./configure --disable-amalgamation CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="/opt/local/lib/libcrypto.a"
+make
+
+Dynamic linking
+./configure --disable-amalgamation CFLAGS="-DSQLITE_HAS_CODEC -lcrypto"
+make
+
+== End Introduction ==
+
 This directory contains source code to 
 
     SQLite: An Embeddable SQL Database Engine

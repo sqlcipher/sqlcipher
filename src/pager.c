@@ -5353,3 +5353,19 @@ i64 sqlite3PagerJournalSizeLimit(Pager *pPager, i64 iLimit){
 }
 
 #endif /* SQLITE_OMIT_DISKIO */
+
+/* BEGIN CRYPTO */
+#if defined(SQLITE_HAS_CODEC)
+
+int sqlite3pager_get_codec(Pager *pPager, void **ctx) {
+  *ctx = pPager->pCodecArg;
+}
+
+void sqlite3pager_set_codec(Pager *pPager, void *(*xCodec)(void*,void*,Pgno,int), void *pCodecArg){
+  pPager->xCodec = xCodec;
+  pPager->pCodecArg = pCodecArg;
+}
+
+#endif
+/* END CRYPTO */
+

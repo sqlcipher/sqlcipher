@@ -17,6 +17,7 @@
 #
 TOP = @srcdir@
 
+
 # C Compiler and options for use in building executables that
 # will run on the platform that is doing the build.
 #
@@ -122,6 +123,13 @@ USE_GCOV = @USE_GCOV@
 LTCOMPILE_EXTRAS += $(GCOV_CFLAGS$(USE_GCOV))
 LTLINK_EXTRAS += $(GCOV_LDFLAGS$(USE_GCOV))
 
+# BEGIN CRYPTO
+CRYPTOLIBOBJ = \
+  crypto.lo
+  
+CRYPTOSRC = \
+  $(TOP)/src/crypto.c
+# END CRYPTO
 
 # The directory into which to store package information for
 
@@ -160,7 +168,7 @@ OBJS0 = alter.lo analyze.lo attach.lo auth.lo bitvec.lo btmutex.lo \
         select.lo status.lo table.lo tokenize.lo trigger.lo update.lo \
         util.lo vacuum.lo \
         vdbe.lo vdbeapi.lo vdbeaux.lo vdbeblob.lo vdbefifo.lo vdbemem.lo \
-        where.lo utf.lo legacy.lo vtab.lo
+        where.lo utf.lo legacy.lo vtab.lo $(CRYPTOLIBOBJ)
 
 # Object files for the amalgamation.
 #
@@ -175,6 +183,7 @@ LIBOBJ = $(OBJS$(USE_AMALGAMATION))
 # All of the source code files.
 #
 SRC = \
+  $(CRYPTOSRC) \
   $(TOP)/src/alter.c \
   $(TOP)/src/analyze.c \
   $(TOP)/src/attach.c \
@@ -463,6 +472,11 @@ lemon$(BEXE):	$(TOP)/tool/lemon.c $(TOP)/tool/lempar.c
 #
 sqlite3.lo:	sqlite3.c
 	$(LTCOMPILE) -c sqlite3.c
+
+# BEGIN CRYPTO
+crypto.lo:	$(TOP)/src/crypto.c $(HDR)
+	$(LTCOMPILE) -c $(TOP)/src/crypto.c
+# END CRYPTO
 
 # Rules to build individual files
 #

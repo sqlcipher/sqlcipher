@@ -1,10 +1,11 @@
 /* BEGIN CRYPTO */
 #if defined(SQLITE_HAS_CODEC)
 
-#include "sqliteInt.h"
-#include "btreeInt.h"
+#include <assert.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include "sqliteInt.h"
+#include "btreeInt.h"
 #include "crypto.h"
 
 typedef struct {
@@ -16,7 +17,7 @@ typedef struct {
   void *buffer;
 } codec_ctx;
 
-static int codec_hash(codec_ctx *ctx, void *out, int *outLen, void *in, int inLen) {
+static int codec_page_hash(Pgno pgno, void *in, int inLen, void *out, int *outLen) {
   EVP_MD_CTX mdctx;
   unsigned int md_sz;
   unsigned char md_value[EVP_MAX_MD_SIZE];
@@ -24,10 +25,9 @@ static int codec_hash(codec_ctx *ctx, void *out, int *outLen, void *in, int inLe
   EVP_MD_CTX_init(&mdctx);
   EVP_DigestInit_ex(&mdctx, DIGEST, NULL);
     
-  if(ctx->rand)
-    EVP_DigestUpdate(&mdctx, ctx->rand, 16);
+  EVP_DigestUpdate(&mdctx, in, inLen); /* add random "salt" data to hash*/
+  EVP_DigestUpdate(&mdctx, &pgno, sizeof(pgno));
   
-  EVP_DigestUpdate(&mdctx, in, inLen);
   EVP_DigestFinal_ex(&mdctx, md_value, &md_sz);
   
   memcpy(out, md_value, md_sz);
@@ -35,6 +35,21 @@ static int codec_hash(codec_ctx *ctx, void *out, int *outLen, void *in, int inLe
   EVP_MD_CTX_cleanup(&mdctx);
   memset(md_value, 0, md_sz);
   *outLen =  md_sz;
+}
+
+static int codec_passphrase_hash(void *in, int inLen, void *out, int *outLen) {
+  EVP_MD_CTX mdctx;
+  unsigned int md_sz;
+  unsigned char md_value[EVP_MAX_MD_SIZE];
+  
+  EVP_MD_CTX_init(&mdctx);
+  EVP_DigestInit_ex(&mdctx, DIGEST, NULL);
+  EVP_DigestUpdate(&mdctx, in, inLen);
+  EVP_DigestFinal_ex(&mdctx, md_value, &md_sz);
+  memcpy(out, md_value, md_sz);
+  EVP_MD_CTX_cleanup(&mdctx);
+  memset(md_value, 0, md_sz);
+  *outLen = md_sz;
 }
 
 /*
@@ -45,12 +60,16 @@ static int codec_hash(codec_ctx *ctx, void *out, int *outLen, void *in, int inLe
  * in - pointer to input bytes
  * out - pouter to output bytes
  */
-static int codec_cipher(codec_ctx *ctx, int pgno, int mode, int size, void *in, void *out) {
+static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in, void *out) {
   EVP_CIPHER_CTX ectx;
   unsigned char iv[EVP_MAX_MD_SIZE];
   int iv_sz, tmp_csz, csz;
   
-  codec_hash(ctx, iv, &iv_sz, &pgno, sizeof(pgno));
+  /* the initilization vector is created from the hash of the
+     16 byte database random salt and the page number. This will
+     ensure that each page in the database has a unique initialization
+     vector */
+  codec_page_hash(pgno, ctx->rand, 16, iv, &iv_sz);
   
   EVP_CipherInit(&ectx, CIPHER, NULL, NULL, mode);
   EVP_CIPHER_CTX_set_padding(&ectx, 0);
@@ -62,11 +81,6 @@ static int codec_cipher(codec_ctx *ctx, int pgno, int mode, int size, void *in, 
   csz += tmp_csz;
   EVP_CIPHER_CTX_cleanup(&ectx);
   assert(size == csz);
-}
-
-
-void sqlite3_activate_see(const char* in) {
-  /* do nothing, security enhancements are always active */
 }
 
 /*
@@ -152,12 +166,22 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
        operations to avoid overhead of multiple memory allocations*/
     ctx->buffer = sqlite3_malloc(sqlite3BtreeGetPageSize(ctx->pBt));
     
-    /* if key string starts with x' then this is a blob literal key*/
+    ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
+    
+    /* if key string starts with x' then assume this is a blob literal key*/
     if(sqlite3StrNICmp(zKey,"x'", 2) == 0) { 
       int n = nKey - 3; /* adjust for leading x' and tailing ' */
       const char *z = zKey + 2; /* adjust lead offset of x' */
-      ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
+      
+      assert((n/2) == ctx->key_sz); /* keylength after hex decode should equal cipher key length */
       ctx->key = sqlite3HexToBlob(db, z, n);
+    
+    /* otherwise the key is provided as a string so hash it to get key data */
+    } else {
+      int key_sz;
+      ctx->key = sqlite3_malloc(ctx->key_sz);
+      codec_passphrase_hash(zKey, nKey, ctx->key, &key_sz);
+      assert(key_sz == ctx->key_sz);
     } 
     
     sqlite3pager_set_codec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
