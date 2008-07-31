@@ -2796,6 +2796,13 @@ int sqlite3PagerClose(Pager *pPager){
   ** }
   */
 
+  /* BEGIN CRYPTO */
+  #ifdef SQLITE_HAS_CODEC
+  extern int sqlite3FreeCodecArg(void *);
+  if(pPager->pCodecArg) sqlite3FreeCodecArg(pPager->pCodecArg);
+  #endif
+  /* END CRYPTO */
+
   sqlite3_free(pPager->aHash);
   sqlite3PageFree(pPager->pTmpSpace);
   sqlite3_free(pPager);

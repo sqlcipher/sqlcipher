@@ -219,6 +219,29 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   }
 }
 
+int sqlite3FreeCodecArg(void *pCodecArg) {
+  codec_ctx *ctx = (codec_ctx *) pCodecArg;
+  if(pCodecArg == NULL) return;
+  
+  if(ctx->key) {
+    memset(ctx->key, 0, ctx->key_sz);
+    sqlite3_free(ctx->key);
+  }
+  
+  if(ctx->rand) {
+    memset(ctx->rand, 0, 16);
+    sqlite3_free(ctx->rand);
+  }
+  
+  if(ctx->buffer) {
+    memset(ctx->buffer, 0, sqlite3BtreeGetPageSize(ctx->pBt));
+    sqlite3_free(ctx->buffer);
+  }
+  
+  memset(ctx, 0, sizeof(codec_ctx));
+  sqlite3_free(ctx);
+}
+
 void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
 }
