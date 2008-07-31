@@ -5361,11 +5361,6 @@ int sqlite3pager_get_codec(Pager *pPager, void **ctx) {
   *ctx = pPager->pCodecArg;
 }
 
-void sqlite3pager_set_codec(Pager *pPager, void *(*xCodec)(void*,void*,Pgno,int), void *pCodecArg){
-  pPager->xCodec = xCodec;
-  pPager->pCodecArg = pCodecArg;
-}
-
 #endif
 /* END CRYPTO */
 

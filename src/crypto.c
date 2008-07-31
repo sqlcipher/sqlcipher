@@ -218,7 +218,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
       assert(key_sz == ctx->key_sz);
     } 
     
-    sqlite3pager_set_codec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
+    sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
   }
 }
 
