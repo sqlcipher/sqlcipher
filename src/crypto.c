@@ -32,11 +32,10 @@ typedef struct {
   Btree *pBt;
   void *key;
   void *rand;
-  char *pKey;
   void *buffer;
 } codec_ctx;
 
-static int codec_page_hash(Pgno pgno, void *in, int inLen, void *out, int *outLen) {
+static int codec_page_hash(Pgno pgno, const void *in, int inLen, void *out, int *outLen) {
   EVP_MD_CTX mdctx;
   unsigned int md_sz;
   unsigned char md_value[EVP_MAX_MD_SIZE];
@@ -56,7 +55,7 @@ static int codec_page_hash(Pgno pgno, void *in, int inLen, void *out, int *outLe
   *outLen =  md_sz;
 }
 
-static int codec_passphrase_hash(void *in, int inLen, void *out, int *outLen) {
+static int codec_passphrase_hash(const void *in, int inLen, void *out, int *outLen) {
   EVP_MD_CTX mdctx;
   unsigned int md_sz;
   unsigned char md_value[EVP_MAX_MD_SIZE];
@@ -69,6 +68,24 @@ static int codec_passphrase_hash(void *in, int inLen, void *out, int *outLen) {
   EVP_MD_CTX_cleanup(&mdctx);
   memset(md_value, 0, md_sz);
   *outLen = md_sz;
+}
+
+static int codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *out, int *nOut) {
+  /* if key string starts with x' then assume this is a blob literal key*/
+  if (sqlite3StrNICmp(zKey ,"x'", 2) == 0) { 
+    int n = nKey - 3; /* adjust for leading x' and tailing ' */
+    int half_n = n/2;
+    const char *z = zKey + 2; /* adjust lead offset of x' */ 
+    void *key = sqlite3HexToBlob(db, z, n);
+    memcpy(out, key, half_n);
+    *nOut = half_n;
+    
+    memset(key, 0, half_n); /* cleanup temporary key data */
+    sqlite3_free(key);
+  /* otherwise the key is provided as a string so hash it to get key data */
+  } else {
+    codec_passphrase_hash(zKey, nKey, out, nOut);
+  }
 }
 
 /*
@@ -182,7 +199,6 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     
     RAND_pseudo_bytes(ctx->rand, 16);
     
-    
     /* pre-allocate a page buffer of PageSize bytes. This will
        be used as a persistent buffer for encryption and decryption 
        operations to avoid overhead of multiple memory allocations*/
@@ -191,32 +207,13 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
          
-    /* when key size is exactly the same size as nKey then we assume
-       we've recieved raw key data (i.e. through the attach of another
-       database */
-    if(nKey == ctx->key_sz) {
-      ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
-      if(ctx->key == NULL) return SQLITE_NOMEM;
-      
-      memcpy(ctx->key, zKey, nKey);
- 
-    /* if key string starts with x' then assume this is a blob literal key*/
-    } else if (sqlite3StrNICmp(zKey,"x'", 2) == 0) { 
-      int n = nKey - 3; /* adjust for leading x' and tailing ' */
-      const char *z = zKey + 2; /* adjust lead offset of x' */
-      
-      assert((n/2) == ctx->key_sz); /* keylength after hex decode should equal cipher key length */
-      ctx->key = sqlite3HexToBlob(db, z, n);
+    /* key size should be exactly the same size as nKey since this is
+       raw key data at this point */
+    assert(nKey == ctx->key_sz);
     
-    /* otherwise the key is provided as a string so hash it to get key data */
-    } else {
-      int key_sz;
-      ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
-      if(ctx->key == NULL) return SQLITE_NOMEM;
-      
-      codec_passphrase_hash(zKey, nKey, ctx->key, &key_sz);
-      assert(key_sz == ctx->key_sz);
-    } 
+    ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
+    if(ctx->key == NULL) return SQLITE_NOMEM;
+    memcpy(ctx->key, zKey, nKey);
     
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
   }
@@ -228,10 +225,19 @@ void sqlite3_activate_see(const char* in) {
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
   if(db) {
-    int i;
+    int i, prepared_key_sz;
+    int key_sz =  EVP_CIPHER_key_length(CIPHER);
+    void *key = sqlite3DbMallocRaw(db, key_sz);
+    
+    codec_prepare_key(db, pKey, nKey, key, &prepared_key_sz);
+    assert(prepared_key_sz == key_sz);
+    
     for(i=0; i<db->nDb; i++){
-      sqlite3CodecAttach(db, i, pKey, nKey);
+      sqlite3CodecAttach(db, i, key, prepared_key_sz);
     }
+    
+    memset(key, 0, key_sz); /* cleanup temporary key data */
+    sqlite3_free(key);
   }
 }
 
