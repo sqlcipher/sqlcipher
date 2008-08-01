@@ -247,10 +247,12 @@ void sqlite3_activate_see(const char* in) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
-  if(db) {
+  /* attach key if db and pKey are not null and nKey is > 0 */
+  if(db && pKey && nKey) {
     int i, prepared_key_sz;
     int key_sz =  EVP_CIPHER_key_length(CIPHER);
     void *key = sqlite3DbMallocRaw(db, key_sz);
+    if(key == NULL) return SQLITE_NOMEM;
     
     codec_prepare_key(db, pKey, nKey, key, &prepared_key_sz);
     assert(prepared_key_sz == key_sz);
@@ -277,6 +279,8 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   
   if( pDb->pBt ) {
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+
+    /* if the codec has an attached codec_context user the raw key data */
     if(ctx) {
       *zKey = ctx->key;
       *nKey = ctx->key_sz;
