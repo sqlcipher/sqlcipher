@@ -90,6 +90,20 @@ set EXCLUDE {
 if {[sqlite3 -has-codec]} {
   # lappend EXCLUDE \
   #  conflict.test
+  lappend EXCLUDE corrupt2.test
+  lappend EXCLUDE corrupt3.test
+  lappend EXCLUDE corrupt4.test
+  lappend EXCLUDE corrupt5.test
+  lappend EXCLUDE corrupt6.test
+  lappend EXCLUDE corrupt7.test
+  lappend EXCLUDE corrupt8.test
+  lappend EXCLUDE corrupt9.test
+  lappend EXCLUDE corruptA.test
+  lappend EXCLUDE filefmt.test
+  lappend EXCLUDE lock4.test
+  lappend EXCLUDE memsubsys1.test
+  lappend EXCLUDE pagesize.test
+  lappend EXCLUDE shared.test
 }
 
 
