@@ -23,6 +23,8 @@
 
 #define CIPHER EVP_aes_256_cfb()
 #define DIGEST EVP_sha256()
+#define CIPHER_DECRYPT 0
+#define CIPHER_ENCRYPT 1
 
 /* HDR_SIZE allocates 16 bytes for random salt and 8 bytes for page size */
 #define HDR_SZ 24

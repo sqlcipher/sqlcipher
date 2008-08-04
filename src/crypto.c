@@ -27,13 +27,16 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
+extern int sqlite3pager_get_codec(Pager *pPager, void * ctx);
+
 typedef struct {
   int key_sz;
   Btree *pBt;
   void *key;
-  void *rekey;
   void *rand;
   void *buffer;
+  void *rekey;
+  int  rekey_plaintext;
 } codec_ctx;
 
 static int codec_page_hash(Pgno pgno, const void *in, int inLen, void *out, int *outLen) {
@@ -101,7 +104,20 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
   EVP_CIPHER_CTX ectx;
   unsigned char iv[EVP_MAX_MD_SIZE];
   int iv_sz, tmp_csz, csz;
+
+  /* when this is an encryption operation and rekey is not null, we will actually encrypt
+  ** data with the new rekey data */
+  void *key = ((mode == CIPHER_ENCRYPT && ctx->rekey != NULL) ? ctx->rekey : ctx->key);
   
+  /* just copy raw data from in to out whenever 
+  ** 1. key is NULL; or 
+  ** 2. this is a decrypt operation and rekey_plaintext is true
+  */ 
+  if(key == NULL || (mode==CIPHER_DECRYPT && ctx->rekey_plaintext)) {
+    memcpy(out, in, size);
+    return SQLITE_OK;
+  } 
+
   /* the initilization vector is created from the hash of the
      16 byte database random salt and the page number. This will
      ensure that each page in the database has a unique initialization
@@ -110,7 +126,7 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
   
   EVP_CipherInit(&ectx, CIPHER, NULL, NULL, mode);
   EVP_CIPHER_CTX_set_padding(&ectx, 0);
-  EVP_CipherInit(&ectx, NULL, ctx->key, iv, mode);
+  EVP_CipherInit(&ectx, NULL, key, iv, mode);
   EVP_CipherUpdate(&ectx, out, &tmp_csz, in, size);
   csz = tmp_csz;  
   out += tmp_csz;
@@ -136,11 +152,11 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
     case 0: /* decrypt */
     case 2:
     case 3:
-      emode = 0;
+      emode = CIPHER_DECRYPT;
       break;
     case 6: /* encrypt */
     case 7:
-      emode = 1;
+      emode = CIPHER_ENCRYPT;
       break;
     default:
       return pData;
@@ -154,9 +170,9 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
     /* if this is a read & decrypt operation on the first page then copy the 
        first 16 bytes off the page into the context's random salt buffer
        */
-    if(emode) {
+    if(emode == CIPHER_ENCRYPT) {
       memcpy(ctx->buffer, ctx->rand, 16);
-    } else {
+    } else { /* CIPHER_DECRYPT */
       memcpy(ctx->rand, pData, 16);
       memcpy(ctx->buffer, SQLITE_FILE_HEADER, 16);
     }
@@ -167,7 +183,7 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
     codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
   }
   
-  if(emode) {
+  if(emode == CIPHER_ENCRYPT) {
     return ctx->buffer; /* return persistent buffer data, pData remains intact */
   } else {
     memcpy(pData, ctx->buffer, pg_sz); /* copy buffer data back to pData and return */
@@ -188,7 +204,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     ctx = sqlite3DbMallocRaw(db, sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
-    
+    memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
+ 
     ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
     
     /* assign random salt data. This will be written to the first page
@@ -215,8 +232,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
     if(ctx->key == NULL) return SQLITE_NOMEM;
     memcpy(ctx->key, zKey, nKey);
-  
-    ctx->rekey = NULL; /* rekey data will not be initialized by default */  
+
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
   }
 }
@@ -283,21 +299,52 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 ** 1. Determine if there is already a key present
 ** 2. If there is NOT already a key present, create one and attach a codec (key would be null)
 ** 3. Initialize a ctx->rekey parameter of the codec
-** 3. Create a transaction on the database
-** 4. Iterate through each page, reading it and then writing it.
-** 5. If that goes ok then commit and put ctx->rekey into ctx->key
-**
+** 
 ** Note: this will require modifications to the sqlite3Codec to support rekey
 **
 */
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
-  /* FIXME - this should change the password for the database! */
-  printf("sorry sqlite3_rekey is not implemented yet\n");
-  sqlite3_key(db, pKey, nKey);
+  if(db && pKey && nKey) {
+    int i, prepared_key_sz;
+    int key_sz =  EVP_CIPHER_key_length(CIPHER);
+    void *key = sqlite3DbMallocRaw(db, key_sz);
+    if(key == NULL) return SQLITE_NOMEM;
+
+    codec_prepare_key(db, pKey, nKey, key, &prepared_key_sz);
+    assert(prepared_key_sz == key_sz);
+    
+    for(i=0; i<db->nDb; i++){
+      struct Db *pDb = &db->aDb[i];
+      if(pDb->pBt) {
+        codec_ctx *ctx;
+        sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+        if(ctx == NULL) { 
+          /* there was no codec attached to this database,so attach one now with a null password */
+          sqlite3CodecAttach(db, i, key, prepared_key_sz);
+          sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+          ctx->rekey_plaintext = 1;
+        }
+        ctx->rekey = key; /* set rekey to new key data - note that ctx->key is original encryption key */
+      
+        /* do stuff here to rewrite the database 
+        ** 1. Create a transaction on the database
+        ** 2. Iterate through each page, reading it and then writing it.
+        ** 3. If that goes ok then commit and put ctx->rekey into ctx->key
+        **    note: don't deallocate rekey since it may be used in a subsequent iteration 
+        */
+        memcpy(ctx->key, ctx->rekey, key_sz); 
+        ctx->rekey = NULL; 
+        ctx->rekey_plaintext = 0;
+      }
+    }
+    
+    /* clear and free temporary key data */
+    memset(key, 0, key_sz); 
+    sqlite3_free(key);
+  }
 }
 
 void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
-  extern int sqlite3pager_get_codec(Pager *pPager, void * ctx);
   codec_ctx *ctx;
   struct Db *pDb = &db->aDb[nDb];
   
