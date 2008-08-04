@@ -31,6 +31,7 @@ typedef struct {
   int key_sz;
   Btree *pBt;
   void *key;
+  void *rekey;
   void *rand;
   void *buffer;
 } codec_ctx;
@@ -214,7 +215,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
     if(ctx->key == NULL) return SQLITE_NOMEM;
     memcpy(ctx->key, zKey, nKey);
-    
+  
+    ctx->rekey = NULL; /* rekey data will not be initialized by default */  
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
   }
 }
@@ -226,6 +228,11 @@ int sqlite3FreeCodecArg(void *pCodecArg) {
   if(ctx->key) {
     memset(ctx->key, 0, ctx->key_sz);
     sqlite3_free(ctx->key);
+  }
+
+  if(ctx->rekey) {
+    memset(ctx->rekey, 0, ctx->key_sz);
+    sqlite3_free(ctx->rekey);
   }
   
   if(ctx->rand) {
@@ -275,12 +282,12 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 ** The proposed logic for this function follows:
 ** 1. Determine if there is already a key present
 ** 2. If there is NOT already a key present, create one and attach a codec (key would be null)
-** 3. Initialize a ctx->new_key parameter of the codec
+** 3. Initialize a ctx->rekey parameter of the codec
 ** 3. Create a transaction on the database
 ** 4. Iterate through each page, reading it and then writing it.
-** 5. If that goes ok then commit and put ctx->new_key into ctx->key
+** 5. If that goes ok then commit and put ctx->rekey into ctx->key
 **
-** Note: this will require modifications to the sqlite3Codec to support new_key
+** Note: this will require modifications to the sqlite3Codec to support rekey
 **
 */
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
