@@ -1283,6 +1283,8 @@ void sqlite3Pragma(
 #if SQLITE_HAS_CODEC
   if( sqlite3StrICmp(zLeft, "key")==0 ){
     sqlite3_key(db, zRight, strlen(zRight));
+  }else if (  sqlite3StrICmp(zLeft, "rekey")==0 ){
+    sqlite3_rekey(db, zRight, strlen(zRight));
   }else
 #endif
 #if SQLITE_HAS_CODEC || defined(SQLITE_ENABLE_CEROD)
