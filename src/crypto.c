@@ -28,6 +28,7 @@
 #include "crypto.h"
 
 extern int sqlite3pager_get_codec(Pager *pPager, void * ctx);
+extern int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
 
 typedef struct {
   int key_sz;
@@ -317,6 +318,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       struct Db *pDb = &db->aDb[i];
       if(pDb->pBt) {
         codec_ctx *ctx;
+        int rc;
+        Pgno page_count, pgno;
+        void *page;
+        Pager *pPager = pDb->pBt->pBt->pPager;
+ 
         sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
         if(ctx == NULL) { 
           /* there was no codec attached to this database,so attach one now with a null password */
@@ -332,7 +338,27 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         ** 3. If that goes ok then commit and put ctx->rekey into ctx->key
         **    note: don't deallocate rekey since it may be used in a subsequent iteration 
         */
-        memcpy(ctx->key, ctx->rekey, key_sz); 
+        rc = sqlite3BtreeBeginTrans(pDb->pBt, 1); /* begin write transaction */
+        rc = sqlite3PagerPagecount(pPager, &page_count);
+        for(pgno = 1; rc == SQLITE_OK && pgno <= page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
+          rc = sqlite3PagerGet(pPager, pgno, &page);
+          if(rc == SQLITE_OK) { /* write page see pager_incr_changecounter for example */
+            rc = sqlite3PagerWrite(page);
+            if(rc == SQLITE_OK) {
+              sqlite3PagerUnref(page);
+            } 
+          } 
+        }
+
+        /* if commit was successful commit and copy the rekey data to current key, else rollback to release locks */
+        if(rc == SQLITE_OK) { 
+          rc = sqlite3BtreeCommit(pDb->pBt); 
+          memcpy(ctx->key, ctx->rekey, key_sz); 
+        } else {
+          sqlite3BtreeRollback(pDb->pBt);
+        }
+
+        /* cleanup rekey data, make sure to overwrite rekey_plaintext or read errors will ensue */
         ctx->rekey = NULL; 
         ctx->rekey_plaintext = 0;
       }
