@@ -1,0 +1,86 @@
+# This file implements regression tests for SQLite library.  The
+# focus of this script is testing code cipher features.
+#
+# codec.test developed by Stephen Lombardo (ZETETIC LLC) 
+# sjlombardo@zetetic.net
+#
+# NOTE: tester.tcl has overridden the definition of sqlite3 to 
+# automatically pass in a key value. Thus tests in this file
+# should explicitly close and open db with sqlite_orig in order
+# to bypass default key assignment.
+
+file delete -force test.db
+file delete -force test2.db
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+
+if {![sqlite_orig -has-codec]} {
+  finish_test
+  return
+}
+
+# If the library is not compiled with has_codec support then
+# skip all tests in this file.
+#
+#ifcapable {! -has_codec} {
+#}
+
+# The database is initially empty.
+do_test codec-1.1 {
+  db close
+  sqlite_orig db test.db
+  execsql {
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {}
+
+# set an encryption key and create some basic data
+# create table and insert operations should work
+do_test codec-1.2 {
+  db close
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES ('test1', 'test2'); 
+  }
+} {}
+
+# close database, open it again with the same
+# key. verify that the table is readable
+# and the data just inserted is visible
+do_test codec-1.3 {
+  db close
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT * from t1;
+  }
+} {t1 test1 test2}
+
+# open the database and try to read from it without
+# providing a passphrase. verify that the 
+# an error is returned from the library
+do_test codec-1.4 {
+  db close
+  sqlite_orig db test.db
+  catchsql {
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {1 {file is encrypted or is not a database}}
+
+# open the database and try to set an invalid
+# passphrase. verify that an error is returned
+# and that data couldn't be read
+do_test codec-1.5 {
+  db close
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = 'testkey2';
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {1 {database disk image is malformed}}
+
+finish_test
