@@ -26,8 +26,7 @@
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
 
-/* HDR_SIZE allocates 16 bytes for random salt and 8 bytes for page size */
-#define HDR_SZ 24
+#define HDR_SZ 100
 
 #endif
 /* END CRYPTO */

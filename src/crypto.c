@@ -27,38 +27,18 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
+#define RESERVE 128
 extern int sqlite3pager_get_codec(Pager *pPager, void * ctx);
-extern int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
 
 typedef struct {
   int key_sz;
+  int iv_sz;
   Btree *pBt;
   void *key;
-  void *rand;
   void *buffer;
   void *rekey;
   int  rekey_plaintext;
 } codec_ctx;
-
-static int codec_page_hash(Pgno pgno, const void *in, int inLen, void *out, int *outLen) {
-  EVP_MD_CTX mdctx;
-  unsigned int md_sz;
-  unsigned char md_value[EVP_MAX_MD_SIZE];
-
-  EVP_MD_CTX_init(&mdctx);
-  EVP_DigestInit_ex(&mdctx, DIGEST, NULL);
-    
-  EVP_DigestUpdate(&mdctx, in, inLen); /* add random "salt" data to hash*/
-  EVP_DigestUpdate(&mdctx, &pgno, sizeof(pgno));
-  
-  EVP_DigestFinal_ex(&mdctx, md_value, &md_sz);
-  
-  memcpy(out, md_value, md_sz);
-    
-  EVP_MD_CTX_cleanup(&mdctx);
-  memset(md_value, 0, md_sz);
-  *outLen =  md_sz;
-}
 
 static int codec_passphrase_hash(const void *in, int inLen, void *out, int *outLen) {
   EVP_MD_CTX mdctx;
@@ -103,8 +83,15 @@ static int codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *out,
  */
 static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in, void *out) {
   EVP_CIPHER_CTX ectx;
-  unsigned char iv[EVP_MAX_MD_SIZE];
-  int iv_sz, tmp_csz, csz;
+  void *iv;
+  int tmp_csz, csz;
+
+  size = size - ctx->iv_sz; /* adjust size to useable size and memset reserve at end of page */
+  iv = out + size;
+  if(mode == CIPHER_ENCRYPT) {
+    //RAND_pseudo_bytes(ctx->iv, ctx->iv_sz);
+    memset(iv, 0, ctx->iv_sz);
+  } 
 
   /* when this is an encryption operation and rekey is not null, we will actually encrypt
   ** data with the new rekey data */
@@ -119,12 +106,6 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
     return SQLITE_OK;
   } 
 
-  /* the initilization vector is created from the hash of the
-     16 byte database random salt and the page number. This will
-     ensure that each page in the database has a unique initialization
-     vector */
-  codec_page_hash(pgno, ctx->rand, 16, iv, &iv_sz);
-  
   EVP_CipherInit(&ectx, CIPHER, NULL, NULL, mode);
   EVP_CIPHER_CTX_set_padding(&ectx, 0);
   EVP_CipherInit(&ectx, NULL, key, iv, mode);
@@ -135,6 +116,7 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
   csz += tmp_csz;
   EVP_CIPHER_CTX_cleanup(&ectx);
   assert(size == csz);
+  
 }
 
 /*
@@ -164,26 +146,16 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
       break;
   }
 
+#if 0
   if(pgno == 1 ) { 
-    /* duplicate first 24 bytes of page 1 exactly to include random header data and page size */
     memcpy(ctx->buffer, pData, HDR_SZ); 
-
-    /* if this is a read & decrypt operation on the first page then copy the 
-       first 16 bytes off the page into the context's random salt buffer
-       */
-    if(emode == CIPHER_ENCRYPT) {
-      memcpy(ctx->buffer, ctx->rand, 16);
-    } else { /* CIPHER_DECRYPT */
-      memcpy(ctx->rand, pData, 16);
-      memcpy(ctx->buffer, SQLITE_FILE_HEADER, 16);
-    }
-    
     /* adjust starting pointers in data page for header offset */
     codec_cipher(ctx, pgno, emode, pg_sz - HDR_SZ, &pData[HDR_SZ], &ctx->buffer[HDR_SZ]);
   } else {
     codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
   }
-  
+#endif
+  codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
   if(emode == CIPHER_ENCRYPT) {
     return ctx->buffer; /* return persistent buffer data, pData remains intact */
   } else {
@@ -201,22 +173,12 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   if(nKey && zKey && pDb->pBt) {
     codec_ctx *ctx;
     int rc;
-    MemPage *pPage1;
 
     ctx = sqlite3DbMallocRaw(db, sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
     memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
  
     ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
-    
-    /* assign random salt data. This will be written to the first page
-       if this is a new database file. If an existing database file is
-       attached this will just be overwritten when the first page is
-       read from disk */
-    ctx->rand = sqlite3DbMallocRaw(db, 16);
-    if(ctx->rand == NULL) return SQLITE_NOMEM;
-    
-    RAND_pseudo_bytes(ctx->rand, 16);
     
     /* pre-allocate a page buffer of PageSize bytes. This will
        be used as a persistent buffer for encryption and decryption 
@@ -225,6 +187,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     if(ctx->buffer == NULL) return SQLITE_NOMEM;
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
+    ctx->iv_sz = EVP_CIPHER_key_length(CIPHER);
          
     /* key size should be exactly the same size as nKey since this is
        raw key data at this point */
@@ -234,6 +197,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     if(ctx->key == NULL) return SQLITE_NOMEM;
     memcpy(ctx->key, zKey, nKey);
 
+    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), RESERVE);
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
   }
 }
@@ -250,11 +214,6 @@ int sqlite3FreeCodecArg(void *pCodecArg) {
   if(ctx->rekey) {
     memset(ctx->rekey, 0, ctx->key_sz);
     sqlite3_free(ctx->rekey);
-  }
-  
-  if(ctx->rand) {
-    memset(ctx->rand, 0, 16);
-    sqlite3_free(ctx->rand);
   }
   
   if(ctx->buffer) {
