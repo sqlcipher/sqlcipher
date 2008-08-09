@@ -26,7 +26,5 @@
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
 
-#define HDR_SZ 100
-
 #endif
 /* END CRYPTO */
