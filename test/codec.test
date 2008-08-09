@@ -15,20 +15,15 @@ file delete -force test2.db
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
+# If the library is not compiled with has_codec support then
+# skip all tests in this file.
 if {![sqlite_orig -has-codec]} {
   finish_test
   return
 }
 
-# If the library is not compiled with has_codec support then
-# skip all tests in this file.
-#
-#ifcapable {! -has_codec} {
-#}
-
 # The database is initially empty.
 do_test codec-1.1 {
-  db close
   sqlite_orig db test.db
   execsql {
     SELECT name FROM sqlite_master WHERE type='table';
@@ -81,6 +76,7 @@ do_test codec-1.5 {
     PRAGMA key = 'testkey2';
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {1 {database disk image is malformed}}
+} {1 {file is encrypted or is not a database}}
 
+db close
 finish_test
