@@ -89,9 +89,11 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
   size = size - ctx->iv_sz; /* adjust size to useable size and memset reserve at end of page */
   iv = out + size;
   if(mode == CIPHER_ENCRYPT) {
-    //RAND_pseudo_bytes(ctx->iv, ctx->iv_sz);
-    memset(iv, 0, ctx->iv_sz);
+    RAND_pseudo_bytes(iv, ctx->iv_sz);
+  } else {
+    memcpy(iv, in+size, ctx->iv_sz);
   } 
+  
 
   /* when this is an encryption operation and rekey is not null, we will actually encrypt
   ** data with the new rekey data */
@@ -146,15 +148,6 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
       break;
   }
 
-#if 0
-  if(pgno == 1 ) { 
-    memcpy(ctx->buffer, pData, HDR_SZ); 
-    /* adjust starting pointers in data page for header offset */
-    codec_cipher(ctx, pgno, emode, pg_sz - HDR_SZ, &pData[HDR_SZ], &ctx->buffer[HDR_SZ]);
-  } else {
-    codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
-  }
-#endif
   codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
   if(emode == CIPHER_ENCRYPT) {
     return ctx->buffer; /* return persistent buffer data, pData remains intact */
@@ -188,7 +181,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
     ctx->iv_sz = EVP_CIPHER_key_length(CIPHER);
-         
+ 
     /* key size should be exactly the same size as nKey since this is
        raw key data at this point */
     assert(nKey == ctx->key_sz);
