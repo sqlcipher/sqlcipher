@@ -78,5 +78,66 @@ do_test codec-1.5 {
   }
 } {1 {file is encrypted or is not a database}}
 
+# open using raw hex key
+do_test codec-1.6 {
+  db close
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836489'";
+    SELECT * from t1;
+  }
+} {test1 test2}
+
+# test invalid hex key fails
+do_test codec-1.7 {
+  db close
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {1 {file is encrypted or is not a database}}
+
+# test a large number of inserts in a transaction for multiple pages
+do_test codec-1.8 {
+  db close
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    BEGIN;
+    CREATE TABLE t2(a,b);
+  }
+  for {set i 1} {$i<=25000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t2 VALUES($i,$r);" 
+  }
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t2;
+  } 
+} {25000}
+
+# test initial rekey
+do_test codec-1.9 {
+  db close
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA rekey = 'testkeynew';
+  }
+  db close
+} {}
+
+# test that now the new key opens the database
+# now close database re-open with new key
+do_test codec-1.10 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkeynew';
+    SELECT count(*) FROM t2;
+  }
+} {25000}
+
+
 db close
 finish_test

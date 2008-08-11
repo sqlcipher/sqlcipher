@@ -5363,11 +5363,13 @@ i64 sqlite3PagerJournalSizeLimit(Pager *pPager, i64 iLimit){
 
 /* BEGIN CRYPTO */
 #ifdef SQLITE_HAS_CODEC
-
 int sqlite3pager_get_codec(Pager *pPager, void **ctx) {
   *ctx = pPager->pCodecArg;
 }
 
+int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno) {
+  return (PAGER_MJ_PGNO(pPager) == pgno) ? 1 : 0;
+}
 #endif
 /* END CRYPTO */
 
