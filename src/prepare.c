@@ -13,7 +13,7 @@
 ** interface, and routines that contribute to loading the database schema
 ** from disk.
 **
-** $Id: prepare.c,v 1.89 2008/07/08 19:34:07 drh Exp $
+** $Id: prepare.c,v 1.91 2008/08/02 03:50:39 drh Exp $
 */
 #include "sqliteInt.h"
 #include <ctype.h>
@@ -32,7 +32,7 @@ static void corruptSchema(
     sqlite3SetString(pData->pzErrMsg, pData->db,
        "malformed database schema (%s)", zObj);
     if( zExtra && zExtra[0] ){
-      *pData->pzErrMsg = sqlite3MPrintf(pData->db, "%z - %s",
+      *pData->pzErrMsg = sqlite3MAppendf(pData->db, *pData->pzErrMsg, "%s - %s",
                                   *pData->pzErrMsg, zExtra);
     }
   }
@@ -79,11 +79,15 @@ int sqlite3InitCallback(void *pInit, int argc, char **argv, char **azColName){
     */
     char *zErr;
     int rc;
+    u8 lookasideEnabled;
     assert( db->init.busy );
     db->init.iDb = iDb;
     db->init.newTnum = atoi(argv[1]);
+    lookasideEnabled = db->lookaside.bEnabled;
+    db->lookaside.bEnabled = 0;
     rc = sqlite3_exec(db, argv[2], 0, 0, &zErr);
     db->init.iDb = 0;
+    db->lookaside.bEnabled = lookasideEnabled;
     assert( rc!=SQLITE_OK || zErr==0 );
     if( SQLITE_OK!=rc ){
       pData->rc = rc;
@@ -92,7 +96,7 @@ int sqlite3InitCallback(void *pInit, int argc, char **argv, char **azColName){
       }else if( rc!=SQLITE_INTERRUPT ){
         corruptSchema(pData, argv[0], zErr);
       }
-      sqlite3_free(zErr);
+      sqlite3DbFree(db, zErr);
       return 1;
     }
   }else if( argv[0]==0 ){
@@ -220,7 +224,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   rc = sqlite3BtreeCursor(pDb->pBt, MASTER_ROOT, 0, 0, curMain);
   if( rc!=SQLITE_OK && rc!=SQLITE_EMPTY ){
     sqlite3SetString(pzErrMsg, db, "%s", sqlite3ErrStr(rc));
-    goto leave_error_out;
+    goto initone_error_out;
   }
 
   /* Get the database meta information.
@@ -242,12 +246,12 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   */
   if( rc==SQLITE_OK ){
     int i;
-    for(i=0; rc==SQLITE_OK && i<sizeof(meta)/sizeof(meta[0]); i++){
+    for(i=0; i<sizeof(meta)/sizeof(meta[0]); i++){
       rc = sqlite3BtreeGetMeta(pDb->pBt, i+1, (u32 *)&meta[i]);
-    }
-    if( rc ){
-      sqlite3SetString(pzErrMsg, db, "%s", sqlite3ErrStr(rc));
-      goto leave_error_out;
+      if( rc ){
+        sqlite3SetString(pzErrMsg, db, "%s", sqlite3ErrStr(rc));
+        goto initone_error_out;
+      }
     }
   }else{
     memset(meta, 0, sizeof(meta));
@@ -270,7 +274,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
         sqlite3SetString(pzErrMsg, db, "attached databases must use the same"
             " text encoding as main database");
         rc = SQLITE_ERROR;
-        goto leave_error_out;
+        goto initone_error_out;
       }
     }
   }else{
@@ -299,7 +303,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   if( pDb->pSchema->file_format>SQLITE_MAX_FILE_FORMAT ){
     sqlite3SetString(pzErrMsg, db, "unsupported file format");
     rc = SQLITE_ERROR;
-    goto leave_error_out;
+    goto initone_error_out;
   }
 
   /* Ticket #2804:  When we open a database in the newer file format,
@@ -336,7 +340,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
 #endif
     if( rc==SQLITE_ABORT ) rc = initData.rc;
     (void)sqlite3SafetyOn(db);
-    sqlite3_free(zSql);
+    sqlite3DbFree(db, zSql);
 #ifndef SQLITE_OMIT_ANALYZE
     if( rc==SQLITE_OK ){
       sqlite3AnalysisLoad(db, iDb);
@@ -364,7 +368,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   ** curMain and calling sqlite3BtreeEnter(). For an error that occurs
   ** before that point, jump to error_out.
   */
-leave_error_out:
+initone_error_out:
   sqlite3BtreeCloseCursor(curMain);
   sqlite3_free(curMain);
   sqlite3BtreeLeave(pDb->pBt);
@@ -568,7 +572,7 @@ static int sqlite3Prepare(
     zSqlCopy = sqlite3DbStrNDup(db, zSql, nBytes);
     if( zSqlCopy ){
       sqlite3RunParser(&sParse, zSqlCopy, &zErrMsg);
-      sqlite3_free(zSqlCopy);
+      sqlite3DbFree(db, zSqlCopy);
       sParse.zTail = &zSql[sParse.zTail-zSqlCopy];
     }else{
       sParse.zTail = &zSql[nBytes];
@@ -632,7 +636,7 @@ static int sqlite3Prepare(
 
   if( zErrMsg ){
     sqlite3Error(db, rc, "%s", zErrMsg);
-    sqlite3_free(zErrMsg);
+    sqlite3DbFree(db, zErrMsg);
   }else{
     sqlite3Error(db, rc, 0);
   }
@@ -767,7 +771,7 @@ static int sqlite3Prepare16(
     int chars_parsed = sqlite3Utf8CharLen(zSql8, zTail8-zSql8);
     *pzTail = (u8 *)zSql + sqlite3Utf16ByteLen(zSql, chars_parsed);
   }
-  sqlite3_free(zSql8); 
+  sqlite3DbFree(db, zSql8); 
   rc = sqlite3ApiExit(db, rc);
   sqlite3_mutex_leave(db->mutex);
   return rc;

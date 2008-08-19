@@ -13,7 +13,7 @@
 ** is not included in the SQLite library.  It is used for automated
 ** testing of the SQLite library.
 **
-** $Id: test8.c,v 1.67 2008/07/07 14:50:14 drh Exp $
+** $Id: test8.c,v 1.72 2008/08/05 21:36:07 drh Exp $
 */
 #include "sqliteInt.h"
 #include "tcl.h"
@@ -42,6 +42,22 @@ typedef struct echo_cursor echo_cursor;
 ** by code in this file. If it is set to the name of a real table in the
 ** the database, then all xSync operations on echo virtual tables that
 ** use the named table as a backing store will fail.
+*/
+
+/*
+** Errors can be provoked within the following echo virtual table methods:
+**
+**   xBestIndex   xOpen     xFilter   xNext   
+**   xColumn      xRowid    xUpdate   xSync   
+**   xBegin       xRename
+**
+** This is done by setting the global tcl variable:
+**
+**   echo_module_fail($method,$tbl)
+**
+** where $method is set to the name of the virtual table method to fail
+** (i.e. "xBestIndex") and $tbl is the name of the table being echoed (not
+** the name of the virtual table, the name of the underlying real table).
 */
 
 /* 
@@ -75,6 +91,19 @@ struct echo_cursor {
   sqlite3_vtab_cursor base;
   sqlite3_stmt *pStmt;
 };
+
+static int simulateVtabError(echo_vtab *p, const char *zMethod){
+  const char *zErr;
+  char zVarname[128];
+  zVarname[127] = '\0';
+  sqlite3_snprintf(127, zVarname, 
+                   "echo_module_fail(%s,%s)", zMethod, p->zTableName);
+  zErr = Tcl_GetVar(p->interp, zVarname, TCL_GLOBAL_ONLY);
+  if( zErr ){
+    p->base.zErrMsg = sqlite3_mprintf("echo-vtab-error: %s", zErr);
+  }
+  return (zErr!=0);
+}
 
 /*
 ** Convert an SQL-style quoted string into a normal string by removing
@@ -459,7 +488,7 @@ static int echoCreate(
     rc = sqlite3_exec(db, zSql, 0, 0, 0);
     sqlite3_free(zSql);
     if( rc!=SQLITE_OK ){
-      *pzErr = sqlite3StrDup(sqlite3_errmsg(db));
+      *pzErr = sqlite3DbStrDup(0, sqlite3_errmsg(db));
     }
   }
 
@@ -524,6 +553,9 @@ static int echoDestroy(sqlite3_vtab *pVtab){
 */
 static int echoOpen(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCursor){
   echo_cursor *pCur;
+  if( simulateVtabError((echo_vtab *)pVTab, "xOpen") ){
+    return SQLITE_ERROR;
+  }
   pCur = sqlite3MallocZero(sizeof(echo_cursor));
   *ppCursor = (sqlite3_vtab_cursor *)pCur;
   return (pCur ? SQLITE_OK : SQLITE_NOMEM);
@@ -557,6 +589,10 @@ static int echoNext(sqlite3_vtab_cursor *cur){
   int rc = SQLITE_OK;
   echo_cursor *pCur = (echo_cursor *)cur;
 
+  if( simulateVtabError((echo_vtab *)(cur->pVtab), "xNext") ){
+    return SQLITE_ERROR;
+  }
+
   if( pCur->pStmt ){
     rc = sqlite3_step(pCur->pStmt);
     if( rc==SQLITE_ROW ){
@@ -576,6 +612,11 @@ static int echoNext(sqlite3_vtab_cursor *cur){
 static int echoColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
   int iCol = i + 1;
   sqlite3_stmt *pStmt = ((echo_cursor *)cur)->pStmt;
+
+  if( simulateVtabError((echo_vtab *)(cur->pVtab), "xColumn") ){
+    return SQLITE_ERROR;
+  }
+
   if( !pStmt ){
     sqlite3_result_null(ctx);
   }else{
@@ -590,6 +631,11 @@ static int echoColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
 */
 static int echoRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
   sqlite3_stmt *pStmt = ((echo_cursor *)cur)->pStmt;
+
+  if( simulateVtabError((echo_vtab *)(cur->pVtab), "xRowid") ){
+    return SQLITE_ERROR;
+  }
+
   *pRowid = sqlite3_column_int64(pStmt, 0);
   return SQLITE_OK;
 }
@@ -626,6 +672,10 @@ static int echoFilter(
   echo_cursor *pCur = (echo_cursor *)pVtabCursor;
   echo_vtab *pVtab = (echo_vtab *)pVtabCursor->pVtab;
   sqlite3 *db = pVtab->db;
+
+  if( simulateVtabError(pVtab, "xFilter") ){
+    return SQLITE_ERROR;
+  }
 
   /* Check that idxNum matches idxStr */
   assert( idxNum==hashString(idxStr) );
@@ -734,10 +784,13 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
   int rc = SQLITE_OK;
   int useCost = 0;
   double cost;
-
   int isIgnoreUsable = 0;
   if( Tcl_GetVar(interp, "echo_module_ignore_usable", TCL_GLOBAL_ONLY) ){
     isIgnoreUsable = 1;
+  }
+
+  if( simulateVtabError(pVtab, "xBestIndex") ){
+    return SQLITE_ERROR;
   }
 
   /* Determine the number of rows in the table and store this value in local
@@ -892,6 +945,10 @@ int echoUpdate(
   ** making any changes to a virtual table */
   assert( pVtab->inTransaction );
 
+  if( simulateVtabError(pVtab, "xUpdate") ){
+    return SQLITE_ERROR;
+  }
+
   /* If apData[0] is an integer and nData>1 then do an UPDATE */
   if( nData>1 && sqlite3_value_type(apData[0])==SQLITE_INTEGER ){
     char *zSep = " SET";
@@ -987,6 +1044,9 @@ int echoUpdate(
   if( pRowid && rc==SQLITE_OK ){
     *pRowid = sqlite3_last_insert_rowid(db);
   }
+  if( rc!=SQLITE_OK ){
+    tab->zErrMsg = sqlite3_mprintf("echo-vtab-error: %s", sqlite3_errmsg(db));
+  }
 
   return rc;
 }
@@ -1016,6 +1076,10 @@ static int echoBegin(sqlite3_vtab *tab){
   ** a transaction */
   assert( !pVtab->inTransaction );
 
+  if( simulateVtabError(pVtab, "xBegin") ){
+    return SQLITE_ERROR;
+  }
+
   rc = echoTransactionCall(tab, "xBegin");
 
   if( rc==SQLITE_OK ){
@@ -1043,6 +1107,10 @@ static int echoSync(sqlite3_vtab *tab){
   ** transaction */
   assert( pVtab->inTransaction );
 
+  if( simulateVtabError(pVtab, "xSync") ){
+    return SQLITE_ERROR;
+  }
+
   rc = echoTransactionCall(tab, "xSync");
 
   if( rc==SQLITE_OK ){
@@ -1064,6 +1132,10 @@ static int echoCommit(sqlite3_vtab *tab){
   /* Ticket #3083 - Only call xCommit if we have previously started
   ** a transaction */
   assert( pVtab->inTransaction );
+
+  if( simulateVtabError(pVtab, "xCommit") ){
+    return SQLITE_ERROR;
+  }
 
   sqlite3BeginBenignMalloc();
   rc = echoTransactionCall(tab, "xCommit");
@@ -1146,6 +1218,10 @@ static int echoFindFunction(
 static int echoRename(sqlite3_vtab *vtab, const char *zNewName){
   int rc = SQLITE_OK;
   echo_vtab *p = (echo_vtab *)vtab;
+
+  if( simulateVtabError(p, "xRename") ){
+    return SQLITE_ERROR;
+  }
 
   if( p->isPattern ){
     int nThis = strlen(p->zThis);

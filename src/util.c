@@ -14,7 +14,7 @@
 ** This file contains functions for allocating memory, comparing
 ** strings, and stuff like that.
 **
-** $Id: util.c,v 1.238 2008/07/11 16:19:10 drh Exp $
+** $Id: util.c,v 1.241 2008/07/28 19:34:54 drh Exp $
 */
 #include "sqliteInt.h"
 #include <stdarg.h>
@@ -22,7 +22,7 @@
 
 
 /*
-** Return true if the floating point value is Not a Number.
+** Return true if the floating point value is Not a Number (NaN).
 */
 int sqlite3IsNaN(double x){
   /* This NaN test sometimes fails if compiled on GCC with -ffast-math.
@@ -33,6 +33,14 @@ int sqlite3IsNaN(double x){
   **      -O option since it can result in incorrect output for programs
   **      which depend on an exact implementation of IEEE or ISO 
   **      rules/specifications for math functions.
+  **
+  ** Under MSVC, this NaN test may fail if compiled with a floating-
+  ** point precision mode other than /fp:precise.  From the MSDN 
+  ** documentation:
+  **
+  **      The compiler [with /fp:precise] will properly handle comparisons 
+  **      involving NaN. For example, x != x evaluates to true if x is NaN 
+  **      ...
   */
 #ifdef __FAST_MATH__
 # error SQLite will not work correctly with the -ffast-math option of GCC.
@@ -48,11 +56,15 @@ int sqlite3IsNaN(double x){
 */
 int sqlite3Strlen(sqlite3 *db, const char *z){
   const char *z2 = z;
+  int len;
+  size_t x;
   while( *z2 ){ z2++; }
-  if( z2 > &z[db->aLimit[SQLITE_LIMIT_LENGTH]] ){
+  x = z2 - z;
+  len = 0x7fffffff & x;
+  if( len!=x || len > db->aLimit[SQLITE_LIMIT_LENGTH] ){
     return db->aLimit[SQLITE_LIMIT_LENGTH];
   }else{
-    return (int)(z2 - z);
+    return len;
   }
 }
 
@@ -86,7 +98,7 @@ void sqlite3Error(sqlite3 *db, int err_code, const char *zFormat, ...){
       va_start(ap, zFormat);
       z = sqlite3VMPrintf(db, zFormat, ap);
       va_end(ap);
-      sqlite3ValueSetStr(db->pErr, -1, z, SQLITE_UTF8, sqlite3_free);
+      sqlite3ValueSetStr(db->pErr, -1, z, SQLITE_UTF8, SQLITE_DYNAMIC);
     }else{
       sqlite3ValueSetStr(db->pErr, 0, 0, SQLITE_UTF8, SQLITE_STATIC);
     }
@@ -112,10 +124,11 @@ void sqlite3Error(sqlite3 *db, int err_code, const char *zFormat, ...){
 */
 void sqlite3ErrorMsg(Parse *pParse, const char *zFormat, ...){
   va_list ap;
+  sqlite3 *db = pParse->db;
   pParse->nErr++;
-  sqlite3_free(pParse->zErrMsg);
+  sqlite3DbFree(db, pParse->zErrMsg);
   va_start(ap, zFormat);
-  pParse->zErrMsg = sqlite3VMPrintf(pParse->db, zFormat, ap);
+  pParse->zErrMsg = sqlite3VMPrintf(db, zFormat, ap);
   va_end(ap);
   if( pParse->rc==SQLITE_OK ){
     pParse->rc = SQLITE_ERROR;
@@ -126,7 +139,7 @@ void sqlite3ErrorMsg(Parse *pParse, const char *zFormat, ...){
 ** Clear the error message in pParse, if any
 */
 void sqlite3ErrorClear(Parse *pParse){
-  sqlite3_free(pParse->zErrMsg);
+  sqlite3DbFree(pParse->db, pParse->zErrMsg);
   pParse->zErrMsg = 0;
   pParse->nErr = 0;
 }

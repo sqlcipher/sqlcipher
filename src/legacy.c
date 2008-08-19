@@ -14,7 +14,7 @@
 ** other files are for internal use by SQLite and should not be
 ** accessed by users of the library.
 **
-** $Id: legacy.c,v 1.27 2008/06/15 02:51:47 drh Exp $
+** $Id: legacy.c,v 1.29 2008/08/02 03:50:39 drh Exp $
 */
 
 #include "sqliteInt.h"
@@ -84,10 +84,9 @@ int sqlite3_exec(
           }
           for(i=0; i<nCol; i++){
             azCols[i] = (char *)sqlite3_column_name(pStmt, i);
-            if( !azCols[i] ){
-              db->mallocFailed = 1;
-              goto exec_out;
-            }
+            /* sqlite3VdbeSetColName() installs column names as UTF8
+            ** strings so there is no way for sqlite3_column_name() to fail. */
+            assert( azCols[i]!=0 );
           }
           nCallback++;
         }
@@ -122,13 +121,13 @@ int sqlite3_exec(
       }
     }
 
-    sqlite3_free(azCols);
+    sqlite3DbFree(db, azCols);
     azCols = 0;
   }
 
 exec_out:
   if( pStmt ) sqlite3_finalize(pStmt);
-  if( azCols ) sqlite3_free(azCols);
+  sqlite3DbFree(db, azCols);
 
   rc = sqlite3ApiExit(db, rc);
   if( rc!=SQLITE_OK && rc==sqlite3_errcode(db) && pzErrMsg ){

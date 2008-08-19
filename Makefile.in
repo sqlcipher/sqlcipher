@@ -76,8 +76,13 @@ TLIBS = @LIBS@
 #
 TEMP_STORE = -DSQLITE_TEMP_STORE=@TEMP_STORE@
 
-# Enable/disable loadable extensions based on configuration
-TCC += @LOADEXTENSION_FLAGS@
+# Enable/disable loadable extensions, and other optional features
+# based on configuration. (-DSQLITE_OMIT*).  The same set of OMIT
+# flags should be passed to the LEMON parser generator and the 
+# mkkeywordhash tool as well.
+OPT_FEATURE_FLAGS = @OPT_FEATURE_FLAGS@
+
+TCC += $(OPT_FEATURE_FLAGS)
 
 # Version numbers and release number for the SQLite being compiled.
 #
@@ -138,6 +143,7 @@ CRYPTOSRC = \
 prefix = @prefix@
 exec_prefix = @exec_prefix@
 libdir = @libdir@
+pkgconfigdir = $(libdir)/pkgconfig
 bindir = @bindir@
 includedir = @includedir@
 INSTALL = @INSTALL@
@@ -161,8 +167,8 @@ OBJS0 = alter.lo analyze.lo attach.lo auth.lo bitvec.lo btmutex.lo \
         btree.lo build.lo callback.lo complete.lo date.lo \
         delete.lo expr.lo fault.lo func.lo global.lo \
         hash.lo journal.lo insert.lo loadext.lo \
-        main.lo malloc.lo mem1.lo mem2.lo mem3.lo mem4.lo mem5.lo mutex.lo \
-        mutex_os2.lo mutex_unix.lo mutex_w32.lo \
+        main.lo malloc.lo mem1.lo mem2.lo mem3.lo mem4.lo mem5.lo mem6.lo \
+        mutex.lo mutex_os2.lo mutex_unix.lo mutex_w32.lo \
         opcodes.lo os.lo os_unix.lo os_win.lo os_os2.lo \
         pager.lo parse.lo pragma.lo prepare.lo printf.lo random.lo \
         select.lo status.lo table.lo tokenize.lo trigger.lo update.lo \
@@ -216,6 +222,7 @@ SRC = \
   $(TOP)/src/mem3.c \
   $(TOP)/src/mem4.c \
   $(TOP)/src/mem5.c \
+  $(TOP)/src/mem6.c \
   $(TOP)/src/mutex.c \
   $(TOP)/src/mutex.h \
   $(TOP)/src/mutex_os2.c \
@@ -436,7 +443,7 @@ libsqlite3.la:	$(LIBOBJ)
 
 libtclsqlite3.la:	tclsqlite.lo libsqlite3.la
 	$(LTLINK) -o $@ tclsqlite.lo \
-		$(LIBOBJ) @TCL_STUB_LIB_SPEC@ $(TLIBS) \
+		libsqlite3.la @TCL_STUB_LIB_SPEC@ $(TLIBS) \
                 -rpath "$(libdir)/sqlite" \
 		-version-info "8:6:8"
 
@@ -564,6 +571,9 @@ mem4.lo:	$(TOP)/src/mem4.c $(HDR)
 mem5.lo:	$(TOP)/src/mem5.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/mem5.c
 
+mem6.lo:	$(TOP)/src/mem6.c $(HDR)
+	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/mem6.c
+
 mutex.lo:	$(TOP)/src/mutex.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/mutex.c
 
@@ -607,7 +617,7 @@ parse.h:	parse.c
 
 parse.c:	$(TOP)/src/parse.y lemon$(BEXE) $(TOP)/addopcodes.awk
 	cp $(TOP)/src/parse.y .
-	./lemon$(BEXE) $(OPTS) parse.y
+	./lemon$(BEXE) $(OPTS) $(OPT_FEATURE_FLAGS) parse.y
 	mv parse.h parse.h.temp
 	$(NAWK) -f $(TOP)/addopcodes.awk parse.h.temp >parse.h
 
@@ -637,13 +647,13 @@ table.lo:	$(TOP)/src/table.c $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/table.c
 
 tclsqlite.lo:	$(TOP)/src/tclsqlite.c $(HDR)
-	$(LTCOMPILE) -c $(TOP)/src/tclsqlite.c
+	$(LTCOMPILE) -DUSE_TCL_STUBS=1 -c $(TOP)/src/tclsqlite.c
 
 tokenize.lo:	$(TOP)/src/tokenize.c keywordhash.h $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/tokenize.c
 
 keywordhash.h:	$(TOP)/tool/mkkeywordhash.c
-	$(BCC) -o mkkeywordhash$(BEXE) $(OPTS) $(TOP)/tool/mkkeywordhash.c
+	$(BCC) -o mkkeywordhash$(BEXE) $(OPTS) $(OPT_FEATURE_FLAGS) $(TOP)/tool/mkkeywordhash.c
 	./mkkeywordhash$(BEXE) >keywordhash.h
 
 trigger.lo:	$(TOP)/src/trigger.c $(HDR)
@@ -729,8 +739,8 @@ install:	sqlite3$(BEXE) libsqlite3.la sqlite3.h ${HAVE_TCL:1=tcl_install}
 	$(INSTALL) -d $(DESTDIR)$(includedir)
 	$(INSTALL) -m 0644 sqlite3.h $(DESTDIR)$(includedir)
 	$(INSTALL) -m 0644 $(TOP)/src/sqlite3ext.h $(DESTDIR)$(includedir)
-	$(INSTALL) -d $(DESTDIR)$(libdir)/pkgconfig; 
-	$(INSTALL) -m 0644 sqlite3.pc $(DESTDIR)$(libdir)/pkgconfig; 
+	$(INSTALL) -d $(DESTDIR)$(pkgconfigdir)
+	$(INSTALL) -m 0644 sqlite3.pc $(DESTDIR)$(pkgconfigdir)
 
 tcl_install:	libtclsqlite3.la
 	$(TCLSH_CMD) $(TOP)/tclinstaller.tcl $(VERSION)

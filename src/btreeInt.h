@@ -9,7 +9,7 @@
 **    May you share freely, never taking more than you give.
 **
 *************************************************************************
-** $Id: btreeInt.h,v 1.26 2008/07/12 14:52:20 drh Exp $
+** $Id: btreeInt.h,v 1.30 2008/08/01 20:10:08 drh Exp $
 **
 ** This file implements a external (disk-based) database using BTrees.
 ** For a detailed discussion of BTrees, refer to
@@ -275,8 +275,6 @@ struct MemPage {
   u8 nOverflow;        /* Number of overflow cell bodies in aCell[] */
   u8 intKey;           /* True if intkey flag is set */
   u8 leaf;             /* True if leaf flag is set */
-  u8 zeroData;         /* True if table stores keys only */
-  u8 leafData;         /* True if tables stores data on leaves only */
   u8 hasData;          /* True if this page stores data */
   u8 hdrOffset;        /* 100 for page 1.  0 otherwise */
   u8 childPtrSize;     /* 0 if leaf==1.  4 if leaf==0 */
@@ -286,6 +284,7 @@ struct MemPage {
   u16 idxParent;       /* Index in parent of this node */
   u16 nFree;           /* Number of free bytes on the page */
   u16 nCell;           /* Number of cells on this page, local and ovfl */
+  u16 maskPage;        /* Mask for page offset */
   struct _OvflCell {   /* Cells that will not fit on aData[] */
     u8 *pCell;          /* Pointers to the body of the overflow cell */
     u16 idx;            /* Insert this cell before idx-th non-overflow cell */
@@ -528,7 +527,7 @@ struct BtLock {
 ** this test.
 */
 #define PTRMAP_PAGENO(pBt, pgno) ptrmapPageno(pBt, pgno)
-#define PTRMAP_PTROFFSET(pBt, pgno) (5*(pgno-ptrmapPageno(pBt, pgno)-1))
+#define PTRMAP_PTROFFSET(pgptrmap, pgno) (5*(pgno-pgptrmap-1))
 #define PTRMAP_ISPAGE(pBt, pgno) (PTRMAP_PAGENO((pBt),(pgno))==(pgno))
 
 /*
@@ -602,6 +601,7 @@ struct IntegrityCk {
   int *anRef;       /* Number of times each page is referenced */
   int mxErr;        /* Stop accumulating errors when this reaches zero */
   int nErr;         /* Number of messages written to zErrMsg so far */
+  int mallocFailed; /* A memory allocation error has occurred */
   StrAccum errMsg;  /* Accumulate the error message text here */
 };
 

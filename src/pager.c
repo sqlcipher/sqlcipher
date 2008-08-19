@@ -18,7 +18,7 @@
 ** file simultaneously, or one process from reading the database while
 ** another is writing.
 **
-** @(#) $Id: pager.c,v 1.465 2008/07/11 03:34:10 drh Exp $
+** @(#) $Id: pager.c,v 1.469 2008/08/02 03:50:39 drh Exp $
 */
 #ifndef SQLITE_OMIT_DISKIO
 #include "sqliteInt.h"
@@ -896,7 +896,7 @@ static int readMasterJournal(sqlite3_file *pJrnl, char *zMaster, int nMaster){
   u32 len;
   i64 szJ;
   u32 cksum;
-  int i;
+  u32 u;                   /* Unsigned loop counter */
   unsigned char aMagic[8]; /* A buffer to hold the magic header */
 
   zMaster[0] = '\0';
@@ -924,8 +924,8 @@ static int readMasterJournal(sqlite3_file *pJrnl, char *zMaster, int nMaster){
   zMaster[len] = '\0';
 
   /* See if the checksum matches the master journal name */
-  for(i=0; i<len; i++){
-    cksum -= zMaster[i];
+  for(u=0; u<len; u++){
+    cksum -= zMaster[u];
    }
   if( cksum ){
     /* If the checksum doesn't add up, then one or more of the disk sectors
@@ -1848,7 +1848,7 @@ static int pager_playback(Pager *pPager, int isHot){
   sqlite3_vfs *pVfs = pPager->pVfs;
   i64 szJ;                 /* Size of the journal file in bytes */
   u32 nRec;                /* Number of Records in the journal */
-  u32 i;                   /* Loop counter */
+  u32 u;                   /* Unsigned loop counter */
   Pgno mxPg = 0;           /* Size of the original file in pages */
   int rc;                  /* Result code of a subroutine */
   int res = 1;             /* Value returned by sqlite3OsAccess() */
@@ -1931,7 +1931,7 @@ static int pager_playback(Pager *pPager, int isHot){
 
     /* Copy original pages out of the journal and back into the database file.
     */
-    for(i=0; i<nRec; i++){
+    for(u=0; u<nRec; u++){
       rc = pager_playback_one_page(pPager, pPager->jfd, pPager->journalOff, 1);
       if( rc!=SQLITE_OK ){
         if( rc==SQLITE_DONE ){
@@ -3151,11 +3151,11 @@ static PgHdr *pager_get_all_dirty_pages(Pager *pPager){
 ** is hot.  The pager_playback() routine will discover that the
 ** journal file is not really hot and will no-op.
 */
-static int hasHotJournal(Pager *pPager){
+static int hasHotJournal(Pager *pPager, int *pExists){
   sqlite3_vfs *pVfs = pPager->pVfs;
-  int res = 0;
+  int rc = SQLITE_OK;
+  *pExists = 0;
   if( pPager->useJournal && pPager->fd->pMethods ){
-    int rc;
     int exists;
     int locked;
 
@@ -3167,16 +3167,17 @@ static int hasHotJournal(Pager *pPager){
     if( rc==SQLITE_OK && exists && !locked ){
       int nPage;
       rc = sqlite3PagerPagecount(pPager, &nPage);
-      if( rc==SQLITE_OK && nPage==0 ){
-        sqlite3OsDelete(pVfs, pPager->zJournal, 0);
-        exists = 0;
+      if( rc==SQLITE_OK ){
+        if( nPage==0 ){
+          sqlite3OsDelete(pVfs, pPager->zJournal, 0);
+        }else{
+          *pExists = 1;
+        }
       }
     }
-
-    res = (rc!=SQLITE_OK ? -1 : (exists && !locked));
   }
 
-  return res;
+  return rc;
 }
 
 /*
@@ -3442,7 +3443,7 @@ static int readDbPage(Pager *pPager, PgHdr *pPg, Pgno pgno){
 */
 static int pagerSharedLock(Pager *pPager){
   int rc = SQLITE_OK;
-  int isHot = 0;
+  int isErrorReset = 0;
 
   /* If this database is opened for exclusive access, has no outstanding 
   ** page references and is in an error-state, now is the chance to clear
@@ -3451,7 +3452,7 @@ static int pagerSharedLock(Pager *pPager){
   */
   if( !MEMDB && pPager->exclusiveMode && pPager->nRef==0 && pPager->errCode ){
     if( pPager->journalOpen ){
-      isHot = 1;
+      isErrorReset = 1;
     }
     pPager->errCode = SQLITE_OK;
     pager_reset(pPager);
@@ -3465,9 +3466,10 @@ static int pagerSharedLock(Pager *pPager){
     return pPager->errCode;
   }
 
-  if( pPager->state==PAGER_UNLOCK || isHot ){
+  if( pPager->state==PAGER_UNLOCK || isErrorReset ){
     sqlite3_vfs *pVfs = pPager->pVfs;
     if( !MEMDB ){
+      int isHotJournal;
       assert( pPager->nRef==0 );
       if( !pPager->noReadlock ){
         rc = pager_wait_on_lock(pPager, SHARED_LOCK);
@@ -3481,12 +3483,13 @@ static int pagerSharedLock(Pager *pPager){
       /* If a journal file exists, and there is no RESERVED lock on the
       ** database file, then it either needs to be played back or deleted.
       */
-      rc = hasHotJournal(pPager);
-      if( rc<0 ){
-        rc = SQLITE_IOERR_NOMEM;
-        goto failed;
+      if( !isErrorReset ){
+        rc = hasHotJournal(pPager, &isHotJournal);
+        if( rc!=SQLITE_OK ){
+          goto failed;
+        }
       }
-      if( rc==1 || isHot ){
+      if( isErrorReset || isHotJournal ){
         /* Get an EXCLUSIVE lock on the database file. At this point it is
         ** important that a RESERVED lock is not obtained on the way to the
         ** EXCLUSIVE lock. If it were, another process might open the
@@ -3513,7 +3516,7 @@ static int pagerSharedLock(Pager *pPager){
         ** OsTruncate() call used in exclusive-access mode also requires
         ** a read/write file handle.
         */
-        if( !isHot && pPager->journalOpen==0 ){
+        if( !isErrorReset && pPager->journalOpen==0 ){
           int res;
           rc = sqlite3OsAccess(pVfs,pPager->zJournal,SQLITE_ACCESS_EXISTS,&res);
           if( rc==SQLITE_OK ){
@@ -4584,6 +4587,9 @@ static int pager_incr_changecounter(Pager *pPager, int isDirect){
   u32 change_counter;
   int rc = SQLITE_OK;
 
+#ifndef SQLITE_ENABLE_ATOMIC_WRITE
+  assert( isDirect==0 );  /* isDirect is only true for atomic writes */
+#endif
   if( !pPager->changeCountDone ){
     /* Open page 1 of the file for writing. */
     rc = sqlite3PagerGet(pPager, 1, &pPgHdr);
@@ -4602,10 +4608,12 @@ static int pager_incr_changecounter(Pager *pPager, int isDirect){
     change_counter++;
     put32bits(((char*)PGHDR_TO_DATA(pPgHdr))+24, change_counter);
 
+#ifdef SQLITE_ENABLE_ATOMIC_WRITE
     if( isDirect && pPager->fd->pMethods ){
       const void *zBuf = PGHDR_TO_DATA(pPgHdr);
       rc = sqlite3OsWrite(pPager->fd, zBuf, pPager->pageSize, 0);
     }
+#endif
 
     /* Release the page reference. */
     sqlite3PagerUnref(pPgHdr);
@@ -5191,8 +5199,13 @@ void sqlite3PagerSetCodec(
 ** required that a statement transaction was not active, but this restriction
 ** has been removed (CREATE INDEX needs to move a page when a statement
 ** transaction is active).
+**
+** If the fourth argument, isCommit, is non-zero, then this page is being
+** moved as part of a database reorganization just before the transaction 
+** is being committed. In this case, it is guaranteed that the database page 
+** pPg refers to will not be written to again within this transaction.
 */
-int sqlite3PagerMovepage(Pager *pPager, DbPage *pPg, Pgno pgno){
+int sqlite3PagerMovepage(Pager *pPager, DbPage *pPg, Pgno pgno, int isCommit){
   PgHdr *pPgOld;  /* The page being overwritten. */
   int h;
   Pgno needSyncPgno = 0;
@@ -5205,7 +5218,15 @@ int sqlite3PagerMovepage(Pager *pPager, DbPage *pPg, Pgno pgno){
   IOTRACE(("MOVE %p %d %d\n", pPager, pPg->pgno, pgno))
 
   pager_get_content(pPg);
-  if( pPg->needSync ){
+
+  /* If the journal needs to be sync()ed before page pPg->pgno can
+  ** be written to, store pPg->pgno in local variable needSyncPgno.
+  **
+  ** If the isCommit flag is set, there is no need to remember that
+  ** the journal needs to be sync()ed before database page pPg->pgno 
+  ** can be written to. The caller has already promised not to write to it.
+  */
+  if( pPg->needSync && !isCommit ){
     needSyncPgno = pPg->pgno;
     assert( pPg->inJournal || (int)pgno>pPager->origDbSize );
     assert( pPg->dirty );
@@ -5252,8 +5273,9 @@ int sqlite3PagerMovepage(Pager *pPager, DbPage *pPg, Pgno pgno){
     /* If needSyncPgno is non-zero, then the journal file needs to be 
     ** sync()ed before any data is written to database file page needSyncPgno.
     ** Currently, no such page exists in the page-cache and the 
-    ** Pager.pInJournal bit has been set. This needs to be remedied by loading
-    ** the page into the pager-cache and setting the PgHdr.needSync flag.
+    ** "is journaled" bitvec flag has been set. This needs to be remedied by
+    ** loading the page into the pager-cache and setting the PgHdr.needSync 
+    ** flag.
     **
     ** If the attempt to load the page into the page-cache fails, (due
     ** to a malloc() or IO failure), clear the bit in the pInJournal[]

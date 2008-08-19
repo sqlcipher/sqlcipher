@@ -51,14 +51,14 @@ TCCX = $(TCC) $(OPTS) -I. -I$(TOP)/src -I$(TOP) -I$(TOP)/ext/rtree
 LIBOBJ+= alter.o analyze.o attach.o auth.o bitvec.o btmutex.o btree.o build.o \
          callback.o complete.o date.o delete.o \
          expr.o fault.o func.o global.o hash.o insert.o journal.o loadext.o \
-         main.o malloc.o mem1.o mem2.o mem3.o mem4.o mem5.o \
+         main.o malloc.o mem1.o mem2.o mem3.o mem4.o mem5.o mem6.o \
          mutex.o mutex_os2.o mutex_unix.o mutex_w32.o \
          opcodes.o os.o os_os2.o os_unix.o os_win.o \
          pager.o parse.o pragma.o prepare.o printf.o random.o \
          select.o status.o table.o $(TCLOBJ) tokenize.o trigger.o \
          update.o util.o vacuum.o \
          vdbe.o vdbeapi.o vdbeaux.o vdbeblob.o vdbefifo.o vdbemem.o \
-         where.o utf.o legacy.o vtab.o rtree.o
+         where.o utf.o legacy.o vtab.o rtree.o icu.o
 
 EXTOBJ = icu.o
 EXTOBJ += fts1.o \
@@ -114,6 +114,7 @@ SRC = \
   $(TOP)/src/mem3.c \
   $(TOP)/src/mem4.c \
   $(TOP)/src/mem5.c \
+  $(TOP)/src/mem6.c \
   $(TOP)/src/mutex.c \
   $(TOP)/src/mutex.h \
   $(TOP)/src/mutex_os2.c \

@@ -9,7 +9,7 @@
 #
 #***********************************************************************
 #
-# $Id: permutations.test,v 1.13 2008/07/16 12:25:32 drh Exp $
+# $Id: permutations.test,v 1.20 2008/08/01 18:47:02 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -66,6 +66,7 @@ set EXCLUDE {
   fts3.test                 misc7.test                utf16.test
   fuzz_malloc.test          misuse.test               veryquick.test
   fuzz.test                 mutex2.test               vtab_err.test
+  lookaside.test
 }
 set ALLTESTS [list]
 foreach filename [glob $testdir/*.test] {
@@ -141,6 +142,7 @@ proc run_tests {name args} {
 run_tests "memsubsys1" -description {
   Tests using pre-allocated page and scratch blocks
 } -initialize {
+  catch {db close}
   sqlite3_shutdown
   sqlite3_config_pagecache 4096 24
   sqlite3_config_scratch 25000 1
@@ -159,6 +161,7 @@ run_tests "memsubsys1" -description {
 run_tests "memsubsys2" -description {
   Tests using small pre-allocated page and scratch blocks
 } -initialize {
+  catch {db close}
   sqlite3_shutdown
   sqlite3_config_pagecache 512 5
   sqlite3_config_scratch 1000 1
@@ -168,6 +171,38 @@ run_tests "memsubsys2" -description {
   sqlite3_shutdown
   sqlite3_config_pagecache 0 0
   sqlite3_config_scratch 0 0
+  sqlite3_initialize
+}
+
+# Run all tests with the lookaside allocator disabled.
+#
+run_tests "memsubsys3" -description {
+  OOM tests with lookaside disabled
+} -include {
+  malloc.test
+  malloc3.test
+  malloc4.test
+  malloc5.test
+  malloc6.test
+  malloc7.test
+  malloc8.test
+  malloc9.test
+  mallocA.test
+  mallocB.test
+  mallocC.test
+  mallocD.test
+  mallocE.test
+  mallocF.test
+  mallocG.test
+} -initialize {
+  catch {db close}
+  sqlite3_shutdown
+  sqlite3_config_lookaside 0 0
+  sqlite3_initialize
+} -shutdown {
+  catch {db close}
+  sqlite3_shutdown
+  sqlite3_config_lookaside 100 500
   sqlite3_initialize
 }
 
@@ -362,6 +397,7 @@ ifcapable mem3 {
     sqlite3_reset_auto_extension
     sqlite3_shutdown
     sqlite3_config_heap 25000000 0
+    sqlite3_config_lookaside 0 0
     install_malloc_faultsim 1 
     sqlite3_initialize
     autoinstall_test_functions
@@ -370,6 +406,7 @@ ifcapable mem3 {
     sqlite3_reset_auto_extension
     sqlite3_shutdown
     sqlite3_config_heap 0 0
+    sqlite3_config_lookaside 100 500
     install_malloc_faultsim 1 
     sqlite3_initialize
   }
@@ -390,6 +427,7 @@ ifcapable mem5 {
     sqlite3_reset_auto_extension
     sqlite3_shutdown
     sqlite3_config_heap 25000000 64
+    sqlite3_config_lookaside 0 0
     install_malloc_faultsim 1 
     sqlite3_initialize
     autoinstall_test_functions
@@ -398,6 +436,7 @@ ifcapable mem5 {
     sqlite3_reset_auto_extension
     sqlite3_shutdown
     sqlite3_config_heap 0 0
+    sqlite3_config_lookaside 100 500
     install_malloc_faultsim 1 
     sqlite3_initialize
   }
@@ -411,6 +450,7 @@ ifcapable mem5 {
     sqlite3_reset_auto_extension
     sqlite3_shutdown
     sqlite3_config_heap 40000000 16
+    sqlite3_config_lookaside 0 0
     install_malloc_faultsim 1 
     sqlite3_initialize
     autoinstall_test_functions
@@ -419,6 +459,7 @@ ifcapable mem5 {
     sqlite3_reset_auto_extension
     sqlite3_shutdown
     sqlite3_config_heap 0 0
+    sqlite3_config_lookaside 100 500
     install_malloc_faultsim 1 
     sqlite3_initialize
   }
@@ -437,6 +478,27 @@ ifcapable threadsafe {
     sqlite3_shutdown
     install_mutex_counters 0
   }
+}
+
+run_tests "memsys6" -description {
+  Run tests using the allocator in mem6.c.
+} -exclude {
+  capi3.test capi3c.test 
+} -initialize {
+  catch {db close}
+  sqlite3_reset_auto_extension
+  sqlite3_shutdown
+  sqlite3_config_chunkalloc 0
+  install_malloc_faultsim 1 
+  sqlite3_initialize
+  autoinstall_test_functions
+} -shutdown {
+  catch {db close}
+  sqlite3_reset_auto_extension
+  sqlite3_shutdown
+  sqlite3_config_heap 0 0
+  install_malloc_faultsim 1 
+  sqlite3_initialize
 }
 
 # run_tests "crash_safe_append" -description {
