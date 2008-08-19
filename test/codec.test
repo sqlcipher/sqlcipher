@@ -138,6 +138,33 @@ do_test codec-1.10 {
   }
 } {25000}
 
+# test rekey on an unecrypted database
+do_test codec-1.11 {
+  sqlite_orig db2 test2.db
+  execsql {
+    BEGIN;
+    CREATE TABLE t2(a,b);
+  } db2
+
+  for {set i 1} {$i<=25000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t2 VALUES($i,$r);" db2
+  }
+
+  execsql {
+    COMMIT;
+    PRAGMA rekey = 'testkey';
+  } db2
+
+  db2 close
+  sqlite_orig db2 test2.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t2;
+  } db2
+
+} {25000}
 
 db close
 finish_test

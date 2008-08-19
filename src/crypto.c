@@ -27,7 +27,6 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
-#define RESERVE 128
 extern int sqlite3pager_get_codec(Pager *pPager, void * ctx);
 
 typedef struct {
@@ -86,19 +85,10 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
   void *iv;
   int tmp_csz, csz;
 
-  size = size - ctx->iv_sz; /* adjust size to useable size and memset reserve at end of page */
-  iv = out + size;
-  if(mode == CIPHER_ENCRYPT) {
-    RAND_pseudo_bytes(iv, ctx->iv_sz);
-  } else {
-    memcpy(iv, in+size, ctx->iv_sz);
-  } 
-  
-
   /* when this is an encryption operation and rekey is not null, we will actually encrypt
   ** data with the new rekey data */
   void *key = ((mode == CIPHER_ENCRYPT && ctx->rekey != NULL) ? ctx->rekey : ctx->key);
-  
+
   /* just copy raw data from in to out whenever 
   ** 1. key is NULL; or 
   ** 2. this is a decrypt operation and rekey_plaintext is true
@@ -108,6 +98,14 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
     return SQLITE_OK;
   } 
 
+  size = size - ctx->iv_sz; /* adjust size to useable size and memset reserve at end of page */
+  iv = out + size;
+  if(mode == CIPHER_ENCRYPT) {
+    RAND_pseudo_bytes(iv, ctx->iv_sz);
+  } else {
+    memcpy(iv, in+size, ctx->iv_sz);
+  } 
+  
   EVP_CipherInit(&ectx, CIPHER, NULL, NULL, mode);
   EVP_CIPHER_CTX_set_padding(&ectx, 0);
   EVP_CipherInit(&ectx, NULL, key, iv, mode);
@@ -180,7 +178,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     if(ctx->buffer == NULL) return SQLITE_NOMEM;
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
-    ctx->iv_sz = EVP_CIPHER_key_length(CIPHER);
+    ctx->iv_sz = EVP_CIPHER_iv_length(CIPHER);
  
     /* key size should be exactly the same size as nKey since this is
        raw key data at this point */
@@ -190,7 +188,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     if(ctx->key == NULL) return SQLITE_NOMEM;
     memcpy(ctx->key, zKey, nKey);
 
-    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), RESERVE);
+    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->iv_sz);
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
   }
 }
@@ -278,6 +276,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
         if(ctx == NULL) { 
           /* there was no codec attached to this database,so attach one now with a null password */
+          char *error;
+          db->nextPagesize =  sqlite3BtreeGetPageSize(pDb->pBt);
+          pDb->pBt->pBt->pageSizeFixed = 0; /* required for sqlite3BtreeSetPageSize to modify pagesize setting */
+          sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, EVP_CIPHER_iv_length(CIPHER));
+          sqlite3RunVacuum(&error, db);
           sqlite3CodecAttach(db, i, key, prepared_key_sz);
           sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
           ctx->rekey_plaintext = 1;
@@ -297,6 +300,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
             rc = sqlite3PagerGet(pPager, pgno, &page);
             if(rc == SQLITE_OK) { /* write page see pager_incr_changecounter for example */
               rc = sqlite3PagerWrite(page);
+              //printf("sqlite3PagerWrite(%d)\n", pgno);
               if(rc == SQLITE_OK) {
                 sqlite3PagerUnref(page);
               } 
@@ -309,6 +313,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
           rc = sqlite3BtreeCommit(pDb->pBt); 
           memcpy(ctx->key, ctx->rekey, key_sz); 
         } else {
+          printf("error\n");
           sqlite3BtreeRollback(pDb->pBt);
         }
 
