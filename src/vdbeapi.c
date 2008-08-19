@@ -13,7 +13,7 @@
 ** This file contains code use to implement APIs that are part of the
 ** VDBE.
 **
-** $Id: vdbeapi.c,v 1.134 2008/06/19 02:52:25 drh Exp $
+** $Id: vdbeapi.c,v 1.138 2008/08/02 03:50:39 drh Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
@@ -228,7 +228,7 @@ int sqlite3_reset(sqlite3_stmt *pStmt){
   }else{
     Vdbe *v = (Vdbe*)pStmt;
     sqlite3_mutex_enter(v->db->mutex);
-    rc = sqlite3VdbeReset(v, 1);
+    rc = sqlite3VdbeReset(v);
     stmtLruAdd(v);
     sqlite3VdbeMakeReady(v, -1, 0, 0, 0);
     assert( (rc & (v->db->errMask))==rc );
@@ -435,9 +435,6 @@ static int sqlite3Step(Vdbe *p){
   db = p->db;
   assert( !db->mallocFailed );
 
-  if( p->aborted ){
-    return SQLITE_ABORT;
-  }
   if( p->pc<=0 && p->expired ){
     if( p->rc==SQLITE_OK ){
       p->rc = SQLITE_SCHEMA;
@@ -497,14 +494,16 @@ static int sqlite3Step(Vdbe *p){
   }
 #endif
 
-  sqlite3Error(p->db, rc, 0);
+  db->errCode = rc;
+  /*sqlite3Error(p->db, rc, 0);*/
   p->rc = sqlite3ApiExit(p->db, p->rc);
 end_of_step:
   assert( (rc&0xff)==rc );
   if( p->zSql && (rc&0xff)<SQLITE_ROW ){
     /* This behavior occurs if sqlite3_prepare_v2() was used to build
     ** the prepared statement.  Return error codes directly */
-    sqlite3Error(p->db, p->rc, 0);
+    p->db->errCode = p->rc;
+    /* sqlite3Error(p->db, p->rc, 0); */
     return p->rc;
   }else{
     /* This is for legacy sqlite3_prepare() builds and when the code
@@ -554,7 +553,7 @@ int sqlite3_step(sqlite3_stmt *pStmt){
       ** sqlite3_errmsg() and sqlite3_errcode().
       */
       const char *zErr = (const char *)sqlite3_value_text(db->pErr); 
-      sqlite3_free(v->zErrMsg);
+      sqlite3DbFree(db, v->zErrMsg);
       if( !db->mallocFailed ){
         v->zErrMsg = sqlite3DbStrDup(db, zErr);
       } else {

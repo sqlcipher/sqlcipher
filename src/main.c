@@ -14,7 +14,7 @@
 ** other files are for internal use by SQLite and should not be
 ** accessed by users of the library.
 **
-** $Id: main.c,v 1.479 2008/07/16 14:02:33 drh Exp $
+** $Id: main.c,v 1.486 2008/08/04 20:13:27 drh Exp $
 */
 #include "sqliteInt.h"
 #include <ctype.h>
@@ -117,6 +117,20 @@ int sqlite3_initialize(void){
     sqlite3Config.isInit = (rc==SQLITE_OK ? 1 : 0);
     sqlite3_mutex_leave(sqlite3Config.pInitMutex);
   }
+
+  /* Check NaN support. */
+#ifndef NDEBUG
+  /* This section of code's only "output" is via assert() statements. */
+  if ( rc==SQLITE_OK ){
+    u64 x = (((u64)1)<<63)-1;
+    double y;
+    assert(sizeof(x)==8);
+    assert(sizeof(x)==sizeof(y));
+    memcpy(&y, &x, 8);
+    assert( sqlite3IsNaN(y) );
+  }
+#endif
+
   return rc;
 }
 
@@ -253,6 +267,95 @@ int sqlite3_config(int op, ...){
     }
 #endif
 
+#if defined(SQLITE_ENABLE_MEMSYS6)
+    case SQLITE_CONFIG_CHUNKALLOC: {
+      sqlite3Config.nSmall = va_arg(ap, int);
+      sqlite3Config.m = *sqlite3MemGetMemsys6();
+      break;
+    }
+#endif
+
+    case SQLITE_CONFIG_LOOKASIDE: {
+      sqlite3Config.szLookaside = va_arg(ap, int);
+      sqlite3Config.nLookaside = va_arg(ap, int);
+      break;
+    }
+
+    default: {
+      rc = SQLITE_ERROR;
+      break;
+    }
+  }
+  va_end(ap);
+  return rc;
+}
+
+/*
+** Set up the lookaside buffers for a database connection.
+** Return SQLITE_OK on success.  
+** If lookaside is already active, return SQLITE_BUSY.
+**
+** The sz parameter is the number of bytes in each lookaside slot.
+** The cnt parameter is the number of slots.  If pStart is NULL the
+** space for the lookaside memory is obtained from sqlite3_malloc().
+** If pStart is not NULL then it is sz*cnt bytes of memory to use for
+** the lookaside memory.
+*/
+static int setupLookaside(sqlite3 *db, void *pBuf, int sz, int cnt){
+  void *pStart;
+  if( db->lookaside.nOut ){
+    return SQLITE_BUSY;
+  }
+  if( sz<0 ) sz = 0;
+  if( cnt<0 ) cnt = 0;
+  sz = (sz+7)&~7;
+  if( pBuf==0 ){
+    sqlite3BeginBenignMalloc();
+    pStart = sqlite3Malloc( sz*cnt );
+    sqlite3EndBenignMalloc();
+  }else{
+    pStart = pBuf;
+  }
+  if( db->lookaside.bMalloced ){
+    sqlite3_free(db->lookaside.pStart);
+  }
+  db->lookaside.pStart = pStart;
+  db->lookaside.pFree = 0;
+  db->lookaside.sz = sz;
+  db->lookaside.bMalloced = pBuf==0;
+  if( pStart ){
+    int i;
+    LookasideSlot *p;
+    p = (LookasideSlot*)pStart;
+    for(i=cnt-1; i>=0; i--){
+      p->pNext = db->lookaside.pFree;
+      db->lookaside.pFree = p;
+      p = (LookasideSlot*)&((u8*)p)[sz];
+    }
+    db->lookaside.pEnd = p;
+    db->lookaside.bEnabled = 1;
+  }else{
+    db->lookaside.pEnd = 0;
+    db->lookaside.bEnabled = 0;
+  }
+  return SQLITE_OK;
+}
+
+/*
+** Configuration settings for an individual database connection
+*/
+int sqlite3_db_config(sqlite3 *db, int op, ...){
+  va_list ap;
+  int rc;
+  va_start(ap, op);
+  switch( op ){
+    case SQLITE_DBCONFIG_LOOKASIDE: {
+      void *pBuf = va_arg(ap, void*);
+      int sz = va_arg(ap, int);
+      int cnt = va_arg(ap, int);
+      rc = setupLookaside(db, pBuf, sz, cnt);
+      break;
+    }
     default: {
       rc = SQLITE_ERROR;
       break;
@@ -411,7 +514,7 @@ int sqlite3_close(sqlite3 *db){
     FuncDef *pFunc, *pNext;
     for(pFunc = (FuncDef*)sqliteHashData(i); pFunc; pFunc=pNext){
       pNext = pFunc->pNext;
-      sqlite3_free(pFunc);
+      sqlite3DbFree(db, pFunc);
     }
   }
 
@@ -423,7 +526,7 @@ int sqlite3_close(sqlite3 *db){
         pColl[j].xDel(pColl[j].pUser);
       }
     }
-    sqlite3_free(pColl);
+    sqlite3DbFree(db, pColl);
   }
   sqlite3HashClear(&db->aCollSeq);
 #ifndef SQLITE_OMIT_VIRTUALTABLE
@@ -432,7 +535,7 @@ int sqlite3_close(sqlite3 *db){
     if( pMod->xDestroy ){
       pMod->xDestroy(pMod->pAux);
     }
-    sqlite3_free(pMod);
+    sqlite3DbFree(db, pMod);
   }
   sqlite3HashClear(&db->aModule);
 #endif
@@ -452,10 +555,13 @@ int sqlite3_close(sqlite3 *db){
   ** the same sqliteMalloc() as the one that allocates the database 
   ** structure?
   */
-  sqlite3_free(db->aDb[1].pSchema);
+  sqlite3DbFree(db, db->aDb[1].pSchema);
   sqlite3_mutex_leave(db->mutex);
   db->magic = SQLITE_MAGIC_CLOSED;
   sqlite3_mutex_free(db->mutex);
+  if( db->lookaside.bMalloced ){
+    sqlite3_free(db->lookaside.pStart);
+  }
   sqlite3_free(db);
   return SQLITE_OK;
 }
@@ -785,7 +891,7 @@ int sqlite3_create_function16(
   assert( !db->mallocFailed );
   zFunc8 = sqlite3Utf16to8(db, zFunctionName, -1);
   rc = sqlite3CreateFunc(db, zFunc8, nArg, eTextRep, p, xFunc, xStep, xFinal);
-  sqlite3_free(zFunc8);
+  sqlite3DbFree(db, zFunc8);
   rc = sqlite3ApiExit(db, rc);
   sqlite3_mutex_leave(db->mutex);
   return rc;
@@ -1290,6 +1396,7 @@ static int openDatabase(
   db->nDb = 2;
   db->magic = SQLITE_MAGIC_BUSY;
   db->aDb = db->aDbStatic;
+
   assert( sizeof(db->aLimit)==sizeof(aHardLimit) );
   memcpy(db->aLimit, aHardLimit, sizeof(db->aLimit));
   db->autoCommit = 1;
@@ -1431,6 +1538,9 @@ static int openDatabase(
                           SQLITE_DEFAULT_LOCKING_MODE);
 #endif
 
+  /* Enable the lookaside-malloc subsystem */
+  setupLookaside(db, 0, sqlite3Config.szLookaside, sqlite3Config.nLookaside);
+
 opendb_out:
   if( db ){
     assert( db->mutex!=0 || isThreadsafe==0 || sqlite3Config.bFullMutex==0 );
@@ -1558,7 +1668,7 @@ int sqlite3_create_collation16(
   zName8 = sqlite3Utf16to8(db, zName, -1);
   if( zName8 ){
     rc = createCollation(db, zName8, enc, pCtx, xCompare, 0);
-    sqlite3_free(zName8);
+    sqlite3DbFree(db, zName8);
   }
   rc = sqlite3ApiExit(db, rc);
   sqlite3_mutex_leave(db->mutex);
@@ -1747,13 +1857,13 @@ error_out:
   if( pAutoinc ) *pAutoinc = autoinc;
 
   if( SQLITE_OK==rc && !pTab ){
-    sqlite3_free(zErrMsg);
+    sqlite3DbFree(db, zErrMsg);
     zErrMsg = sqlite3MPrintf(db, "no such table column: %s.%s", zTableName,
         zColumnName);
     rc = SQLITE_ERROR;
   }
   sqlite3Error(db, rc, (zErrMsg?"%s":0), zErrMsg);
-  sqlite3_free(zErrMsg);
+  sqlite3DbFree(db, zErrMsg);
   rc = sqlite3ApiExit(db, rc);
   sqlite3_mutex_leave(db->mutex);
   return rc;

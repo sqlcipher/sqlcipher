@@ -43,7 +43,7 @@
 ** in this file for details.  If in doubt, do not deviate from existing
 ** commenting and indentation practices when changing or adding code.
 **
-** $Id: vdbe.c,v 1.761 2008/07/11 21:02:54 drh Exp $
+** $Id: vdbe.c,v 1.772 2008/08/02 15:10:09 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 #include <ctype.h>
@@ -890,12 +890,12 @@ case OP_String8: {         /* same as TK_STRING, out2-prerelease */
   if( encoding!=SQLITE_UTF8 ){
     sqlite3VdbeMemSetStr(pOut, pOp->p4.z, -1, SQLITE_UTF8, SQLITE_STATIC);
     if( SQLITE_OK!=sqlite3VdbeChangeEncoding(pOut, encoding) ) goto no_mem;
-    if( SQLITE_OK!=sqlite3VdbeMemDynamicify(pOut) ) goto no_mem;
+    if( SQLITE_OK!=sqlite3VdbeMemMakeWriteable(pOut) ) goto no_mem;
     pOut->zMalloc = 0;
     pOut->flags |= MEM_Static;
     pOut->flags &= ~MEM_Dyn;
     if( pOp->p4type==P4_DYNAMIC ){
-      sqlite3_free(pOp->p4.z);
+      sqlite3DbFree(db, pOp->p4.z);
     }
     pOp->p4type = P4_DYNAMIC;
     pOp->p4.z = pOut->z;
@@ -1179,6 +1179,8 @@ case OP_Multiply:              /* same as TK_STAR, in1, in2, out3 */
 case OP_Divide:                /* same as TK_SLASH, in1, in2, out3 */
 case OP_Remainder: {           /* same as TK_REM, in1, in2, out3 */
   int flags;
+  applyNumericAffinity(pIn1);
+  applyNumericAffinity(pIn2);
   flags = pIn1->flags | pIn2->flags;
   if( (flags & MEM_Null)!=0 ) goto arithmetic_result_is_null;
   if( (pIn1->flags & pIn2->flags & MEM_Int)==MEM_Int ){
@@ -2155,17 +2157,8 @@ case OP_Column: {
   if( aOffset[p2] ){
     assert( rc==SQLITE_OK );
     if( zRec ){
-      if( pDest->flags&MEM_Dyn ){
-        sqlite3VdbeSerialGet((u8 *)&zRec[aOffset[p2]], aType[p2], &sMem);
-        sMem.db = db; 
-        rc = sqlite3VdbeMemCopy(pDest, &sMem);
-        assert( !(sMem.flags&MEM_Dyn) );
-        if( rc!=SQLITE_OK ){
-          goto op_column_out;
-        }
-      }else{
-        sqlite3VdbeSerialGet((u8 *)&zRec[aOffset[p2]], aType[p2], pDest);
-      }
+      sqlite3VdbeMemReleaseExternal(pDest);
+      sqlite3VdbeSerialGet((u8 *)&zRec[aOffset[p2]], aType[p2], pDest);
     }else{
       len = sqlite3VdbeSerialTypeLen(aType[p2]);
       sqlite3VdbeMemMove(&sMem, pDest);
@@ -2605,7 +2598,7 @@ case OP_VerifyCookie: {
     iMeta = 0;
   }
   if( rc==SQLITE_OK && iMeta!=pOp->p2 ){
-    sqlite3_free(p->zErrMsg);
+    sqlite3DbFree(db, p->zErrMsg);
     p->zErrMsg = sqlite3DbStrDup(db, "database schema has changed");
     /* If the schema-cookie from the database file matches the cookie 
     ** stored with the in-memory representation of the schema, do
@@ -3136,7 +3129,14 @@ case OP_IsUnique: {        /* jump, in3 */
     zKey = pK->z;
     nKey = pK->n;
 
-    szRowid = sqlite3VdbeIdxRowidLen((u8*)zKey);
+    /* sqlite3VdbeIdxRowidLen() only returns other than SQLITE_OK when the
+    ** record passed as an argument corrupt. Since the record in this case
+    ** has just been created by an OP_MakeRecord instruction, and not loaded
+    ** from the database file, it is not possible for it to be corrupt.
+    ** Therefore, assert(rc==SQLITE_OK).
+    */
+    rc = sqlite3VdbeIdxRowidLen((u8*)zKey, nKey, &szRowid);
+    assert(rc==SQLITE_OK);
     len = nKey-szRowid;
 
     /* Search for an entry in P1 where all but the last four bytes match K.
@@ -3463,7 +3463,7 @@ case OP_Insert: {
   }
   if( pC->pseudoTable ){
     if( !pC->ephemPseudoTable ){
-      sqlite3_free(pC->pData);
+      sqlite3DbFree(db, pC->pData);
     }
     pC->iKey = iKey;
     pC->nData = pData->n;
@@ -4142,7 +4142,7 @@ case OP_ParseSchema: {
   assert( !db->mallocFailed );
   rc = sqlite3_exec(db, zSql, sqlite3InitCallback, &initData, 0);
   if( rc==SQLITE_ABORT ) rc = initData.rc;
-  sqlite3_free(zSql);
+  sqlite3DbFree(db, zSql);
   db->init.busy = 0;
   (void)sqlite3SafetyOn(db);
   if( rc==SQLITE_NOMEM ){
@@ -4234,7 +4234,7 @@ case OP_IntegrityCk: {
   
   nRoot = pOp->p2;
   assert( nRoot>0 );
-  aRoot = sqlite3Malloc( sizeof(int)*(nRoot+1) );
+  aRoot = sqlite3DbMallocRaw(db, sizeof(int)*(nRoot+1) );
   if( aRoot==0 ) goto no_mem;
   assert( pOp->p3>0 && pOp->p3<=p->nMem );
   pnErr = &p->aMem[pOp->p3];
@@ -4249,16 +4249,18 @@ case OP_IntegrityCk: {
   assert( (p->btreeMask & (1<<pOp->p5))!=0 );
   z = sqlite3BtreeIntegrityCheck(db->aDb[pOp->p5].pBt, aRoot, nRoot,
                                  pnErr->u.i, &nErr);
+  sqlite3DbFree(db, aRoot);
   pnErr->u.i -= nErr;
   sqlite3VdbeMemSetNull(pIn1);
   if( nErr==0 ){
     assert( z==0 );
+  }else if( z==0 ){
+    goto no_mem;
   }else{
     sqlite3VdbeMemSetStr(pIn1, z, -1, SQLITE_UTF8, sqlite3_free);
   }
   UPDATE_MAX_BLOBSIZE(pIn1);
   sqlite3VdbeChangeEncoding(pIn1, encoding);
-  sqlite3_free(aRoot);
   break;
 }
 #endif /* SQLITE_OMIT_INTEGRITY_CHECK */
@@ -4268,6 +4270,7 @@ case OP_IntegrityCk: {
 ** Write the integer from register P1 into the Fifo.
 */
 case OP_FifoWrite: {        /* in1 */
+  p->sFifo.db = db;
   if( sqlite3VdbeFifoPush(&p->sFifo, sqlite3VdbeIntValue(pIn1))==SQLITE_NOMEM ){
     goto no_mem;
   }
@@ -4315,7 +4318,7 @@ case OP_ContextPush: {
   pContext->lastRowid = db->lastRowid;
   pContext->nChange = p->nChange;
   pContext->sFifo = p->sFifo;
-  sqlite3VdbeFifoInit(&p->sFifo);
+  sqlite3VdbeFifoInit(&p->sFifo, db);
   break;
 }
 
@@ -4569,11 +4572,21 @@ case OP_TableLock: {
 #ifndef SQLITE_OMIT_VIRTUALTABLE
 /* Opcode: VBegin * * * P4 *
 **
-** P4 a pointer to an sqlite3_vtab structure. Call the xBegin method 
-** for that table.
+** P4 may be a pointer to an sqlite3_vtab structure. If so, call the 
+** xBegin method for that table.
+**
+** Also, whether or not P4 is set, check that this is not being called from
+** within a callback to a virtual table xSync() method. If it is, set the
+** error code to SQLITE_LOCKED.
 */
 case OP_VBegin: {
-  rc = sqlite3VtabBegin(db, pOp->p4.pVtab);
+  sqlite3_vtab *pVtab = pOp->p4.pVtab;
+  rc = sqlite3VtabBegin(db, pVtab);
+  if( pVtab ){
+    sqlite3DbFree(db, p->zErrMsg);
+    p->zErrMsg = pVtab->zErrMsg;
+    pVtab->zErrMsg = 0;
+  }
   break;
 }
 #endif /* SQLITE_OMIT_VIRTUALTABLE */
@@ -4621,6 +4634,9 @@ case OP_VOpen: {
   assert(pVtab && pModule);
   if( sqlite3SafetyOff(db) ) goto abort_due_to_misuse;
   rc = pModule->xOpen(pVtab, &pVtabCursor);
+  sqlite3DbFree(db, p->zErrMsg);
+  p->zErrMsg = pVtab->zErrMsg;
+  pVtab->zErrMsg = 0;
   if( sqlite3SafetyOn(db) ) goto abort_due_to_misuse;
   if( SQLITE_OK==rc ){
     /* Initialize sqlite3_vtab_cursor base class */
@@ -4665,12 +4681,16 @@ case OP_VFilter: {   /* jump */
   const sqlite3_module *pModule;
   Mem *pQuery = &p->aMem[pOp->p3];
   Mem *pArgc = &pQuery[1];
+  sqlite3_vtab_cursor *pVtabCursor;
+  sqlite3_vtab *pVtab;
 
   Cursor *pCur = p->apCsr[pOp->p1];
 
   REGISTER_TRACE(pOp->p3, pQuery);
   assert( pCur->pVtabCursor );
-  pModule = pCur->pVtabCursor->pVtab->pModule;
+  pVtabCursor = pCur->pVtabCursor;
+  pVtab = pVtabCursor->pVtab;
+  pModule = pVtab->pModule;
 
   /* Grab the index number and argc parameters */
   assert( (pQuery->flags&MEM_Int)!=0 && pArgc->flags==MEM_Int );
@@ -4688,11 +4708,16 @@ case OP_VFilter: {   /* jump */
     }
 
     if( sqlite3SafetyOff(db) ) goto abort_due_to_misuse;
+    sqlite3VtabLock(pVtab);
     p->inVtabMethod = 1;
-    rc = pModule->xFilter(pCur->pVtabCursor, iQuery, pOp->p4.z, nArg, apArg);
+    rc = pModule->xFilter(pVtabCursor, iQuery, pOp->p4.z, nArg, apArg);
     p->inVtabMethod = 0;
+    sqlite3DbFree(db, p->zErrMsg);
+    p->zErrMsg = pVtab->zErrMsg;
+    pVtab->zErrMsg = 0;
+    sqlite3VtabUnlock(db, pVtab);
     if( rc==SQLITE_OK ){
-      res = pModule->xEof(pCur->pVtabCursor);
+      res = pModule->xEof(pVtabCursor);
     }
     if( sqlite3SafetyOn(db) ) goto abort_due_to_misuse;
 
@@ -4713,6 +4738,7 @@ case OP_VFilter: {   /* jump */
 ** the virtual-table that the P1 cursor is pointing to.
 */
 case OP_VRowid: {             /* out2-prerelease */
+  sqlite3_vtab *pVtab;
   const sqlite3_module *pModule;
   sqlite_int64 iRow;
   Cursor *pCur = p->apCsr[pOp->p1];
@@ -4721,10 +4747,14 @@ case OP_VRowid: {             /* out2-prerelease */
   if( pCur->nullRow ){
     break;
   }
-  pModule = pCur->pVtabCursor->pVtab->pModule;
+  pVtab = pCur->pVtabCursor->pVtab;
+  pModule = pVtab->pModule;
   assert( pModule->xRowid );
   if( sqlite3SafetyOff(db) ) goto abort_due_to_misuse;
   rc = pModule->xRowid(pCur->pVtabCursor, &iRow);
+  sqlite3DbFree(db, p->zErrMsg);
+  p->zErrMsg = pVtab->zErrMsg;
+  pVtab->zErrMsg = 0;
   if( sqlite3SafetyOn(db) ) goto abort_due_to_misuse;
   MemSetTypeFlag(pOut, MEM_Int);
   pOut->u.i = iRow;
@@ -4740,6 +4770,7 @@ case OP_VRowid: {             /* out2-prerelease */
 ** P1 cursor is pointing to into register P3.
 */
 case OP_VColumn: {
+  sqlite3_vtab *pVtab;
   const sqlite3_module *pModule;
   Mem *pDest;
   sqlite3_context sContext;
@@ -4752,7 +4783,8 @@ case OP_VColumn: {
     sqlite3VdbeMemSetNull(pDest);
     break;
   }
-  pModule = pCur->pVtabCursor->pVtab->pModule;
+  pVtab = pCur->pVtabCursor->pVtab;
+  pModule = pVtab->pModule;
   assert( pModule->xColumn );
   memset(&sContext, 0, sizeof(sContext));
 
@@ -4766,6 +4798,9 @@ case OP_VColumn: {
 
   if( sqlite3SafetyOff(db) ) goto abort_due_to_misuse;
   rc = pModule->xColumn(pCur->pVtabCursor, &sContext, pOp->p2);
+  sqlite3DbFree(db, p->zErrMsg);
+  p->zErrMsg = pVtab->zErrMsg;
+  pVtab->zErrMsg = 0;
 
   /* Copy the result of the function to the P3 register. We
   ** do this regardless of whether or not an error occured to ensure any
@@ -4794,6 +4829,7 @@ case OP_VColumn: {
 ** the end of its result set, then fall through to the next instruction.
 */
 case OP_VNext: {   /* jump */
+  sqlite3_vtab *pVtab;
   const sqlite3_module *pModule;
   int res = 0;
 
@@ -4802,7 +4838,8 @@ case OP_VNext: {   /* jump */
   if( pCur->nullRow ){
     break;
   }
-  pModule = pCur->pVtabCursor->pVtab->pModule;
+  pVtab = pCur->pVtabCursor->pVtab;
+  pModule = pVtab->pModule;
   assert( pModule->xNext );
 
   /* Invoke the xNext() method of the module. There is no way for the
@@ -4812,9 +4849,14 @@ case OP_VNext: {   /* jump */
   ** some other method is next invoked on the save virtual table cursor.
   */
   if( sqlite3SafetyOff(db) ) goto abort_due_to_misuse;
+  sqlite3VtabLock(pVtab);
   p->inVtabMethod = 1;
   rc = pModule->xNext(pCur->pVtabCursor);
   p->inVtabMethod = 0;
+  sqlite3DbFree(db, p->zErrMsg);
+  p->zErrMsg = pVtab->zErrMsg;
+  pVtab->zErrMsg = 0;
+  sqlite3VtabUnlock(db, pVtab);
   if( rc==SQLITE_OK ){
     res = pModule->xEof(pCur->pVtabCursor);
   }
@@ -4846,6 +4888,9 @@ case OP_VRename: {
   if( sqlite3SafetyOff(db) ) goto abort_due_to_misuse;
   sqlite3VtabLock(pVtab);
   rc = pVtab->pModule->xRename(pVtab, pName->z);
+  sqlite3DbFree(db, p->zErrMsg);
+  p->zErrMsg = pVtab->zErrMsg;
+  pVtab->zErrMsg = 0;
   sqlite3VtabUnlock(db, pVtab);
   if( sqlite3SafetyOn(db) ) goto abort_due_to_misuse;
 
@@ -4898,6 +4943,9 @@ case OP_VUpdate: {
     if( sqlite3SafetyOff(db) ) goto abort_due_to_misuse;
     sqlite3VtabLock(pVtab);
     rc = pModule->xUpdate(pVtab, nArg, apArg, &rowid);
+    sqlite3DbFree(db, p->zErrMsg);
+    p->zErrMsg = pVtab->zErrMsg;
+    pVtab->zErrMsg = 0;
     sqlite3VtabUnlock(db, pVtab);
     if( sqlite3SafetyOn(db) ) goto abort_due_to_misuse;
     if( pOp->p1 && rc==SQLITE_OK ){

@@ -19,7 +19,7 @@
 ** This file contains implementations of the low-level memory allocation
 ** routines specified in the sqlite3_mem_methods object.
 **
-** $Id: mem2.c,v 1.34 2008/07/10 18:13:42 drh Exp $
+** $Id: mem2.c,v 1.37 2008/07/25 08:49:00 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
@@ -113,13 +113,36 @@ static struct {
 
   /*
   ** Gather statistics on the sizes of memory allocations.
-  ** sizeCnt[i] is the number of allocation attempts of i*8
+  ** nAlloc[i] is the number of allocation attempts of i*8
   ** bytes.  i==NCSIZE is the number of allocation attempts for
   ** sizes more than NCSIZE*8 bytes.
   */
-  int sizeCnt[NCSIZE];
+  int nAlloc[NCSIZE];      /* Total number of allocations */
+  int nCurrent[NCSIZE];    /* Current number of allocations */
+  int mxCurrent[NCSIZE];   /* Highwater mark for nCurrent */
 
 } mem;
+
+
+/*
+** Adjust memory usage statistics
+*/
+static void adjustStats(int iSize, int increment){
+  int i = ((iSize+7)&~7)/8;
+  if( i>NCSIZE-1 ){
+    i = NCSIZE - 1;
+  }
+  if( increment>0 ){
+    mem.nAlloc[i]++;
+    mem.nCurrent[i]++;
+    if( mem.nCurrent[i]>mem.mxCurrent[i] ){
+      mem.mxCurrent[i] = mem.nCurrent[i];
+    }
+  }else{
+    mem.nCurrent[i]--;
+    assert( mem.nCurrent[i]>=0 );
+  }
+}
 
 /*
 ** Given an allocation, find the MemBlockHdr for that allocation.
@@ -198,11 +221,6 @@ static void *sqlite3MemMalloc(int nByte){
   sqlite3_mutex_enter(mem.mutex);
   assert( mem.disallow==0 );
   nReserve = (nByte+7)&~7;
-  if( nReserve/8>NCSIZE-1 ){
-    mem.sizeCnt[NCSIZE-1]++;
-  }else{
-    mem.sizeCnt[nReserve/8]++;
-  }
   totalSize = nReserve + sizeof(*pHdr) + sizeof(int) +
                mem.nBacktrace*sizeof(void*) + mem.nTitle;
   p = malloc(totalSize);
@@ -235,6 +253,7 @@ static void *sqlite3MemMalloc(int nByte){
       memcpy(z, mem.zTitle, mem.nTitle);
     }
     pHdr->iSize = nByte;
+    adjustStats(nByte, +1);
     pInt = (int*)&pHdr[1];
     pInt[nReserve/sizeof(int)] = REARGUARD;
     memset(pInt, 0x65, nReserve);
@@ -272,6 +291,7 @@ static void sqlite3MemFree(void *pPrior){
   }
   z = (char*)pBt;
   z -= pHdr->nTitle;
+  adjustStats(pHdr->iSize, -1);
   memset(z, 0x2b, sizeof(void*)*pHdr->nBacktraceSlots + sizeof(*pHdr) +
                   pHdr->iSize + sizeof(int) + pHdr->nTitle);
   free(z);
@@ -304,11 +324,7 @@ static void *sqlite3MemRealloc(void *pPrior, int nByte){
 }
 
 
-/*
-** Populate the low-level memory allocation function pointers in
-** sqlite3Config.m with pointers to the routines in this file.
-*/
-void sqlite3MemSetDefault(void){
+const sqlite3_mem_methods *sqlite3MemGetDefault(void){
   static const sqlite3_mem_methods defaultMethods = {
      sqlite3MemMalloc,
      sqlite3MemFree,
@@ -319,7 +335,15 @@ void sqlite3MemSetDefault(void){
      sqlite3MemShutdown,
      0
   };
-  sqlite3_config(SQLITE_CONFIG_MALLOC, &defaultMethods);
+  return &defaultMethods;
+}
+
+/*
+** Populate the low-level memory allocation function pointers in
+** sqlite3Config.m with pointers to the routines in this file.
+*/
+void sqlite3MemSetDefault(void){
+  sqlite3_config(SQLITE_CONFIG_MALLOC, sqlite3MemGetDefault());
 }
 
 /*
@@ -390,12 +414,15 @@ void sqlite3MemdebugDump(const char *zFilename){
   }
   fprintf(out, "COUNTS:\n");
   for(i=0; i<NCSIZE-1; i++){
-    if( mem.sizeCnt[i] ){
-      fprintf(out, "   %3d: %d\n", i*8+8, mem.sizeCnt[i]);
+    if( mem.nAlloc[i] ){
+      fprintf(out, "   %5d: %10d %10d %10d\n", 
+            i*8, mem.nAlloc[i], mem.nCurrent[i], mem.mxCurrent[i]);
     }
   }
-  if( mem.sizeCnt[NCSIZE-1] ){
-    fprintf(out, "  >%3d: %d\n", NCSIZE*8, mem.sizeCnt[NCSIZE-1]);
+  if( mem.nAlloc[NCSIZE-1] ){
+    fprintf(out, "   %5d: %10d %10d %10d\n",
+             NCSIZE*8-8, mem.nAlloc[NCSIZE-1],
+             mem.nCurrent[NCSIZE-1], mem.mxCurrent[NCSIZE-1]);
   }
   fclose(out);
 }
@@ -407,7 +434,7 @@ int sqlite3MemdebugMallocCount(){
   int i;
   int nTotal = 0;
   for(i=0; i<NCSIZE; i++){
-    nTotal += mem.sizeCnt[i];
+    nTotal += mem.nAlloc[i];
   }
   return nTotal;
 }

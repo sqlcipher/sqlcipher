@@ -12,7 +12,7 @@
 **
 ** Memory allocation functions used throughout sqlite.
 **
-** $Id: malloc.c,v 1.28 2008/07/14 12:38:21 drh Exp $
+** $Id: malloc.c,v 1.34 2008/08/05 17:53:23 drh Exp $
 */
 #include "sqliteInt.h"
 #include <stdarg.h>
@@ -112,9 +112,10 @@ int sqlite3MallocInit(void){
   if( sqlite3Config.bCoreMutex ){
     mem0.mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MEM);
   }
-  if( sqlite3Config.pScratch && sqlite3Config.szScratch>=3000
-      && sqlite3Config.nScratch>0 ){
+  if( sqlite3Config.pScratch && sqlite3Config.szScratch>=100
+      && sqlite3Config.nScratch>=0 ){
     int i;
+    sqlite3Config.szScratch -= 4;
     mem0.aScratchFree = (u32*)&((char*)sqlite3Config.pScratch)
                   [sqlite3Config.szScratch*sqlite3Config.nScratch];
     for(i=0; i<sqlite3Config.nScratch; i++){ mem0.aScratchFree[i] = i; }
@@ -124,8 +125,13 @@ int sqlite3MallocInit(void){
     sqlite3Config.szScratch = 0;
   }
   if( sqlite3Config.pPage && sqlite3Config.szPage>=512
-      && sqlite3Config.nPage>0 ){
+      && sqlite3Config.nPage>=1 ){
     int i;
+    int overhead;
+    int sz = sqlite3Config.szPage;
+    int n = sqlite3Config.nPage;
+    overhead = (4*n + sz - 1)/sz;
+    sqlite3Config.nPage -= overhead;
     mem0.aPageFree = (u32*)&((char*)sqlite3Config.pPage)
                   [sqlite3Config.szPage*sqlite3Config.nPage];
     for(i=0; i<sqlite3Config.nPage; i++){ mem0.aPageFree[i] = i; }
@@ -224,7 +230,10 @@ static int mallocWithAlarm(int n, void **pp){
     sqlite3MallocAlarm(nFull);
     p = sqlite3Config.m.xMalloc(nFull);
   }
-  if( p ) sqlite3StatusAdd(SQLITE_STATUS_MEMORY_USED, nFull);
+  if( p ){
+    nFull = sqlite3MallocSize(p);
+    sqlite3StatusAdd(SQLITE_STATUS_MEMORY_USED, nFull);
+  }
   *pp = p;
   return nFull;
 }
@@ -303,6 +312,7 @@ void *sqlite3ScratchMalloc(int n){
       sqlite3_mutex_leave(mem0.mutex);
       i *= sqlite3Config.szScratch;
       sqlite3StatusAdd(SQLITE_STATUS_SCRATCH_USED, 1);
+      sqlite3StatusSet(SQLITE_STATUS_SCRATCH_SIZE, n);
       p = (void*)&((char*)sqlite3Config.pScratch)[i];
     }
   }
@@ -315,6 +325,7 @@ void *sqlite3ScratchMalloc(int n){
 scratch_overflow:
   if( sqlite3Config.bMemstat ){
     sqlite3_mutex_enter(mem0.mutex);
+    sqlite3StatusSet(SQLITE_STATUS_SCRATCH_SIZE, n);
     n = mallocWithAlarm(n, &p);
     if( p ) sqlite3StatusAdd(SQLITE_STATUS_SCRATCH_OVERFLOW, n);
     sqlite3_mutex_leave(mem0.mutex);
@@ -389,6 +400,7 @@ void *sqlite3PageMalloc(int n){
       i = mem0.aPageFree[--mem0.nPageFree];
       sqlite3_mutex_leave(mem0.mutex);
       i *= sqlite3Config.szPage;
+      sqlite3StatusSet(SQLITE_STATUS_PAGECACHE_SIZE, n);
       sqlite3StatusAdd(SQLITE_STATUS_PAGECACHE_USED, 1);
       p = (void*)&((char*)sqlite3Config.pPage)[i];
     }
@@ -398,6 +410,7 @@ void *sqlite3PageMalloc(int n){
 page_overflow:
   if( sqlite3Config.bMemstat ){
     sqlite3_mutex_enter(mem0.mutex);
+    sqlite3StatusSet(SQLITE_STATUS_PAGECACHE_SIZE, n);
     n = mallocWithAlarm(n, &p);
     if( p ) sqlite3StatusAdd(SQLITE_STATUS_PAGECACHE_OVERFLOW, n);
     sqlite3_mutex_leave(mem0.mutex);
@@ -440,7 +453,7 @@ void sqlite3PageFree(void *p){
       mem0.aPageFree[mem0.nPageFree++] = i;
       sqlite3StatusAdd(SQLITE_STATUS_PAGECACHE_USED, -1);
       sqlite3_mutex_leave(mem0.mutex);
-#ifndef NDEBUG
+#if !defined(NDEBUG) && 0
       /* Assert that a duplicate was not just inserted into aPageFree[]. */
       for(i=0; i<mem0.nPageFree-1; i++){
         assert( mem0.aPageFree[i]!=mem0.aPageFree[mem0.nPageFree-1] );
@@ -451,11 +464,25 @@ void sqlite3PageFree(void *p){
 }
 
 /*
+** TRUE if p is a lookaside memory allocation from db
+*/
+static int isLookaside(sqlite3 *db, void *p){
+  return db && p && p>=db->lookaside.pStart && p<db->lookaside.pEnd;
+}
+
+/*
 ** Return the size of a memory allocation previously obtained from
 ** sqlite3Malloc() or sqlite3_malloc().
 */
 int sqlite3MallocSize(void *p){
   return sqlite3Config.m.xSize(p);
+}
+int sqlite3DbMallocSize(sqlite3 *db, void *p){
+  if( isLookaside(db, p) ){
+    return db->lookaside.sz;
+  }else{
+    return sqlite3Config.m.xSize(p);
+  }
 }
 
 /*
@@ -470,6 +497,21 @@ void sqlite3_free(void *p){
     sqlite3_mutex_leave(mem0.mutex);
   }else{
     sqlite3Config.m.xFree(p);
+  }
+}
+
+/*
+** Free memory that might be associated with a particular database
+** connection.
+*/
+void sqlite3DbFree(sqlite3 *db, void *p){
+  if( isLookaside(db, p) ){
+    LookasideSlot *pBuf = (LookasideSlot*)p;
+    pBuf->pNext = db->lookaside.pFree;
+    db->lookaside.pFree = pBuf;
+    db->lookaside.nOut--;
+  }else{
+    sqlite3_free(p);
   }
 }
 
@@ -504,6 +546,7 @@ void *sqlite3Realloc(void *pOld, int nBytes){
         pNew = sqlite3Config.m.xRealloc(pOld, nNew);
       }
       if( pNew ){
+        nNew = sqlite3MallocSize(pNew);
         sqlite3StatusAdd(SQLITE_STATUS_MEMORY_USED, nNew-nOld);
       }
     }
@@ -554,26 +597,53 @@ void *sqlite3DbMallocZero(sqlite3 *db, int n){
 ** the mallocFailed flag in the connection pointer.
 */
 void *sqlite3DbMallocRaw(sqlite3 *db, int n){
-  void *p = 0;
-  if( !db || db->mallocFailed==0 ){
-    p = sqlite3Malloc(n);
-    if( !p && db ){
-      db->mallocFailed = 1;
+  void *p;
+  if( db ){
+    LookasideSlot *pBuf;
+    if( db->mallocFailed ){
+      return 0;
     }
+    if( db->lookaside.bEnabled && n<=db->lookaside.sz
+         && (pBuf = db->lookaside.pFree)!=0 ){
+      db->lookaside.pFree = pBuf->pNext;
+      db->lookaside.nOut++;
+      if( db->lookaside.nOut>db->lookaside.mxOut ){
+        db->lookaside.mxOut = db->lookaside.nOut;
+      }
+      return (void*)pBuf;
+    }
+  }
+  p = sqlite3Malloc(n);
+  if( !p && db ){
+    db->mallocFailed = 1;
   }
   return p;
 }
 
 /*
 ** Resize the block of memory pointed to by p to n bytes. If the
-** resize fails, set the mallocFailed flag inthe connection object.
+** resize fails, set the mallocFailed flag in the connection object.
 */
 void *sqlite3DbRealloc(sqlite3 *db, void *p, int n){
   void *pNew = 0;
   if( db->mallocFailed==0 ){
-    pNew = sqlite3_realloc(p, n);
-    if( !pNew ){
-      db->mallocFailed = 1;
+    if( p==0 ){
+      return sqlite3DbMallocRaw(db, n);
+    }
+    if( isLookaside(db, p) ){
+      if( n<=db->lookaside.sz ){
+        return p;
+      }
+      pNew = sqlite3DbMallocRaw(db, n);
+      if( pNew ){
+        memcpy(pNew, p, db->lookaside.sz);
+        sqlite3DbFree(db, p);
+      }
+    }else{
+      pNew = sqlite3_realloc(p, n);
+      if( !pNew ){
+        db->mallocFailed = 1;
+      }
     }
   }
   return pNew;
@@ -587,7 +657,7 @@ void *sqlite3DbReallocOrFree(sqlite3 *db, void *p, int n){
   void *pNew;
   pNew = sqlite3DbRealloc(db, p, n);
   if( !pNew ){
-    sqlite3_free(p);
+    sqlite3DbFree(db, p);
   }
   return pNew;
 }
@@ -599,37 +669,30 @@ void *sqlite3DbReallocOrFree(sqlite3 *db, void *p, int n){
 ** called via macros that record the current file and line number in the
 ** ThreadData structure.
 */
-char *sqlite3StrDup(const char *z){
+char *sqlite3DbStrDup(sqlite3 *db, const char *z){
   char *zNew;
-  int n;
-  if( z==0 ) return 0;
+  size_t n;
+  if( z==0 ){
+    return 0;
+  }
   n = strlen(z)+1;
-  zNew = sqlite3Malloc(n);
-  if( zNew ) memcpy(zNew, z, n);
-  return zNew;
-}
-char *sqlite3StrNDup(const char *z, int n){
-  char *zNew;
-  if( z==0 ) return 0;
-  zNew = sqlite3Malloc(n+1);
+  assert( (n&0x7fffffff)==n );
+  zNew = sqlite3DbMallocRaw(db, (int)n);
   if( zNew ){
     memcpy(zNew, z, n);
-    zNew[n] = 0;
-  }
-  return zNew;
-}
-
-char *sqlite3DbStrDup(sqlite3 *db, const char *z){
-  char *zNew = sqlite3StrDup(z);
-  if( z && !zNew ){
-    db->mallocFailed = 1;
   }
   return zNew;
 }
 char *sqlite3DbStrNDup(sqlite3 *db, const char *z, int n){
-  char *zNew = sqlite3StrNDup(z, n);
-  if( z && !zNew ){
-    db->mallocFailed = 1;
+  char *zNew;
+  if( z==0 ){
+    return 0;
+  }
+  assert( (n&0x7fffffff)==n );
+  zNew = sqlite3DbMallocRaw(db, n+1);
+  if( zNew ){
+    memcpy(zNew, z, n);
+    zNew[n] = 0;
   }
   return zNew;
 }
@@ -646,7 +709,7 @@ void sqlite3SetString(char **pz, sqlite3 *db, const char *zFormat, ...){
   va_start(ap, zFormat);
   z = sqlite3VMPrintf(db, zFormat, ap);
   va_end(ap);
-  sqlite3_free(*pz);
+  sqlite3DbFree(db, *pz);
   *pz = z;
 }
 

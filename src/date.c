@@ -16,7 +16,7 @@
 ** sqlite3RegisterDateTimeFunctions() found at the bottom of the file.
 ** All other code has file scope.
 **
-** $Id: date.c,v 1.85 2008/06/18 17:09:10 danielk1977 Exp $
+** $Id: date.c,v 1.87 2008/07/28 19:34:53 drh Exp $
 **
 ** SQLite processes all times and dates as Julian Day numbers.  The
 ** dates and times are stored as the number of days since noon
@@ -553,7 +553,9 @@ static int parseModifier(const char *zMod, DateTime *p){
         p->iJD = p->iJD/86400.0 + 2440587.5*86400000.0;
         clearYMD_HMS_TZ(p);
         rc = 0;
-      }else if( strcmp(z, "utc")==0 ){
+      }
+#ifndef SQLITE_OMIT_LOCALTIME
+      else if( strcmp(z, "utc")==0 ){
         double c1;
         computeJD(p);
         c1 = localtimeOffset(p);
@@ -562,6 +564,7 @@ static int parseModifier(const char *zMod, DateTime *p){
         p->iJD += c1 - localtimeOffset(p);
         rc = 0;
       }
+#endif
       break;
     }
     case 'w': {
@@ -846,9 +849,11 @@ static void strftimeFunc(
   u64 n;
   int i, j;
   char *z;
+  sqlite3 *db;
   const char *zFmt = (const char*)sqlite3_value_text(argv[0]);
   char zBuf[100];
   if( zFmt==0 || isDate(context, argc-1, argv+1, &x) ) return;
+  db = sqlite3_context_db_handle(context);
   for(i=0, n=1; zFmt[i]; i++, n++){
     if( zFmt[i]=='%' ){
       switch( zFmt[i+1] ){
@@ -884,11 +889,11 @@ static void strftimeFunc(
   }
   if( n<sizeof(zBuf) ){
     z = zBuf;
-  }else if( n>sqlite3_context_db_handle(context)->aLimit[SQLITE_LIMIT_LENGTH] ){
+  }else if( n>db->aLimit[SQLITE_LIMIT_LENGTH] ){
     sqlite3_result_error_toobig(context);
     return;
   }else{
-    z = sqlite3Malloc( n );
+    z = sqlite3DbMallocRaw(db, n);
     if( z==0 ){
       sqlite3_result_error_nomem(context);
       return;
@@ -953,7 +958,7 @@ static void strftimeFunc(
   }
   z[j] = 0;
   sqlite3_result_text(context, z, -1,
-                      z==zBuf ? SQLITE_TRANSIENT : sqlite3_free);
+                      z==zBuf ? SQLITE_TRANSIENT : SQLITE_DYNAMIC);
 }
 
 /*

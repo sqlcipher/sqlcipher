@@ -13,7 +13,7 @@
 ** This module implements the sqlite3_status() interface and related
 ** functionality.
 **
-** $Id: status.c,v 1.3 2008/07/11 16:15:18 drh Exp $
+** $Id: status.c,v 1.7 2008/08/05 17:53:23 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -21,8 +21,8 @@
 ** Variables in which to record status information.
 */
 static struct {
-  int nowValue[6];         /* Current value */
-  int mxValue[6];          /* Maximum value */
+  int nowValue[9];         /* Current value */
+  int mxValue[9];          /* Maximum value */
 } sqlite3Stat;
 
 
@@ -80,6 +80,32 @@ int sqlite3_status(int op, int *pCurrent, int *pHighwater, int resetFlag){
   *pHighwater = sqlite3Stat.mxValue[op];
   if( resetFlag ){
     sqlite3Stat.mxValue[op] = sqlite3Stat.nowValue[op];
+  }
+  return SQLITE_OK;
+}
+
+/*
+** Query status information for a single database connection
+*/
+int sqlite3_db_status(
+  sqlite3 *db,          /* The database connection whose status is desired */
+  int op,               /* Status verb */
+  int *pCurrent,        /* Write current value here */
+  int *pHighwater,      /* Write high-water mark here */
+  int resetFlag         /* Reset high-water mark if true */
+){
+  switch( op ){
+    case SQLITE_DBSTATUS_LOOKASIDE_USED: {
+      *pCurrent = db->lookaside.nOut;
+      *pHighwater = db->lookaside.mxOut;
+      if( resetFlag ){
+        db->lookaside.mxOut = db->lookaside.nOut;
+      }
+      break;
+    }
+    default: {
+      return SQLITE_ERROR;
+    }
   }
   return SQLITE_OK;
 }

@@ -15,7 +15,7 @@
 ** 6000 lines long) it was split up into several smaller files and
 ** this header information was factored out.
 **
-** $Id: vdbeInt.h,v 1.149 2008/06/25 00:12:41 drh Exp $
+** $Id: vdbeInt.h,v 1.153 2008/08/02 03:50:39 drh Exp $
 */
 #ifndef _VDBEINT_H_
 #define _VDBEINT_H_
@@ -245,6 +245,7 @@ struct FifoPage {
 typedef struct Fifo Fifo;
 struct Fifo {
   int nEntry;         /* Total number of entries */
+  sqlite3 *db;        /* The associated database connection */
   FifoPage *pFirst;   /* First page on the list */
   FifoPage *pLast;    /* Last page on the list */
 };
@@ -317,7 +318,6 @@ struct Vdbe {
   Mem *pResultSet;        /* Pointer to an array of results */
   u8 explain;             /* True if EXPLAIN present on SQL command */
   u8 changeCntOn;         /* True to update the change-counter */
-  u8 aborted;             /* True if ROLLBACK in another VM causes an abort */
   u8 expired;             /* True if the VM needs to be recompiled */
   u8 minWriteFileFormat;  /* Minimum file format for writable database files */
   u8 inVtabMethod;        /* See comments above */
@@ -390,7 +390,7 @@ int sqlite2BtreeKeyCompare(BtCursor *, const void *, int, int, int *);
 int sqlite3VdbeIdxKeyCompare(Cursor*,UnpackedRecord *,int,const unsigned char*,int*);
 int sqlite3VdbeIdxRowid(BtCursor *, i64 *);
 int sqlite3MemCompare(const Mem*, const Mem*, const CollSeq*);
-int sqlite3VdbeIdxRowidLen(const u8*);
+int sqlite3VdbeIdxRowidLen(const u8*, int, int*);
 int sqlite3VdbeExec(Vdbe*);
 int sqlite3VdbeList(Vdbe*);
 int sqlite3VdbeHalt(Vdbe*);
@@ -406,7 +406,6 @@ void sqlite3VdbeMemSetDouble(Mem*, double);
 void sqlite3VdbeMemSetNull(Mem*);
 void sqlite3VdbeMemSetZeroBlob(Mem*,int);
 int sqlite3VdbeMemMakeWriteable(Mem*);
-int sqlite3VdbeMemDynamicify(Mem*);
 int sqlite3VdbeMemStringify(Mem*, int);
 i64 sqlite3VdbeIntValue(Mem*);
 int sqlite3VdbeMemIntegerify(Mem*);
@@ -434,7 +433,7 @@ int sqlite3VdbeMemTranslate(Mem*, u8);
   void sqlite3VdbeMemPrettyPrint(Mem *pMem, char *zBuf);
 #endif
 int sqlite3VdbeMemHandleBom(Mem *pMem);
-void sqlite3VdbeFifoInit(Fifo*);
+void sqlite3VdbeFifoInit(Fifo*, sqlite3*);
 int sqlite3VdbeFifoPush(Fifo*, i64);
 int sqlite3VdbeFifoPop(Fifo*, i64*);
 void sqlite3VdbeFifoClear(Fifo*);

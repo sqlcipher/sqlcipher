@@ -143,11 +143,11 @@ static const YYCODETYPE yyFallback[] = {
 **      It is sometimes called the "minor" token.
 */
 struct yyStackEntry {
-  int stateno;       /* The state-number */
-  int major;         /* The major token value.  This is the code
-                     ** number for the token at this stack level */
-  YYMINORTYPE minor; /* The user-supplied minor token value.  This
-                     ** is the value of the token  */
+  YYACTIONTYPE stateno;  /* The state-number */
+  YYCODETYPE major;      /* The major token value.  This is the code
+                         ** number for the token at this stack level */
+  YYMINORTYPE minor;     /* The user-supplied minor token value.  This
+                         ** is the value of the token  */
 };
 typedef struct yyStackEntry yyStackEntry;
 
@@ -155,6 +155,9 @@ typedef struct yyStackEntry yyStackEntry;
 ** the following structure */
 struct yyParser {
   int yyidx;                    /* Index of top element in stack */
+#ifdef YYTRACKMAXSTACKDEPTH
+  int yyidxMax;                 /* Maximum value of yyidx */
+#endif
   int yyerrcnt;                 /* Shifts left before out of the error */
   ParseARG_SDECL                /* A place to hold %extra_argument */
 #if YYSTACKDEPTH<=0
@@ -255,6 +258,9 @@ void *ParseAlloc(void *(*mallocProc)(size_t)){
   pParser = (yyParser*)(*mallocProc)( (size_t)sizeof(yyParser) );
   if( pParser ){
     pParser->yyidx = -1;
+#ifdef YYTRACKMAXSTACKDEPTH
+    pParser->yyidxMax = 0;
+#endif
 #if YYSTACKDEPTH<=0
     yyGrowStack(pParser);
 #endif
@@ -267,7 +273,12 @@ void *ParseAlloc(void *(*mallocProc)(size_t)){
 ** "yymajor" is the symbol code, and "yypminor" is a pointer to
 ** the value.
 */
-static void yy_destructor(YYCODETYPE yymajor, YYMINORTYPE *yypminor){
+static void yy_destructor(
+  yyParser *yypParser,    /* The parser */
+  YYCODETYPE yymajor,     /* Type code for object to destroy */
+  YYMINORTYPE *yypminor   /* The object to be destroyed */
+){
+  ParseARG_FETCH;
   switch( yymajor ){
     /* Here is inserted the actions which take place when a
     ** terminal or non-terminal is destroyed.  This can happen
@@ -305,7 +316,7 @@ static int yy_pop_parser_stack(yyParser *pParser){
   }
 #endif
   yymajor = yytos->major;
-  yy_destructor( yymajor, &yytos->minor);
+  yy_destructor(pParser, yymajor, &yytos->minor);
   pParser->yyidx--;
   return yymajor;
 }
@@ -334,6 +345,16 @@ void ParseFree(
 #endif
   (*freeProc)((void*)pParser);
 }
+
+/*
+** Return the peak depth of the stack for a parser.
+*/
+#ifdef YYTRACKMAXSTACKDEPTH
+int ParseStackPeak(void *p){
+  yyParser *pParser = (yyParser*)p;
+  return pParser->yyidxMax;
+}
+#endif
 
 /*
 ** Find the appropriate action for a parser given the terminal
@@ -455,6 +476,11 @@ static void yy_shift(
 ){
   yyStackEntry *yytos;
   yypParser->yyidx++;
+#ifdef YYTRACKMAXSTACKDEPTH
+  if( yypParser->yyidx>yypParser->yyidxMax ){
+    yypParser->yyidxMax = yypParser->yyidx;
+  }
+#endif
 #if YYSTACKDEPTH>0 
   if( yypParser->yyidx>=YYSTACKDEPTH ){
     yyStackOverflow(yypParser, yypMinor);
@@ -737,7 +763,7 @@ void Parse(
              yyTracePrompt,yyTokenName[yymajor]);
         }
 #endif
-        yy_destructor(yymajor,&yyminorunion);
+        yy_destructor(yypParser, yymajor,&yyminorunion);
         yymajor = YYNOCODE;
       }else{
          while(
@@ -750,7 +776,7 @@ void Parse(
           yy_pop_parser_stack(yypParser);
         }
         if( yypParser->yyidx < 0 || yymajor==0 ){
-          yy_destructor(yymajor,&yyminorunion);
+          yy_destructor(yypParser,yymajor,&yyminorunion);
           yy_parse_failed(yypParser);
           yymajor = YYNOCODE;
         }else if( yymx!=YYERRORSYMBOL ){
@@ -775,7 +801,7 @@ void Parse(
         yy_syntax_error(yypParser,yymajor,yyminorunion);
       }
       yypParser->yyerrcnt = 3;
-      yy_destructor(yymajor,&yyminorunion);
+      yy_destructor(yypParser,yymajor,&yyminorunion);
       if( yyendofinput ){
         yy_parse_failed(yypParser);
       }

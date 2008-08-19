@@ -16,7 +16,7 @@
 ** so is applicable.  Because this module is responsible for selecting
 ** indices, you might also think of this module as the "query optimizer".
 **
-** $Id: where.c,v 1.317 2008/07/12 14:52:20 drh Exp $
+** $Id: where.c,v 1.319 2008/08/01 17:37:41 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
@@ -92,7 +92,7 @@ struct WhereTerm {
 /*
 ** Allowed values of WhereTerm.flags
 */
-#define TERM_DYNAMIC    0x01   /* Need to call sqlite3ExprDelete(pExpr) */
+#define TERM_DYNAMIC    0x01   /* Need to call sqlite3ExprDelete(db, pExpr) */
 #define TERM_VIRTUAL    0x02   /* Added by the optimizer.  Do not code */
 #define TERM_CODED      0x04   /* This term is already coded */
 #define TERM_COPIED     0x08   /* Has a child */
@@ -203,13 +203,14 @@ static void whereClauseInit(
 static void whereClauseClear(WhereClause *pWC){
   int i;
   WhereTerm *a;
+  sqlite3 *db = pWC->pParse->db;
   for(i=pWC->nTerm-1, a=pWC->a; i>=0; i--, a++){
     if( a->flags & TERM_DYNAMIC ){
-      sqlite3ExprDelete(a->pExpr);
+      sqlite3ExprDelete(db, a->pExpr);
     }
   }
   if( pWC->a!=pWC->aStatic ){
-    sqlite3_free(pWC->a);
+    sqlite3DbFree(db, pWC->a);
   }
 }
 
@@ -230,18 +231,18 @@ static int whereClauseInsert(WhereClause *pWC, Expr *p, int flags){
   int idx;
   if( pWC->nTerm>=pWC->nSlot ){
     WhereTerm *pOld = pWC->a;
-    pWC->a = sqlite3Malloc( sizeof(pWC->a[0])*pWC->nSlot*2 );
+    sqlite3 *db = pWC->pParse->db;
+    pWC->a = sqlite3DbMallocRaw(db, sizeof(pWC->a[0])*pWC->nSlot*2 );
     if( pWC->a==0 ){
-      pWC->pParse->db->mallocFailed = 1;
       if( flags & TERM_DYNAMIC ){
-        sqlite3ExprDelete(p);
+        sqlite3ExprDelete(db, p);
       }
       pWC->a = pOld;
       return 0;
     }
     memcpy(pWC->a, pOld, sizeof(pWC->a[0])*pWC->nTerm);
     if( pOld!=pWC->aStatic ){
-      sqlite3_free(pOld);
+      sqlite3DbFree(db, pOld);
     }
     pWC->nSlot *= 2;
   }
@@ -773,7 +774,7 @@ static void exprAnalyze(
         int idxNew;
         pDup = sqlite3ExprDup(db, pExpr);
         if( db->mallocFailed ){
-          sqlite3ExprDelete(pDup);
+          sqlite3ExprDelete(db, pDup);
           return;
         }
         idxNew = whereClauseInsert(pWC, pDup, TERM_VIRTUAL|TERM_DYNAMIC);
@@ -889,7 +890,7 @@ static void exprAnalyze(
         pWC->a[idxNew].iParent = idxTerm;
         pTerm->nChild = 1;
       }else{
-        sqlite3ExprListDelete(pList);
+        sqlite3ExprListDelete(db, pList);
       }
     }
 or_not_possible:
@@ -1258,6 +1259,7 @@ static double bestVirtualIndex(
   sqlite3_index_info **ppIdxInfo /* Index information passed to xBestIndex */
 ){
   Table *pTab = pSrc->pTab;
+  sqlite3_vtab *pVtab = pTab->pVtab;
   sqlite3_index_info *pIdxInfo;
   struct sqlite3_index_constraint *pIdxCons;
   struct sqlite3_index_orderby *pIdxOrderBy;
@@ -1369,7 +1371,7 @@ static double bestVirtualIndex(
   ** sqlite3ViewGetColumnNames() would have picked up the error. 
   */
   assert( pTab->azModuleArg && pTab->azModuleArg[0] );
-  assert( pTab->pVtab );
+  assert( pVtab );
 #if 0
   if( pTab->pVtab==0 ){
     sqlite3ErrorMsg(pParse, "undefined module %s for table %s",
@@ -1422,9 +1424,21 @@ static double bestVirtualIndex(
   (void)sqlite3SafetyOff(pParse->db);
   WHERETRACE(("xBestIndex for %s\n", pTab->zName));
   TRACE_IDX_INPUTS(pIdxInfo);
-  rc = pTab->pVtab->pModule->xBestIndex(pTab->pVtab, pIdxInfo);
+  rc = pVtab->pModule->xBestIndex(pVtab, pIdxInfo);
   TRACE_IDX_OUTPUTS(pIdxInfo);
   (void)sqlite3SafetyOn(pParse->db);
+
+  if( rc!=SQLITE_OK ){
+    if( rc==SQLITE_NOMEM ){
+      pParse->db->mallocFailed = 1;
+    }else if( !pVtab->zErrMsg ){
+      sqlite3ErrorMsg(pParse, "%s", sqlite3ErrStr(rc));
+    }else{
+      sqlite3ErrorMsg(pParse, "%s", pVtab->zErrMsg);
+    }
+  }
+  sqlite3DbFree(pParse->db, pVtab->zErrMsg);
+  pVtab->zErrMsg = 0;
 
   for(i=0; i<pIdxInfo->nConstraint; i++){
     if( !pIdxInfo->aConstraint[i].usable && pUsage[i].argvIndex>0 ){
@@ -1434,15 +1448,7 @@ static double bestVirtualIndex(
     }
   }
 
-  if( rc!=SQLITE_OK ){
-    if( rc==SQLITE_NOMEM ){
-      pParse->db->mallocFailed = 1;
-    }else {
-      sqlite3ErrorMsg(pParse, "%s", sqlite3ErrStr(rc));
-    }
-  }
   *(int*)&pIdxInfo->nOrderBy = nOrderBy;
-
   return pIdxInfo->estimatedCost;
 }
 #endif /* SQLITE_OMIT_VIRTUALTABLE */
@@ -1908,14 +1914,15 @@ static int nQPlan = 0;              /* Next free slow in _query_plan[] */
 static void whereInfoFree(WhereInfo *pWInfo){
   if( pWInfo ){
     int i;
+    sqlite3 *db = pWInfo->pParse->db;
     for(i=0; i<pWInfo->nLevel; i++){
       sqlite3_index_info *pInfo = pWInfo->a[i].pIdxInfo;
       if( pInfo ){
         assert( pInfo->needToFreeIdxStr==0 );
-        sqlite3_free(pInfo);
+        sqlite3DbFree(db, pInfo);
       }
     }
-    sqlite3_free(pWInfo);
+    sqlite3DbFree(db, pWInfo);
   }
 }
 
@@ -2248,22 +2255,22 @@ WhereInfo *sqlite3WhereBegin(
       struct SrcList_item *pItem = &pTabList->a[pLevel->iFrom];
       zMsg = sqlite3MPrintf(db, "TABLE %s", pItem->zName);
       if( pItem->zAlias ){
-        zMsg = sqlite3MPrintf(db, "%z AS %s", zMsg, pItem->zAlias);
+        zMsg = sqlite3MAppendf(db, zMsg, "%s AS %s", zMsg, pItem->zAlias);
       }
       if( (pIx = pLevel->pIdx)!=0 ){
-        zMsg = sqlite3MPrintf(db, "%z WITH INDEX %s", zMsg, pIx->zName);
+        zMsg = sqlite3MAppendf(db, zMsg, "%s WITH INDEX %s", zMsg, pIx->zName);
       }else if( pLevel->flags & (WHERE_ROWID_EQ|WHERE_ROWID_RANGE) ){
-        zMsg = sqlite3MPrintf(db, "%z USING PRIMARY KEY", zMsg);
+        zMsg = sqlite3MAppendf(db, zMsg, "%s USING PRIMARY KEY", zMsg);
       }
 #ifndef SQLITE_OMIT_VIRTUALTABLE
       else if( pLevel->pBestIdx ){
         sqlite3_index_info *pBestIdx = pLevel->pBestIdx;
-        zMsg = sqlite3MPrintf(db, "%z VIRTUAL TABLE INDEX %d:%s", zMsg,
+        zMsg = sqlite3MAppendf(db, zMsg, "%s VIRTUAL TABLE INDEX %d:%s", zMsg,
                     pBestIdx->idxNum, pBestIdx->idxStr);
       }
 #endif
       if( pLevel->flags & WHERE_ORDERBY ){
-        zMsg = sqlite3MPrintf(db, "%z ORDER BY", zMsg);
+        zMsg = sqlite3MAppendf(db, zMsg, "%s ORDER BY", zMsg);
       }
       sqlite3VdbeAddOp4(v, OP_Explain, i, pLevel->iFrom, 0, zMsg, P4_DYNAMIC);
     }
@@ -2779,14 +2786,16 @@ whereBeginNoMem:
 ** sqlite3WhereBegin() for additional information.
 */
 void sqlite3WhereEnd(WhereInfo *pWInfo){
-  Vdbe *v = pWInfo->pParse->pVdbe;
+  Parse *pParse = pWInfo->pParse;
+  Vdbe *v = pParse->pVdbe;
   int i;
   WhereLevel *pLevel;
   SrcList *pTabList = pWInfo->pTabList;
+  sqlite3 *db = pParse->db;
 
   /* Generate loop termination code.
   */
-  sqlite3ExprClearColumnCache(pWInfo->pParse, -1);
+  sqlite3ExprClearColumnCache(pParse, -1);
   for(i=pTabList->nSrc-1; i>=0; i--){
     pLevel = &pWInfo->a[i];
     sqlite3VdbeResolveLabel(v, pLevel->cont);
@@ -2802,7 +2811,7 @@ void sqlite3WhereEnd(WhereInfo *pWInfo){
         sqlite3VdbeAddOp2(v, OP_Next, pIn->iCur, pIn->topAddr);
         sqlite3VdbeJumpHere(v, pIn->topAddr-1);
       }
-      sqlite3_free(pLevel->aInLoop);
+      sqlite3DbFree(db, pLevel->aInLoop);
     }
     sqlite3VdbeResolveLabel(v, pLevel->brk);
     if( pLevel->iLeftJoin ){

@@ -12,7 +12,7 @@
 **
 ** This file contains code that is specific to OS/2.
 **
-** $Id: os_os2.c,v 1.50 2008/07/15 22:59:05 pweilbacher Exp $
+** $Id: os_os2.c,v 1.55 2008/07/29 18:49:29 pweilbacher Exp $
 */
 
 #include "sqliteInt.h"
@@ -558,7 +558,6 @@ static UconvObject uclCp = NULL;  /* convert between local codepage and UCS-2 */
 ** Helper function to initialize the conversion objects from and to UTF-8.
 */
 static void initUconvObjects( void ){
-	printf("init them\n");
   if( UniCreateUconvObject( UTF_8, &ucUtf8 ) != ULS_SUCCESS )
     ucUtf8 = NULL;
   if ( UniCreateUconvObject( (UniChar *)L"@path=yes", &uclCp ) != ULS_SUCCESS )
@@ -569,7 +568,6 @@ static void initUconvObjects( void ){
 ** Helper function to free the conversion objects from and to UTF-8.
 */
 static void freeUconvObjects( void ){
-	printf("free them\n");
   if ( ucUtf8 )
     UniFreeUconvObject( ucUtf8 );
   if ( uclCp )
@@ -587,7 +585,6 @@ static void freeUconvObjects( void ){
 static char *convertUtf8PathToCp( const char *in ){
   UniChar tempPath[CCHMAXPATH];
   char *out = (char *)calloc( CCHMAXPATH, 1 );
-printf("convertUtf8PathToCp(%s)\n", in);
 
   if( !out )
     return NULL;
@@ -602,7 +599,6 @@ printf("convertUtf8PathToCp(%s)\n", in);
   /* conversion for current codepage which can be used for paths */
   UniStrFromUcs( uclCp, out, tempPath, CCHMAXPATH );
 
-	printf("%s -> Cp = %s\n", in, out);
   return out;
 }
 
@@ -618,7 +614,6 @@ printf("convertUtf8PathToCp(%s)\n", in);
 char *convertCpPathToUtf8( const char *in ){
   UniChar tempPath[CCHMAXPATH];
   char *out = (char *)calloc( CCHMAXPATH, 1 );
-printf("convertCpPathToUtf8(%s)\n", in);
 
   if( !out )
     return NULL;
@@ -633,7 +628,6 @@ printf("convertCpPathToUtf8(%s)\n", in);
   /* determine string for the conversion of UTF-8 which is CP1208 */
   UniStrFromUcs( ucUtf8, out, tempPath, CCHMAXPATH );
 
-	printf("%s -> Utf8 = %s\n", in, out);
   return out;
 }
 
@@ -718,6 +712,30 @@ static int getTempname(int nBuf, char *zBuf ){
 
 
 /*
+** Turn a relative pathname into a full pathname.  Write the full
+** pathname into zFull[].  zFull[] will be at least pVfs->mxPathname
+** bytes in size.
+*/
+static int os2FullPathname(
+  sqlite3_vfs *pVfs,          /* Pointer to vfs object */
+  const char *zRelative,      /* Possibly relative input path */
+  int nFull,                  /* Size of output buffer in bytes */
+  char *zFull                 /* Output buffer */
+){
+  char *zRelativeCp = convertUtf8PathToCp( zRelative );
+  char zFullCp[CCHMAXPATH] = "\0";
+  char *zFullUTF;
+  APIRET rc = DosQueryPathInfo( zRelativeCp, FIL_QUERYFULLNAME, zFullCp,
+                                CCHMAXPATH );
+  free( zRelativeCp );
+  zFullUTF = convertCpPathToUtf8( zFullCp );
+  sqlite3_snprintf( nFull, zFull, zFullUTF );
+  free( zFullUTF );
+  return rc == NO_ERROR ? SQLITE_OK : SQLITE_IOERR;
+}
+
+
+/*
 ** Open a file.
 */
 static int os2Open(
@@ -783,9 +801,11 @@ static int os2Open(
   if( flags & (SQLITE_OPEN_TEMP_DB | SQLITE_OPEN_TEMP_JOURNAL
                | SQLITE_OPEN_SUBJOURNAL) ){
     char pathUtf8[CCHMAXPATH];
-    /*ulFileAttribute = FILE_HIDDEN;  //for debugging, we want to make sure it is deleted*/
+#ifdef NDEBUG /* when debugging we want to make sure it is deleted */
+    ulFileAttribute = FILE_HIDDEN;
+#endif
     ulFileAttribute = FILE_NORMAL;
-    sqlite3OsFullPathname( pVfs, zName, CCHMAXPATH, pathUtf8 );
+    os2FullPathname( pVfs, zName, CCHMAXPATH, pathUtf8 );
     pFile->pathToDel = convertUtf8PathToCp( pathUtf8 );
     OSTRACE1( "OPEN hidden/delete on close file attributes\n" );
   }else{
@@ -817,7 +837,7 @@ static int os2Open(
     pFile->pathToDel = NULL;
     if( flags & SQLITE_OPEN_READWRITE ){
       OSTRACE2( "OPEN %d Invalid handle\n", ((flags | SQLITE_OPEN_READONLY) & ~SQLITE_OPEN_READWRITE) );
-      return os2Open( 0, zName, id,
+      return os2Open( pVfs, zName, id,
                       ((flags | SQLITE_OPEN_READONLY) & ~SQLITE_OPEN_READWRITE),
                       pOutFlags );
     }else{
@@ -889,29 +909,6 @@ static int os2Access(
   return SQLITE_OK;
 }
 
-
-/*
-** Turn a relative pathname into a full pathname.  Write the full
-** pathname into zFull[].  zFull[] will be at least pVfs->mxPathname
-** bytes in size.
-*/
-static int os2FullPathname(
-  sqlite3_vfs *pVfs,          /* Pointer to vfs object */
-  const char *zRelative,      /* Possibly relative input path */
-  int nFull,                  /* Size of output buffer in bytes */
-  char *zFull                 /* Output buffer */
-){
-  char *zRelativeCp = convertUtf8PathToCp( zRelative );
-  char zFullCp[CCHMAXPATH];
-  char *zFullUTF;
-  APIRET rc = DosQueryPathInfo( zRelativeCp, FIL_QUERYFULLNAME, zFullCp,
-                                CCHMAXPATH );
-  free( zRelativeCp );
-  zFullUTF = convertCpPathToUtf8( zFullCp );
-  sqlite3_snprintf( nFull, zFull, zFullUTF );
-  free( zFullUTF );
-  return rc == NO_ERROR ? SQLITE_OK : SQLITE_IOERR;
-}
 
 #ifndef SQLITE_OMIT_LOAD_EXTENSION
 /*
@@ -1089,8 +1086,6 @@ static int os2GetLastError(sqlite3_vfs *pVfs, int nBuf, char *zBuf){
 ** Initialize and deinitialize the operating system interface.
 */
 int sqlite3_os_init(void){
-  initUconvObjects();
-
   static sqlite3_vfs os2Vfs = {
     1,                 /* iVersion */
     sizeof(os2File),   /* szOsFile */
@@ -1113,6 +1108,7 @@ int sqlite3_os_init(void){
     os2GetLastError    /* xGetLastError */
   };
   sqlite3_vfs_register(&os2Vfs, 1);
+  initUconvObjects();
   return SQLITE_OK;
 }
 int sqlite3_os_end(void){

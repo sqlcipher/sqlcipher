@@ -12,7 +12,7 @@
 ** This file contains C code routines that are called by the parser
 ** to handle SELECT statements in SQLite.
 **
-** $Id: select.c,v 1.457 2008/07/15 20:56:17 drh Exp $
+** $Id: select.c,v 1.463 2008/08/04 03:51:24 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
@@ -21,16 +21,16 @@
 ** Delete all the content of a Select structure but do not deallocate
 ** the select structure itself.
 */
-static void clearSelect(Select *p){
-  sqlite3ExprListDelete(p->pEList);
-  sqlite3SrcListDelete(p->pSrc);
-  sqlite3ExprDelete(p->pWhere);
-  sqlite3ExprListDelete(p->pGroupBy);
-  sqlite3ExprDelete(p->pHaving);
-  sqlite3ExprListDelete(p->pOrderBy);
-  sqlite3SelectDelete(p->pPrior);
-  sqlite3ExprDelete(p->pLimit);
-  sqlite3ExprDelete(p->pOffset);
+static void clearSelect(sqlite3 *db, Select *p){
+  sqlite3ExprListDelete(db, p->pEList);
+  sqlite3SrcListDelete(db, p->pSrc);
+  sqlite3ExprDelete(db, p->pWhere);
+  sqlite3ExprListDelete(db, p->pGroupBy);
+  sqlite3ExprDelete(db, p->pHaving);
+  sqlite3ExprListDelete(db, p->pOrderBy);
+  sqlite3SelectDelete(db, p->pPrior);
+  sqlite3ExprDelete(db, p->pLimit);
+  sqlite3ExprDelete(db, p->pOffset);
 }
 
 /*
@@ -88,7 +88,7 @@ Select *sqlite3SelectNew(
   pNew->addrOpenEphm[1] = -1;
   pNew->addrOpenEphm[2] = -1;
   if( pNew==&standin) {
-    clearSelect(pNew);
+    clearSelect(db, pNew);
     pNew = 0;
   }
   return pNew;
@@ -97,10 +97,10 @@ Select *sqlite3SelectNew(
 /*
 ** Delete the given Select structure and all of its substructures.
 */
-void sqlite3SelectDelete(Select *p){
+void sqlite3SelectDelete(sqlite3 *db, Select *p){
   if( p ){
-    clearSelect(p);
-    sqlite3_free(p);
+    clearSelect(db, p);
+    sqlite3DbFree(db, p);
   }
 }
 
@@ -1163,12 +1163,14 @@ Table *sqlite3ResultSetOfSelect(Parse *pParse, char *zTabName, Select *pSelect){
   if( pTab==0 ){
     return 0;
   }
+  pTab->db = db;
   pTab->nRef = 1;
   pTab->zName = zTabName ? sqlite3DbStrDup(db, zTabName) : 0;
   pEList = pSelect->pEList;
   pTab->nCol = pEList->nExpr;
   assert( pTab->nCol>0 );
   pTab->aCol = aCol = sqlite3DbMallocZero(db, sizeof(pTab->aCol[0])*pTab->nCol);
+  testcase( aCol==0 );
   for(i=0, pCol=aCol; i<pTab->nCol; i++, pCol++){
     Expr *p;
     char *zType;
@@ -1194,11 +1196,9 @@ Table *sqlite3ResultSetOfSelect(Parse *pParse, char *zTabName, Select *pSelect){
       /* Use the original text of the column expression as its name */
       zName = sqlite3MPrintf(db, "%T", &p->span);
     }
-    if( !zName || db->mallocFailed ){
-      db->mallocFailed = 1;
-      sqlite3_free(zName);
-      sqlite3DeleteTable(pTab);
-      return 0;
+    if( db->mallocFailed ){
+      sqlite3DbFree(db, zName);
+      break;
     }
     sqlite3Dequote(zName);
 
@@ -1208,8 +1208,11 @@ Table *sqlite3ResultSetOfSelect(Parse *pParse, char *zTabName, Select *pSelect){
     nName = strlen(zName);
     for(j=cnt=0; j<i; j++){
       if( sqlite3StrICmp(aCol[j].zName, zName)==0 ){
+        char *zNewName;
         zName[nName] = 0;
-        zName = sqlite3MPrintf(db, "%z:%d", zName, ++cnt);
+        zNewName = sqlite3MPrintf(db, "%s:%d", zName, ++cnt);
+        sqlite3DbFree(db, zName);
+        zName = zNewName;
         j = -1;
         if( zName==0 ) break;
       }
@@ -1230,6 +1233,10 @@ Table *sqlite3ResultSetOfSelect(Parse *pParse, char *zTabName, Select *pSelect){
     }
   }
   pTab->iPKey = -1;
+  if( db->mallocFailed ){
+    sqlite3DeleteTable(pTab);
+    return 0;
+  }
   return pTab;
 }
 
@@ -1471,10 +1478,10 @@ static int prepSelectStmt(Parse *pParse, Select *p){
           }
           rc = 1;
         }
-        sqlite3_free(zTName);
+        sqlite3DbFree(db, zTName);
       }
     }
-    sqlite3ExprListDelete(pEList);
+    sqlite3ExprListDelete(db, pEList);
     p->pEList = pNew;
   }
 #if SQLITE_MAX_COLUMN
@@ -1535,11 +1542,11 @@ static int matchOrderByTermToExprList(
     for(i=0; i<pEList->nExpr; i++){
       char *zAs = pEList->a[i].zName;
       if( zAs!=0 && sqlite3StrICmp(zAs, zCol)==0 ){
-        sqlite3_free(zCol);
+        sqlite3DbFree(db, zCol);
         return i+1;
       }
     }
-    sqlite3_free(zCol);
+    sqlite3DbFree(db, zCol);
   }
 
   /* Resolve all names in the ORDER BY term expression
@@ -1628,7 +1635,7 @@ static int processOrderGroupBy(
     if( iCol>0 ){
       CollSeq *pColl = pE->pColl;
       int flags = pE->flags & EP_ExpCollate;
-      sqlite3ExprDelete(pE);
+      sqlite3ExprDelete(db, pE);
       pE = sqlite3ExprDup(db, pEList->a[iCol-1].pExpr);
       pOrderBy->a[i].pExpr = pE;
       if( pE && pColl && flags ){
@@ -1699,7 +1706,7 @@ static int processCompoundOrderBy(
           assert(pDup);
           iCol = matchOrderByTermToExprList(pParse, pSelect, pDup, i+1, 1, 0);
         }
-        sqlite3ExprDelete(pDup);
+        sqlite3ExprDelete(db, pDup);
         if( iCol<0 ){
           return 1;
         }
@@ -1879,14 +1886,13 @@ static int multiSelect(
   Vdbe *v;              /* Generate code to this VDBE */
   SelectDest dest;      /* Alternative data destination */
   Select *pDelete = 0;  /* Chain of simple selects to delete */
+  sqlite3 *db;          /* Database connection */
 
   /* Make sure there is no ORDER BY or LIMIT clause on prior SELECTs.  Only
   ** the last (right-most) SELECT in the series may have an ORDER BY or LIMIT.
   */
-  if( p==0 || p->pPrior==0 ){
-    rc = 1;
-    goto multi_select_end;
-  }
+  assert( p && p->pPrior );  /* Calling function guarantees this much */
+  db = pParse->db;
   pPrior = p->pPrior;
   assert( pPrior->pRightmost!=pPrior );
   assert( pPrior->pRightmost==p->pRightmost );
@@ -1903,13 +1909,8 @@ static int multiSelect(
     goto multi_select_end;
   }
 
-  /* Make sure we have a valid query engine.  If not, create a new one.
-  */
   v = sqlite3GetVdbe(pParse);
-  if( v==0 ){
-    rc = 1;
-    goto multi_select_end;
-  }
+  assert( v!=0 );  /* The VDBE already created by calling function */
 
   /* Create the destination temporary table if necessary
   */
@@ -2008,10 +2009,11 @@ static int multiSelect(
 
       /* Code the current SELECT statement
       */
-      switch( p->op ){
-         case TK_EXCEPT:  op = SRT_Except;   break;
-         case TK_UNION:   op = SRT_Union;    break;
-         case TK_ALL:     op = SRT_Table;    break;
+      if( p->op==TK_EXCEPT ){
+        op = SRT_Except;
+      }else{
+        assert( p->op==TK_UNION );
+        op = SRT_Union;
       }
       p->pPrior = 0;
       p->disallowOrderBy = 0;
@@ -2023,11 +2025,11 @@ static int multiSelect(
       rc = sqlite3Select(pParse, p, &uniondest, 0, 0, 0);
       /* Query flattening in sqlite3Select() might refill p->pOrderBy.
       ** Be sure to delete p->pOrderBy, therefore, to avoid a memory leak. */
-      sqlite3ExprListDelete(p->pOrderBy);
+      sqlite3ExprListDelete(db, p->pOrderBy);
       pDelete = p->pPrior;
       p->pPrior = pPrior;
       p->pOrderBy = 0;
-      sqlite3ExprDelete(p->pLimit);
+      sqlite3ExprDelete(db, p->pLimit);
       p->pLimit = pLimit;
       p->pOffset = pOffset;
       p->iLimit = 0;
@@ -2106,7 +2108,7 @@ static int multiSelect(
       rc = sqlite3Select(pParse, p, &intersectdest, 0, 0, 0);
       pDelete = p->pPrior;
       p->pPrior = pPrior;
-      sqlite3ExprDelete(p->pLimit);
+      sqlite3ExprDelete(db, p->pLimit);
       p->pLimit = pLimit;
       p->pOffset = pOffset;
       if( rc ){
@@ -2159,20 +2161,20 @@ static int multiSelect(
 
     assert( p->pRightmost==p );
     nCol = p->pEList->nExpr;
-    pKeyInfo = sqlite3DbMallocZero(pParse->db,
+    pKeyInfo = sqlite3DbMallocZero(db,
                        sizeof(*pKeyInfo)+nCol*(sizeof(CollSeq*) + 1));
     if( !pKeyInfo ){
       rc = SQLITE_NOMEM;
       goto multi_select_end;
     }
 
-    pKeyInfo->enc = ENC(pParse->db);
+    pKeyInfo->enc = ENC(db);
     pKeyInfo->nField = nCol;
 
     for(i=0, apColl=pKeyInfo->aColl; i<nCol; i++, apColl++){
       *apColl = multiSelectCollSeq(pParse, p, i);
       if( 0==*apColl ){
-        *apColl = pParse->db->pDfltColl;
+        *apColl = db->pDfltColl;
       }
     }
 
@@ -2190,13 +2192,13 @@ static int multiSelect(
         pLoop->addrOpenEphm[i] = -1;
       }
     }
-    sqlite3_free(pKeyInfo);
+    sqlite3DbFree(db, pKeyInfo);
   }
 
 multi_select_end:
   pDest->iMem = dest.iMem;
   pDest->nMem = dest.nMem;
-  sqlite3SelectDelete(pDelete);
+  sqlite3SelectDelete(db, pDelete);
   return rc;
 }
 #endif /* SQLITE_OMIT_COMPOUND_SELECT */
@@ -2445,6 +2447,7 @@ static int generateOutputSubroutine(
 ** until all data is exhausted then jump to the "end" labe.  AltB, AeqB,
 ** and AgtB jump to either L2 or to one of EofA or EofB.
 */
+#ifndef SQLITE_OMIT_COMPOUND_SELECT
 static int multiSelectOrderBy(
   Parse *pParse,        /* Parsing context */
   Select *p,            /* The right-most of SELECTs to be coded */
@@ -2619,9 +2622,9 @@ static int multiSelectOrderBy(
   }else{
     regLimitA = regLimitB = 0;
   }
-  sqlite3ExprDelete(p->pLimit);
+  sqlite3ExprDelete(db, p->pLimit);
   p->pLimit = 0;
-  sqlite3ExprDelete(p->pOffset);
+  sqlite3ExprDelete(db, p->pOffset);
   p->pOffset = 0;
 
   regAddrA = ++pParse->nMem;
@@ -2783,7 +2786,7 @@ static int multiSelectOrderBy(
   /* Reassembly the compound query so that it will be freed correctly
   ** by the calling function */
   if( p->pPrior ){
-    sqlite3SelectDelete(p->pPrior);
+    sqlite3SelectDelete(db, p->pPrior);
   }
   p->pPrior = pPrior;
 
@@ -2791,8 +2794,9 @@ static int multiSelectOrderBy(
   **** subqueries ****/
   return SQLITE_OK;
 }
+#endif
 
-#ifndef SQLITE_OMIT_VIEW
+#if !defined(SQLITE_OMIT_SUBQUERY) || !defined(SQLITE_OMIT_VIEW)
 /* Forward Declarations */
 static void substExprList(sqlite3*, ExprList*, int, ExprList*);
 static void substSelect(sqlite3*, Select *, int, ExprList *);
@@ -2875,9 +2879,9 @@ static void substSelect(
   substExpr(db, p->pWhere, iTable, pEList);
   substSelect(db, p->pPrior, iTable, pEList);
 }
-#endif /* !defined(SQLITE_OMIT_VIEW) */
+#endif /* !defined(SQLITE_OMIT_SUBQUERY) || !defined(SQLITE_OMIT_VIEW) */
 
-#ifndef SQLITE_OMIT_VIEW
+#if !defined(SQLITE_OMIT_SUBQUERY) || !defined(SQLITE_OMIT_VIEW)
 /*
 ** This routine attempts to flatten subqueries in order to speed
 ** execution.  It returns 1 if it makes changes and 0 if no flattening
@@ -3152,9 +3156,9 @@ static int flattenSubquery(
       nSubSrc = pSubSrc->nSrc;
       jointype = pSubitem->jointype;
       sqlite3DeleteTable(pSubitem->pTab);
-      sqlite3_free(pSubitem->zDatabase);
-      sqlite3_free(pSubitem->zName);
-      sqlite3_free(pSubitem->zAlias);
+      sqlite3DbFree(db, pSubitem->zDatabase);
+      sqlite3DbFree(db, pSubitem->zName);
+      sqlite3DbFree(db, pSubitem->zAlias);
       pSubitem->pTab = 0;
       pSubitem->zDatabase = 0;
       pSubitem->zName = 0;
@@ -3251,11 +3255,11 @@ static int flattenSubquery(
   /* Finially, delete what is left of the subquery and return
   ** success.
   */
-  sqlite3SelectDelete(pSub1);
+  sqlite3SelectDelete(db, pSub1);
 
   return 1;
 }
-#endif /* SQLITE_OMIT_VIEW */
+#endif /* !defined(SQLITE_OMIT_SUBQUERY) || !defined(SQLITE_OMIT_VIEW) */
 
 /*
 ** Analyze the SELECT statement passed as an argument to see if it
@@ -3521,33 +3525,6 @@ static void updateAccumulator(Parse *pParse, AggInfo *pAggInfo){
   }
   pAggInfo->directMode = 0;
 }
-
-#if 0
-/*
-** This function is used when a SELECT statement is used to create a
-** temporary table for iterating through when running an INSTEAD OF
-** UPDATE or INSTEAD OF DELETE trigger. 
-**
-** If possible, the SELECT statement is modified so that NULL values
-** are stored in the temporary table for all columns for which the 
-** corresponding bit in argument mask is not set. If mask takes the
-** special value 0xffffffff, then all columns are populated.
-*/
-void sqlite3SelectMask(Parse *pParse, Select *p, u32 mask){
-  if( p && !p->pPrior && !p->isDistinct && mask!=0xffffffff ){
-    ExprList *pEList;
-    int i;
-    sqlite3SelectResolve(pParse, p, 0);
-    pEList = p->pEList;
-    for(i=0; pEList && i<pEList->nExpr && i<32; i++){
-      if( !(mask&((u32)1<<i)) ){
-        sqlite3ExprDelete(pEList->a[i].pExpr);
-        pEList->a[i].pExpr = sqlite3Expr(pParse->db, TK_NULL, 0, 0, 0);
-      }
-    }
-  }
-}
-#endif
 
 /*
 ** Generate code for the given SELECT statement.
@@ -4017,12 +3994,20 @@ int sqlite3Select(
           struct AggInfo_col *pCol = &sAggInfo.aCol[i];
           if( pCol->iSorterColumn>=j ){
             int r1 = j + regBase;
-            int r2 = sqlite3ExprCodeGetColumn(pParse, 
+#ifndef NDEBUG
+            int r2 = 
+#endif
+                     sqlite3ExprCodeGetColumn(pParse, 
                                pCol->pTab, pCol->iColumn, pCol->iTable, r1, 0);
-            if( r1!=r2 ){
-              sqlite3VdbeAddOp2(v, OP_SCopy, r2, r1);
-            }
             j++;
+
+            /* sAggInfo.aCol[] only contains one entry per column.  So
+            ** The reference to pCol->iColumn,pCol->iTable must have been
+            ** the first reference to that column.  Hence, 
+            ** sqliteExprCodeGetColumn is guaranteed to put the result in
+            ** the column requested. 
+            */
+            assert( r1==r2 );
           }
         }
         regRecord = sqlite3GetTempReg(pParse);
@@ -4141,7 +4126,7 @@ int sqlite3Select(
       resetAccumulator(pParse, &sAggInfo);
       pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, &pMinMax, flag);
       if( pWInfo==0 ){
-        sqlite3ExprListDelete(pDel);
+        sqlite3ExprListDelete(db, pDel);
         goto select_end;
       }
       updateAccumulator(pParse, &sAggInfo);
@@ -4158,7 +4143,7 @@ int sqlite3Select(
       selectInnerLoop(pParse, p, p->pEList, 0, 0, 0, -1, 
                       pDest, addrEnd, addrEnd);
 
-      sqlite3ExprListDelete(pDel);
+      sqlite3ExprListDelete(db, pDel);
     }
     sqlite3VdbeResolveLabel(v, addrEnd);
     
@@ -4205,8 +4190,8 @@ select_end:
     generateColumnNames(pParse, pTabList, pEList);
   }
 
-  sqlite3_free(sAggInfo.aCol);
-  sqlite3_free(sAggInfo.aFunc);
+  sqlite3DbFree(db, sAggInfo.aCol);
+  sqlite3DbFree(db, sAggInfo.aFunc);
   return rc;
 }
 

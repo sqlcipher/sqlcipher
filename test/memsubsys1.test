@@ -11,7 +11,7 @@
 #
 # This file contains tests of the memory allocation subsystem
 #
-# $Id: memsubsys1.test,v 1.4 2008/07/12 14:52:20 drh Exp $
+# $Id: memsubsys1.test,v 1.8 2008/08/04 20:13:27 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -26,6 +26,7 @@ proc build_test_db {testname pragmas} {
   catch {db close}
   file delete -force test.db test.db-journal
   sqlite3 db test.db
+  sqlite3_db_config_lookaside db 0 0 0
   db eval $pragmas
   db eval {
     CREATE TABLE t1(x, y);
@@ -49,6 +50,7 @@ proc build_test_db {testname pragmas} {
 #
 db close
 sqlite3_shutdown
+sqlite3_config_lookaside 0 0
 sqlite3_initialize
 build_test_db memsubsys1-1 {PRAGMA page_size=1024}
 do_test memsubsys1-1.3 {
@@ -75,7 +77,7 @@ do_test memsubsys1-2.3 {
 } $max_pagecache
 do_test memsubsys1-2.4 {
   set pg_used [lindex [sqlite3_status SQLITE_STATUS_PAGECACHE_USED 0] 2]
-} 20
+} 19
 do_test memsubsys1-2.5 {
   set s_used [lindex [sqlite3_status SQLITE_STATUS_SCRATCH_USED 0] 2]
 } 0
@@ -109,7 +111,7 @@ do_test memsubsys1-3.2.3 {
 } 2048
 do_test memsubsys1-3.2.4 {
   set pg_used [lindex [sqlite3_status SQLITE_STATUS_PAGECACHE_USED 0] 2]
-} 20
+} 19
 do_test memsubsys1-3.2.5 {
   set s_used [lindex [sqlite3_status SQLITE_STATUS_SCRATCH_USED 0] 2]
 } 0
@@ -125,7 +127,7 @@ build_test_db memsubsys1-4 {PRAGMA page_size=1024}
 #show_memstats
 do_test memsubsys1-4.3 {
   set pg_used [lindex [sqlite3_status SQLITE_STATUS_PAGECACHE_USED 0] 2]
-} 50
+} 49
 do_test memsubsys1-4.4 {
   set pg_ovfl [lindex [sqlite3_status SQLITE_STATUS_PAGECACHE_OVERFLOW 0] 2]
   set pg_used [lindex [sqlite3_status SQLITE_STATUS_PAGECACHE_USED 0] 2]
@@ -133,7 +135,7 @@ do_test memsubsys1-4.4 {
 } $max_pagecache
 do_test memsubsys1-4.5 {
   set maxreq [lindex [sqlite3_status SQLITE_STATUS_MALLOC_SIZE 0] 2]
-  expr {$maxreq<4096}
+  expr {$maxreq<7000}
 } 1
 do_test memsubsys1-4.6 {
   set s_used [lindex [sqlite3_status SQLITE_STATUS_SCRATCH_USED 0] 2]
@@ -151,7 +153,7 @@ build_test_db memsubsys1-5 {PRAGMA page_size=4096}
 #show_memstats
 do_test memsubsys1-5.3 {
   set pg_used [lindex [sqlite3_status SQLITE_STATUS_PAGECACHE_USED 0] 2]
-} 24
+} 23
 do_test memsubsys1-5.4 {
   set maxreq [lindex [sqlite3_status SQLITE_STATUS_MALLOC_SIZE 0] 2]
   expr {$maxreq>4096}
@@ -176,7 +178,7 @@ build_test_db memsubsys1-6 {PRAGMA page_size=4096}
 #show_memstats
 do_test memsubsys1-6.3 {
   set pg_used [lindex [sqlite3_status SQLITE_STATUS_PAGECACHE_USED 0] 2]
-} 24
+} 23
 do_test memsubsys1-6.4 {
   set maxreq [lindex [sqlite3_status SQLITE_STATUS_MALLOC_SIZE 0] 2]
 } 4096
@@ -211,7 +213,7 @@ do_test memsubsys1-7.4 {
 } 0
 do_test memsubsys1-7.5 {
   set maxreq [lindex [sqlite3_status SQLITE_STATUS_MALLOC_SIZE 0] 2]
-  expr {$maxreq<2500}
+  expr {$maxreq<4000}
 } 1
 do_test memsubsys1-7.6 {
   set s_used [lindex [sqlite3_status SQLITE_STATUS_SCRATCH_USED 0] 2]
@@ -224,6 +226,7 @@ db close
 sqlite3_shutdown
 sqlite3_config_pagecache 0 0
 sqlite3_config_scratch 0 0
+sqlite3_config_lookaside 100 500
 sqlite3_initialize
 autoinstall_test_functions
 finish_test
