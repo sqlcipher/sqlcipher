@@ -65,7 +65,7 @@ static int codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *out,
     *nOut = half_n;
     
     memset(key, 0, half_n); /* cleanup temporary key data */
-    sqlite3_free(key);
+    sqlite3DbFree(db, key);
   /* otherwise the key is provided as a string so hash it to get key data */
   } else {
     codec_passphrase_hash(zKey, nKey, out, nOut);
@@ -165,7 +165,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     codec_ctx *ctx;
     int rc;
 
-    ctx = sqlite3DbMallocRaw(db, sizeof(codec_ctx));
+    ctx = sqlite3Malloc(sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
     memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
  
@@ -174,7 +174,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* pre-allocate a page buffer of PageSize bytes. This will
        be used as a persistent buffer for encryption and decryption 
        operations to avoid overhead of multiple memory allocations*/
-    ctx->buffer = sqlite3DbMallocRaw(db, sqlite3BtreeGetPageSize(ctx->pBt));
+    ctx->buffer = sqlite3Malloc(sqlite3BtreeGetPageSize(ctx->pBt));
     if(ctx->buffer == NULL) return SQLITE_NOMEM;
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
@@ -184,7 +184,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
        raw key data at this point */
     assert(nKey == ctx->key_sz);
     
-    ctx->key = sqlite3DbMallocRaw(db, ctx->key_sz);
+    ctx->key = sqlite3Malloc(ctx->key_sz);
     if(ctx->key == NULL) return SQLITE_NOMEM;
     memcpy(ctx->key, zKey, nKey);
 
@@ -225,7 +225,7 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
   if(db && pKey && nKey) {
     int i, prepared_key_sz;
     int key_sz =  EVP_CIPHER_key_length(CIPHER);
-    void *key = sqlite3DbMallocRaw(db, key_sz);
+    void *key = sqlite3Malloc(key_sz);
     if(key == NULL) return SQLITE_NOMEM;
     
     codec_prepare_key(db, pKey, nKey, key, &prepared_key_sz);
@@ -258,7 +258,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
   if(db && pKey && nKey) {
     int i, prepared_key_sz;
     int key_sz =  EVP_CIPHER_key_length(CIPHER);
-    void *key = sqlite3DbMallocRaw(db, key_sz);
+    void *key = sqlite3Malloc(key_sz);
     if(key == NULL) return SQLITE_NOMEM;
 
     codec_prepare_key(db, pKey, nKey, key, &prepared_key_sz);
