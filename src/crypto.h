@@ -39,5 +39,8 @@
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
 
+int sqlite3pager_get_codec(Pager *pPager, void **ctx);
+int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
+
 #endif
 /* END CRYPTO */

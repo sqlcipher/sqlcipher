@@ -40,8 +40,6 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
-extern int sqlite3pager_get_codec(Pager *pPager, void * ctx);
-
 typedef struct {
   int key_sz;
   int iv_sz;
