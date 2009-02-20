@@ -11,7 +11,7 @@
 *************************************************************************
 ** This file contains the C functions that implement mutexes for pthreads
 **
-** $Id: mutex_unix.c,v 1.13 2008/07/16 12:33:24 drh Exp $
+** $Id: mutex_unix.c,v 1.16 2008/12/08 18:19:18 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -61,7 +61,7 @@ struct sqlite3_mutex {
 ** make sure no assert() statements are evaluated and hence these
 ** routines are never called.
 */
-#ifndef NDEBUG
+#if !defined(NDEBUG) || defined(SQLITE_DEBUG)
 static int pthreadMutexHeld(sqlite3_mutex *p){
   return (p->nRef!=0 && pthread_equal(p->owner, pthread_self()));
 }
@@ -157,7 +157,7 @@ static sqlite3_mutex *pthreadMutexAlloc(int iType){
     }
     default: {
       assert( iType-2 >= 0 );
-      assert( iType-2 < sizeof(staticMutexes)/sizeof(staticMutexes[0]) );
+      assert( iType-2 < ArraySize(staticMutexes) );
       p = &staticMutexes[iType-2];
       p->id = iType;
       break;
@@ -316,6 +316,9 @@ sqlite3_mutex_methods *sqlite3DefaultMutex(void){
 #ifdef SQLITE_DEBUG
     pthreadMutexHeld,
     pthreadMutexNotheld
+#else
+    0,
+    0
 #endif
   };
 

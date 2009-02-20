@@ -12,7 +12,7 @@
 # of these tests is exclusive access mode (i.e. the thing activated by 
 # "PRAGMA locking_mode = EXCLUSIVE").
 #
-# $Id: exclusive.test,v 1.8 2008/04/17 14:16:42 drh Exp $
+# $Id: exclusive.test,v 1.11 2008/12/22 11:43:36 danielk1977 Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -29,15 +29,6 @@ file delete -force test3.db
 file delete -force test4.db-journal
 file delete -force test4.db
 
-# The locking mode for the TEMP table is always "exclusive" for
-# on-disk tables and "normal" for in-memory tables.
-#
-if {[info exists TEMP_STORE] && $TEMP_STORE>=2} {
-  set temp_mode normal
-} else {
-  set temp_mode exclusive
-}
-
 #----------------------------------------------------------------------
 # Test cases exclusive-1.X test the PRAGMA logic.
 #
@@ -47,7 +38,7 @@ do_test exclusive-1.0 {
     pragma main.locking_mode;
     pragma temp.locking_mode;
   } 
-} [list normal normal $temp_mode]
+} [list normal normal exclusive]
 do_test exclusive-1.1 {
   execsql {
     pragma locking_mode = exclusive;
@@ -59,7 +50,7 @@ do_test exclusive-1.2 {
     pragma main.locking_mode;
     pragma temp.locking_mode;
   } 
-} [list exclusive exclusive $temp_mode]
+} [list exclusive exclusive exclusive]
 do_test exclusive-1.3 {
   execsql {
     pragma locking_mode = normal;
@@ -71,7 +62,7 @@ do_test exclusive-1.4 {
     pragma main.locking_mode;
     pragma temp.locking_mode;
   } 
-} [list normal normal $temp_mode]
+} [list normal normal exclusive]
 do_test exclusive-1.5 {
   execsql {
     pragma locking_mode = invalid;
@@ -83,7 +74,7 @@ do_test exclusive-1.6 {
     pragma main.locking_mode;
     pragma temp.locking_mode;
   } 
-} [list normal normal $temp_mode]
+} [list normal normal exclusive]
 ifcapable attach {
   do_test exclusive-1.7 {
     execsql {
@@ -104,7 +95,7 @@ ifcapable attach {
       pragma temp.locking_mode;
       pragma aux.locking_mode;
     }
-  } [list normal $temp_mode exclusive]
+  } [list normal exclusive exclusive]
   do_test exclusive-1.9 {
     execsql {
       pragma locking_mode;
@@ -140,7 +131,7 @@ ifcapable attach {
       pragma aux.locking_mode;
       pragma aux2.locking_mode;
     }
-  } [list normal $temp_mode normal normal]
+  } [list normal exclusive normal normal]
   do_test exclusive-1.13 {
     execsql {
       ATTACH 'test4.db' as aux3;
@@ -152,7 +143,7 @@ ifcapable attach {
       pragma aux2.locking_mode;
       pragma aux3.locking_mode;
     }
-  } [list normal $temp_mode normal normal normal]
+  } [list normal exclusive normal normal normal]
   
   do_test exclusive-1.99 {
     execsql {
@@ -257,58 +248,64 @@ db2 close
 # truncates instead of deletes the journal file when committing 
 # a transaction.
 #
-proc filestate {fname} {
-  set exists 0
-  set content 0
-  if {[file exists $fname]} {
-    set exists 1
-    set hdr [hexio_read $fname 0 28]
-    set content \
-      [expr {$hdr!="00000000000000000000000000000000000000000000000000000000"}]
+# These tests are not run on windows because the windows backend
+# opens the journal file for exclusive access, preventing its contents 
+# from being inspected externally.
+#
+if {$tcl_platform(platform) != "windows"} {
+  proc filestate {fname} {
+    set exists 0
+    set content 0
+    if {[file exists $fname]} {
+      set exists 1
+      set hdr [hexio_read $fname 0 28]
+      set content \
+       [expr {$hdr!="00000000000000000000000000000000000000000000000000000000"}]
+    }
+    list $exists $content
   }
-  list $exists $content
+  do_test exclusive-3.0 {
+    filestate test.db-journal
+  } {0 0}
+  do_test exclusive-3.1 {
+    execsql {
+      PRAGMA locking_mode = exclusive;
+      BEGIN;
+      DELETE FROM abc;
+    }
+    filestate test.db-journal
+  } {1 1}
+  do_test exclusive-3.2 {
+    execsql {
+      COMMIT;
+    }
+    filestate test.db-journal
+  } {1 0}
+  do_test exclusive-3.3 {
+    execsql {
+      INSERT INTO abc VALUES('A', 'B', 'C');
+      SELECT * FROM abc;
+    }
+  } {A B C}
+  do_test exclusive-3.4 {
+    execsql {
+      BEGIN;
+      UPDATE abc SET a = 1, b = 2, c = 3;
+      ROLLBACK;
+      SELECT * FROM abc;
+    }
+  } {A B C}
+  do_test exclusive-3.5 {
+    filestate test.db-journal
+  } {1 0}
+  do_test exclusive-3.6 {
+    execsql {
+      PRAGMA locking_mode = normal;
+      SELECT * FROM abc;
+    }
+    filestate test.db-journal
+  } {0 0}
 }
-do_test exclusive-3.0 {
-  filestate test.db-journal
-} {0 0}
-do_test exclusive-3.1 {
-  execsql {
-    PRAGMA locking_mode = exclusive;
-    BEGIN;
-    DELETE FROM abc;
-  }
-  filestate test.db-journal
-} {1 1}
-do_test exclusive-3.2 {
-  execsql {
-    COMMIT;
-  }
-  filestate test.db-journal
-} {1 0}
-do_test exclusive-3.3 {
-  execsql {
-    INSERT INTO abc VALUES('A', 'B', 'C');
-    SELECT * FROM abc;
-  }
-} {A B C}
-do_test exclusive-3.4 {
-  execsql {
-    BEGIN;
-    UPDATE abc SET a = 1, b = 2, c = 3;
-    ROLLBACK;
-    SELECT * FROM abc;
-  }
-} {A B C}
-do_test exclusive-3.5 {
-  filestate test.db-journal
-} {1 0}
-do_test exclusive-3.6 {
-  execsql {
-    PRAGMA locking_mode = normal;
-    SELECT * FROM abc;
-  }
-  filestate test.db-journal
-} {0 0}
 
 #----------------------------------------------------------------------
 # Tests exclusive-4.X - test that rollback works correctly when
@@ -396,6 +393,17 @@ do_test exclusive-4.5 {
 db close
 sqlite db test.db
 
+# if we're using proxy locks, we use 3 filedescriptors for a db
+# that is open but NOT writing changes, normally
+# sqlite uses 1 (proxy locking adds the conch and the local lock)
+set using_proxy 0
+foreach {name value} [array get env SQLITE_FORCE_PROXY_LOCKING] {
+  set using_proxy $value
+}
+set extrafds 0
+if {$using_proxy!=0} {
+  set extrafds 2
+} 
 
 do_test exclusive-5.0 {
   execsql {
@@ -408,6 +416,7 @@ do_test exclusive-5.0 {
 do_test exclusive-5.1 {
   # Three files are open: The db, journal and statement-journal.
   set sqlite_open_file_count
+  expr $sqlite_open_file_count-$extrafds
 } {3}
 do_test exclusive-5.2 {
   execsql {
@@ -415,6 +424,7 @@ do_test exclusive-5.2 {
   }
   # One file open: the db.
   set sqlite_open_file_count
+  expr $sqlite_open_file_count-$extrafds
 } {1}
 do_test exclusive-5.3 {
   execsql {
@@ -424,6 +434,7 @@ do_test exclusive-5.3 {
   }
   # Two files open: the db and journal.
   set sqlite_open_file_count
+  expr $sqlite_open_file_count-$extrafds
 } {2}
 do_test exclusive-5.4 {
   execsql {
@@ -431,6 +442,7 @@ do_test exclusive-5.4 {
   }
   # Three files are open: The db, journal and statement-journal.
   set sqlite_open_file_count
+  expr $sqlite_open_file_count-$extrafds
 } {3}
 do_test exclusive-5.5 {
   execsql {
@@ -438,6 +450,7 @@ do_test exclusive-5.5 {
   }
   # Three files are still open: The db, journal and statement-journal.
   set sqlite_open_file_count
+  expr $sqlite_open_file_count-$extrafds
 } {3}
 do_test exclusive-5.6 {
   execsql {
@@ -448,6 +461,7 @@ do_test exclusive-5.6 {
 do_test exclusive-5.7 {
   # Just the db open.
   set sqlite_open_file_count
+  expr $sqlite_open_file_count-$extrafds
 } {1}
 
 finish_test

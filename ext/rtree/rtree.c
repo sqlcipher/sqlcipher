@@ -12,7 +12,7 @@
 ** This file contains code for implementations of the r-tree and r*-tree
 ** algorithms packaged as an SQLite virtual table module.
 **
-** $Id: rtree.c,v 1.7 2008/07/16 14:43:35 drh Exp $
+** $Id: rtree.c,v 1.12 2008/12/22 15:04:32 danielk1977 Exp $
 */
 
 #if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_RTREE)
@@ -226,8 +226,12 @@ struct RtreeCell {
   RtreeCoord aCoord[RTREE_MAX_DIMENSIONS*2];
 };
 
-#define MAX(x,y) ((x) < (y) ? (y) : (x))
-#define MIN(x,y) ((x) > (y) ? (y) : (x))
+#ifndef MAX
+# define MAX(x,y) ((x) < (y) ? (y) : (x))
+#endif
+#ifndef MIN
+# define MIN(x,y) ((x) > (y) ? (y) : (x))
+#endif
 
 /*
 ** Functions to deserialize a 16 bit integer, 32 bit real number and
@@ -396,7 +400,8 @@ nodeAcquire(
   */
   if( (pNode = nodeHashLookup(pRtree, iNode)) ){
     assert( !pParent || !pNode->pParent || pNode->pParent==pParent );
-    if( pParent ){
+    if( pParent && !pNode->pParent ){
+      nodeReference(pParent);
       pNode->pParent = pParent;
     }
     pNode->nRef++;
@@ -600,7 +605,7 @@ static void nodeGetCell(
 ** the virtual table module xCreate() and xConnect() methods.
 */
 static int rtreeInit(
-  sqlite3 *, void *, int, const char *const*, sqlite3_vtab **, char **, int, int
+  sqlite3 *, void *, int, const char *const*, sqlite3_vtab **, char **, int
 );
 
 /* 
@@ -613,7 +618,7 @@ static int rtreeCreate(
   sqlite3_vtab **ppVtab,
   char **pzErr
 ){
-  return rtreeInit(db, pAux, argc, argv, ppVtab, pzErr, 1, (int)pAux);
+  return rtreeInit(db, pAux, argc, argv, ppVtab, pzErr, 1);
 }
 
 /* 
@@ -626,7 +631,7 @@ static int rtreeConnect(
   sqlite3_vtab **ppVtab,
   char **pzErr
 ){
-  return rtreeInit(db, pAux, argc, argv, ppVtab, pzErr, 0, (int)pAux);
+  return rtreeInit(db, pAux, argc, argv, ppVtab, pzErr, 0);
 }
 
 /*
@@ -1116,6 +1121,13 @@ static int rtreeBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
       pIdxInfo->idxNum = 1;
       pIdxInfo->aConstraintUsage[ii].argvIndex = 1;
       pIdxInfo->aConstraintUsage[jj].omit = 1;
+
+      /* This strategy involves a two rowid lookups on an B-Tree structures
+      ** and then a linear search of an R-Tree node. This should be 
+      ** considered almost as quick as a direct rowid lookup (for which 
+      ** sqlite uses an internal cost of 0.0).
+      */ 
+      pIdxInfo->estimatedCost = 10.0;
       return SQLITE_OK;
     }
 
@@ -1169,6 +1181,8 @@ static int rtreeBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
   if( iIdx>0 && 0==(pIdxInfo->idxStr = sqlite3_mprintf("%s", zIdxStr)) ){
     return SQLITE_NOMEM;
   }
+  assert( iIdx>=0 );
+  pIdxInfo->estimatedCost = (2000000.0 / (double)(iIdx + 1));
   return rc;
 }
 
@@ -1213,6 +1227,25 @@ static void cellUnion(Rtree *pRtree, RtreeCell *p1, RtreeCell *p2){
       p1->aCoord[ii+1].i = MAX(p1->aCoord[ii+1].i, p2->aCoord[ii+1].i);
     }
   }
+}
+
+/*
+** Return true if the area covered by p2 is a subset of the area covered
+** by p1. False otherwise.
+*/
+static int cellContains(Rtree *pRtree, RtreeCell *p1, RtreeCell *p2){
+  int ii;
+  int isInt = (pRtree->eCoordType==RTREE_COORD_INT32);
+  for(ii=0; ii<(pRtree->nDim*2); ii+=2){
+    RtreeCoord *a1 = &p1->aCoord[ii];
+    RtreeCoord *a2 = &p2->aCoord[ii];
+    if( (!isInt && (a2[0].f<a1[0].f || a2[1].f>a1[1].f)) 
+     || ( isInt && (a2[0].i<a1[0].i || a2[1].i>a1[1].i)) 
+    ){
+      return 0;
+    }
+  }
+  return 1;
 }
 
 /*
@@ -1381,7 +1414,7 @@ static void AdjustTree(
     int iCell = nodeParentIndex(pRtree, p);
 
     nodeGetCell(pRtree, pParent, iCell, &cell);
-    if( cellGrowth(pRtree, &cell, pCell)>0.0 ){
+    if( !cellContains(pRtree, &cell, pCell) ){
       cellUnion(pRtree, &cell, pCell);
       nodeOverwriteCell(pRtree, pParent, &cell, iCell);
     }
@@ -2623,18 +2656,18 @@ static int getPageSize(sqlite3 *db, const char *zDb, int *piPageSize){
 */
 static int rtreeInit(
   sqlite3 *db,                        /* Database connection */
-  void *pAux,                         /* Pointer to head of rtree list */
+  void *pAux,                         /* One of the RTREE_COORD_* constants */
   int argc, const char *const*argv,   /* Parameters to CREATE TABLE statement */
   sqlite3_vtab **ppVtab,              /* OUT: New virtual table */
   char **pzErr,                       /* OUT: Error message, if any */
-  int isCreate,                       /* True for xCreate, false for xConnect */
-  int eCoordType                      /* One of the RTREE_COORD_* constants */
+  int isCreate                        /* True for xCreate, false for xConnect */
 ){
   int rc = SQLITE_OK;
   int iPageSize = 0;
   Rtree *pRtree;
   int nDb;              /* Length of string argv[1] */
   int nName;            /* Length of string argv[2] */
+  int eCoordType = (int)pAux;
 
   const char *aErrMsg[] = {
     0,                                                    /* 0 */

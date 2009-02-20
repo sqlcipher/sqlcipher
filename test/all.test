@@ -10,19 +10,20 @@
 #***********************************************************************
 # This file runs all tests.
 #
-# $Id: all.test,v 1.57 2008/07/14 15:11:20 drh Exp $
+# $Id: all.test,v 1.62 2009/01/06 18:43:51 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 rename finish_test really_finish_test
 proc finish_test {} {
-  # no-op
+  catch {db close}
+  show_memstats
 }
 
 if {[file exists ./sqlite_test_count]} {
   set COUNT [exec cat ./sqlite_test_count]
 } else {
-  set COUNT 3
+  set COUNT 1
 }
 
 if {[llength $argv]>0} {
@@ -63,7 +64,6 @@ lappend EXCLUDE malloc.test            ;# Run seperately later.
 lappend EXCLUDE misuse.test            ;# Run seperately later.
 lappend EXCLUDE memleak.test           ;# Alternate test driver script
 lappend EXCLUDE permutations.test      ;# Run seperately later.
-lappend EXCLUDE fuzz.test
 lappend EXCLUDE soak.test              ;# Takes a very long time (default 1 hr)
 lappend EXCLUDE fts3.test              ;# Wrapper for muliple fts3*.tests
 lappend EXCLUDE mallocAll.test         ;# Wrapper for running all malloc tests
@@ -75,11 +75,6 @@ set INCLUDE {
 }
 
 for {set Counter 0} {$Counter<$COUNT && $nErr==0} {incr Counter} {
-  if {$Counter%2} {
-    set ::SETUP_SQL {PRAGMA default_synchronous=off;}
-  } else {
-    catch {unset ::SETUP_SQL}
-  }
   foreach testfile [lsort -dictionary [glob $testdir/*.test]] {
     set tail [file tail $testfile]
     if {[lsearch -exact $EXCLUDE $tail]>=0} continue

@@ -10,7 +10,7 @@
 **
 *************************************************************************
 **
-** $Id: test_onefile.c,v 1.9 2008/06/26 10:54:12 danielk1977 Exp $
+** $Id: test_onefile.c,v 1.11 2009/02/10 18:54:03 danielk1977 Exp $
 **
 ** OVERVIEW:
 **
@@ -168,7 +168,7 @@ static int fsAccess(sqlite3_vfs*, const char *zName, int flags, int *);
 static int fsFullPathname(sqlite3_vfs*, const char *zName, int nOut,char *zOut);
 static void *fsDlOpen(sqlite3_vfs*, const char *zFilename);
 static void fsDlError(sqlite3_vfs*, int nByte, char *zErrMsg);
-static void *fsDlSym(sqlite3_vfs*,void*, const char *zSymbol);
+static void (*fsDlSym(sqlite3_vfs*,void*, const char *zSymbol))(void);
 static void fsDlClose(sqlite3_vfs*, void*);
 static int fsRandomness(sqlite3_vfs*, int nByte, char *zOut);
 static int fsSleep(sqlite3_vfs*, int microseconds);
@@ -604,6 +604,7 @@ static int fsOpen(
   for(; pReal && strncmp(pReal->zName, zName, nName); pReal=pReal->pNext);
 
   if( !pReal ){
+    int real_flags = (flags&~(SQLITE_OPEN_MAIN_DB))|SQLITE_OPEN_TEMP_DB;
     sqlite3_int64 size;
     sqlite3_file *pRealFile;
     sqlite3_vfs *pParent = pFsVfs->pParent;
@@ -618,7 +619,7 @@ static int fsOpen(
     pReal->zName = zName;
     pReal->pFile = (sqlite3_file *)(&pReal[1]);
 
-    rc = pParent->xOpen(pParent, zName, pReal->pFile, flags, pOutFlags);
+    rc = pParent->xOpen(pParent, zName, pReal->pFile, real_flags, pOutFlags);
     if( rc!=SQLITE_OK ){
       goto open_out;
     }
@@ -765,9 +766,9 @@ static void fsDlError(sqlite3_vfs *pVfs, int nByte, char *zErrMsg){
 /*
 ** Return a pointer to the symbol zSymbol in the dynamic library pHandle.
 */
-static void *fsDlSym(sqlite3_vfs *pVfs, void *pHandle, const char *zSymbol){
+static void (*fsDlSym(sqlite3_vfs *pVfs, void *pH, const char *zSym))(void){
   sqlite3_vfs *pParent = ((fs_vfs_t *)pVfs)->pParent;
-  return pParent->xDlSym(pParent, pHandle, zSymbol);
+  return pParent->xDlSym(pParent, pH, zSym);
 }
 
 /*

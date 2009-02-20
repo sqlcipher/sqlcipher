@@ -11,7 +11,7 @@
 # This file implements regression tests for SQLite library. The focus
 # of these tests is the journal mode pragma.
 #
-# $Id: jrnlmode.test,v 1.5 2008/08/02 20:09:37 drh Exp $
+# $Id: jrnlmode.test,v 1.12 2009/01/11 05:54:40 danielk1977 Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -19,6 +19,18 @@ source $testdir/tester.tcl
 ifcapable {!pager_pragmas} {
   finish_test
   return
+}
+
+if {[info exists TEMP_STORE] && $TEMP_STORE>=2} {
+  set temp_persist memory
+  set temp_delete memory
+  set temp_truncate memory
+  set temp_off memory
+} else {
+  set temp_persist persist
+  set temp_delete delete
+  set temp_truncate truncate
+  set temp_off off
 }
 
 #----------------------------------------------------------------------
@@ -30,7 +42,7 @@ do_test jrnlmode-1.0 {
     PRAGMA main.journal_mode;
     PRAGMA temp.journal_mode;
   } 
-} [list delete delete delete]
+} [list delete delete $temp_delete]
 do_test jrnlmode-1.1 {
   execsql {
     PRAGMA journal_mode = persist;
@@ -42,7 +54,7 @@ do_test jrnlmode-1.2 {
     PRAGMA main.journal_mode;
     PRAGMA temp.journal_mode;
   } 
-} [list persist persist persist]
+} [list persist persist $temp_persist]
 do_test jrnlmode-1.4 {
   execsql {
     PRAGMA journal_mode = off;
@@ -54,7 +66,7 @@ do_test jrnlmode-1.5 {
     PRAGMA main.journal_mode;
     PRAGMA temp.journal_mode;
   } 
-} {off off off}
+} [list off off $temp_off]
 do_test jrnlmode-1.6 {
   execsql {
     PRAGMA journal_mode = delete;
@@ -66,7 +78,19 @@ do_test jrnlmode-1.7 {
     PRAGMA main.journal_mode;
     PRAGMA temp.journal_mode;
   } 
-} {delete delete delete}
+} [list delete delete $temp_delete]
+do_test jrnlmode-1.7.1 {
+  execsql {
+    PRAGMA journal_mode = truncate;
+  } 
+} {truncate}
+do_test jrnlmode-1.7.2 {
+  execsql {
+    PRAGMA journal_mode;
+    PRAGMA main.journal_mode;
+    PRAGMA temp.journal_mode;
+  } 
+} [list truncate truncate $temp_truncate]
 do_test jrnlmode-1.8 {
   execsql {
     PRAGMA journal_mode = off;
@@ -76,24 +100,24 @@ do_test jrnlmode-1.8 {
 ifcapable attach {
   do_test jrnlmode-1.9 {
     execsql {
-      PRAGMA journal_mode = persist;
+      PRAGMA journal_mode = PERSIST;
       ATTACH ':memory:' as aux1;
     }
     execsql {
       PRAGMA main.journal_mode;
       PRAGMA aux1.journal_mode;
     }
-  } {persist persist}
+  } {persist memory}
   do_test jrnlmode-1.10 {
     execsql {
-      PRAGMA main.journal_mode = off;
+      PRAGMA main.journal_mode = OFF;
     }
     execsql {
       PRAGMA main.journal_mode;
       PRAGMA temp.journal_mode;
       PRAGMA aux1.journal_mode;
     }
-  } {off persist persist}
+  } [list off $temp_persist memory]
   do_test jrnlmode-1.11 {
     execsql {
       PRAGMA journal_mode;
@@ -108,18 +132,19 @@ ifcapable attach {
       PRAGMA aux1.journal_mode;
       PRAGMA aux2.journal_mode;
     }
-  } {off persist persist}
-  do_test jrnlmode-1.11 {
+  } {off memory memory}
+  do_test jrnlmode-1.13 {
+    # The journal-mode used by in-memory databases cannot be changed.
     execsql {
-      PRAGMA aux1.journal_mode = delete;
+      PRAGMA aux1.journal_mode = DELETE;
     }
     execsql {
       PRAGMA main.journal_mode;
       PRAGMA aux1.journal_mode;
       PRAGMA aux2.journal_mode;
     }
-  } {off delete persist}
-  do_test jrnlmode-1.12 {
+  } {off memory memory}
+  do_test jrnlmode-1.14 {
     execsql {
       PRAGMA journal_mode = delete;
     }
@@ -129,8 +154,8 @@ ifcapable attach {
       PRAGMA aux1.journal_mode;
       PRAGMA aux2.journal_mode;
     }
-  } {delete delete delete delete}
-  do_test jrnlmode-1.13 {
+  } [list delete $temp_delete memory memory]
+  do_test jrnlmode-1.15 {
     execsql {
       ATTACH ':memory:' as aux3;
     }
@@ -141,8 +166,20 @@ ifcapable attach {
       PRAGMA aux2.journal_mode;
       PRAGMA aux3.journal_mode;
     }
-  } {delete delete delete delete delete}
-  
+  } [list delete $temp_delete memory memory memory]
+  do_test jrnlmode-1.16 {
+    execsql {
+      PRAGMA journal_mode = TRUNCATE;
+    }
+    execsql {
+      PRAGMA main.journal_mode;
+      PRAGMA temp.journal_mode;
+      PRAGMA aux1.journal_mode;
+      PRAGMA aux2.journal_mode;
+      PRAGMA aux3.journal_mode;
+    }
+  } [list truncate $temp_truncate memory memory memory]
+
   do_test jrnlmode-1.99 {
     execsql {
       DETACH aux1;
@@ -382,6 +419,69 @@ ifcapable pragma {
     set sz [file size test.db-journal]
     expr {$sz>=$journalsize}
   } {1}
+
+  # Test a size-limit of 0.
+  #
+  do_test jrnlmode-5.20 {
+    execsql {
+      PRAGMA journal_size_limit = 0;
+      BEGIN;
+      UPDATE t1 SET a = randomblob(1000);
+    }
+  } {0}
+  do_test jrnlmode-5.21 {
+    expr {[file size test.db-journal] > 1024}
+  } {1}
+  do_test jrnlmode-5.22 {
+    execsql COMMIT
+    list [file exists test.db-journal] [file size test.db-journal]
+  } {1 0}
+}
+
+ifcapable pragma {
+  # These tests are not run as part of the "journaltest" permutation,
+  # as the test_journal.c layer is incompatible with in-memory journaling.
+  if {[catch {set ::permutations_test_prefix} z] || $z ne "journaltest"} {
+
+    do_test jrnlmode-6.1 {
+      execsql {
+        PRAGMA journal_mode = truncate;
+        CREATE TABLE t4(a, b);
+        BEGIN;
+          INSERT INTO t4 VALUES(1, 2);
+          PRAGMA journal_mode = memory;
+      }
+    } {truncate memory}
+    do_test jrnlmode-6.2 {
+      file exists test.db-journal
+    } {1}
+    do_test jrnlmode-6.3 {
+      execsql {
+        COMMIT;
+        SELECT * FROM t4;
+      }
+    } {1 2}
+    do_test jrnlmode-6.4 {
+      file exists test.db-journal
+    } {0}
+    do_test jrnlmode-6.5 {
+      execsql {
+        BEGIN;
+          INSERT INTO t4 VALUES(3, 4);
+      }
+      file exists test.db-journal
+    } {0}
+    do_test jrnlmode-6.7 {
+      execsql {
+        COMMIT;
+        SELECT * FROM t4;
+      }
+    } {1 2 3 4}
+    do_test jrnlmode-6.8 {
+      file exists test.db-journal
+    } {0}
+  }
 }
 
 finish_test
+

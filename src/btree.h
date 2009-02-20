@@ -13,7 +13,7 @@
 ** subsystem.  See comments in the source code for a detailed description
 ** of what each interface routine does.
 **
-** @(#) $Id: btree.h,v 1.102 2008/07/11 21:02:54 drh Exp $
+** @(#) $Id: btree.h,v 1.108 2009/02/03 16:51:25 danielk1977 Exp $
 */
 #ifndef _BTREE_H_
 #define _BTREE_H_
@@ -98,12 +98,13 @@ int sqlite3BtreeCreateTable(Btree*, int*, int flags);
 int sqlite3BtreeIsInTrans(Btree*);
 int sqlite3BtreeIsInStmt(Btree*);
 int sqlite3BtreeIsInReadTrans(Btree*);
+int sqlite3BtreeIsInBackup(Btree*);
 void *sqlite3BtreeSchema(Btree *, int, void(*)(void *));
 int sqlite3BtreeSchemaLocked(Btree *);
 int sqlite3BtreeLockTable(Btree *, int, u8);
+int sqlite3BtreeSavepoint(Btree *, int, int);
 
 const char *sqlite3BtreeGetFilename(Btree *);
-const char *sqlite3BtreeGetDirname(Btree *);
 const char *sqlite3BtreeGetJournalname(Btree *);
 int sqlite3BtreeCopyFile(Btree *, Btree *);
 
@@ -117,12 +118,10 @@ int sqlite3BtreeIncrVacuum(Btree *);
 #define BTREE_LEAFDATA   4    /* Data stored in leaves only.  Implies INTKEY */
 
 int sqlite3BtreeDropTable(Btree*, int, int*);
-int sqlite3BtreeClearTable(Btree*, int);
+int sqlite3BtreeClearTable(Btree*, int, int*);
 int sqlite3BtreeGetMeta(Btree*, int idx, u32 *pValue);
 int sqlite3BtreeUpdateMeta(Btree*, int idx, u32 value);
 void sqlite3BtreeTripAllCursors(Btree*, int);
-
-struct UnpackedRecord;  /* Forward declaration.  Definition in vdbeaux.c. */
 
 int sqlite3BtreeCursor(
   Btree*,                              /* BTree containing table to open */
@@ -137,8 +136,14 @@ int sqlite3BtreeCloseCursor(BtCursor*);
 int sqlite3BtreeMoveto(
   BtCursor*,
   const void *pKey,
-  struct UnpackedRecord *pUnKey,
   i64 nKey,
+  int bias,
+  int *pRes
+);
+int sqlite3BtreeMovetoUnpacked(
+  BtCursor*,
+  UnpackedRecord *pUnKey,
+  i64 intKey,
   int bias,
   int *pRes
 );
@@ -166,6 +171,7 @@ struct Pager *sqlite3BtreePager(Btree*);
 
 int sqlite3BtreePutData(BtCursor*, u32 offset, u32 amt, void*);
 void sqlite3BtreeCacheOverflow(BtCursor *);
+void sqlite3BtreeClearCursor(BtCursor *);
 
 #ifdef SQLITE_TEST
 int sqlite3BtreeCursorInfo(BtCursor*, int*, int);

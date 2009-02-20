@@ -9,17 +9,22 @@
 #
 #***********************************************************************
 #
-# $Id: mutex1.test,v 1.10 2008/07/15 00:27:35 drh Exp $
+# $Id: mutex1.test,v 1.17 2009/01/09 14:29:35 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
+ifcapable !mutex {
+  finish_test
+  return
+}
 if {[info exists tester_do_binarylog]} {
   finish_test
   return
 }
 
 sqlite3_reset_auto_extension
+clear_mutex_counters
 
 proc mutex_counters {varname} {
   upvar $varname var
@@ -96,14 +101,9 @@ set enable_shared_cache [sqlite3_enable_shared_cache 1]
 ifcapable threadsafe {
   foreach {mode mutexes} {
     singlethread {}
-    multithread  {fast static_master static_mem static_prng}
-    serialized   {fast recursive static_master static_mem static_prng}
+    multithread  {fast static_lru static_master static_mem static_prng }
+    serialized  {fast recursive static_lru static_master static_mem static_prng}
   } {
-    ifcapable memorymanage {
-      if {$mode ne "singlethread"} {
-        lappend mutexes static_lru static_lru2 static_mem2
-      }
-    }
 
     do_test mutex1.2.$mode.1 {
       catch {db close}
@@ -114,7 +114,7 @@ ifcapable threadsafe {
     do_test mutex1.2.$mode.2 {
       sqlite3_initialize
       clear_mutex_counters
-      sqlite3 db test.db
+      sqlite3 db test.db -nomutex 0
       catchsql { CREATE TABLE abc(a, b, c) }
       db eval {
         INSERT INTO abc VALUES(1, 2, 3);
@@ -150,6 +150,29 @@ ifcapable threadsafe {
     set counters(recursive)
   } {0}
 }
+
+# Test the sqlite3_db_mutex() function.
+#
+do_test mutex1.4.1 {
+  catch {db close}
+  sqlite3 db test.db
+  enter_db_mutex db
+  db eval {SELECT 1, 2, 3}
+} {1 2 3}
+do_test mutex1.4.2 {
+  leave_db_mutex db
+  db eval {SELECT 1, 2, 3}
+} {1 2 3}
+do_test mutex1.4.3 {
+  catch {db close}
+  sqlite3 db test.db -nomutex 1
+  enter_db_mutex db
+  db eval {SELECT 1, 2, 3}
+} {1 2 3}
+do_test mutex1.4.4 {
+  leave_db_mutex db
+  db eval {SELECT 1, 2, 3}
+} {1 2 3}
 
 do_test mutex1-X {
   catch {db close}

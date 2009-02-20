@@ -11,7 +11,7 @@
 *************************************************************************
 ** This file contains code associated with the ANALYZE command.
 **
-** @(#) $Id: analyze.c,v 1.43 2008/07/28 19:34:53 drh Exp $
+** @(#) $Id: analyze.c,v 1.48 2009/02/13 16:59:53 drh Exp $
 */
 #ifndef SQLITE_OMIT_ANALYZE
 #include "sqliteInt.h"
@@ -33,7 +33,7 @@ static void openStatTable(
   sqlite3 *db = pParse->db;
   Db *pDb;
   int iRootPage;
-  int createStat1 = 0;
+  u8 createStat1 = 0;
   Table *pStat;
   Vdbe *v = sqlite3GetVdbe(pParse);
 
@@ -86,11 +86,11 @@ static void openStatTable(
 static void analyzeOneTable(
   Parse *pParse,   /* Parser context */
   Table *pTab,     /* Table whose indices are to be analyzed */
-  int iStatCur,    /* Cursor that writes to the sqlite_stat1 table */
+  int iStatCur,    /* Index of VdbeCursor that writes the sqlite_stat1 table */
   int iMem         /* Available memory locations begin here */
 ){
   Index *pIdx;     /* An index to being analyzed */
-  int iIdxCur;     /* Cursor number for index being analyzed */
+  int iIdxCur;     /* Index of VdbeCursor for index being analyzed */
   int nCol;        /* Number of columns in the index */
   Vdbe *v;         /* The virtual machine being built up */
   int i;           /* Loop counter */
@@ -356,7 +356,7 @@ struct analysisInfo {
 **     argv[0] = name of the index
 **     argv[1] = results of analysis - on integer for each column
 */
-static int analysisLoader(void *pData, int argc, char **argv, char **azNotUsed){
+static int analysisLoader(void *pData, int argc, char **argv, char **NotUsed){
   analysisInfo *pInfo = (analysisInfo*)pData;
   Index *pIndex;
   int i, c;
@@ -364,6 +364,8 @@ static int analysisLoader(void *pData, int argc, char **argv, char **azNotUsed){
   const char *z;
 
   assert( argc==2 );
+  UNUSED_PARAMETER2(NotUsed, argc);
+
   if( argv==0 || argv[0]==0 || argv[1]==0 ){
     return 0;
   }
@@ -414,10 +416,15 @@ int sqlite3AnalysisLoad(sqlite3 *db, int iDb){
   /* Load new statistics out of the sqlite_stat1 table */
   zSql = sqlite3MPrintf(db, "SELECT idx, stat FROM %Q.sqlite_stat1",
                         sInfo.zDatabase);
-  (void)sqlite3SafetyOff(db);
-  rc = sqlite3_exec(db, zSql, analysisLoader, &sInfo, 0);
-  (void)sqlite3SafetyOn(db);
-  sqlite3DbFree(db, zSql);
+  if( zSql==0 ){
+    rc = SQLITE_NOMEM;
+  }else{
+    (void)sqlite3SafetyOff(db);
+    rc = sqlite3_exec(db, zSql, analysisLoader, &sInfo, 0);
+    (void)sqlite3SafetyOn(db);
+    sqlite3DbFree(db, zSql);
+    if( rc==SQLITE_NOMEM ) db->mallocFailed = 1;
+  }
   return rc;
 }
 

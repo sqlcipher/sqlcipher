@@ -13,12 +13,12 @@
 ** This file contains code use to implement APIs that are part of the
 ** VDBE.
 **
-** $Id: vdbeapi.c,v 1.138 2008/08/02 03:50:39 drh Exp $
+** $Id: vdbeapi.c,v 1.151 2009/02/04 03:59:25 shane Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
 
-#ifdef SQLITE_ENABLE_MEMORY_MANAGEMENT
+#if 0 && defined(SQLITE_ENABLE_MEMORY_MANAGEMENT)
 /*
 ** The following structure contains pointers to the end points of a
 ** doubly-linked list of all compiled SQL statements that may be holding
@@ -174,6 +174,7 @@ int vdbeReprepare(Vdbe *p){
 #endif
 
 
+#ifndef SQLITE_OMIT_DEPRECATED
 /*
 ** Return TRUE (non-zero) of the statement supplied as an argument needs
 ** to be recompiled.  A statement needs to be recompiled whenever the
@@ -186,6 +187,7 @@ int sqlite3_expired(sqlite3_stmt *pStmt){
   Vdbe *p = (Vdbe*)pStmt;
   return p==0 || p->expired;
 }
+#endif
 
 /*
 ** The following routine destroys a virtual machine that is created by
@@ -202,7 +204,7 @@ int sqlite3_finalize(sqlite3_stmt *pStmt){
     rc = SQLITE_OK;
   }else{
     Vdbe *v = (Vdbe*)pStmt;
-#ifndef SQLITE_MUTEX_NOOP
+#if SQLITE_THREADSAFE
     sqlite3_mutex *mutex = v->db->mutex;
 #endif
     sqlite3_mutex_enter(mutex);
@@ -244,7 +246,7 @@ int sqlite3_clear_bindings(sqlite3_stmt *pStmt){
   int i;
   int rc = SQLITE_OK;
   Vdbe *p = (Vdbe*)pStmt;
-#ifndef SQLITE_MUTEX_NOOP
+#if SQLITE_THREADSAFE
   sqlite3_mutex *mutex = ((Vdbe*)pStmt)->db->mutex;
 #endif
   sqlite3_mutex_enter(mutex);
@@ -282,7 +284,7 @@ double sqlite3_value_double(sqlite3_value *pVal){
   return sqlite3VdbeRealValue((Mem*)pVal);
 }
 int sqlite3_value_int(sqlite3_value *pVal){
-  return sqlite3VdbeIntValue((Mem*)pVal);
+  return (int)sqlite3VdbeIntValue((Mem*)pVal);
 }
 sqlite_int64 sqlite3_value_int64(sqlite3_value *pVal){
   return sqlite3VdbeIntValue((Mem*)pVal);
@@ -433,7 +435,9 @@ static int sqlite3Step(Vdbe *p){
 
   /* Assert that malloc() has not failed */
   db = p->db;
-  assert( !db->mallocFailed );
+  if( db->mallocFailed ){
+    return SQLITE_NOMEM;
+  }
 
   if( p->pc<=0 && p->expired ){
     if( p->rc==SQLITE_OK ){
@@ -459,11 +463,12 @@ static int sqlite3Step(Vdbe *p){
     if( db->xProfile && !db->init.busy ){
       double rNow;
       sqlite3OsCurrentTime(db->pVfs, &rNow);
-      p->startTime = (rNow - (int)rNow)*3600.0*24.0*1000000000.0;
+      p->startTime = (u64)((rNow - (int)rNow)*3600.0*24.0*1000000000.0);
     }
 #endif
 
     db->activeVdbeCnt++;
+    if( p->readOnly==0 ) db->writeVdbeCnt++;
     p->pc = 0;
     stmtLruRemove(p);
   }
@@ -489,7 +494,8 @@ static int sqlite3Step(Vdbe *p){
     u64 elapseTime;
 
     sqlite3OsCurrentTime(db->pVfs, &rNow);
-    elapseTime = (rNow - (int)rNow)*3600.0*24.0*1000000000.0 - p->startTime;
+    elapseTime = (u64)((rNow - (int)rNow)*3600.0*24.0*1000000000.0);
+    elapseTime -= p->startTime;
     db->xProfile(db->pProfileArg, p->aOp[0].p4.z, elapseTime);
   }
 #endif
@@ -596,11 +602,12 @@ sqlite3 *sqlite3_context_db_handle(sqlite3_context *p){
 */
 void sqlite3InvalidFunction(
   sqlite3_context *context,  /* The function calling context */
-  int argc,                  /* Number of arguments to the function */
-  sqlite3_value **argv       /* Value of each argument */
+  int NotUsed,               /* Number of arguments to the function */
+  sqlite3_value **NotUsed2   /* Value of each argument */
 ){
   const char *zName = context->pFunc->zName;
   char *zErr;
+  UNUSED_PARAMETER2(NotUsed, NotUsed2);
   zErr = sqlite3MPrintf(0,
       "unable to use function %s in the requested context", zName);
   sqlite3_result_error(context, zErr, -1);
@@ -693,6 +700,7 @@ failed:
   }
 }
 
+#ifndef SQLITE_OMIT_DEPRECATED
 /*
 ** Return the number of times the Step function of a aggregate has been 
 ** called.
@@ -706,6 +714,7 @@ int sqlite3_aggregate_count(sqlite3_context *p){
   assert( p && p->pFunc && p->pFunc->xStep );
   return p->pMem->n;
 }
+#endif
 
 /*
 ** Return the number of columns in the result set for the statement pStmt.
@@ -743,7 +752,8 @@ static Mem *columnMem(sqlite3_stmt *pStmt, int i){
     vals = sqlite3_data_count(pStmt);
     pOut = &pVm->pResultSet[i];
   }else{
-    static const Mem nullMem = {{0}, 0.0, 0, "", 0, MEM_Null, SQLITE_NULL, 0, 0, 0 };
+    /* ((double)0) In case of SQLITE_OMIT_FLOATING_POINT... */
+    static const Mem nullMem = {{0}, (double)0, 0, "", 0, MEM_Null, SQLITE_NULL, 0, 0, 0 };
     if( pVm->db ){
       sqlite3_mutex_enter(pVm->db->mutex);
       sqlite3Error(pVm->db, SQLITE_RANGE, 0);
@@ -831,9 +841,13 @@ const unsigned char *sqlite3_column_text(sqlite3_stmt *pStmt, int i){
   return val;
 }
 sqlite3_value *sqlite3_column_value(sqlite3_stmt *pStmt, int i){
-  sqlite3_value *pOut = columnMem(pStmt, i);
+  Mem *pOut = columnMem(pStmt, i);
+  if( pOut->flags&MEM_Static ){
+    pOut->flags &= ~MEM_Static;
+    pOut->flags |= MEM_Ephem;
+  }
   columnMallocFailure(pStmt);
-  return pOut;
+  return (sqlite3_value *)pOut;
 }
 #ifndef SQLITE_OMIT_UTF16
 const void *sqlite3_column_text16(sqlite3_stmt *pStmt, int i){
@@ -1003,17 +1017,24 @@ const void *sqlite3_column_origin_name16(sqlite3_stmt *pStmt, int N){
 ** the same as binding a NULL value to the column. If the "i" parameter is
 ** out of range, then SQLITE_RANGE is returned. Othewise SQLITE_OK.
 **
+** A successful evaluation of this routine acquires the mutex on p.
+** the mutex is released if any kind of error occurs.
+**
 ** The error code stored in database p->db is overwritten with the return
 ** value in any case.
 */
 static int vdbeUnbind(Vdbe *p, int i){
   Mem *pVar;
-  if( p==0 || p->magic!=VDBE_MAGIC_RUN || p->pc>=0 ){
-    if( p ) sqlite3Error(p->db, SQLITE_MISUSE, 0);
+  if( p==0 ) return SQLITE_MISUSE;
+  sqlite3_mutex_enter(p->db->mutex);
+  if( p->magic!=VDBE_MAGIC_RUN || p->pc>=0 ){
+    sqlite3Error(p->db, SQLITE_MISUSE, 0);
+    sqlite3_mutex_leave(p->db->mutex);
     return SQLITE_MISUSE;
   }
   if( i<1 || i>p->nVar ){
     sqlite3Error(p->db, SQLITE_RANGE, 0);
+    sqlite3_mutex_leave(p->db->mutex);
     return SQLITE_RANGE;
   }
   i--;
@@ -1033,27 +1054,25 @@ static int bindText(
   const void *zData,     /* Pointer to the data to be bound */
   int nData,             /* Number of bytes of data to be bound */
   void (*xDel)(void*),   /* Destructor for the data */
-  int encoding           /* Encoding for the data */
+  u8 encoding            /* Encoding for the data */
 ){
   Vdbe *p = (Vdbe *)pStmt;
   Mem *pVar;
   int rc;
 
-  if( p==0 ){
-    return SQLITE_MISUSE;
-  }
-  sqlite3_mutex_enter(p->db->mutex);
   rc = vdbeUnbind(p, i);
-  if( rc==SQLITE_OK && zData!=0 ){
-    pVar = &p->aVar[i-1];
-    rc = sqlite3VdbeMemSetStr(pVar, zData, nData, encoding, xDel);
-    if( rc==SQLITE_OK && encoding!=0 ){
-      rc = sqlite3VdbeChangeEncoding(pVar, ENC(p->db));
+  if( rc==SQLITE_OK ){
+    if( zData!=0 ){
+      pVar = &p->aVar[i-1];
+      rc = sqlite3VdbeMemSetStr(pVar, zData, nData, encoding, xDel);
+      if( rc==SQLITE_OK && encoding!=0 ){
+        rc = sqlite3VdbeChangeEncoding(pVar, ENC(p->db));
+      }
+      sqlite3Error(p->db, rc, 0);
+      rc = sqlite3ApiExit(p->db, rc);
     }
-    sqlite3Error(p->db, rc, 0);
-    rc = sqlite3ApiExit(p->db, rc);
+    sqlite3_mutex_leave(p->db->mutex);
   }
-  sqlite3_mutex_leave(p->db->mutex);
   return rc;
 }
 
@@ -1073,12 +1092,11 @@ int sqlite3_bind_blob(
 int sqlite3_bind_double(sqlite3_stmt *pStmt, int i, double rValue){
   int rc;
   Vdbe *p = (Vdbe *)pStmt;
-  sqlite3_mutex_enter(p->db->mutex);
   rc = vdbeUnbind(p, i);
   if( rc==SQLITE_OK ){
     sqlite3VdbeMemSetDouble(&p->aVar[i-1], rValue);
+    sqlite3_mutex_leave(p->db->mutex);
   }
-  sqlite3_mutex_leave(p->db->mutex);
   return rc;
 }
 int sqlite3_bind_int(sqlite3_stmt *p, int i, int iValue){
@@ -1087,20 +1105,20 @@ int sqlite3_bind_int(sqlite3_stmt *p, int i, int iValue){
 int sqlite3_bind_int64(sqlite3_stmt *pStmt, int i, sqlite_int64 iValue){
   int rc;
   Vdbe *p = (Vdbe *)pStmt;
-  sqlite3_mutex_enter(p->db->mutex);
   rc = vdbeUnbind(p, i);
   if( rc==SQLITE_OK ){
     sqlite3VdbeMemSetInt64(&p->aVar[i-1], iValue);
+    sqlite3_mutex_leave(p->db->mutex);
   }
-  sqlite3_mutex_leave(p->db->mutex);
   return rc;
 }
 int sqlite3_bind_null(sqlite3_stmt *pStmt, int i){
   int rc;
   Vdbe *p = (Vdbe*)pStmt;
-  sqlite3_mutex_enter(p->db->mutex);
   rc = vdbeUnbind(p, i);
-  sqlite3_mutex_leave(p->db->mutex);
+  if( rc==SQLITE_OK ){
+    sqlite3_mutex_leave(p->db->mutex);
+  }
   return rc;
 }
 int sqlite3_bind_text( 
@@ -1126,27 +1144,25 @@ int sqlite3_bind_text16(
 int sqlite3_bind_value(sqlite3_stmt *pStmt, int i, const sqlite3_value *pValue){
   int rc;
   Vdbe *p = (Vdbe *)pStmt;
-  sqlite3_mutex_enter(p->db->mutex);
   rc = vdbeUnbind(p, i);
   if( rc==SQLITE_OK ){
     rc = sqlite3VdbeMemCopy(&p->aVar[i-1], pValue);
     if( rc==SQLITE_OK ){
       rc = sqlite3VdbeChangeEncoding(&p->aVar[i-1], ENC(p->db));
     }
+    sqlite3_mutex_leave(p->db->mutex);
   }
   rc = sqlite3ApiExit(p->db, rc);
-  sqlite3_mutex_leave(p->db->mutex);
   return rc;
 }
 int sqlite3_bind_zeroblob(sqlite3_stmt *pStmt, int i, int n){
   int rc;
   Vdbe *p = (Vdbe *)pStmt;
-  sqlite3_mutex_enter(p->db->mutex);
   rc = vdbeUnbind(p, i);
   if( rc==SQLITE_OK ){
     sqlite3VdbeMemSetZeroBlob(&p->aVar[i-1], n);
+    sqlite3_mutex_leave(p->db->mutex);
   }
-  sqlite3_mutex_leave(p->db->mutex);
   return rc;
 }
 
@@ -1225,7 +1241,7 @@ int sqlite3_bind_parameter_index(sqlite3_stmt *pStmt, const char *zName){
 ** If the two statements contain a different number of bindings, then
 ** an SQLITE_ERROR is returned.
 */
-int sqlite3_transfer_bindings(sqlite3_stmt *pFromStmt, sqlite3_stmt *pToStmt){
+int sqlite3TransferBindings(sqlite3_stmt *pFromStmt, sqlite3_stmt *pToStmt){
   Vdbe *pFrom = (Vdbe*)pFromStmt;
   Vdbe *pTo = (Vdbe*)pToStmt;
   int i, rc = SQLITE_OK;
@@ -1245,6 +1261,16 @@ int sqlite3_transfer_bindings(sqlite3_stmt *pFromStmt, sqlite3_stmt *pToStmt){
   assert( rc==SQLITE_OK || rc==SQLITE_NOMEM );
   return rc;
 }
+
+#ifndef SQLITE_OMIT_DEPRECATED
+/*
+** Deprecated external interface.  Internal/core SQLite code
+** should call sqlite3TransferBindings.
+*/
+int sqlite3_transfer_bindings(sqlite3_stmt *pFromStmt, sqlite3_stmt *pToStmt){
+  return sqlite3TransferBindings(pFromStmt, pToStmt);
+}
+#endif
 
 /*
 ** Return the sqlite3* database handle to which the prepared statement given
@@ -1272,4 +1298,14 @@ sqlite3_stmt *sqlite3_next_stmt(sqlite3 *pDb, sqlite3_stmt *pStmt){
   }
   sqlite3_mutex_leave(pDb->mutex);
   return pNext;
+}
+
+/*
+** Return the value of a status counter for a prepared statement
+*/
+int sqlite3_stmt_status(sqlite3_stmt *pStmt, int op, int resetFlag){
+  Vdbe *pVdbe = (Vdbe*)pStmt;
+  int v = pVdbe->aCounter[op-1];
+  if( resetFlag ) pVdbe->aCounter[op-1] = 0;
+  return v;
 }

@@ -44,40 +44,30 @@
 
 # This is how we compile
 #
-TCCX = $(TCC) $(OPTS) -I. -I$(TOP)/src -I$(TOP) -I$(TOP)/ext/rtree
+TCCX =  $(TCC) $(OPTS) -I. -I$(TOP)/src -I$(TOP) 
+TCCX += -I$(TOP)/ext/rtree -I$(TOP)/ext/icu -I$(TOP)/ext/fts3
 
 # Object files for the SQLite library.
 #
-LIBOBJ+= alter.o analyze.o attach.o auth.o bitvec.o btmutex.o btree.o build.o \
-         callback.o complete.o date.o delete.o \
-         expr.o fault.o func.o global.o hash.o insert.o journal.o loadext.o \
-         main.o malloc.o mem1.o mem2.o mem3.o mem4.o mem5.o mem6.o \
-         mutex.o mutex_os2.o mutex_unix.o mutex_w32.o \
+LIBOBJ+= alter.o analyze.o attach.o auth.o \
+         backup.o bitvec.o btmutex.o btree.o build.o \
+         callback.o complete.o date.o delete.o expr.o fault.o \
+         fts3.o fts3_expr.o fts3_hash.o fts3_icu.o fts3_porter.o \
+         fts3_tokenizer.o fts3_tokenizer1.o \
+         func.o global.o hash.o \
+         icu.o insert.o journal.o legacy.o loadext.o \
+         main.o malloc.o mem0.o mem1.o mem2.o mem3.o mem5.o \
+         memjournal.o \
+         mutex.o mutex_noop.o mutex_os2.o mutex_unix.o mutex_w32.o \
          opcodes.o os.o os_os2.o os_unix.o os_win.o \
-         pager.o parse.o pragma.o prepare.o printf.o random.o \
-         select.o status.o table.o $(TCLOBJ) tokenize.o trigger.o \
+         pager.o parse.o pcache.o pcache1.o pragma.o prepare.o printf.o \
+         random.o resolve.o rowset.o rtree.o select.o status.o \
+         table.o tokenize.o trigger.o \
          update.o util.o vacuum.o \
-         vdbe.o vdbeapi.o vdbeaux.o vdbeblob.o vdbefifo.o vdbemem.o \
-         where.o utf.o legacy.o vtab.o rtree.o icu.o
+         vdbe.o vdbeapi.o vdbeaux.o vdbeblob.o vdbemem.o \
+         walker.o where.o utf.o vtab.o
 
-EXTOBJ = icu.o
-EXTOBJ += fts1.o \
-	  fts1_hash.o \
-	  fts1_tokenizer1.o \
-	  fts1_porter.o
-EXTOBJ += fts2.o \
-	  fts2_hash.o \
-	  fts2_icu.o \
-	  fts2_porter.o \
-          fts2_tokenizer.o \
-	  fts2_tokenizer1.o
-EXTOBJ += fts3.o \
-	  fts3_hash.o \
-	  fts3_icu.o \
-	  fts3_porter.o \
-          fts3_tokenizer.o \
-	  fts3_tokenizer1.o
-EXTOBJ += rtree.o
+
 
 # All of the source code files.
 #
@@ -86,6 +76,7 @@ SRC = \
   $(TOP)/src/analyze.c \
   $(TOP)/src/attach.c \
   $(TOP)/src/auth.c \
+  $(TOP)/src/backup.c \
   $(TOP)/src/bitvec.c \
   $(TOP)/src/btmutex.c \
   $(TOP)/src/btree.c \
@@ -109,14 +100,15 @@ SRC = \
   $(TOP)/src/loadext.c \
   $(TOP)/src/main.c \
   $(TOP)/src/malloc.c \
+  $(TOP)/src/mem0.c \
   $(TOP)/src/mem1.c \
   $(TOP)/src/mem2.c \
   $(TOP)/src/mem3.c \
-  $(TOP)/src/mem4.c \
   $(TOP)/src/mem5.c \
-  $(TOP)/src/mem6.c \
+  $(TOP)/src/memjournal.c \
   $(TOP)/src/mutex.c \
   $(TOP)/src/mutex.h \
+  $(TOP)/src/mutex_noop.c \
   $(TOP)/src/mutex_os2.c \
   $(TOP)/src/mutex_unix.c \
   $(TOP)/src/mutex_w32.c \
@@ -129,10 +121,15 @@ SRC = \
   $(TOP)/src/pager.c \
   $(TOP)/src/pager.h \
   $(TOP)/src/parse.y \
+  $(TOP)/src/pcache.c \
+  $(TOP)/src/pcache.h \
+  $(TOP)/src/pcache1.c \
   $(TOP)/src/pragma.c \
   $(TOP)/src/prepare.c \
   $(TOP)/src/printf.c \
   $(TOP)/src/random.c \
+  $(TOP)/src/resolve.c \
+  $(TOP)/src/rowset.c \
   $(TOP)/src/select.c \
   $(TOP)/src/status.c \
   $(TOP)/src/shell.c \
@@ -153,10 +150,10 @@ SRC = \
   $(TOP)/src/vdbeapi.c \
   $(TOP)/src/vdbeaux.c \
   $(TOP)/src/vdbeblob.c \
-  $(TOP)/src/vdbefifo.c \
   $(TOP)/src/vdbemem.c \
   $(TOP)/src/vdbeInt.h \
   $(TOP)/src/vtab.c \
+  $(TOP)/src/walker.c \
   $(TOP)/src/where.c
 
 # Source code for extensions
@@ -182,6 +179,8 @@ SRC += \
 SRC += \
   $(TOP)/ext/fts3/fts3.c \
   $(TOP)/ext/fts3/fts3.h \
+  $(TOP)/ext/fts3/fts3_expr.c \
+  $(TOP)/ext/fts3/fts3_expr.h \
   $(TOP)/ext/fts3/fts3_hash.c \
   $(TOP)/ext/fts3/fts3_hash.h \
   $(TOP)/ext/fts3/fts3_icu.c \
@@ -190,7 +189,8 @@ SRC += \
   $(TOP)/ext/fts3/fts3_tokenizer.c \
   $(TOP)/ext/fts3/fts3_tokenizer1.c
 SRC += \
-  $(TOP)/ext/icu/icu.c
+  $(TOP)/ext/icu/sqliteicu.h \
+  $(TOP)/ext/icu/icu.c 
 SRC += \
   $(TOP)/ext/rtree/rtree.h \
   $(TOP)/ext/rtree/rtree.c
@@ -221,33 +221,40 @@ TESTSRC = \
   $(TOP)/src/test9.c \
   $(TOP)/src/test_autoext.c \
   $(TOP)/src/test_async.c \
+  $(TOP)/src/test_backup.c \
   $(TOP)/src/test_btree.c \
   $(TOP)/src/test_config.c \
   $(TOP)/src/test_devsym.c \
   $(TOP)/src/test_func.c \
   $(TOP)/src/test_hexio.c \
+  $(TOP)/src/test_journal.c \
   $(TOP)/src/test_malloc.c \
   $(TOP)/src/test_md5.c \
   $(TOP)/src/test_mutex.c \
   $(TOP)/src/test_onefile.c \
   $(TOP)/src/test_osinst.c \
+  $(TOP)/src/test_pcache.c \
   $(TOP)/src/test_schema.c \
   $(TOP)/src/test_server.c \
   $(TOP)/src/test_tclvar.c \
   $(TOP)/src/test_thread.c \
+  $(TOP)/src/test_wsd.c \
 
 #TESTSRC += $(TOP)/ext/fts2/fts2_tokenizer.c
 #TESTSRC += $(TOP)/ext/fts3/fts3_tokenizer.c
 
 TESTSRC2 = \
-  $(TOP)/src/attach.c $(TOP)/src/btree.c $(TOP)/src/build.c $(TOP)/src/date.c  \
+  $(TOP)/src/attach.c $(TOP)/src/backup.c $(TOP)/src/btree.c                   \
+  $(TOP)/src/build.c $(TOP)/src/date.c                                         \
   $(TOP)/src/expr.c $(TOP)/src/func.c $(TOP)/src/insert.c $(TOP)/src/os.c      \
   $(TOP)/src/os_os2.c $(TOP)/src/os_unix.c $(TOP)/src/os_win.c                 \
   $(TOP)/src/pager.c $(TOP)/src/pragma.c $(TOP)/src/prepare.c                  \
-  $(TOP)/src/printf.c $(TOP)/src/random.c                                      \
-  $(TOP)/src/select.c $(TOP)/src/tokenize.c                                    \
+  $(TOP)/src/printf.c $(TOP)/src/random.c $(TOP)/src/pcache.c                  \
+  $(TOP)/src/pcache1.c $(TOP)/src/select.c $(TOP)/src/tokenize.c               \
   $(TOP)/src/utf.c $(TOP)/src/util.c $(TOP)/src/vdbeapi.c $(TOP)/src/vdbeaux.c \
-  $(TOP)/src/vdbe.c $(TOP)/src/vdbemem.c $(TOP)/src/where.c parse.c
+  $(TOP)/src/vdbe.c $(TOP)/src/vdbemem.c $(TOP)/src/where.c parse.c            \
+  $(TOP)/ext/fts3/fts3.c $(TOP)/ext/fts3/fts3_expr.c                           \
+  $(TOP)/ext/fts3/fts3_tokenizer.c 
 
 # Header files used by all library source files.
 #
@@ -262,6 +269,7 @@ HDR = \
    $(TOP)/src/os.h \
    $(TOP)/src/os_common.h \
    $(TOP)/src/pager.h \
+   $(TOP)/src/pcache.h \
    parse.h  \
    sqlite3.h  \
    $(TOP)/src/sqlite3ext.h \
@@ -282,10 +290,13 @@ EXTHDR += \
   $(TOP)/ext/fts2/fts2_tokenizer.h
 EXTHDR += \
   $(TOP)/ext/fts3/fts3.h \
+  $(TOP)/ext/fts3/fts3_expr.h \
   $(TOP)/ext/fts3/fts3_hash.h \
   $(TOP)/ext/fts3/fts3_tokenizer.h
 EXTHDR += \
   $(TOP)/ext/rtree/rtree.h
+EXTHDR += \
+  $(TOP)/ext/icu/sqliteicu.h
 
 # This is the default Makefile target.  The objects listed here
 # are what get build when you type just "make" with no arguments.
@@ -358,8 +369,8 @@ opcodes.c:	opcodes.h $(TOP)/mkopcodec.awk
 	sort -n -b -k 3 opcodes.h | $(NAWK) -f $(TOP)/mkopcodec.awk >opcodes.c
 
 opcodes.h:	parse.h $(TOP)/src/vdbe.c $(TOP)/mkopcodeh.awk
-	cat parse.h $(TOP)/src/vdbe.c |$(NAWK) -f $(TOP)/mkopcodeh.awk >opcodes.h
-
+	cat parse.h $(TOP)/src/vdbe.c | \
+		$(NAWK) -f $(TOP)/mkopcodeh.awk >opcodes.h
 
 # Rules to build parse.c and parse.h - the outputs of lemon.
 #
@@ -408,6 +419,9 @@ fts2_tokenizer1.o:	$(TOP)/ext/fts2/fts2_tokenizer1.c $(HDR) $(EXTHDR)
 
 fts3.o:	$(TOP)/ext/fts3/fts3.c $(HDR) $(EXTHDR)
 	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/fts3/fts3.c
+
+fts3_expr.o:	$(TOP)/ext/fts3/fts3_expr.c $(HDR) $(EXTHDR)
+	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/fts3/fts3_expr.c
 
 fts3_hash.o:	$(TOP)/ext/fts3/fts3_hash.c $(HDR) $(EXTHDR)
 	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/fts3/fts3_hash.c
@@ -502,4 +516,4 @@ clean:
 	rm -f *.da *.bb *.bbg gmon.out
 	rm -rf tsrc target_source
 	rm -f testloadext.dll libtestloadext.so
-	rm -f sqlite3.c fts?amal.c
+	rm -f sqlite3.c fts?amal.c tclsqlite3.c

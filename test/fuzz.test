@@ -19,7 +19,7 @@
 #
 # The most complicated trees are for SELECT statements.
 #
-# $Id: fuzz.test,v 1.14 2007/05/30 10:36:47 danielk1977 Exp $
+# $Id: fuzz.test,v 1.18 2009/01/06 00:11:26 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -32,6 +32,7 @@ if {[info exists ::ISQUICK]} {
 }
 
 source $testdir/fuzz_common.tcl
+expr srand(0)
 
 #----------------------------------------------------------------
 # These tests caused errors that were first caught by the tests
@@ -172,6 +173,119 @@ do_test fuzz-1.14.2 {
     DROP TABLE abc;
   }
 } {}
+
+# Making sure previously discovered errors have been fixed.
+#
+do_test fuzz-1.15 {
+  execsql {
+    SELECT hex(CAST(zeroblob(1000) AS integer))
+  }
+} {30}
+
+do_test fuzz-1.16.1 {
+  execsql {
+    CREATE TABLE abc(a, b, c);
+    CREATE TABLE def(a, b, c);
+    CREATE TABLE ghi(a, b, c);
+  }
+} {}
+do_test fuzz-1.16.2 {
+  catchsql {
+    SELECT DISTINCT EXISTS(
+       SELECT 1
+       FROM (
+         SELECT C FROM (SELECT 1)
+       )
+       WHERE (SELECT c)
+    )
+    FROM abc
+  }
+} {0 {}}
+do_test fuzz-1.16.3 {
+  catchsql {
+    SELECT DISTINCT substr(-456 ISNULL,zeroblob(1000), EXISTS(
+         SELECT DISTINCT EXISTS(
+           SELECT DISTINCT b FROM abc
+           ORDER BY EXISTS (
+             SELECT DISTINCT 2147483647 UNION ALL SELECT -2147483648
+           ) ASC
+         )
+         FROM (
+           SELECT c, c FROM (
+             SELECT 456, 'injection' ORDER BY 56.1 ASC, -56.1 DESC
+           )
+         )
+         GROUP BY (SELECT ALL (SELECT DISTINCT 'hardware')) 
+         HAVING (
+           SELECT DISTINCT c
+           FROM (
+             SELECT ALL -2147483648, 'experiments'
+             ORDER BY -56.1 ASC, -56.1 DESC
+           )
+           GROUP BY (SELECT DISTINCT 456) IN 
+                   (SELECT DISTINCT 'injection') NOT IN (SELECT ALL -456)
+           HAVING EXISTS (
+             SELECT ALL 'injection'
+           )
+         )
+         UNION ALL
+         SELECT a IN (
+           SELECT -2147483647
+           UNION ALL
+           SELECT ALL 'injection'
+         )
+         FROM sqlite_master
+       ) -- end EXISTS
+    ) /* end SUBSTR() */, c NOTNULL ISNULL
+    FROM abc
+    ORDER BY CAST(-56.1 AS blob) ASC
+  }
+} {0 {}}
+do_test fuzz-1.16.4 {
+  execsql {
+    DROP TABLE abc; DROP TABLE def; DROP TABLE ghi;
+  }
+} {}
+
+do_test fuzz-1.17 {
+  catchsql {
+    SELECT 'hardware', 56.1 NOTNULL, random()&0
+    FROM (
+       SELECT ALL lower(~ EXISTS (
+           SELECT 1 NOT IN (SELECT ALL 1)
+       )), CAST(456 AS integer), -2147483647
+       FROM (
+         SELECT DISTINCT -456, CAST(1 AS integer) ISNULL
+         FROM (SELECT ALL 2147483647, typeof(2147483649))
+       )
+    )
+    GROUP BY CAST(CAST('experiments' AS blob) AS blob)
+    HAVING random()
+  }
+} {0 {hardware 1 0}}
+
+do_test fuzz-1.18 {
+  catchsql {
+     SELECT -2147483649 << upper('fault' NOT IN (
+        SELECT ALL (
+           SELECT ALL -1
+           ORDER BY -2147483649
+           LIMIT (
+              SELECT ALL (
+                 SELECT 0 EXCEPT SELECT DISTINCT 'experiments' ORDER BY 1 ASC
+              )
+           )
+           OFFSET EXISTS (
+              SELECT ALL 
+                  (SELECT ALL -2147483648) NOT IN (
+                     SELECT ALL 123456789.1234567899
+                  ) IN (SELECT 2147483649) 
+              FROM sqlite_master
+           ) NOT IN (SELECT ALL 'The')
+        )
+     ))
+  }
+} {0 -4294967298}
 
 #----------------------------------------------------------------
 # Test some fuzzily generated expressions.

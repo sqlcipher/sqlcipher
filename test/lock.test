@@ -11,7 +11,7 @@
 # This file implements regression tests for SQLite library.  The
 # focus of this script is database locks.
 #
-# $Id: lock.test,v 1.33 2006/08/16 16:42:48 drh Exp $
+# $Id: lock.test,v 1.37 2009/02/12 09:36:16 danielk1977 Exp $
 
 
 set testdir [file dirname $argv0]
@@ -20,7 +20,10 @@ source $testdir/tester.tcl
 # Create an alternative connection to the database
 #
 do_test lock-1.0 {
-  sqlite3 db2 ./test.db
+  # Give a complex pathnme to stress the path simplification logic in
+  # the vxworks driver.
+  file mkdir tempdir/t1/t2
+  sqlite3 db2 ./tempdir/../tempdir/t1/.//t2/../../..//test.db
   set dummy {}
 } {}
 do_test lock-1.1 {
@@ -346,6 +349,75 @@ ifcapable tempdb {
     }
   } {9}
 }
+
+do_test lock-6.1 {
+  execsql {
+    CREATE TABLE t4(a PRIMARY KEY, b);
+    INSERT INTO t4 VALUES(1, 'one');
+    INSERT INTO t4 VALUES(2, 'two');
+    INSERT INTO t4 VALUES(3, 'three');
+  }
+
+  set STMT [sqlite3_prepare $DB "SELECT * FROM sqlite_master" -1 TAIL]
+  sqlite3_step $STMT
+
+  execsql { DELETE FROM t4 }
+  execsql { SELECT * FROM sqlite_master } db2
+  execsql { SELECT * FROM t4 } db2
+} {}
+
+do_test lock-6.2 {
+  execsql { 
+    BEGIN;
+    INSERT INTO t4 VALUES(1, 'one');
+    INSERT INTO t4 VALUES(2, 'two');
+    INSERT INTO t4 VALUES(3, 'three');
+    COMMIT;
+  }
+
+  execsql { SELECT * FROM t4 } db2
+} {1 one 2 two 3 three}
+
+do_test lock-6.3 {
+  execsql { SELECT a FROM t4 ORDER BY a } db2
+} {1 2 3}
+
+do_test lock-6.4 {
+  execsql { PRAGMA integrity_check } db2
+} {ok}
+
+do_test lock-6.5 {
+  sqlite3_finalize $STMT
+} {SQLITE_OK}
+
+# At one point the following set of conditions would cause SQLite to 
+# retain a RESERVED or EXCLUSIVE lock after the transaction was committed:
+# 
+#   * The journal-mode is set to something other than 'delete', and
+#   * there exists one or more active read-only statements, and
+#   * a transaction that modified zero database pages is committed.
+# 
+set temp_status unlocked
+if {$TEMP_STORE==3} {set temp_status unknown}
+do_test lock-7.1 {
+  set STMT [sqlite3_prepare $DB "SELECT * FROM sqlite_master" -1 TAIL]
+  sqlite3_step $STMT
+} {SQLITE_ROW}
+do_test lock-7.2 {
+  execsql { PRAGMA lock_status }
+} [list main shared temp $temp_status]
+do_test lock-7.3 {
+  execsql {
+    PRAGMA journal_mode = truncate;
+    BEGIN;
+    UPDATE t4 SET a = 10 WHERE 0;
+    COMMIT;
+  }
+  execsql { PRAGMA lock_status }
+} [list main shared temp $temp_status]
+do_test lock-7.4 {
+  sqlite3_finalize $STMT
+} {SQLITE_OK}
 
 do_test lock-999.1 {
   rename db2 {}

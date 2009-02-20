@@ -12,7 +12,7 @@
 **
 ** This file contains code that is specific to OS/2.
 **
-** $Id: os_os2.c,v 1.55 2008/07/29 18:49:29 pweilbacher Exp $
+** $Id: os_os2.c,v 1.63 2008/12/10 19:26:24 drh Exp $
 */
 
 #include "sqliteInt.h"
@@ -124,6 +124,7 @@ static int os2Read(
   if( got == (ULONG)amt )
     return SQLITE_OK;
   else {
+    /* Unread portions of the input buffer must be zero-filled */
     memset(&((char*)pBuf)[got], 0, amt-got);
     return SQLITE_IOERR_SHORT_READ;
   }
@@ -171,7 +172,7 @@ static int os2Truncate( sqlite3_file *id, i64 nByte ){
   OSTRACE3( "TRUNCATE %d %lld\n", pFile->h, nByte );
   SimulateIOError( return SQLITE_IOERR_TRUNCATE );
   rc = DosSetFileSize( pFile->h, nByte );
-  return rc == NO_ERROR ? SQLITE_OK : SQLITE_IOERR;
+  return rc == NO_ERROR ? SQLITE_OK : SQLITE_IOERR_TRUNCATE;
 }
 
 #ifdef SQLITE_TEST
@@ -195,7 +196,15 @@ static int os2Sync( sqlite3_file *id, int flags ){
   }
   sqlite3_sync_count++;
 #endif
+  /* If we compiled with the SQLITE_NO_SYNC flag, then syncing is a
+  ** no-op
+  */
+#ifdef SQLITE_NO_SYNC
+  UNUSED_PARAMETER(pFile);
+  return SQLITE_OK;
+#else
   return DosResetBuffer( pFile->h ) == NO_ERROR ? SQLITE_OK : SQLITE_IOERR;
+#endif
 }
 
 /*
@@ -206,13 +215,13 @@ static int os2FileSize( sqlite3_file *id, sqlite3_int64 *pSize ){
   FILESTATUS3 fsts3FileInfo;
   memset(&fsts3FileInfo, 0, sizeof(fsts3FileInfo));
   assert( id!=0 );
-  SimulateIOError( return SQLITE_IOERR );
+  SimulateIOError( return SQLITE_IOERR_FSTAT );
   rc = DosQueryFileInfo( ((os2File*)id)->h, FIL_STANDARD, &fsts3FileInfo, sizeof(FILESTATUS3) );
   if( rc == NO_ERROR ){
     *pSize = fsts3FileInfo.cbFile;
     return SQLITE_OK;
   }else{
-    return SQLITE_IOERR;
+    return SQLITE_IOERR_FSTAT;
   }
 }
 
@@ -685,7 +694,7 @@ static int getTempname(int nBuf, char *zBuf ){
   /* Strip off a trailing slashes or backslashes, otherwise we would get *
    * multiple (back)slashes which causes DosOpen() to fail.              *
    * Trailing spaces are not allowed, either.                            */
-  j = strlen(zTempPath);
+  j = sqlite3Strlen30(zTempPath);
   while( j > 0 && ( zTempPath[j-1] == '\\' || zTempPath[j-1] == '/'
                     || zTempPath[j-1] == ' ' ) ){
     j--;
@@ -700,7 +709,7 @@ static int getTempname(int nBuf, char *zBuf ){
     sqlite3_snprintf( nBuf-30, zBuf,
                       "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath );
   }
-  j = strlen( zBuf );
+  j = sqlite3Strlen30( zBuf );
   sqlite3_randomness( 20, &zBuf[j] );
   for( i = 0; i < 20; i++, j++ ){
     zBuf[j] = (char)zChars[ ((unsigned char)zBuf[j])%(sizeof(zChars)-1) ];
@@ -746,7 +755,7 @@ static int os2Open(
   int *pOutFlags                /* Status return flags */
 ){
   HFILE h;
-  ULONG ulFileAttribute = 0;
+  ULONG ulFileAttribute = FILE_NORMAL;
   ULONG ulOpenFlags = 0;
   ULONG ulOpenMode = 0;
   os2File *pFile = (os2File*)id;
@@ -771,7 +780,6 @@ static int os2Open(
 
   OSTRACE2( "OPEN want %d\n", flags );
 
-  /*ulOpenMode = flags & SQLITE_OPEN_READWRITE ? OPEN_ACCESS_READWRITE : OPEN_ACCESS_READONLY;*/
   if( flags & SQLITE_OPEN_READWRITE ){
     ulOpenMode |= OPEN_ACCESS_READWRITE;
     OSTRACE1( "OPEN read/write\n" );
@@ -780,7 +788,6 @@ static int os2Open(
     OSTRACE1( "OPEN read only\n" );
   }
 
-  /*ulOpenFlags = flags & SQLITE_OPEN_CREATE ? OPEN_ACTION_CREATE_IF_NEW : OPEN_ACTION_FAIL_IF_NEW;*/
   if( flags & SQLITE_OPEN_CREATE ){
     ulOpenFlags |= OPEN_ACTION_OPEN_IF_EXISTS | OPEN_ACTION_CREATE_IF_NEW;
     OSTRACE1( "OPEN open new/create\n" );
@@ -789,7 +796,6 @@ static int os2Open(
     OSTRACE1( "OPEN open existing\n" );
   }
 
-  /*ulOpenMode |= flags & SQLITE_OPEN_MAIN_DB ? OPEN_SHARE_DENYNONE : OPEN_SHARE_DENYWRITE;*/
   if( flags & SQLITE_OPEN_MAIN_DB ){
     ulOpenMode |= OPEN_SHARE_DENYNONE;
     OSTRACE1( "OPEN share read/write\n" );
@@ -798,18 +804,15 @@ static int os2Open(
     OSTRACE1( "OPEN share read only\n" );
   }
 
-  if( flags & (SQLITE_OPEN_TEMP_DB | SQLITE_OPEN_TEMP_JOURNAL
-               | SQLITE_OPEN_SUBJOURNAL) ){
+  if( flags & SQLITE_OPEN_DELETEONCLOSE ){
     char pathUtf8[CCHMAXPATH];
 #ifdef NDEBUG /* when debugging we want to make sure it is deleted */
     ulFileAttribute = FILE_HIDDEN;
 #endif
-    ulFileAttribute = FILE_NORMAL;
     os2FullPathname( pVfs, zName, CCHMAXPATH, pathUtf8 );
     pFile->pathToDel = convertUtf8PathToCp( pathUtf8 );
     OSTRACE1( "OPEN hidden/delete on close file attributes\n" );
   }else{
-    ulFileAttribute = FILE_ARCHIVED | FILE_NORMAL;
     pFile->pathToDel = NULL;
     OSTRACE1( "OPEN normal file attribute\n" );
   }
@@ -870,7 +873,7 @@ static int os2Delete(
   rc = DosDelete( (PSZ)zFilenameCp );
   free( zFilenameCp );
   OSTRACE2( "DELETE \"%s\"\n", zFilename );
-  return rc == NO_ERROR ? SQLITE_OK : SQLITE_IOERR;
+  return rc == NO_ERROR ? SQLITE_OK : SQLITE_IOERR_DELETE;
 }
 
 /*
@@ -964,9 +967,13 @@ static void os2DlClose(sqlite3_vfs *pVfs, void *pHandle){
 ** Write up to nBuf bytes of randomness into zBuf.
 */
 static int os2Randomness(sqlite3_vfs *pVfs, int nBuf, char *zBuf ){
-  ULONG sizeofULong = sizeof(ULONG);
   int n = 0;
-  if( sizeof(DATETIME) <= nBuf - n ){
+#if defined(SQLITE_TEST)
+  n = nBuf;
+  memset(zBuf, 0, nBuf);
+#else
+  int sizeofULong = sizeof(ULONG);
+  if( (int)sizeof(DATETIME) <= nBuf - n ){
     DATETIME x;
     DosGetDateTime(&x);
     memcpy(&zBuf[n], &x, sizeof(x));
@@ -1013,6 +1020,7 @@ static int os2Randomness(sqlite3_vfs *pVfs, int nBuf, char *zBuf ){
       n += sizeofULong;
     }
   }
+#endif
 
   return n;
 }

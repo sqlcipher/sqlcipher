@@ -14,7 +14,7 @@
 ** the effect on the database file of an OS crash or power failure.  This
 ** is used to test the ability of SQLite to recover from those situations.
 **
-** $Id: test6.c,v 1.39 2008/06/06 11:11:26 danielk1977 Exp $
+** $Id: test6.c,v 1.43 2009/02/11 14:27:04 danielk1977 Exp $
 */
 #if SQLITE_TEST          /* This file is used for testing only */
 #include "sqliteInt.h"
@@ -129,6 +129,7 @@ struct CrashFile {
   const sqlite3_io_methods *pMethod;   /* Must be first */
   sqlite3_file *pRealFile;             /* Underlying "real" file handle */
   char *zName;
+  int flags;                           /* Flags the file was opened with */
 
   /* Cache of the entire file. This is used to speed up OsRead() and 
   ** OsFileSize() calls. Although both could be done by traversing the
@@ -165,6 +166,22 @@ static void crash_free(void *p){
 }
 static void *crash_realloc(void *p, int n){
   return (void *)Tcl_Realloc(p, (size_t)n);
+}
+
+/*
+** Wrapper around the sqlite3OsWrite() function that avoids writing to the
+** 512 byte block begining at offset PENDING_BYTE.
+*/
+static int writeDbFile(CrashFile *p, u8 *z, i64 iAmt, i64 iOff){
+  int rc;
+  int iSkip = 0;
+  if( iOff==PENDING_BYTE && (p->flags&SQLITE_OPEN_MAIN_DB) ){
+    iSkip = 512;
+  }
+  if( (iAmt-iSkip)>0 ){
+    rc = sqlite3OsWrite(p->pRealFile, &z[iSkip], iAmt-iSkip, iOff+iSkip);
+  }
+  return rc;
 }
 
 /*
@@ -261,8 +278,8 @@ static int writeListSync(CrashFile *pFile, int isCrash){
     switch( eAction ){
       case 1: {               /* Write out correctly */
         if( pWrite->zBuf ){
-          rc = sqlite3OsWrite(
-              pRealFile, pWrite->zBuf, pWrite->nBuf, pWrite->iOffset
+          rc = writeDbFile(
+              pWrite->pFile, pWrite->zBuf, pWrite->nBuf, pWrite->iOffset
           );
         }else{
           rc = sqlite3OsTruncate(pRealFile, pWrite->iOffset);
@@ -307,8 +324,8 @@ static int writeListSync(CrashFile *pFile, int isCrash){
           sqlite3_int64 i;
           for(i=iFirst; rc==SQLITE_OK && i<=iLast; i++){
             sqlite3_randomness(g.iSectorSize, zGarbage); 
-            rc = sqlite3OsWrite(
-              pRealFile, zGarbage, g.iSectorSize, i*g.iSectorSize
+            rc = writeDbFile(
+              pWrite->pFile, zGarbage, g.iSectorSize, i*g.iSectorSize
             );
           }
           crash_free(zGarbage);
@@ -559,13 +576,29 @@ static int cfOpen(
     pWrapper->pRealFile = pReal;
     rc = sqlite3OsFileSize(pReal, &iSize);
     pWrapper->iSize = (int)iSize;
+    pWrapper->flags = flags;
   }
   if( rc==SQLITE_OK ){
     pWrapper->nData = (4096 + pWrapper->iSize);
     pWrapper->zData = crash_malloc(pWrapper->nData);
     if( pWrapper->zData ){
+      /* os_unix.c contains an assert() that fails if the caller attempts
+      ** to read data from the 512-byte locking region of a file opened
+      ** with the SQLITE_OPEN_MAIN_DB flag. This region of a database file
+      ** never contains valid data anyhow. So avoid doing such a read here.
+      */
+      const int isDb = (flags&SQLITE_OPEN_MAIN_DB);
+      i64 iChunk = pWrapper->iSize;
+      if( iChunk>PENDING_BYTE && isDb ){
+        iChunk = PENDING_BYTE;
+      }
       memset(pWrapper->zData, 0, pWrapper->nData);
-      rc = sqlite3OsRead(pReal, pWrapper->zData, pWrapper->iSize, 0); 
+      rc = sqlite3OsRead(pReal, pWrapper->zData, iChunk, 0); 
+      if( SQLITE_OK==rc && pWrapper->iSize>(PENDING_BYTE+512) && isDb ){
+        i64 iOff = PENDING_BYTE+512;
+        iChunk = pWrapper->iSize - iOff;
+        rc = sqlite3OsRead(pReal, &pWrapper->zData[iOff], iChunk, iOff);
+      }
     }else{
       rc = SQLITE_NOMEM;
     }
@@ -606,9 +639,9 @@ static void cfDlError(sqlite3_vfs *pCfVfs, int nByte, char *zErrMsg){
   sqlite3_vfs *pVfs = (sqlite3_vfs *)pCfVfs->pAppData;
   pVfs->xDlError(pVfs, nByte, zErrMsg);
 }
-static void *cfDlSym(sqlite3_vfs *pCfVfs, void *pHandle, const char *zSymbol){
+static void (*cfDlSym(sqlite3_vfs *pCfVfs, void *pH, const char *zSym))(void){
   sqlite3_vfs *pVfs = (sqlite3_vfs *)pCfVfs->pAppData;
-  return pVfs->xDlSym(pVfs, pHandle, zSymbol);
+  return pVfs->xDlSym(pVfs, pH, zSym);
 }
 static void cfDlClose(sqlite3_vfs *pCfVfs, void *pHandle){
   sqlite3_vfs *pVfs = (sqlite3_vfs *)pCfVfs->pAppData;
@@ -864,6 +897,64 @@ static int devSymObjCmd(
   return TCL_OK;
 }
 
+/*
+** tclcmd: register_jt_vfs ?-default? PARENT-VFS
+*/
+static int jtObjCmd(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int jt_register(char *, int);
+  char *zParent = 0;
+
+  if( objc!=2 && objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "?-default? PARENT-VFS");
+    return TCL_ERROR;
+  }
+  zParent = Tcl_GetString(objv[1]);
+  if( objc==3 ){
+    if( strcmp(zParent, "-default") ){
+      Tcl_AppendResult(interp, 
+          "bad option \"", zParent, "\": must be -default", 0
+      );
+      return TCL_ERROR;
+    }
+    zParent = Tcl_GetString(objv[2]);
+  }
+
+  if( !(*zParent) ){
+    zParent = 0;
+  }
+  if( jt_register(zParent, objc==3) ){
+    Tcl_AppendResult(interp, "Error in jt_register", 0);
+    return TCL_ERROR;
+  }
+
+  return TCL_OK;
+}
+
+/*
+** tclcmd: unregister_jt_vfs
+*/
+static int jtUnregisterObjCmd(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  void jt_unregister(void);
+
+  if( objc!=1 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "");
+    return TCL_ERROR;
+  }
+
+  jt_unregister();
+  return TCL_OK;
+}
+
 #endif /* SQLITE_OMIT_DISKIO */
 
 /*
@@ -874,6 +965,8 @@ int Sqlitetest6_Init(Tcl_Interp *interp){
   Tcl_CreateObjCommand(interp, "sqlite3_crash_enable", crashEnableCmd, 0, 0);
   Tcl_CreateObjCommand(interp, "sqlite3_crashparams", crashParamsObjCmd, 0, 0);
   Tcl_CreateObjCommand(interp, "sqlite3_simulate_device", devSymObjCmd, 0, 0);
+  Tcl_CreateObjCommand(interp, "register_jt_vfs", jtObjCmd, 0, 0);
+  Tcl_CreateObjCommand(interp, "unregister_jt_vfs", jtUnregisterObjCmd, 0, 0);
 #endif
   return TCL_OK;
 }

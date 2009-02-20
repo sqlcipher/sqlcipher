@@ -92,7 +92,7 @@ AC_INIT(sqlite, m4_esyscmd([cat VERSION | tr -d '\n']))
 dnl Put the RCS revision string after AC_INIT so that it will also
 dnl show in in configure.
 # The following RCS revision string applies to configure.in
-# $Revision: 1.48 $
+# $Revision: 1.54 $
 
 #########
 # Programs needed
@@ -140,6 +140,16 @@ if test "$TCLSH_CMD" = "none"; then
 fi
 AC_SUBST(TCLSH_CMD)
 
+AC_ARG_VAR([TCLLIBDIR], [Where to install tcl plugin])
+if test "x${TCLLIBDIR+set}" != "xset" ; then
+  TCLLIBDIR='$(libdir)'
+  for i in `echo 'puts stdout $auto_path' | ${TCLSH_CMD}` ; do
+    TCLLIBDIR=$i
+    break
+  done
+  TCLLIBDIR="${TCLLIBDIR}/sqlite3"
+fi
+
 
 #########
 # Set up an appropriate program prefix
@@ -150,15 +160,15 @@ fi
 AC_SUBST(program_prefix)
 
 VERSION=[`cat $srcdir/VERSION | sed 's/^\([0-9]*\.*[0-9]*\).*/\1/'`]
-echo "Version set to $VERSION"
+AC_MSG_NOTICE(Version set to $VERSION)
 AC_SUBST(VERSION)
 RELEASE=`cat $srcdir/VERSION`
-echo "Release set to $RELEASE"
+AC_MSG_NOTICE(Release set to $RELEASE)
 AC_SUBST(RELEASE)
-VERSION_NUMBER=[`cat $srcdir/VERSION  \
+VERSION_NUMBER=[`cat $srcdir/VERSION \
                            | sed 's/[^0-9]/ /g' \
                 | awk '{printf "%d%03d%03d",$1,$2,$3}'`]
-echo "Version number set to $VERSION_NUMBER"
+AC_MSG_NOTICE(Version number set to $VERSION_NUMBER)
 AC_SUBST(VERSION_NUMBER)
 
 #########
@@ -297,17 +307,17 @@ case "$enable_tempstore" in
     TEMP_STORE=1
     AC_MSG_RESULT([no])
   ;;
-  always ) 
-     TEMP_STORE=3
-    AC_MSG_RESULT([always])
-  ;;
   yes ) 
+     TEMP_STORE=2
+    AC_MSG_RESULT([yes])
+  ;;
+  always ) 
      TEMP_STORE=3
     AC_MSG_RESULT([always])
   ;;
   * ) 
     TEMP_STORE=1
-    AC_MSG_RESULT([yes])
+    AC_MSG_RESULT([no])
   ;;
 esac
 
@@ -344,10 +354,6 @@ if test "$TARGET_EXEEXT" = ".exe"; then
     SQLITE_OS_WIN=0
     SQLITE_OS_OS2=1
     CFLAGS="$CFLAGS -DSQLITE_OS_OS2=1"
-    if test "$ac_compiler_gnu" = "yes" ; then
-      CFLAGS="$CFLAGS -Zomf -Zexe -Zmap"
-      BUILD_CFLAGS="$BUILD_CFLAGS -Zomf -Zexe"
-    fi
   else
     SQLITE_OS_UNIX=0
     SQLITE_OS_WIN=1
@@ -389,6 +395,18 @@ if test "${use_tcl}" = "yes" ; then
         AC_MSG_ERROR([${with_tclconfig} directory doesn't contain tclConfig.sh])
       fi
     fi
+
+    # Start autosearch by asking tclsh
+    if test x"$cross_compiling" = xno; then
+      for i in `echo 'puts stdout $auto_path' | ${TCLSH_CMD}`
+      do
+        if test -f "$i/tclConfig.sh" ; then
+          ac_cv_c_tclconfig="$i"
+          break
+        fi
+      done
+    fi
+
     # then check for a private Tcl installation
     if test x"${ac_cv_c_tclconfig}" = x ; then
       for i in \
@@ -615,46 +633,50 @@ else
 fi
 
 #########
-# attempt to duplicate any OMITS into the $(OPT_FEATURE_FLAGS) parameter
+# attempt to duplicate any OMITS and ENABLES into the $(OPT_FEATURE_FLAGS) parameter
 for option in $CFLAGS $CPPFLAGS
 do
   case $option in
     -DSQLITE_OMIT*) OPT_FEATURE_FLAGS="$OPT_FEATURE_FLAGS $option";;
+    -DSQLITE_ENABLE*) OPT_FEATURE_FLAGS="$OPT_FEATURE_FLAGS $option";;
   esac
 done
 AC_SUBST(OPT_FEATURE_FLAGS)
 
 
-# attempt to remove any OMITS from the $(CFLAGS) parameter
+# attempt to remove any OMITS and ENABLES from the $(CFLAGS) parameter
 ac_temp_CFLAGS=""
 for option in $CFLAGS
 do
   case $option in
     -DSQLITE_OMIT*) ;;
+    -DSQLITE_ENABLE*) ;;
     *) ac_temp_CFLAGS="$ac_temp_CFLAGS $option";;
   esac
 done
 CFLAGS=$ac_temp_CFLAGS
 
 
-# attempt to remove any OMITS from the $(CPPFLAGS) parameter
+# attempt to remove any OMITS and ENABLES from the $(CPPFLAGS) parameter
 ac_temp_CPPFLAGS=""
 for option in $CPPFLAGS
 do
   case $option in
     -DSQLITE_OMIT*) ;;
+    -DSQLITE_ENABLE*) ;;
     *) ac_temp_CPPFLAGS="$ac_temp_CPPFLAGS $option";;
   esac
 done
 CPPFLAGS=$ac_temp_CPPFLAGS
 
 
-# attempt to remove any OMITS from the $(BUILD_CFLAGS) parameter
+# attempt to remove any OMITS and ENABLES from the $(BUILD_CFLAGS) parameter
 ac_temp_BUILD_CFLAGS=""
 for option in $BUILD_CFLAGS
 do
   case $option in
     -DSQLITE_OMIT*) ;;
+    -DSQLITE_ENABLE*) ;;
     *) ac_temp_BUILD_CFLAGS="$ac_temp_BUILD_CFLAGS $option";;
   esac
 done

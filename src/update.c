@@ -12,7 +12,7 @@
 ** This file contains C code routines that are called by the parser
 ** to handle UPDATE statements.
 **
-** $Id: update.c,v 1.181 2008/07/28 19:34:54 drh Exp $
+** $Id: update.c,v 1.191 2008/12/23 23:56:22 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -109,10 +109,10 @@ void sqlite3Update(
   int isView;                  /* Trying to update a view */
   int triggers_exist = 0;      /* True if any row triggers exist */
 #endif
-  int iBeginAfterTrigger;      /* Address of after trigger program */
-  int iEndAfterTrigger;        /* Exit of after trigger program */
-  int iBeginBeforeTrigger;     /* Address of before trigger program */
-  int iEndBeforeTrigger;       /* Exit of before trigger program */
+  int iBeginAfterTrigger = 0;  /* Address of after trigger program */
+  int iEndAfterTrigger = 0;    /* Exit of after trigger program */
+  int iBeginBeforeTrigger = 0; /* Address of before trigger program */
+  int iEndBeforeTrigger = 0;   /* Exit of before trigger program */
   u32 old_col_mask = 0;        /* Mask of OLD.* columns in use */
   u32 new_col_mask = 0;        /* Mask of NEW.* columns in use */
 
@@ -124,6 +124,7 @@ void sqlite3Update(
   int regOldRowid;       /* The old rowid */
   int regNewRowid;       /* The new rowid */
   int regData;           /* New data for the row */
+  int regRowSet = 0;     /* Rowset of rows to be updated */
 
   sContext.pParse = 0;
   db = pParse->db;
@@ -142,7 +143,7 @@ void sqlite3Update(
   ** updated is a view
   */
 #ifndef SQLITE_OMIT_TRIGGER
-  triggers_exist = sqlite3TriggersExist(pParse, pTab, TK_UPDATE, pChanges);
+  triggers_exist = sqlite3TriggersExist(pTab, TK_UPDATE, pChanges);
   isView = pTab->pSelect!=0;
 #else
 # define triggers_exist 0
@@ -194,7 +195,7 @@ void sqlite3Update(
   */
   chngRowid = 0;
   for(i=0; i<pChanges->nExpr; i++){
-    if( sqlite3ExprResolveNames(&sNC, pChanges->a[i].pExpr) ){
+    if( sqlite3ResolveExprNames(&sNC, pChanges->a[i].pExpr) ){
       goto update_cleanup;
     }
     for(j=0; j<pTab->nCol; j++){
@@ -328,14 +329,16 @@ void sqlite3Update(
   /* If we are trying to update a view, realize that view into
   ** a ephemeral table.
   */
+#if !defined(SQLITE_OMIT_VIEW) && !defined(SQLITE_OMIT_TRIGGER)
   if( isView ){
-    sqlite3MaterializeView(pParse, pTab->pSelect, pWhere, iCur);
+    sqlite3MaterializeView(pParse, pTab, pWhere, iCur);
   }
+#endif
 
   /* Resolve the column names in all the expressions in the
   ** WHERE clause.
   */
-  if( sqlite3ExprResolveNames(&sNC, pWhere) ){
+  if( sqlite3ResolveExprNames(&sNC, pWhere) ){
     goto update_cleanup;
   }
 
@@ -343,14 +346,17 @@ void sqlite3Update(
   */
   sqlite3VdbeAddOp2(v, OP_Null, 0, regOldRowid);
   pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, 0,
-                             WHERE_ONEPASS_DESIRED);
+                             WHERE_ONEPASS_DESIRED, 0);
   if( pWInfo==0 ) goto update_cleanup;
   okOnePass = pWInfo->okOnePass;
 
   /* Remember the rowid of every item to be updated.
   */
   sqlite3VdbeAddOp2(v, IsVirtual(pTab)?OP_VRowid:OP_Rowid, iCur, regOldRowid);
-  if( !okOnePass ) sqlite3VdbeAddOp2(v, OP_FifoWrite, regOldRowid, 0);
+  if( !okOnePass ){
+    regRowSet = ++pParse->nMem;
+    sqlite3VdbeAddOp2(v, OP_RowSetAdd, regRowSet, regOldRowid);
+  }
 
   /* End the database scan loop.
   */
@@ -403,7 +409,7 @@ void sqlite3Update(
     addr = sqlite3VdbeAddOp0(v, OP_Goto);
     sqlite3VdbeJumpHere(v, a1);
   }else{
-    addr = sqlite3VdbeAddOp2(v, OP_FifoRead, regOldRowid, 0);
+    addr = sqlite3VdbeAddOp3(v, OP_RowSetRead, regRowSet, 0, regOldRowid);
   }
 
   if( triggers_exist ){
@@ -431,6 +437,7 @@ void sqlite3Update(
     */
     if( chngRowid ){
       sqlite3ExprCodeAndCache(pParse, pRowidExpr, regRowid);
+      sqlite3VdbeAddOp1(v, OP_MustBeInt, regRowid);
     }else{
       sqlite3VdbeAddOp2(v, OP_Rowid, iCur, regRowid);
     }
@@ -522,7 +529,7 @@ void sqlite3Update(
     /* Create the new index entries and the new record.
     */
     sqlite3CompleteInsertion(pParse, pTab, iCur, regNewRowid, 
-                             aRegIdx, chngRowid, 1, -1, 0);
+                             aRegIdx, 1, -1, 0);
   }
 
   /* Increment the row counter 
@@ -565,7 +572,7 @@ void sqlite3Update(
   if( db->flags & SQLITE_CountRows && !pParse->trigStack && pParse->nested==0 ){
     sqlite3VdbeAddOp2(v, OP_ResultRow, regRowCount, 1);
     sqlite3VdbeSetNumCols(v, 1);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "rows updated", P4_STATIC);
+    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "rows updated", SQLITE_STATIC);
   }
 
 update_cleanup:
@@ -649,7 +656,7 @@ static void updateVirtualTable(
   /* fill the ephemeral table 
   */
   sqlite3SelectDestInit(&dest, SRT_Table, ephemTab);
-  sqlite3Select(pParse, pSelect, &dest, 0, 0, 0);
+  sqlite3Select(pParse, pSelect, &dest);
 
   /* Generate code to scan the ephemeral table and call VUpdate. */
   iReg = ++pParse->nMem;

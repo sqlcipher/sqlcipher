@@ -5,7 +5,7 @@
 ** an historical reference.  Most of the "enhancements" have been backed
 ** out so that the functionality is now the same as standard printf().
 **
-** $Id: printf.c,v 1.93 2008/07/28 19:34:53 drh Exp $
+** $Id: printf.c,v 1.99 2008/12/10 19:26:24 drh Exp $
 **
 **************************************************************************
 **
@@ -137,7 +137,6 @@ static const et_info fmtinfo[] = {
   {  'S',  0, 2, etSRCLIST,    0,  0 },
   {  'r', 10, 3, etORDINAL,    0,  0 },
 };
-#define etNINFO  (sizeof(fmtinfo)/sizeof(fmtinfo[0]))
 
 /*
 ** If SQLITE_OMIT_FLOATING_POINT is defined, then none of the floating point
@@ -157,7 +156,7 @@ static const et_info fmtinfo[] = {
 ** 16 (the number of significant digits in a 64-bit float) '0' is
 ** always returned.
 */
-static int et_getdigit(LONGDOUBLE_TYPE *val, int *cnt){
+static char et_getdigit(LONGDOUBLE_TYPE *val, int *cnt){
   int digit;
   LONGDOUBLE_TYPE d;
   if( (*cnt)++ >= 16 ) return '0';
@@ -165,7 +164,7 @@ static int et_getdigit(LONGDOUBLE_TYPE *val, int *cnt){
   d = digit;
   digit += '0';
   *val = (*val - d)*10.0;
-  return digit;
+  return (char)digit;
 }
 #endif /* SQLITE_OMIT_FLOATING_POINT */
 
@@ -174,7 +173,7 @@ static int et_getdigit(LONGDOUBLE_TYPE *val, int *cnt){
 */
 static void appendSpace(StrAccum *pAccum, int N){
   static const char zSpaces[] = "                             ";
-  while( N>=sizeof(zSpaces)-1 ){
+  while( N>=(int)sizeof(zSpaces)-1 ){
     sqlite3StrAccumAppend(pAccum, zSpaces, sizeof(zSpaces)-1);
     N -= sizeof(zSpaces)-1;
   }
@@ -246,8 +245,7 @@ void sqlite3VXPrintf(
   const et_info *infop;      /* Pointer to the appropriate info structure */
   char buf[etBUFSIZE];       /* Conversion buffer */
   char prefix;               /* Prefix character.  "+" or "-" or " " or '\0'. */
-  etByte errorflag = 0;      /* True if an error is encountered */
-  etByte xtype;              /* Conversion paradigm */
+  etByte xtype = 0;          /* Conversion paradigm */
   char *zExtra;              /* Extra memory used for etTCLESCAPE conversions */
 #ifndef SQLITE_OMIT_FLOATING_POINT
   int  exp, e2;              /* exponent of real numbers */
@@ -270,7 +268,6 @@ void sqlite3VXPrintf(
       if( c==0 ) break;
     }
     if( (c=(*++fmt))==0 ){
-      errorflag = 1;
       sqlite3StrAccumAppend(pAccum, "%", 1);
       break;
     }
@@ -339,7 +336,7 @@ void sqlite3VXPrintf(
     }
     /* Fetch the info entry for the field */
     infop = 0;
-    for(idx=0; idx<etNINFO; idx++){
+    for(idx=0; idx<ArraySize(fmtinfo); idx++){
       if( c==fmtinfo[idx].fmttype ){
         infop = &fmtinfo[idx];
         if( useExtended || (infop->flags & FLAG_INTERN)==0 ){
@@ -416,7 +413,7 @@ void sqlite3VXPrintf(
         bufpt = &buf[etBUFSIZE-1];
         if( xtype==etORDINAL ){
           static const char zOrd[] = "thstndrd";
-          int x = longvalue % 10;
+          int x = (int)(longvalue % 10);
           if( x>=4 || (longvalue/10)%10==1 ){
             x = 0;
           }
@@ -434,7 +431,7 @@ void sqlite3VXPrintf(
             longvalue = longvalue/base;
           }while( longvalue>0 );
         }
-        length = &buf[etBUFSIZE-1]-bufpt;
+        length = (int)(&buf[etBUFSIZE-1]-bufpt);
         for(idx=precision-length; idx>0; idx--){
           *(--bufpt) = '0';                             /* Zero pad */
         }
@@ -445,7 +442,7 @@ void sqlite3VXPrintf(
           pre = &aPrefix[infop->prefix];
           for(; (x=(*pre))!=0; pre++) *(--bufpt) = x;
         }
-        length = &buf[etBUFSIZE-1]-bufpt;
+        length = (int)(&buf[etBUFSIZE-1]-bufpt);
         break;
       case etFLOAT:
       case etEXP:
@@ -473,7 +470,7 @@ void sqlite3VXPrintf(
         if( xtype==etFLOAT ) realvalue += rounder;
         /* Normalize realvalue to within 10.0 > realvalue >= 1.0 */
         exp = 0;
-        if( sqlite3IsNaN(realvalue) ){
+        if( sqlite3IsNaN((double)realvalue) ){
           bufpt = "NaN";
           length = 3;
           break;
@@ -492,7 +489,7 @@ void sqlite3VXPrintf(
             }else{
               bufpt = "Inf";
             }
-            length = strlen(bufpt);
+            length = sqlite3Strlen30(bufpt);
             break;
           }
         }
@@ -523,7 +520,7 @@ void sqlite3VXPrintf(
           e2 = exp;
         }
         nsd = 0;
-        flag_dp = (precision>0) | flag_alternateform | flag_altform2;
+        flag_dp = (precision>0 ?1:0) | flag_alternateform | flag_altform2;
         /* The sign in front of the number */
         if( prefix ){
           *(bufpt++) = prefix;
@@ -571,18 +568,18 @@ void sqlite3VXPrintf(
             *(bufpt++) = '+';
           }
           if( exp>=100 ){
-            *(bufpt++) = (exp/100)+'0';                /* 100's digit */
+            *(bufpt++) = (char)((exp/100)+'0');        /* 100's digit */
             exp %= 100;
           }
-          *(bufpt++) = exp/10+'0';                     /* 10's digit */
-          *(bufpt++) = exp%10+'0';                     /* 1's digit */
+          *(bufpt++) = (char)(exp/10+'0');             /* 10's digit */
+          *(bufpt++) = (char)(exp%10+'0');             /* 1's digit */
         }
         *bufpt = 0;
 
         /* The converted number is in buf[] and zero terminated. Output it.
         ** Note that the number is in the usual order, not reversed as with
         ** integer conversions. */
-        length = bufpt-buf;
+        length = (int)(bufpt-buf);
         bufpt = buf;
 
         /* Special case:  Add leading zeros if the flag_zeropad flag is
@@ -609,9 +606,10 @@ void sqlite3VXPrintf(
         length = 1;
         break;
       case etCHARX:
-        c = buf[0] = va_arg(ap,int);
+        c = va_arg(ap,int);
+        buf[0] = (char)c;
         if( precision>=0 ){
-          for(idx=1; idx<precision; idx++) buf[idx] = c;
+          for(idx=1; idx<precision; idx++) buf[idx] = (char)c;
           length = precision;
         }else{
           length =1;
@@ -629,14 +627,15 @@ void sqlite3VXPrintf(
         if( precision>=0 ){
           for(length=0; length<precision && bufpt[length]; length++){}
         }else{
-          length = strlen(bufpt);
+          length = sqlite3Strlen30(bufpt);
         }
         break;
       case etSQLESCAPE:
       case etSQLESCAPE2:
       case etSQLESCAPE3: {
-        int i, j, n, ch, isnull;
+        int i, j, n, isnull;
         int needQuote;
+        char ch;
         char q = ((xtype==etSQLESCAPE3)?'"':'\'');   /* Quote character */
         char *escarg = va_arg(ap,char*);
         isnull = escarg==0;
@@ -648,7 +647,10 @@ void sqlite3VXPrintf(
         n += i + 1 + needQuote*2;
         if( n>etBUFSIZE ){
           bufpt = zExtra = sqlite3Malloc( n );
-          if( bufpt==0 ) return;
+          if( bufpt==0 ){
+            pAccum->mallocFailed = 1;
+            return;
+          }
         }else{
           bufpt = buf;
         }
@@ -723,9 +725,9 @@ void sqlite3StrAccumAppend(StrAccum *p, const char *z, int N){
     return;
   }
   if( N<0 ){
-    N = strlen(z);
+    N = sqlite3Strlen30(z);
   }
-  if( N==0 ){
+  if( N==0 || z==0 ){
     return;
   }
   if( p->nChar+N >= p->nAlloc ){
@@ -744,7 +746,7 @@ void sqlite3StrAccumAppend(StrAccum *p, const char *z, int N){
         p->tooBig = 1;
         return;
       }else{
-        p->nAlloc = szNew;
+        p->nAlloc = (int)szNew;
       }
       zNew = sqlite3DbMallocRaw(p->db, p->nAlloc );
       if( zNew ){

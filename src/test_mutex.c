@@ -10,7 +10,7 @@
 **
 *************************************************************************
 ** 
-** $Id: test_mutex.c,v 1.11 2008/07/19 13:43:24 danielk1977 Exp $
+** $Id: test_mutex.c,v 1.14 2009/02/11 05:18:07 danielk1977 Exp $
 */
 
 #include "tcl.h"
@@ -38,7 +38,7 @@ static struct test_mutex_globals {
   sqlite3_mutex_methods m;      /* Interface to "real" mutex system */
   int aCounter[8];              /* Number of grabs of each type of mutex */
   sqlite3_mutex aStatic[6];     /* The six static mutexes */
-} g;
+} g = {0};
 
 /* Return true if the countable mutex is currently held */
 static int counterMutexHeld(sqlite3_mutex *p){
@@ -359,6 +359,57 @@ static int test_config(
   return TCL_OK;
 }
 
+static sqlite3 *getDbPointer(Tcl_Interp *pInterp, Tcl_Obj *pObj){
+  sqlite3 *db;
+  Tcl_CmdInfo info;
+  char *zCmd = Tcl_GetString(pObj);
+  if( Tcl_GetCommandInfo(pInterp, zCmd, &info) ){
+    db = *((sqlite3 **)info.objClientData);
+  }else{
+    db = (sqlite3*)sqlite3TestTextToPtr(zCmd);
+  }
+  assert( db );
+  return db;
+}
+
+static int test_enter_db_mutex(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  sqlite3 *db;
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB");
+    return TCL_ERROR;
+  }
+  db = getDbPointer(interp, objv[1]);
+  if( !db ){
+    return TCL_ERROR;
+  }
+  sqlite3_mutex_enter(sqlite3_db_mutex(db));
+  return TCL_OK;
+}
+
+static int test_leave_db_mutex(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  sqlite3 *db;
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB");
+    return TCL_ERROR;
+  }
+  db = getDbPointer(interp, objv[1]);
+  if( !db ){
+    return TCL_ERROR;
+  }
+  sqlite3_mutex_leave(sqlite3_db_mutex(db));
+  return TCL_OK;
+}
+
 int Sqlitetest_mutex_Init(Tcl_Interp *interp){
   static struct {
     char *zName;
@@ -367,6 +418,9 @@ int Sqlitetest_mutex_Init(Tcl_Interp *interp){
     { "sqlite3_shutdown",        (Tcl_ObjCmdProc*)test_shutdown },
     { "sqlite3_initialize",      (Tcl_ObjCmdProc*)test_initialize },
     { "sqlite3_config",          (Tcl_ObjCmdProc*)test_config },
+
+    { "enter_db_mutex",          (Tcl_ObjCmdProc*)test_enter_db_mutex },
+    { "leave_db_mutex",          (Tcl_ObjCmdProc*)test_leave_db_mutex },
 
     { "alloc_dealloc_mutex",     (Tcl_ObjCmdProc*)test_alloc_mutex },
     { "install_mutex_counters",  (Tcl_ObjCmdProc*)test_install_mutex_counters },
@@ -377,7 +431,6 @@ int Sqlitetest_mutex_Init(Tcl_Interp *interp){
   for(i=0; i<sizeof(aCmd)/sizeof(aCmd[0]); i++){
     Tcl_CreateObjCommand(interp, aCmd[i].zName, aCmd[i].xProc, 0, 0);
   }
-  memset(&g, 0, sizeof(g));
 
   Tcl_LinkVar(interp, "disable_mutex_init", 
               (char*)&g.disableInit, TCL_LINK_INT);

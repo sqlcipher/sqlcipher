@@ -1,4 +1,4 @@
-# 4 2001 September 15
+# 2001 September 15
 #
 # The author disclaims copyright to this source code.  In place of
 # a legal notice, here is a blessing:
@@ -11,7 +11,7 @@
 # This file implements regression tests for SQLite library.  The
 # focus of this file is testing the use of indices in WHERE clases.
 #
-# $Id: where.test,v 1.46 2008/07/15 00:27:35 drh Exp $
+# $Id: where.test,v 1.50 2008/11/03 09:06:06 danielk1977 Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -69,11 +69,26 @@ do_test where-1.1.2 {
   set sqlite_query_plan
 } {t1 i1w}
 do_test where-1.1.3 {
+  db status step
+} {0}
+do_test where-1.1.4 {
+  db eval {SELECT x, y, w FROM t1 WHERE +w=10}
+} {3 121 10}
+do_test where-1.1.5 {
+  db status step
+} {99}
+do_test where-1.1.6 {
+  set sqlite_query_plan
+} {t1 {}}
+do_test where-1.1.7 {
   count {SELECT x, y, w AS abc FROM t1 WHERE abc=10}
 } {3 121 10 3}
-do_test where-1.1.4 {
+do_test where-1.1.8 {
   set sqlite_query_plan
 } {t1 i1w}
+do_test where-1.1.9 {
+  db status step
+} {0}
 do_test where-1.2.1 {
   count {SELECT x, y, w FROM t1 WHERE w=11}
 } {3 144 11 3}
@@ -447,9 +462,8 @@ ifcapable subquery {
 # occurring as expected.
 #
 proc cksort {sql} {
-  set ::sqlite_sort_count 0
   set data [execsql $sql]
-  if {$::sqlite_sort_count} {set x sort} {set x nosort}
+  if {[db status sort]} {set x sort} {set x nosort}
   lappend data $x
   return $data
 }
@@ -1155,6 +1169,92 @@ do_test where-15.1 {
   }
 } {}
 
+# Ticket #3408.
+# 
+# The branch of code in where.c that generated rowid lookups was
+# incorrectly deallocating a constant register, meaning that if the 
+# vdbe code ran more than once, the second time around the constant
+# value may have been clobbered by some other value.
+# 
+do_test where-16.1 {
+  execsql {
+    CREATE TABLE a1(id INTEGER PRIMARY KEY, v);
+    CREATE TABLE a2(id INTEGER PRIMARY KEY, v);
+    INSERT INTO a1 VALUES(1, 'one');
+    INSERT INTO a1 VALUES(2, 'two');
+    INSERT INTO a2 VALUES(1, 'one');
+    INSERT INTO a2 VALUES(2, 'two');
+  }
+} {}
+do_test where-16.2 {
+  execsql {
+    SELECT * FROM a2 CROSS JOIN a1 WHERE a1.id=1 AND a1.v='one';
+  }
+} {1 one 1 one 2 two 1 one}
+
+# The actual problem reported in #3408.
+do_test where-16.3 {
+  execsql {
+    CREATE TEMP TABLE foo(idx INTEGER);
+    INSERT INTO foo VALUES(1);
+    INSERT INTO foo VALUES(1);
+    INSERT INTO foo VALUES(1);
+    INSERT INTO foo VALUES(2);
+    INSERT INTO foo VALUES(2);
+    CREATE TEMP TABLE bar(stuff INTEGER);
+    INSERT INTO bar VALUES(100);
+    INSERT INTO bar VALUES(200);
+    INSERT INTO bar VALUES(300);
+  }
+} {}
+do_test where-16.4 {
+  execsql {
+    SELECT bar.RowID id FROM foo, bar WHERE foo.idx = bar.RowID AND id = 2;
+  }
+} {2 2}
+
 integrity_check {where-99.0}
+
+#---------------------------------------------------------------------
+# These tests test that a bug surrounding the use of ForceInt has been
+# fixed in where.c.
+#
+do_test where-17.1 {
+  execsql {
+    CREATE TABLE tbooking (
+      id INTEGER PRIMARY KEY,
+      eventtype INTEGER NOT NULL
+    );
+    INSERT INTO tbooking VALUES(42, 3);
+    INSERT INTO tbooking VALUES(43, 4);
+  }
+} {}
+do_test where-17.2 {
+  execsql {
+    SELECT a.id
+    FROM tbooking AS a
+    WHERE a.eventtype=3;
+  }
+} {42}
+do_test where-17.3 {
+  execsql {
+    SELECT a.id, (SELECT b.id FROM tbooking AS b WHERE b.id>a.id)
+    FROM tbooking AS a
+    WHERE a.eventtype=3;
+  }
+} {42 43}
+do_test where-17.4 {
+  execsql {
+    SELECT a.id, (SELECT b.id FROM tbooking AS b WHERE b.id>a.id)
+    FROM (SELECT 1.5 AS id) AS a
+  }
+} {1.5 42}
+do_test where-17.5 {
+  execsql {
+    CREATE TABLE tother(a, b);
+    INSERT INTO tother VALUES(1, 3.7);
+    SELECT id, a FROM tbooking, tother WHERE id>a;
+  }
+} {42 1 43 1}
 
 finish_test

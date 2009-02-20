@@ -11,10 +11,15 @@
 #
 # Tests for the lookaside memory allocator.
 #
-# $Id: lookaside.test,v 1.4 2008/08/05 17:53:24 drh Exp $
+# $Id: lookaside.test,v 1.8 2008/10/11 17:06:04 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
+
+ifcapable !lookaside {
+  finish_test
+  return
+}
 
 catch {db close}
 sqlite3_shutdown
@@ -29,33 +34,33 @@ do_test lookaside-1.1 {
   catch {sqlite3_config_error db}
 } {0}
 do_test lookaside-1.2 {
-  sqlite3_db_config_lookaside db 1 20 20
+  sqlite3_db_config_lookaside db 1 18 18
 } {0}
 do_test lookaside-1.3 {
   sqlite3_db_status db SQLITE_DBSTATUS_LOOKASIDE_USED 0
 } {0 0 0}
 do_test lookaside-1.4 {
-  db eval {CREATE TABLE t1(x);}
+  db eval {CREATE TABLE t1(w,x,y,z);}
   foreach {x y z} [sqlite3_db_status db SQLITE_DBSTATUS_LOOKASIDE_USED 0] break
-  expr {$x==0 && $y<$z && $z==20}
+  expr {$x==0 && $y<$z && $z==18}
 } {1}
 do_test lookaside-1.5 {
   foreach {x y z} [sqlite3_db_status db SQLITE_DBSTATUS_LOOKASIDE_USED 1] break
-  expr {$x==0 && $y<$z && $z==20}
+  expr {$x==0 && $y<$z && $z==18}
 } {1}
 do_test lookaside-1.6 {
   foreach {x y z} [sqlite3_db_status db SQLITE_DBSTATUS_LOOKASIDE_USED 0] break
-  expr {$x==0 && $y==$z && $y<20}
+  expr {$x==0 && $y==$z && $y<18}
 } {1}
 do_test lookaside-1.7 {
   db cache flush
   foreach {x y z} [sqlite3_db_status db SQLITE_DBSTATUS_LOOKASIDE_USED 0] break
-  expr {$x==0 && $y==0 && $z<20}
+  expr {$x==0 && $y==0 && $z<18}
 } {1}
 do_test lookaside-1.8 {
   db cache flush
   foreach {x y z} [sqlite3_db_status db SQLITE_DBSTATUS_LOOKASIDE_USED 1] break
-  expr {$x==0 && $y==0 && $z<20}
+  expr {$x==0 && $y==0 && $z<18}
 } {1}
 do_test lookaside-1.9 {
   db cache flush
@@ -76,6 +81,12 @@ do_test lookaside-2.3 {
 do_test lookaside-2.4 {
   db cache flush
   sqlite3_db_config_lookaside db 0 50 50
+} {0}  ;# SQLITE_OK
+do_test lookaside-2.5 {
+  sqlite3_db_config_lookaside db 0 -1 50
+} {0}  ;# SQLITE_OK
+do_test lookaside-2.6 {
+  sqlite3_db_config_lookaside db 0 50 -1
 } {0}  ;# SQLITE_OK
 
 # sqlite3_db_status() with an invalid verb returns an error.

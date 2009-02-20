@@ -9,7 +9,7 @@
 #
 #***********************************************************************
 #
-# $Id: incrblob.test,v 1.20 2008/04/24 09:49:55 danielk1977 Exp $
+# $Id: incrblob.test,v 1.23 2008/11/05 16:37:35 drh Exp $
 #
 
 set testdir [file dirname $argv0]
@@ -450,8 +450,10 @@ do_test incrblob-6.9 {
   flush $::blob
 } {}
 
-# At this point rollback or commit should be illegal (because 
-# there is an open blob channel).
+# At this point rollback should be illegal (because 
+# there is an open blob channel).  But commit is allowed because
+# the blob is read-only.
+#
 do_test incrblob-6.10 {
   catchsql {
     ROLLBACK;
@@ -461,7 +463,7 @@ do_test incrblob-6.11 {
   catchsql {
     COMMIT;
   } db2
-} {1 {cannot commit transaction - SQL statements in progress}}
+} {0 {}}
 
 do_test incrblob-6.12 {
   execsql {
@@ -470,9 +472,6 @@ do_test incrblob-6.12 {
 } {}
 do_test incrblob-6.13 {
   close $::blob
-  execsql {
-    COMMIT;
-  } db2
 } {}
 do_test incrblob-6.14 {
   execsql {
@@ -566,6 +565,7 @@ do_test incrblob-7.2.1 {
     INSERT INTO t1 VALUES(123, $::data);
   }
   set ::b [db incrblob -readonly t1 b 123]
+  fconfigure $::b -translation binary
   read $::b
 } $::data
 do_test incrblob-7.2.2 {
@@ -588,6 +588,7 @@ do_test incrblob-7.3.1 {
     INSERT INTO t2 VALUES(456, $::otherdata);
   }
   set ::b [db incrblob -readonly t2 b 456]
+  fconfigure $::b -translation binary
   read $::b
 } $::otherdata
 do_test incrblob-7.3.2 {
@@ -615,5 +616,37 @@ do_test incrblob-7.5 {
 do_test incrblob-7.6 {
   sqlite3_errmsg db
 } {attempt to write a readonly database}
+
+# Test that if either the "offset" or "amount" arguments to
+# sqlite3_blob_write() are less than zero, SQLITE_ERROR is returned.
+# 
+do_test incrblob-8.1 {
+  execsql { INSERT INTO t1 VALUES(314159, 'sqlite') }
+  set ::b [db incrblob t1 b 314159]
+  fconfigure $::b -translation binary
+  set rc [catch {sqlite3_blob_write $::b 10 HELLO -1} msg]
+  lappend rc $msg
+} {1 SQLITE_ERROR}
+do_test incrblob-8.2 {
+  sqlite3_errcode db
+} {SQLITE_ERROR}
+do_test incrblob-8.3 {
+  set rc [catch {sqlite3_blob_write $::b -1 HELLO 5} msg]
+  lappend rc $msg
+} {1 SQLITE_ERROR}
+do_test incrblob-8.4 {
+  sqlite3_errcode db
+} {SQLITE_ERROR}
+do_test incrblob-8.5 {
+  execsql {SELECT b FROM t1 WHERE a = 314159}
+} {sqlite}
+do_test incrblob-8.6 {
+  set rc [catch {sqlite3_blob_write $::b 0 etilqs 6} msg]
+  lappend rc $msg
+} {0 {}}
+do_test incrblob-8.7 {
+  execsql {SELECT b FROM t1 WHERE a = 314159}
+} {etilqs}
+
 
 finish_test

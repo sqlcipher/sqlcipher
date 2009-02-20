@@ -15,7 +15,7 @@
 # interface is pretty well tested.  This file contains some addition
 # tests for fringe issues that the main test suite does not cover.
 #
-# $Id: tclsqlite.test,v 1.65 2008/07/10 17:52:49 danielk1977 Exp $
+# $Id: tclsqlite.test,v 1.72 2009/02/04 22:46:47 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -25,16 +25,17 @@ source $testdir/tester.tcl
 if {[sqlite3 -has-codec]} {
   set r "sqlite_orig HANDLE FILENAME ?-key CODEC-KEY?"
 } else {
-  set r "sqlite3 HANDLE FILENAME ?-vfs VFSNAME? ?-readonly BOOLEAN? ?-create BOOLEAN? ?-nomutex BOOLEAN?"
+  set r "sqlite3 HANDLE FILENAME ?-vfs VFSNAME? ?-readonly BOOLEAN? ?-create BOOLEAN? ?-nomutex BOOLEAN? ?-fullmutex BOOLEAN?"
 }
 do_test tcl-1.1 {
   set v [catch {sqlite3 bogus} msg]
+  regsub {really_sqlite3} $msg {sqlite3} msg
   lappend v $msg
 } [list 1 "wrong # args: should be \"$r\""]
 do_test tcl-1.2 {
   set v [catch {db bogus} msg]
   lappend v $msg
-} {1 {bad option "bogus": must be authorizer, busy, cache, changes, close, collate, collation_needed, commit_hook, complete, copy, enable_load_extension, errorcode, eval, exists, function, incrblob, interrupt, last_insert_rowid, nullvalue, onecolumn, profile, progress, rekey, rollback_hook, timeout, total_changes, trace, transaction, update_hook, or version}}
+} {1 {bad option "bogus": must be authorizer, backup, busy, cache, changes, close, collate, collation_needed, commit_hook, complete, copy, enable_load_extension, errorcode, eval, exists, function, incrblob, interrupt, last_insert_rowid, nullvalue, onecolumn, profile, progress, rekey, restore, rollback_hook, status, timeout, total_changes, trace, transaction, update_hook, or version}}
 do_test tcl-1.2.1 {
   set v [catch {db cache bogus} msg]
   lappend v $msg
@@ -117,7 +118,7 @@ do_test tcl-1.14 {
 do_test tcl-1.15 {
   set v [catch {db function} msg]
   lappend v $msg
-} {1 {wrong # args: should be "db function NAME SCRIPT"}}
+} {1 {wrong # args: should be "db function NAME [-argcount N] SCRIPT"}}
 do_test tcl-1.16 {
   set v [catch {db last_insert_rowid xyz} msg]
   lappend v $msg
@@ -233,13 +234,13 @@ ifcapable {tclvar} {
   do_test tcl-5.1 {
     execsql {CREATE TABLE t3(a,b,c)}
     catch {unset x}
-    set x(1) 5
-    set x(2) 7
+    set x(1) A
+    set x(2) B
     execsql {
       INSERT INTO t3 VALUES($::x(1),$::x(2),$::x(3));
       SELECT * FROM t3
     }
-  } {5 7 {}}
+  } {A B {}}
   do_test tcl-5.2 {
     execsql {
       SELECT typeof(a), typeof(b), typeof(c) FROM t3
@@ -413,16 +414,17 @@ do_test tcl-10.9 {
     }
   }
   db eval {SELECT * FROM t4}
-} {1 2 3 4}
+} {1 2}
 do_test tcl-10.10 {
   for {set i 0} {$i<1} {incr i} {
     db transaction {
       db eval {INSERT INTO t4 VALUES(5)}
       continue
     }
+    error "This line should not be run"
   }
   db eval {SELECT * FROM t4}
-} {1 2 3 4 5}
+} {1 2 5}
 do_test tcl-10.11 {
   for {set i 0} {$i<10} {incr i} {
     db transaction {
@@ -431,7 +433,7 @@ do_test tcl-10.11 {
     }
   }
   db eval {SELECT * FROM t4}
-} {1 2 3 4 5 6}
+} {1 2 5 6}
 do_test tcl-10.12 {
   set rc [catch {
     for {set i 0} {$i<10} {incr i} {
@@ -444,13 +446,125 @@ do_test tcl-10.12 {
 } {2}
 do_test tcl-10.13 {
   db eval {SELECT * FROM t4}
-} {1 2 3 4 5 6 7}
+} {1 2 5 6 7}
+
+# Now test that [db transaction] commands may be nested with 
+# the expected results.
+#
+do_test tcl-10.14 {
+  db transaction {
+    db eval {
+      DELETE FROM t4;
+      INSERT INTO t4 VALUES('one');
+    }
+
+    catch { 
+      db transaction {
+        db eval { INSERT INTO t4 VALUES('two') }
+        db transaction {
+          db eval { INSERT INTO t4 VALUES('three') }
+          error "throw an error!"
+        }
+      }
+    }
+  }
+
+  db eval {SELECT * FROM t4}
+} {one}
+do_test tcl-10.15 {
+  # Make sure a transaction has not been left open.
+  db eval {BEGIN ; COMMIT}
+} {}
+do_test tcl-10.16 {
+  db transaction {
+    db eval { INSERT INTO t4 VALUES('two'); }
+    db transaction {
+      db eval { INSERT INTO t4 VALUES('three') }
+      db transaction {
+        db eval { INSERT INTO t4 VALUES('four') }
+      }
+    }
+  }
+  db eval {SELECT * FROM t4}
+} {one two three four}
+do_test tcl-10.17 {
+  catch {
+    db transaction {
+      db eval { INSERT INTO t4 VALUES('A'); }
+      db transaction {
+        db eval { INSERT INTO t4 VALUES('B') }
+        db transaction {
+          db eval { INSERT INTO t4 VALUES('C') }
+          error "throw an error!"
+        }
+      }
+    }
+  }
+  db eval {SELECT * FROM t4}
+} {one two three four}
+do_test tcl-10.18 {
+  # Make sure a transaction has not been left open.
+  db eval {BEGIN ; COMMIT}
+} {}
+
+# Mess up a [db transaction] command by locking the database using a
+# second connection when it tries to commit. Make sure the transaction
+# is not still open after the "database is locked" exception is thrown.
+#
+do_test tcl-10.18 {
+  sqlite3 db2 test.db
+  db2 eval {
+    BEGIN;
+    SELECT * FROM sqlite_master;
+  }
+
+  set rc [catch {
+    db transaction {
+      db eval {INSERT INTO t4 VALUES('five')}
+    }
+  } msg]
+  list $rc $msg
+} {1 {database is locked}}
+do_test tcl-10.19 {
+  db eval {BEGIN ; COMMIT}
+} {}
+
+# Thwart a [db transaction] command by locking the database using a
+# second connection with "BEGIN EXCLUSIVE". Make sure no transaction is 
+# open after the "database is locked" exception is thrown.
+#
+do_test tcl-10.20 {
+  db2 eval {
+    COMMIT;
+    BEGIN EXCLUSIVE;
+  }
+  set rc [catch {
+    db transaction {
+      db eval {INSERT INTO t4 VALUES('five')}
+    }
+  } msg]
+  list $rc $msg
+} {1 {database is locked}}
+do_test tcl-10.21 {
+  db2 close
+  db eval {BEGIN ; COMMIT}
+} {}
+do_test tcl-10.22 {
+  sqlite3 db2 test.db
+  db transaction exclusive {
+    catch { db2 eval {SELECT * FROM sqlite_master} } msg
+    set msg "db2: $msg"
+  }
+  set msg
+} {db2: database is locked}
+db2 close
 
 do_test tcl-11.1 {
-  db exists {SELECT x,x*2,x+x FROM t4 WHERE x==4}
+  db eval {INSERT INTO t4 VALUES(6)}
+  db exists {SELECT x,x*2,x+x FROM t4 WHERE x==6}
 } {1}
 do_test tcl-11.2 {
-  db exists {SELECT 0 FROM t4 WHERE x==4}
+  db exists {SELECT 0 FROM t4 WHERE x==6}
 } {1}
 do_test tcl-11.3 {
   db exists {SELECT 1 FROM t4 WHERE x==8}
