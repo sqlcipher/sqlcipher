@@ -275,7 +275,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         codec_ctx *ctx;
         int rc;
         Pgno page_count, pgno;
-        void *page;
+        PgHdr *page;
         Pager *pPager = pDb->pBt->pBt->pPager;
  
         sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
