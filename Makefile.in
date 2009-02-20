@@ -141,6 +141,7 @@ CRYPTOLIBOBJ = \
   crypto.lo
   
 CRYPTOSRC = \
+  $(TOP)/src/crypto.h \
   $(TOP)/src/crypto.c
 # END CRYPTO
 

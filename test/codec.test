@@ -110,7 +110,7 @@ do_test codec-1.6 {
   db close
   sqlite_orig db test.db
   execsql {
-    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836489'";
+    PRAGMA hexkey = '98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836489';
     SELECT * from t1;
   }
 } {test1 test2}
@@ -120,7 +120,7 @@ do_test codec-1.7 {
   db close
   sqlite_orig db test.db
   catchsql {
-    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
+    PRAGMA hexkey = '98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480';
     SELECT name FROM sqlite_master WHERE type='table';
   }
 } {1 {file is encrypted or is not a database}}

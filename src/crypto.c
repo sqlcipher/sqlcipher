@@ -65,18 +65,11 @@ static int codec_passphrase_hash(const void *in, int inLen, void *out, int *outL
   *outLen = md_sz;
 }
 
-static int codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *out, int *nOut) {
-  /* if key string starts with x' then assume this is a blob literal key*/
-  if (sqlite3StrNICmp(zKey ,"x'", 2) == 0) { 
-    int n = nKey - 3; /* adjust for leading x' and tailing ' */
-    int half_n = n/2;
-    const char *z = zKey + 2; /* adjust lead offset of x' */ 
-    void *key = sqlite3HexToBlob(db, z, n);
-    memcpy(out, key, half_n);
-    *nOut = half_n;
-    
-    memset(key, 0, half_n); /* cleanup temporary key data */
-    sqlite3DbFree(db, key);
+static void codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *out, int *nOut) {
+  /* if key data lenght is exactly 256 bits / 32 bytes use the data directly */
+  if (nKey == 32) {
+    memcpy(out, zKey, nKey);
+    *nOut = nKey;
   /* otherwise the key is provided as a string so hash it to get key data */
   } else {
     codec_passphrase_hash(zKey, nKey, out, nOut);
@@ -127,7 +120,8 @@ static int codec_cipher(codec_ctx *ctx, Pgno pgno, int mode, int size, void *in,
   csz += tmp_csz;
   EVP_CIPHER_CTX_cleanup(&ectx);
   assert(size == csz);
-  
+
+  return SQLITE_OK;
 }
 
 /*
