@@ -172,7 +172,7 @@ NAWK = @AWK@
 
 # Object files for the SQLite library (non-amalgamation).
 #
-OBJS0 = alter.lo analyze.lo attach.lo auth.lo bitvec.lo btmutex.lo \
+OBJS0 = alter.lo analyze.lo attach.lo auth.lo backup.lo bitvec.lo btmutex.lo \
         btree.lo build.lo callback.lo complete.lo date.lo \
         delete.lo expr.lo fault.lo func.lo global.lo \
         hash.lo journal.lo insert.lo legacy.lo loadext.lo \
@@ -205,6 +205,7 @@ SRC = \
   $(TOP)/src/analyze.c \
   $(TOP)/src/attach.c \
   $(TOP)/src/auth.c \
+  $(TOP)/src/backup.h \
   $(TOP)/src/backup.c \
   $(TOP)/src/bitvec.c \
   $(TOP)/src/btmutex.c \
@@ -532,6 +533,9 @@ attach.lo:	$(TOP)/src/attach.c $(HDR)
 
 auth.lo:	$(TOP)/src/auth.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/auth.c
+
+backup.lo:	$(TOP)/src/backup.c $(HDR)
+	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/backup.c
 
 bitvec.lo:	$(TOP)/src/bitvec.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/bitvec.c
