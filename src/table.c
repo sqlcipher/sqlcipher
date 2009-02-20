@@ -16,7 +16,7 @@
 ** These routines are in a separate files so that they will not be linked
 ** if they are not used.
 **
-** $Id: table.c,v 1.36 2008/07/08 22:28:49 shane Exp $
+** $Id: table.c,v 1.39 2009/01/19 20:49:10 drh Exp $
 */
 #include "sqliteInt.h"
 #include <stdlib.h>
@@ -92,7 +92,7 @@ static int sqlite3_get_table_cb(void *pArg, int nCol, char **argv, char **colv){
       if( argv[i]==0 ){
         z = 0;
       }else{
-        int n = strlen(argv[i])+1;
+        int n = sqlite3Strlen30(argv[i])+1;
         z = sqlite3_malloc( n );
         if( z==0 ) goto malloc_failed;
         memcpy(z, argv[i], n);
@@ -132,6 +132,7 @@ int sqlite3_get_table(
   *pazResult = 0;
   if( pnColumn ) *pnColumn = 0;
   if( pnRow ) *pnRow = 0;
+  if( pzErrMsg ) *pzErrMsg = 0;
   res.zErrMsg = 0;
   res.nResult = 0;
   res.nRow = 0;

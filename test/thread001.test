@@ -9,15 +9,20 @@
 #
 #***********************************************************************
 #
-# $Id: thread001.test,v 1.5 2008/07/12 14:52:20 drh Exp $
+# $Id: thread001.test,v 1.9 2009/02/12 17:06:41 drh Exp $
 
 set testdir [file dirname $argv0]
 
 source $testdir/tester.tcl
+ifcapable !mutex {
+  return
+}
 source $testdir/thread_common.tcl
 if {[info commands sqlthread] eq ""} {
   return
 }
+
+set ::enable_shared_cache [sqlite3_enable_shared_cache]
 
 set ::NTHREAD 10
 
@@ -26,6 +31,8 @@ set ::NTHREAD 10
 #    1) All threads use the same database handle.
 #    2) All threads use their own database handles.
 #    3) All threads use their own database handles, shared-cache is enabled.
+#
+#
 #
 foreach {tn same_db shared_cache} [list \
          1  1       0                   \
@@ -41,7 +48,7 @@ foreach {tn same_db shared_cache} [list \
     sqlite3_enable_shared_cache $shared_cache
     sqlite3_enable_shared_cache $shared_cache
   } $shared_cache
-  sqlite3 db test.db
+  sqlite3 db test.db -fullmutex 1
 
   set dbconfig ""
   if {$same_db} {
@@ -71,11 +78,13 @@ foreach {tn same_db shared_cache} [list \
   do_test thread001.$tn.3 {
     execsql { PRAGMA integrity_check }
   } {ok}
-  
+
   set thread_program {
+    #sqlthread parent {puts STARTING..}
     set needToClose 0
     if {![info exists ::DB]} {
       set ::DB [sqlthread open test.db]
+      #sqlthread parent "puts \"OPEN $::DB\""
       set needToClose 1
     }
   
@@ -94,8 +103,10 @@ foreach {tn same_db shared_cache} [list \
     }
   
     if {$needToClose} {
+      #sqlthread parent "puts \"CLOSE $::DB\""
       sqlite3_close $::DB
     }
+    #sqlthread parent "puts \"DONE\""
   
     list OK
   }
@@ -135,4 +146,6 @@ foreach {tn same_db shared_cache} [list \
   } {ok}
 }
 
+sqlite3_enable_shared_cache $::enable_shared_cache
+set sqlite_open_file_count 0
 finish_test

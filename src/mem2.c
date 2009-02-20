@@ -19,7 +19,7 @@
 ** This file contains implementations of the low-level memory allocation
 ** routines specified in the sqlite3_mem_methods object.
 **
-** $Id: mem2.c,v 1.37 2008/07/25 08:49:00 danielk1977 Exp $
+** $Id: mem2.c,v 1.43 2009/02/05 03:00:06 shane Exp $
 */
 #include "sqliteInt.h"
 
@@ -36,7 +36,7 @@
   extern int backtrace(void**,int);
   extern void backtrace_symbols_fd(void*const*,int,int);
 #else
-# define backtrace(A,B) 0
+# define backtrace(A,B) 1
 # define backtrace_symbols_fd(A,B,C)
 #endif
 #include <stdio.h>
@@ -158,14 +158,16 @@ static struct MemBlockHdr *sqlite3MemsysGetHeader(void *pAllocation){
 
   p = (struct MemBlockHdr*)pAllocation;
   p--;
-  assert( p->iForeGuard==FOREGUARD );
+  assert( p->iForeGuard==(int)FOREGUARD );
   nReserve = (p->iSize+7)&~7;
   pInt = (int*)pAllocation;
   pU8 = (u8*)pAllocation;
-  assert( pInt[nReserve/sizeof(int)]==REARGUARD );
-  assert( (nReserve-0)<=p->iSize || pU8[nReserve-1]==0x65 );
-  assert( (nReserve-1)<=p->iSize || pU8[nReserve-2]==0x65 );
-  assert( (nReserve-2)<=p->iSize || pU8[nReserve-3]==0x65 );
+  assert( pInt[nReserve/sizeof(int)]==(int)REARGUARD );
+  /* This checks any of the "extra" bytes allocated due
+  ** to rounding up to an 8 byte boundary to ensure 
+  ** they haven't been overwritten.
+  */
+  while( nReserve-- > p->iSize ) assert( pU8[nReserve]==0x65 );
   return p;
 }
 
@@ -185,7 +187,9 @@ static int sqlite3MemSize(void *p){
 ** Initialize the memory allocation subsystem.
 */
 static int sqlite3MemInit(void *NotUsed){
-  if( !sqlite3Config.bMemstat ){
+  UNUSED_PARAMETER(NotUsed);
+  assert( (sizeof(struct MemBlockHdr)&7) == 0 );
+  if( !sqlite3GlobalConfig.bMemstat ){
     /* If memory status is enabled, then the malloc.c wrapper will already
     ** hold the STATIC_MEM mutex when the routines here are invoked. */
     mem.mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MEM);
@@ -197,6 +201,7 @@ static int sqlite3MemInit(void *NotUsed){
 ** Deinitialize the memory allocation subsystem.
 */
 static void sqlite3MemShutdown(void *NotUsed){
+  UNUSED_PARAMETER(NotUsed);
   mem.mutex = 0;
 }
 
@@ -270,7 +275,7 @@ static void sqlite3MemFree(void *pPrior){
   struct MemBlockHdr *pHdr;
   void **pBt;
   char *z;
-  assert( sqlite3Config.bMemstat || mem.mutex!=0 );
+  assert( sqlite3GlobalConfig.bMemstat || mem.mutex!=0 );
   pHdr = sqlite3MemsysGetHeader(pPrior);
   pBt = (void**)pHdr;
   pBt -= pHdr->nBacktraceSlots;
@@ -323,8 +328,11 @@ static void *sqlite3MemRealloc(void *pPrior, int nByte){
   return pNew;
 }
 
-
-const sqlite3_mem_methods *sqlite3MemGetDefault(void){
+/*
+** Populate the low-level memory allocation function pointers in
+** sqlite3GlobalConfig.m with pointers to the routines in this file.
+*/
+void sqlite3MemSetDefault(void){
   static const sqlite3_mem_methods defaultMethods = {
      sqlite3MemMalloc,
      sqlite3MemFree,
@@ -335,15 +343,7 @@ const sqlite3_mem_methods *sqlite3MemGetDefault(void){
      sqlite3MemShutdown,
      0
   };
-  return &defaultMethods;
-}
-
-/*
-** Populate the low-level memory allocation function pointers in
-** sqlite3Config.m with pointers to the routines in this file.
-*/
-void sqlite3MemSetDefault(void){
-  sqlite3_config(SQLITE_CONFIG_MALLOC, sqlite3MemGetDefault());
+  sqlite3_config(SQLITE_CONFIG_MALLOC, &defaultMethods);
 }
 
 /*
@@ -366,7 +366,7 @@ void sqlite3MemdebugBacktraceCallback(void (*xBacktrace)(int, int, void **)){
 ** Set the title string for subsequent allocations.
 */
 void sqlite3MemdebugSettitle(const char *zTitle){
-  int n = strlen(zTitle) + 1;
+  unsigned int n = sqlite3Strlen30(zTitle) + 1;
   sqlite3_mutex_enter(mem.mutex);
   if( n>=sizeof(mem.zTitle) ) n = sizeof(mem.zTitle)-1;
   memcpy(mem.zTitle, zTitle, n);

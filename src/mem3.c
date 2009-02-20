@@ -23,7 +23,7 @@
 ** This version of the memory allocation subsystem is included
 ** in the build only if SQLITE_ENABLE_MEMSYS3 is defined.
 **
-** $Id: mem3.c,v 1.20 2008/07/18 18:56:17 drh Exp $
+** $Id: mem3.c,v 1.25 2008/11/19 16:52:44 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
@@ -99,7 +99,14 @@ struct Mem3Block {
 ** static variables organized and to reduce namespace pollution
 ** when this module is combined with other in the amalgamation.
 */
-static struct {
+static SQLITE_WSD struct Mem3Global {
+  /*
+  ** Memory available for allocation. nPool is the size of the array
+  ** (in Mem3Blocks) pointed to by aPool less 2.
+  */
+  u32 nPool;
+  Mem3Block *aPool;
+
   /*
   ** True if we are evaluating an out-of-memory callback.
   */
@@ -131,14 +138,9 @@ static struct {
   */
   u32 aiSmall[MX_SMALL-1];   /* For sizes 2 through MX_SMALL, inclusive */
   u32 aiHash[N_HASH];        /* For sizes MX_SMALL+1 and larger */
+} mem3 = { 97535575 };
 
-  /*
-  ** Memory available for allocation. nPool is the size of the array
-  ** (in Mem3Blocks) pointed to by aPool less 2.
-  */
-  u32 nPool;
-  Mem3Block *aPool;
-} mem3;
+#define mem3 GLOBAL(struct Mem3Global, mem3)
 
 /*
 ** Unlink the chunk at mem3.aPool[i] from list it is currently
@@ -217,10 +219,10 @@ static void memsys3Link(u32 i){
 /*
 ** If the STATIC_MEM mutex is not already held, obtain it now. The mutex
 ** will already be held (obtained by code in malloc.c) if
-** sqlite3Config.bMemStat is true.
+** sqlite3GlobalConfig.bMemStat is true.
 */
 static void memsys3Enter(void){
-  if( sqlite3Config.bMemstat==0 && mem3.mutex==0 ){
+  if( sqlite3GlobalConfig.bMemstat==0 && mem3.mutex==0 ){
     mem3.mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MEM);
   }
   sqlite3_mutex_enter(mem3.mutex);
@@ -249,7 +251,7 @@ static void memsys3OutOfMemory(int nByte){
 ** size parameters for check-out and return a pointer to the 
 ** user portion of the chunk.
 */
-static void *memsys3Checkout(u32 i, int nBlock){
+static void *memsys3Checkout(u32 i, u32 nBlock){
   u32 x;
   assert( sqlite3_mutex_held(mem3.mutex) );
   assert( i>=1 );
@@ -267,7 +269,7 @@ static void *memsys3Checkout(u32 i, int nBlock){
 ** Return a pointer to the new allocation.  Or, if the master chunk
 ** is not large enough, return 0.
 */
-static void *memsys3FromMaster(int nBlock){
+static void *memsys3FromMaster(u32 nBlock){
   assert( sqlite3_mutex_held(mem3.mutex) );
   assert( mem3.szMaster>=nBlock );
   if( nBlock>=mem3.szMaster-1 ){
@@ -353,8 +355,8 @@ static void memsys3Merge(u32 *pRoot){
 */
 static void *memsys3MallocUnsafe(int nByte){
   u32 i;
-  int nBlock;
-  int toFree;
+  u32 nBlock;
+  u32 toFree;
 
   assert( sqlite3_mutex_held(mem3.mutex) );
   assert( sizeof(Mem3Block)==8 );
@@ -550,14 +552,15 @@ void *memsys3Realloc(void *pPrior, int nBytes){
 ** Initialize this module.
 */
 static int memsys3Init(void *NotUsed){
-  if( !sqlite3Config.pHeap ){
+  UNUSED_PARAMETER(NotUsed);
+  if( !sqlite3GlobalConfig.pHeap ){
     return SQLITE_ERROR;
   }
 
   /* Store a pointer to the memory block in global structure mem3. */
   assert( sizeof(Mem3Block)==8 );
-  mem3.aPool = (Mem3Block *)sqlite3Config.pHeap;
-  mem3.nPool = (sqlite3Config.nHeap / sizeof(Mem3Block)) - 2;
+  mem3.aPool = (Mem3Block *)sqlite3GlobalConfig.pHeap;
+  mem3.nPool = (sqlite3GlobalConfig.nHeap / sizeof(Mem3Block)) - 2;
 
   /* Initialize the master block. */
   mem3.szMaster = mem3.nPool;
@@ -574,6 +577,7 @@ static int memsys3Init(void *NotUsed){
 ** Deinitialize this module.
 */
 static void memsys3Shutdown(void *NotUsed){
+  UNUSED_PARAMETER(NotUsed);
   return;
 }
 
@@ -583,10 +587,10 @@ static void memsys3Shutdown(void *NotUsed){
 ** Open the file indicated and write a log of all unfreed memory 
 ** allocations into that log.
 */
-#ifdef SQLITE_DEBUG
 void sqlite3Memsys3Dump(const char *zFilename){
+#ifdef SQLITE_DEBUG
   FILE *out;
-  int i, j;
+  u32 i, j;
   u32 size;
   if( zFilename==0 || zFilename[0]==0 ){
     out = stdout;
@@ -651,15 +655,17 @@ void sqlite3Memsys3Dump(const char *zFilename){
   }else{
     fclose(out);
   }
-}
+#else
+  UNUSED_PARAMETER(zFilename);
 #endif
+}
 
 /*
 ** This routine is the only routine in this file with external 
 ** linkage.
 **
 ** Populate the low-level memory allocation function pointers in
-** sqlite3Config.m with pointers to the routines in this file. The
+** sqlite3GlobalConfig.m with pointers to the routines in this file. The
 ** arguments specify the block of memory to manage.
 **
 ** This routine is only called by sqlite3_config(), and therefore

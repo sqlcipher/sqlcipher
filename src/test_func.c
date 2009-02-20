@@ -12,7 +12,7 @@
 ** Code for testing all sorts of SQLite interfaces.  This code
 ** implements new SQL functions used by the test scripts.
 **
-** $Id: test_func.c,v 1.10 2008/08/02 03:50:39 drh Exp $
+** $Id: test_func.c,v 1.13 2008/08/28 02:26:07 drh Exp $
 */
 #include "sqlite3.h"
 #include "tcl.h"
@@ -207,6 +207,33 @@ static void test_error(
 }
 
 /*
+** Implementation of the counter(X) function.  If X is an integer
+** constant, then the first invocation will return X.  The second X+1.
+** and so forth.  Can be used (for example) to provide a sequence number
+** in a result set.
+*/
+static void counterFunc(
+  sqlite3_context *pCtx,   /* Function context */
+  int nArg,                /* Number of function arguments */
+  sqlite3_value **argv     /* Values for all function arguments */
+){
+  int *pCounter = (int*)sqlite3_get_auxdata(pCtx, 0);
+  if( pCounter==0 ){
+    pCounter = sqlite3_malloc( sizeof(*pCounter) );
+    if( pCounter==0 ){
+      sqlite3_result_error_nomem(pCtx);
+      return;
+    }
+    *pCounter = sqlite3_value_int(argv[0]);
+    sqlite3_set_auxdata(pCtx, 0, pCounter, sqlite3_free);
+  }else{
+    ++*pCounter;
+  }
+  sqlite3_result_int(pCtx, *pCounter);
+}
+
+
+/*
 ** This function takes two arguments.  It performance UTF-8/16 type
 ** conversions on the first argument then returns a copy of the second
 ** argument.
@@ -283,15 +310,14 @@ static int registerTestFunctions(sqlite3 *db){
     { "test_error",            2, SQLITE_UTF8, test_error},
     { "test_eval",             1, SQLITE_UTF8, test_eval},
     { "test_isolation",        2, SQLITE_UTF8, test_isolation},
+    { "test_counter",          1, SQLITE_UTF8, counterFunc},
   };
   int i;
-  extern int Md5_Register(sqlite3*);
 
   for(i=0; i<sizeof(aFuncs)/sizeof(aFuncs[0]); i++){
     sqlite3_create_function(db, aFuncs[i].zName, aFuncs[i].nArg,
         aFuncs[i].eTextRep, 0, aFuncs[i].xFunc, 0, 0);
   }
-  Md5_Register(db);
   return SQLITE_OK;
 }
 
@@ -308,7 +334,11 @@ static int autoinstall_test_funcs(
   int objc,
   Tcl_Obj *CONST objv[]
 ){
+  extern int Md5_Register(sqlite3*);
   int rc = sqlite3_auto_extension((void*)registerTestFunctions);
+  if( rc==SQLITE_OK ){
+    rc = sqlite3_auto_extension((void*)Md5_Register);
+  }
   Tcl_SetObjResult(interp, Tcl_NewIntObj(rc));
   return TCL_OK;
 }
@@ -422,10 +452,13 @@ int Sqlitetest_func_Init(Tcl_Interp *interp){
      { "abuse_create_function",         abuse_create_function  },
   };
   int i;
+  extern int Md5_Register(sqlite3*);
+
   for(i=0; i<sizeof(aObjCmd)/sizeof(aObjCmd[0]); i++){
     Tcl_CreateObjCommand(interp, aObjCmd[i].zName, aObjCmd[i].xProc, 0, 0);
   }
   sqlite3_initialize();
   sqlite3_auto_extension((void*)registerTestFunctions);
+  sqlite3_auto_extension((void*)Md5_Register);
   return TCL_OK;
 }

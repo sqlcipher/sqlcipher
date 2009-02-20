@@ -13,10 +13,9 @@
 ** interface, and routines that contribute to loading the database schema
 ** from disk.
 **
-** $Id: prepare.c,v 1.91 2008/08/02 03:50:39 drh Exp $
+** $Id: prepare.c,v 1.105 2009/01/20 16:53:41 danielk1977 Exp $
 */
 #include "sqliteInt.h"
-#include <ctype.h>
 
 /*
 ** Fill the InitData structure with an error message that indicates
@@ -27,7 +26,8 @@ static void corruptSchema(
   const char *zObj,    /* Object being parsed at the point of error */
   const char *zExtra   /* Error information */
 ){
-  if( !pData->db->mallocFailed ){
+  sqlite3 *db = pData->db;
+  if( !db->mallocFailed && (db->flags & SQLITE_RecoveryMode)==0 ){
     if( zObj==0 ) zObj = "?";
     sqlite3SetString(pData->pzErrMsg, pData->db,
        "malformed database schema (%s)", zObj);
@@ -51,27 +51,25 @@ static void corruptSchema(
 **     argv[2] = SQL text for the CREATE statement.
 **
 */
-int sqlite3InitCallback(void *pInit, int argc, char **argv, char **azColName){
+int sqlite3InitCallback(void *pInit, int argc, char **argv, char **NotUsed){
   InitData *pData = (InitData*)pInit;
   sqlite3 *db = pData->db;
   int iDb = pData->iDb;
 
+  assert( argc==3 );
+  UNUSED_PARAMETER2(NotUsed, argc);
   assert( sqlite3_mutex_held(db->mutex) );
-  pData->rc = SQLITE_OK;
   DbClearProperty(db, iDb, DB_Empty);
   if( db->mallocFailed ){
     corruptSchema(pData, argv[0], 0);
     return SQLITE_NOMEM;
   }
 
-  assert( argc==3 );
+  assert( iDb>=0 && iDb<db->nDb );
   if( argv==0 ) return 0;   /* Might happen if EMPTY_RESULT_CALLBACKS are on */
   if( argv[1]==0 ){
     corruptSchema(pData, argv[0], 0);
-    return 1;
-  }
-  assert( iDb>=0 && iDb<db->nDb );
-  if( argv[2] && argv[2][0] ){
+  }else if( argv[2] && argv[2][0] ){
     /* Call the parser to process a CREATE TABLE, INDEX or VIEW.
     ** But because db->init.busy is set to 1, no VDBE code is generated
     ** or executed.  All the parser does is build the internal data
@@ -97,7 +95,6 @@ int sqlite3InitCallback(void *pInit, int argc, char **argv, char **azColName){
         corruptSchema(pData, argv[0], zErr);
       }
       sqlite3DbFree(db, zErr);
-      return 1;
     }
   }else if( argv[0]==0 ){
     corruptSchema(pData, 0, 0);
@@ -193,17 +190,18 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   azArg[3] = 0;
   initData.db = db;
   initData.iDb = iDb;
+  initData.rc = SQLITE_OK;
   initData.pzErrMsg = pzErrMsg;
   (void)sqlite3SafetyOff(db);
-  rc = sqlite3InitCallback(&initData, 3, (char **)azArg, 0);
+  sqlite3InitCallback(&initData, 3, (char **)azArg, 0);
   (void)sqlite3SafetyOn(db);
-  if( rc ){
+  if( initData.rc ){
     rc = initData.rc;
     goto error_out;
   }
   pTab = sqlite3FindTable(db, zMasterName, db->aDb[iDb].zName);
   if( pTab ){
-    pTab->readOnly = 1;
+    pTab->tabFlags |= TF_Readonly;
   }
 
   /* Create a cursor to hold the database open
@@ -246,7 +244,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   */
   if( rc==SQLITE_OK ){
     int i;
-    for(i=0; i<sizeof(meta)/sizeof(meta[0]); i++){
+    for(i=0; i<ArraySize(meta); i++){
       rc = sqlite3BtreeGetMeta(pDb->pBt, i+1, (u32 *)&meta[i]);
       if( rc ){
         sqlite3SetString(pzErrMsg, db, "%s", sqlite3ErrStr(rc));
@@ -296,7 +294,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   ** file_format==3    Version 3.1.4.  // ditto but with non-NULL defaults
   ** file_format==4    Version 3.3.0.  // DESC indices.  Boolean constants
   */
-  pDb->pSchema->file_format = meta[1];
+  pDb->pSchema->file_format = (u8)meta[1];
   if( pDb->pSchema->file_format==0 ){
     pDb->pSchema->file_format = 1;
   }
@@ -338,7 +336,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
       db->xAuth = xAuth;
     }
 #endif
-    if( rc==SQLITE_ABORT ) rc = initData.rc;
+    if( rc==SQLITE_OK ) rc = initData.rc;
     (void)sqlite3SafetyOn(db);
     sqlite3DbFree(db, zSql);
 #ifndef SQLITE_OMIT_ANALYZE
@@ -502,18 +500,18 @@ int sqlite3SchemaToIndex(sqlite3 *db, Schema *pSchema){
   ** function should never be used.
   **
   ** We return -1000000 instead of the more usual -1 simply because using
-  ** -1000000 as incorrectly using -1000000 index into db->aDb[] is much 
+  ** -1000000 as the incorrect index into db->aDb[] is much 
   ** more likely to cause a segfault than -1 (of course there are assert()
   ** statements too, but it never hurts to play the odds).
   */
   assert( sqlite3_mutex_held(db->mutex) );
   if( pSchema ){
-    for(i=0; i<db->nDb; i++){
+    for(i=0; ALWAYS(i<db->nDb); i++){
       if( db->aDb[i].pSchema==pSchema ){
         break;
       }
     }
-    assert( i>=0 &&i>=0 &&  i<db->nDb );
+    assert( i>=0 && i<db->nDb );
   }
   return i;
 }
@@ -548,7 +546,6 @@ static int sqlite3Prepare(
   for(i=0; i<db->nDb; i++) {
     Btree *pBt = db->aDb[i].pBt;
     if( pBt ){
-      int rc;
       rc = sqlite3BtreeSchemaLocked(pBt);
       if( rc ){
         const char *zDb = db->aDb[i].zName;
@@ -603,19 +600,19 @@ static int sqlite3Prepare(
   if( rc==SQLITE_OK && sParse.pVdbe && sParse.explain ){
     if( sParse.explain==2 ){
       sqlite3VdbeSetNumCols(sParse.pVdbe, 3);
-      sqlite3VdbeSetColName(sParse.pVdbe, 0, COLNAME_NAME, "order", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 1, COLNAME_NAME, "from", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 2, COLNAME_NAME, "detail", P4_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 0, COLNAME_NAME, "order", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 1, COLNAME_NAME, "from", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 2, COLNAME_NAME, "detail", SQLITE_STATIC);
     }else{
       sqlite3VdbeSetNumCols(sParse.pVdbe, 8);
-      sqlite3VdbeSetColName(sParse.pVdbe, 0, COLNAME_NAME, "addr", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 1, COLNAME_NAME, "opcode", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 2, COLNAME_NAME, "p1", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 3, COLNAME_NAME, "p2", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 4, COLNAME_NAME, "p3", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 5, COLNAME_NAME, "p4", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 6, COLNAME_NAME, "p5", P4_STATIC);
-      sqlite3VdbeSetColName(sParse.pVdbe, 7, COLNAME_NAME, "comment",P4_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 0, COLNAME_NAME, "addr", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 1, COLNAME_NAME, "opcode", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 2, COLNAME_NAME, "p1", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 3, COLNAME_NAME, "p2", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 4, COLNAME_NAME, "p3", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 5, COLNAME_NAME, "p4", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 6, COLNAME_NAME, "p5", SQLITE_STATIC);
+      sqlite3VdbeSetColName(sParse.pVdbe, 7, COLNAME_NAME, "comment", SQLITE_STATIC);
     }
   }
 #endif
@@ -625,7 +622,7 @@ static int sqlite3Prepare(
   }
 
   if( saveSqlFlag ){
-    sqlite3VdbeSetSql(sParse.pVdbe, zSql, sParse.zTail - zSql);
+    sqlite3VdbeSetSql(sParse.pVdbe, zSql, (int)(sParse.zTail - zSql));
   }
   if( rc!=SQLITE_OK || db->mallocFailed ){
     sqlite3_finalize((sqlite3_stmt*)sParse.pVdbe);
@@ -692,7 +689,7 @@ int sqlite3Reprepare(Vdbe *p){
     assert( pNew!=0 );
   }
   sqlite3VdbeSwap((Vdbe*)pNew, p);
-  sqlite3_transfer_bindings(pNew, (sqlite3_stmt*)p);
+  sqlite3TransferBindings(pNew, (sqlite3_stmt*)p);
   sqlite3VdbeResetStepResult((Vdbe*)pNew);
   sqlite3VdbeFinalize((Vdbe*)pNew);
   return 1;
@@ -768,7 +765,7 @@ static int sqlite3Prepare16(
     ** characters between zSql8 and zTail8, and then returning a pointer
     ** the same number of characters into the UTF-16 string.
     */
-    int chars_parsed = sqlite3Utf8CharLen(zSql8, zTail8-zSql8);
+    int chars_parsed = sqlite3Utf8CharLen(zSql8, (int)(zTail8-zSql8));
     *pzTail = (u8 *)zSql + sqlite3Utf16ByteLen(zSql, chars_parsed);
   }
   sqlite3DbFree(db, zSql8); 

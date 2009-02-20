@@ -14,11 +14,10 @@
 ** other files are for internal use by SQLite and should not be
 ** accessed by users of the library.
 **
-** $Id: legacy.c,v 1.29 2008/08/02 03:50:39 drh Exp $
+** $Id: legacy.c,v 1.31 2009/01/20 16:53:40 danielk1977 Exp $
 */
 
 #include "sqliteInt.h"
-#include <ctype.h>
 
 /*
 ** Execute SQL code.  Return one of the SQLITE_ success/failure
@@ -115,7 +114,7 @@ int sqlite3_exec(
         if( rc!=SQLITE_SCHEMA ){
           nRetry = 0;
           zSql = zLeftover;
-          while( isspace((unsigned char)zSql[0]) ) zSql++;
+          while( sqlite3Isspace(zSql[0]) ) zSql++;
         }
         break;
       }
@@ -131,7 +130,7 @@ exec_out:
 
   rc = sqlite3ApiExit(db, rc);
   if( rc!=SQLITE_OK && rc==sqlite3_errcode(db) && pzErrMsg ){
-    int nErrMsg = 1 + strlen(sqlite3_errmsg(db));
+    int nErrMsg = 1 + sqlite3Strlen30(sqlite3_errmsg(db));
     *pzErrMsg = sqlite3Malloc(nErrMsg);
     if( *pzErrMsg ){
       memcpy(*pzErrMsg, sqlite3_errmsg(db), nErrMsg);

@@ -11,7 +11,7 @@
 # This file implements regression tests for SQLite library.  The
 # focus of this file is testing the VACUUM statement.
 #
-# $Id: vacuum.test,v 1.41 2008/04/15 02:36:34 drh Exp $
+# $Id: vacuum.test,v 1.43 2009/01/31 14:54:07 danielk1977 Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -102,14 +102,18 @@ ifcapable vacuum {
   } {1}
 }
 ifcapable vacuum {
-  do_test vacuum-2.1 {
+  do_test vacuum-2.1.1 {
     catchsql {
       BEGIN;
       VACUUM;
-      COMMIT;
     }
   } {1 {cannot VACUUM from within a transaction}}
-  catch {db eval COMMIT}
+  do_test vacuum-2.1.2 {
+    sqlite3_get_autocommit db
+  } {0}
+  do_test vacuum-2.1.3 {
+    db eval {COMMIT}
+  } {}
 }
 do_test vacuum-2.2 {
   sqlite3 db2 test.db
@@ -283,7 +287,14 @@ do_test vacuum-7.0 {
     CREATE TABLE t1(t);
     VACUUM;
   } db2
-} {}
+  execsql {
+    CREATE TABLE t2(t);
+    CREATE TABLE t3(t);
+    DROP TABLE t2;
+    VACUUM;
+    pragma integrity_check;
+  } db2
+} {ok}
 db2 close
 
 # Ticket #873.  VACUUM a database that has ' in its name.

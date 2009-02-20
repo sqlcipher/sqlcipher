@@ -14,12 +14,41 @@
 ** This file contains functions for allocating memory, comparing
 ** strings, and stuff like that.
 **
-** $Id: util.c,v 1.241 2008/07/28 19:34:54 drh Exp $
+** $Id: util.c,v 1.248 2009/02/04 03:59:25 shane Exp $
 */
 #include "sqliteInt.h"
 #include <stdarg.h>
-#include <ctype.h>
 
+/*
+** Routine needed to support the testcase() macro.
+*/
+#ifdef SQLITE_COVERAGE_TEST
+void sqlite3Coverage(int x){
+  static int dummy = 0;
+  dummy += x;
+}
+#endif
+
+/*
+** Routine needed to support the ALWAYS() and NEVER() macros.
+**
+** The argument to ALWAYS() should always be true and the argument
+** to NEVER() should always be false.  If either is not the case
+** then this routine is called in order to throw an error.
+**
+** This routine only exists if assert() is operational.  It always
+** throws an assert on its first invocation.  The variable has a long
+** name to help the assert() message be more readable.  The variable
+** is used to prevent a too-clever optimizer from optimizing out the
+** entire call.
+*/
+#ifndef NDEBUG
+int sqlite3Assert(void){
+  static volatile int ALWAYS_was_false_or_NEVER_was_true = 0;
+  assert( ALWAYS_was_false_or_NEVER_was_true );      /* Always fails */
+  return ALWAYS_was_false_or_NEVER_was_true++;       /* Not Reached */
+}
+#endif
 
 /*
 ** Return true if the floating point value is Not a Number (NaN).
@@ -51,15 +80,25 @@ int sqlite3IsNaN(double x){
 }
 
 /*
+** Compute a string length that is limited to what can be stored in
+** lower 30 bits of a 32-bit signed integer.
+*/
+int sqlite3Strlen30(const char *z){
+  const char *z2 = z;
+  while( *z2 ){ z2++; }
+  return 0x3fffffff & (int)(z2 - z);
+}
+
+/*
 ** Return the length of a string, except do not allow the string length
 ** to exceed the SQLITE_LIMIT_LENGTH setting.
 */
 int sqlite3Strlen(sqlite3 *db, const char *z){
   const char *z2 = z;
   int len;
-  size_t x;
+  int x;
   while( *z2 ){ z2++; }
-  x = z2 - z;
+  x = (int)(z2 - z);
   len = 0x7fffffff & x;
   if( len!=x || len > db->aLimit[SQLITE_LIMIT_LENGTH] ){
     return db->aLimit[SQLITE_LIMIT_LENGTH];
@@ -155,7 +194,7 @@ void sqlite3ErrorClear(Parse *pParse){
 ** "a-b-c".
 */
 void sqlite3Dequote(char *z){
-  int quote;
+  char quote;
   int i, j;
   if( z==0 ) return;
   quote = z[0];
@@ -215,23 +254,23 @@ int sqlite3IsNumber(const char *z, int *realnum, u8 enc){
   int incr = (enc==SQLITE_UTF8?1:2);
   if( enc==SQLITE_UTF16BE ) z++;
   if( *z=='-' || *z=='+' ) z += incr;
-  if( !isdigit(*(u8*)z) ){
+  if( !sqlite3Isdigit(*z) ){
     return 0;
   }
   z += incr;
   if( realnum ) *realnum = 0;
-  while( isdigit(*(u8*)z) ){ z += incr; }
+  while( sqlite3Isdigit(*z) ){ z += incr; }
   if( *z=='.' ){
     z += incr;
-    if( !isdigit(*(u8*)z) ) return 0;
-    while( isdigit(*(u8*)z) ){ z += incr; }
+    if( !sqlite3Isdigit(*z) ) return 0;
+    while( sqlite3Isdigit(*z) ){ z += incr; }
     if( realnum ) *realnum = 1;
   }
   if( *z=='e' || *z=='E' ){
     z += incr;
     if( *z=='+' || *z=='-' ) z += incr;
-    if( !isdigit(*(u8*)z) ) return 0;
-    while( isdigit(*(u8*)z) ){ z += incr; }
+    if( !sqlite3Isdigit(*z) ) return 0;
+    while( sqlite3Isdigit(*z) ){ z += incr; }
     if( realnum ) *realnum = 1;
   }
   return *z==0;
@@ -255,7 +294,7 @@ int sqlite3AtoF(const char *z, double *pResult){
   const char *zBegin = z;
   LONGDOUBLE_TYPE v1 = 0.0;
   int nSignificant = 0;
-  while( isspace(*(u8*)z) ) z++;
+  while( sqlite3Isspace(*z) ) z++;
   if( *z=='-' ){
     sign = -1;
     z++;
@@ -265,7 +304,7 @@ int sqlite3AtoF(const char *z, double *pResult){
   while( z[0]=='0' ){
     z++;
   }
-  while( isdigit(*(u8*)z) ){
+  while( sqlite3Isdigit(*z) ){
     v1 = v1*10.0 + (*z - '0');
     z++;
     nSignificant++;
@@ -279,7 +318,7 @@ int sqlite3AtoF(const char *z, double *pResult){
         z++;
       }
     }
-    while( isdigit(*(u8*)z) ){
+    while( sqlite3Isdigit(*z) ){
       if( nSignificant<18 ){
         v1 = v1*10.0 + (*z - '0');
         divisor *= 10.0;
@@ -300,7 +339,7 @@ int sqlite3AtoF(const char *z, double *pResult){
     }else if( *z=='+' ){
       z++;
     }
-    while( isdigit(*(u8*)z) ){
+    while( sqlite3Isdigit(*z) ){
       eval = eval*10 + *z - '0';
       z++;
     }
@@ -314,8 +353,8 @@ int sqlite3AtoF(const char *z, double *pResult){
       v1 *= scale;
     }
   }
-  *pResult = sign<0 ? -v1 : v1;
-  return z - zBegin;
+  *pResult = (double)(sign<0 ? -v1 : v1);
+  return (int)(z - zBegin);
 #else
   return sqlite3Atoi64(z, pResult);
 #endif /* SQLITE_OMIT_FLOATING_POINT */
@@ -359,7 +398,7 @@ int sqlite3Atoi64(const char *zNum, i64 *pNum){
   int neg;
   int i, c;
   const char *zStart;
-  while( isspace(*(u8*)zNum) ) zNum++;
+  while( sqlite3Isspace(*zNum) ) zNum++;
   if( *zNum=='-' ){
     neg = 1;
     zNum++;
@@ -501,17 +540,17 @@ int sqlite3PutVarint(unsigned char *p, u64 v){
   int i, j, n;
   u8 buf[10];
   if( v & (((u64)0xff000000)<<32) ){
-    p[8] = v;
+    p[8] = (u8)v;
     v >>= 8;
     for(i=7; i>=0; i--){
-      p[i] = (v & 0x7f) | 0x80;
+      p[i] = (u8)((v & 0x7f) | 0x80);
       v >>= 7;
     }
     return 9;
   }    
   n = 0;
   do{
-    buf[n++] = (v & 0x7f) | 0x80;
+    buf[n++] = (u8)((v & 0x7f) | 0x80);
     v >>= 7;
   }while( v!=0 );
   buf[0] &= 0x7f;
@@ -538,8 +577,8 @@ int sqlite3PutVarint32(unsigned char *p, u32 v){
   }
 #endif
   if( (v & ~0x3fff)==0 ){
-    p[0] = (v>>7) | 0x80;
-    p[1] = v & 0x7f;
+    p[0] = (u8)((v>>7) | 0x80);
+    p[1] = (u8)(v & 0x7f);
     return 2;
   }
   return sqlite3PutVarint(p, v);
@@ -549,7 +588,7 @@ int sqlite3PutVarint32(unsigned char *p, u32 v){
 ** Read a 64-bit variable-length integer from memory starting at p[0].
 ** Return the number of bytes read.  The value is stored in *v.
 */
-int sqlite3GetVarint(const unsigned char *p, u64 *v){
+u8 sqlite3GetVarint(const unsigned char *p, u64 *v){
   u32 a,b,s;
 
   a = *p;
@@ -711,7 +750,7 @@ int sqlite3GetVarint(const unsigned char *p, u64 *v){
 ** single-byte case.  All code should use the MACRO version as 
 ** this function assumes the single-byte case has already been handled.
 */
-int sqlite3GetVarint32(const unsigned char *p, u32 *v){
+u8 sqlite3GetVarint32(const unsigned char *p, u32 *v){
   u32 a,b;
 
   a = *p;
@@ -780,7 +819,7 @@ int sqlite3GetVarint32(const unsigned char *p, u32 *v){
   ** value. */
   {
     u64 v64;
-    int n;
+    u8 n;
 
     p -= 4;
     n = sqlite3GetVarint(p, &v64);
@@ -811,10 +850,10 @@ u32 sqlite3Get4byte(const u8 *p){
   return (p[0]<<24) | (p[1]<<16) | (p[2]<<8) | p[3];
 }
 void sqlite3Put4byte(unsigned char *p, u32 v){
-  p[0] = v>>24;
-  p[1] = v>>16;
-  p[2] = v>>8;
-  p[3] = v;
+  p[0] = (u8)(v>>24);
+  p[1] = (u8)(v>>16);
+  p[2] = (u8)(v>>8);
+  p[3] = (u8)v;
 }
 
 
@@ -825,7 +864,7 @@ void sqlite3Put4byte(unsigned char *p, u32 v){
 ** This routinen only works if h really is a valid hexadecimal
 ** character:  0..9a..fA..F
 */
-static int hexToInt(int h){
+static u8 hexToInt(int h){
   assert( (h>='0' && h<='9') ||  (h>='a' && h<='f') ||  (h>='A' && h<='F') );
 #ifdef SQLITE_ASCII
   h += 9*(1&(h>>6));
@@ -833,7 +872,7 @@ static int hexToInt(int h){
 #ifdef SQLITE_EBCDIC
   h += 9*(1&~(h>>4));
 #endif
-  return h & 0xf;
+  return (u8)(h & 0xf);
 }
 #endif /* !SQLITE_OMIT_BLOB_LITERAL || SQLITE_HAS_CODEC */
 
@@ -934,7 +973,7 @@ int sqlite3SafetyOff(sqlite3 *db){
 ** used as an argument to sqlite3_errmsg() or sqlite3_close().
 */
 int sqlite3SafetyCheckOk(sqlite3 *db){
-  int magic;
+  u32 magic;
   if( db==0 ) return 0;
   magic = db->magic;
   if( magic!=SQLITE_MAGIC_OPEN &&
@@ -942,7 +981,7 @@ int sqlite3SafetyCheckOk(sqlite3 *db){
   return 1;
 }
 int sqlite3SafetyCheckSickOrOk(sqlite3 *db){
-  int magic;
+  u32 magic;
   if( db==0 ) return 0;
   magic = db->magic;
   if( magic!=SQLITE_MAGIC_SICK &&

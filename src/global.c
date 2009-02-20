@@ -12,7 +12,7 @@
 **
 ** This file contains definitions of global variables and contants.
 **
-** $Id: global.c,v 1.4 2008/07/28 19:34:53 drh Exp $
+** $Id: global.c,v 1.12 2009/02/05 16:31:46 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -63,15 +63,128 @@ const unsigned char sqlite3UpperToLower[] = {
 };
 
 /*
+** The following 256 byte lookup table is used to support SQLites built-in
+** equivalents to the following standard library functions:
+**
+**   isspace()                        0x01
+**   isalpha()                        0x02
+**   isdigit()                        0x04
+**   isalnum()                        0x06
+**   isxdigit()                       0x08
+**   toupper()                        0x20
+**
+** Bit 0x20 is set if the mapped character requires translation to upper
+** case. i.e. if the character is a lower-case ASCII character.
+** If x is a lower-case ASCII character, then its upper-case equivalent
+** is (x - 0x20). Therefore toupper() can be implemented as:
+**
+**   (x & ~(map[x]&0x20))
+**
+** Standard function tolower() is implemented using the sqlite3UpperToLower[]
+** array. tolower() is used more often than toupper() by SQLite.
+**
+** SQLite's versions are identical to the standard versions assuming a
+** locale of "C". They are implemented as macros in sqliteInt.h.
+*/
+#ifdef SQLITE_ASCII
+const unsigned char sqlite3CtypeMap[256] = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 00..07    ........ */
+  0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00,  /* 08..0f    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 10..17    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 18..1f    ........ */
+  0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 20..27     !"#$%&' */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 28..2f    ()*+,-./ */
+  0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c,  /* 30..37    01234567 */
+  0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 38..3f    89:;<=>? */
+
+  0x00, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x02,  /* 40..47    @ABCDEFG */
+  0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,  /* 48..4f    HIJKLMNO */
+  0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,  /* 50..57    PQRSTUVW */
+  0x02, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 58..5f    XYZ[\]^_ */
+  0x00, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x22,  /* 60..67    `abcdefg */
+  0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,  /* 68..6f    hijklmno */
+  0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,  /* 70..77    pqrstuvw */
+  0x22, 0x22, 0x22, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 78..7f    xyz{|}~. */
+
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 80..87    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 88..8f    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 90..97    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 98..9f    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* a0..a7    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* a8..af    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* b0..b7    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* b8..bf    ........ */
+
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* c0..c7    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* c8..cf    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* d0..d7    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* d8..df    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* e0..e7    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* e8..ef    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* f0..f7    ........ */
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   /* f8..ff    ........ */
+};
+#endif
+
+
+
+/*
 ** The following singleton contains the global configuration for
 ** the SQLite library.
 */
-struct Sqlite3Config sqlite3Config = {
-   1,                /* bMemstat */
-   1,                /* bCoreMutex */
-   1,                /* bFullMutex */
-   0x7ffffffe,       /* mxStrlen */
-   100,              /* szLookaside */
-   500,              /* nLookaside */
-   /* Other fields all default to zero */
+SQLITE_WSD struct Sqlite3Config sqlite3Config = {
+   SQLITE_DEFAULT_MEMSTATUS,  /* bMemstat */
+   1,                         /* bCoreMutex */
+   SQLITE_THREADSAFE==1,      /* bFullMutex */
+   0x7ffffffe,                /* mxStrlen */
+   100,                       /* szLookaside */
+   500,                       /* nLookaside */
+   {0,0,0,0,0,0,0,0},         /* m */
+   {0,0,0,0,0,0,0,0,0},       /* mutex */
+   {0,0,0,0,0,0,0,0,0,0,0},   /* pcache */
+   (void*)0,                  /* pHeap */
+   0,                         /* nHeap */
+   0, 0,                      /* mnHeap, mxHeap */
+   (void*)0,                  /* pScratch */
+   0,                         /* szScratch */
+   0,                         /* nScratch */
+   (void*)0,                  /* pPage */
+   0,                         /* szPage */
+   0,                         /* nPage */
+   0,                         /* mxParserStack */
+   0,                         /* sharedCacheEnabled */
+   /* All the rest need to always be zero */
+   0,                         /* isInit */
+   0,                         /* inProgress */
+   0,                         /* isMallocInit */
+   0,                         /* pInitMutex */
+   0,                         /* nRefInitMutex */
 };
+
+
+/*
+** Hash table for global functions - functions common to all
+** database connections.  After initialization, this table is
+** read-only.
+*/
+SQLITE_WSD FuncDefHash sqlite3GlobalFunctions;
+
+/*
+** The value of the "pending" byte must be 0x40000000 (1 byte past the
+** 1-gibabyte boundary) in a compatible database.  SQLite never uses
+** the database page that contains the pending byte.  It never attempts
+** to read or write that page.  The pending byte page is set assign
+** for use by the VFS layers as space for managing file locks.
+**
+** During testing, it is often desirable to move the pending byte to
+** a different position in the file.  This allows code that has to
+** deal with the pending byte to run on files that are much smaller
+** than 1 GiB.  The sqlite3_test_control() interface can be used to
+** move the pending byte.
+**
+** IMPORTANT:  Changing the pending byte to any value other than
+** 0x40000000 results in an incompatible database file format!
+** Changing the pending byte during operating results in undefined
+** and dileterious behavior.
+*/
+int sqlite3PendingByte = 0x40000000;

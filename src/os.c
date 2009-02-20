@@ -13,7 +13,7 @@
 ** This file contains OS interface code that is common to all
 ** architectures.
 **
-** $Id: os.c,v 1.120 2008/07/28 19:34:53 drh Exp $
+** $Id: os.c,v 1.125 2008/12/08 18:19:18 drh Exp $
 */
 #define _SQLITE_OS_C_ 1
 #include "sqliteInt.h"
@@ -36,7 +36,7 @@
 **     sqlite3OsLock()
 **
 */
-#if defined(SQLITE_TEST) && (SQLITE_OS_WIN==0) && 0
+#if defined(SQLITE_TEST) && (SQLITE_OS_WIN==0)
   #define DO_OS_MALLOC_TEST if (1) {            \
     void *pTstAlloc = sqlite3Malloc(10);       \
     if (!pTstAlloc) return SQLITE_IOERR_NOMEM;  \
@@ -142,8 +142,8 @@ void *sqlite3OsDlOpen(sqlite3_vfs *pVfs, const char *zPath){
 void sqlite3OsDlError(sqlite3_vfs *pVfs, int nByte, char *zBufOut){
   pVfs->xDlError(pVfs, nByte, zBufOut);
 }
-void *sqlite3OsDlSym(sqlite3_vfs *pVfs, void *pHandle, const char *zSymbol){
-  return pVfs->xDlSym(pVfs, pHandle, zSymbol);
+void (*sqlite3OsDlSym(sqlite3_vfs *pVfs, void *pHdle, const char *zSym))(void){
+  return pVfs->xDlSym(pVfs, pHdle, zSym);
 }
 void sqlite3OsDlClose(sqlite3_vfs *pVfs, void *pHandle){
   pVfs->xDlClose(pVfs, pHandle);
@@ -190,7 +190,8 @@ int sqlite3OsCloseFree(sqlite3_file *pFile){
 /*
 ** The list of all registered VFS implementations.
 */
-static sqlite3_vfs *vfsList = 0;
+static sqlite3_vfs * SQLITE_WSD vfsList = 0;
+#define vfsList GLOBAL(sqlite3_vfs *, vfsList)
 
 /*
 ** Locate a VFS by name.  If no name is given, simply return the
@@ -198,14 +199,14 @@ static sqlite3_vfs *vfsList = 0;
 */
 sqlite3_vfs *sqlite3_vfs_find(const char *zVfs){
   sqlite3_vfs *pVfs = 0;
-#ifndef SQLITE_MUTEX_NOOP
+#if SQLITE_THREADSAFE
   sqlite3_mutex *mutex;
 #endif
 #ifndef SQLITE_OMIT_AUTOINIT
   int rc = sqlite3_initialize();
   if( rc ) return 0;
 #endif
-#ifndef SQLITE_MUTEX_NOOP
+#if SQLITE_THREADSAFE
   mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
 #endif
   sqlite3_mutex_enter(mutex);
@@ -267,7 +268,7 @@ int sqlite3_vfs_register(sqlite3_vfs *pVfs, int makeDflt){
 ** Unregister a VFS so that it is no longer accessible.
 */
 int sqlite3_vfs_unregister(sqlite3_vfs *pVfs){
-#ifndef SQLITE_MUTEX_NOOP
+#if SQLITE_THREADSAFE
   sqlite3_mutex *mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
 #endif
   sqlite3_mutex_enter(mutex);

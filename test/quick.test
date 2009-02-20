@@ -6,7 +6,7 @@
 #***********************************************************************
 # This file runs all tests.
 #
-# $Id: quick.test,v 1.84 2008/06/26 08:29:35 danielk1977 Exp $
+# $Id: quick.test,v 1.92 2009/02/03 16:51:25 danielk1977 Exp $
 
 proc lshift {lvar} {
   upvar $lvar l
@@ -35,7 +35,10 @@ while {[set arg [lshift argv]] != ""} {
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 rename finish_test really_finish_test
-proc finish_test {} {}
+proc finish_test {} {
+  catch {db close}
+  show_memstats
+}
 set ISQUICK 1
 
 set EXCLUDE {
@@ -43,7 +46,9 @@ set EXCLUDE {
   async.test
   async2.test
   async3.test
+  backup_ioerr.test
   corrupt.test
+  corruptC.test
   crash.test
   crash2.test
   crash3.test
@@ -54,6 +59,7 @@ set EXCLUDE {
   delete3.test
   fts3.test
   fuzz.test
+  fuzz3.test
   fuzz_malloc.test
   in2.test
   loadext.test
@@ -64,6 +70,8 @@ set EXCLUDE {
   onefile.test
   permutations.test
   quick.test
+  savepoint4.test
+  savepoint6.test
   select9.test
   soak.test
   speed1.test
@@ -76,6 +84,8 @@ set EXCLUDE {
   tkt2686.test
   thread001.test
   thread002.test
+  thread003.test
+  trans2.test
   vacuum3.test
 
   incrvacuum_ioerr.test

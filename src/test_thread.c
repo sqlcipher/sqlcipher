@@ -14,16 +14,19 @@
 ** test that sqlite3 database handles may be concurrently accessed by 
 ** multiple threads. Right now this only works on unix.
 **
-** $Id: test_thread.c,v 1.6 2007/12/13 21:54:11 drh Exp $
+** $Id: test_thread.c,v 1.10 2009/02/03 19:55:20 shane Exp $
 */
 
 #include "sqliteInt.h"
 #include <tcl.h>
 
-#if SQLITE_THREADSAFE && defined(TCL_THREADS)
+#if SQLITE_THREADSAFE
 
 #include <errno.h>
+
+#if !defined(_MSC_VER)
 #include <unistd.h>
+#endif
 
 /*
 ** One of these is allocated for each thread created by [sqlthread spawn].
@@ -51,6 +54,7 @@ struct EvalEvent {
 };
 
 static Tcl_ObjCmdProc sqlthread_proc;
+static Tcl_ObjCmdProc clock_seconds_proc;
 int Sqlitetest1_Init(Tcl_Interp *);
 
 /*
@@ -63,6 +67,7 @@ static int tclScriptEvent(Tcl_Event *evPtr, int flags){
   if( rc!=TCL_OK ){
     Tcl_BackgroundError(p->interp);
   }
+  UNUSED_PARAMETER(flags);
   return 1;
 }
 
@@ -95,12 +100,14 @@ static Tcl_ThreadCreateType tclScriptThread(ClientData pSqlThread){
   Tcl_Obj *pRes;
   Tcl_Obj *pList;
   int rc;
-
   SqlThread *p = (SqlThread *)pSqlThread;
+  extern int Sqlitetest_mutex_Init(Tcl_Interp*);
 
   interp = Tcl_CreateInterp();
+  Tcl_CreateObjCommand(interp, "clock_seconds", clock_seconds_proc, 0, 0);
   Tcl_CreateObjCommand(interp, "sqlthread", sqlthread_proc, pSqlThread, 0);
   Sqlitetest1_Init(interp);
+  Sqlitetest_mutex_Init(interp);
 
   rc = Tcl_Eval(interp, p->zScript);
   pRes = Tcl_GetObjResult(interp);
@@ -125,7 +132,7 @@ static Tcl_ThreadCreateType tclScriptThread(ClientData pSqlThread){
   Tcl_DecrRefCount(pList);
   Tcl_DecrRefCount(pRes);
   Tcl_DeleteInterp(interp);
-  return;
+  TCL_THREAD_CREATE_RETURN;
 }
 
 /*
@@ -156,6 +163,8 @@ static int sqlthread_spawn(
   const int flags = TCL_THREAD_NOFLAGS;
 
   assert(objc==4);
+  UNUSED_PARAMETER(clientData);
+  UNUSED_PARAMETER(objc);
 
   zVarname = Tcl_GetStringFromObj(objv[2], &nVarname);
   zScript = Tcl_GetStringFromObj(objv[3], &nScript);
@@ -171,7 +180,7 @@ static int sqlthread_spawn(
   rc = Tcl_CreateThread(&x, tclScriptThread, (void *)pNew, nStack, flags);
   if( rc!=TCL_OK ){
     Tcl_AppendResult(interp, "Error in Tcl_CreateThread()", 0);
-    sqlite3_free(pNew);
+    ckfree((char *)pNew);
     return TCL_ERROR;
   }
 
@@ -201,6 +210,8 @@ static int sqlthread_parent(
   SqlThread *p = (SqlThread *)clientData;
 
   assert(objc==3);
+  UNUSED_PARAMETER(objc);
+
   if( p==0 ){
     Tcl_AppendResult(interp, "no parent thread", 0);
     return TCL_ERROR;
@@ -220,6 +231,8 @@ static int sqlthread_parent(
 }
 
 static int xBusy(void *pArg, int nBusy){
+  UNUSED_PARAMETER(pArg);
+  UNUSED_PARAMETER(nBusy);
   sqlite3_sleep(50);
   return 1;             /* Try again... */
 }
@@ -243,6 +256,9 @@ static int sqlthread_open(
   int rc;
   char zBuf[100];
   extern void Md5_Register(sqlite3*);
+
+  UNUSED_PARAMETER(clientData);
+  UNUSED_PARAMETER(objc);
 
   zFilename = Tcl_GetString(objv[2]);
   rc = sqlite3_open(zFilename, &db);
@@ -270,6 +286,9 @@ static int sqlthread_id(
 ){
   Tcl_ThreadId id = Tcl_GetCurrentThread();
   Tcl_SetObjResult(interp, Tcl_NewIntObj((int)id));
+  UNUSED_PARAMETER(clientData);
+  UNUSED_PARAMETER(objc);
+  UNUSED_PARAMETER(objv);
   return TCL_OK;
 }
 
@@ -319,10 +338,33 @@ static int sqlthread_proc(
 }
 
 /*
+** The [clock_seconds] command. This is more or less the same as the
+** regular tcl [clock seconds], except that it is available in testfixture
+** when linked against both Tcl 8.4 and 8.5. Because [clock seconds] is
+** implemented as a script in Tcl 8.5, it is not usually available to
+** testfixture.
+*/ 
+static int clock_seconds_proc(
+  ClientData clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  Tcl_Time now;
+  Tcl_GetTime(&now);
+  Tcl_SetObjResult(interp, Tcl_NewIntObj(now.sec));
+  UNUSED_PARAMETER(clientData);
+  UNUSED_PARAMETER(objc);
+  UNUSED_PARAMETER(objv);
+  return TCL_OK;
+}
+
+/*
 ** Register commands with the TCL interpreter.
 */
 int SqlitetestThread_Init(Tcl_Interp *interp){
   Tcl_CreateObjCommand(interp, "sqlthread", sqlthread_proc, 0, 0);
+  Tcl_CreateObjCommand(interp, "clock_seconds", clock_seconds_proc, 0, 0);
   return TCL_OK;
 }
 #else

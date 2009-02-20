@@ -14,7 +14,7 @@
 # Note: There are also some tests for incremental vacuum and IO 
 # errors in incrvacuum_ioerr.test.
 #
-# $Id: incrvacuum.test,v 1.19 2008/07/30 17:28:04 drh Exp $
+# $Id: incrvacuum.test,v 1.22 2009/01/30 05:47:15 shane Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -601,7 +601,7 @@ ifcapable default_autovacuum {
     execsql {
       PRAGMA auto_vacuum;
     }
-  } {1}
+  } $AUTOVACUUM
 } else {
   do_test incrvacuum-11.1-av-dflt-off {
     execsql {
@@ -732,6 +732,48 @@ do_test incrvacuum-14.1 {
   } db3
 } {1 {file is encrypted or is not a database}}
 
-db2 close
+do_test incrvacuum-15.1 {
+  db close
+  db2 close
+  file delete -force test.db
+  sqlite3 db test.db
+
+  set str [string repeat "abcdefghij" 500]
+
+  execsql {
+    PRAGMA cache_size = 10;
+    PRAGMA auto_vacuum = incremental;
+    CREATE TABLE t1(x, y);
+    INSERT INTO t1 VALUES('a', $str);
+    INSERT INTO t1 VALUES('b', $str);
+    INSERT INTO t1 VALUES('c', $str);
+    INSERT INTO t1 VALUES('d', $str);
+    INSERT INTO t1 VALUES('e', $str);
+    INSERT INTO t1 VALUES('f', $str);
+    INSERT INTO t1 VALUES('g', $str);
+    INSERT INTO t1 VALUES('h', $str);
+    INSERT INTO t1 VALUES('i', $str);
+    INSERT INTO t1 VALUES('j', $str);
+    INSERT INTO t1 VALUES('j', $str);
+
+    CREATE TABLE t2(x PRIMARY KEY, y);
+    INSERT INTO t2 VALUES('a', $str);
+    INSERT INTO t2 VALUES('b', $str);
+    INSERT INTO t2 VALUES('c', $str);
+    INSERT INTO t2 VALUES('d', $str);
+
+    BEGIN;
+      DELETE FROM t2;
+      PRAGMA incremental_vacuum;
+  }
+
+  catchsql {INSERT INTO t2 SELECT * FROM t1}
+
+  execsql { 
+    COMMIT;
+    PRAGMA integrity_check;
+  }
+} {ok}
+
 db3 close
 finish_test

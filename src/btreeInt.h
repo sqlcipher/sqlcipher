@@ -9,7 +9,7 @@
 **    May you share freely, never taking more than you give.
 **
 *************************************************************************
-** $Id: btreeInt.h,v 1.30 2008/08/01 20:10:08 drh Exp $
+** $Id: btreeInt.h,v 1.42 2009/02/03 16:51:25 danielk1977 Exp $
 **
 ** This file implements a external (disk-based) database using BTrees.
 ** For a detailed discussion of BTrees, refer to
@@ -204,10 +204,6 @@
 **      *     zero or more pages numbers of leaves
 */
 #include "sqliteInt.h"
-#include "pager.h"
-#include "btree.h"
-#include "os.h"
-#include <assert.h>
 
 /* Round up a number to the next larger multiple of 8.  This is used
 ** to force 8-byte alignment on 64-bit architectures.
@@ -271,7 +267,6 @@ typedef struct BtLock BtLock;
 */
 struct MemPage {
   u8 isInit;           /* True if previously initialized. MUST BE FIRST! */
-  u8 idxShift;         /* True if Cell indices have changed */
   u8 nOverflow;        /* Number of overflow cell bodies in aCell[] */
   u8 intKey;           /* True if intkey flag is set */
   u8 leaf;             /* True if leaf flag is set */
@@ -281,7 +276,6 @@ struct MemPage {
   u16 maxLocal;        /* Copy of BtShared.maxLocal or BtShared.maxLeaf */
   u16 minLocal;        /* Copy of BtShared.minLocal or BtShared.minLeaf */
   u16 cellOffset;      /* Index in aData of first cell pointer */
-  u16 idxParent;       /* Index in parent of this node */
   u16 nFree;           /* Number of free bytes on the page */
   u16 nCell;           /* Number of cells on this page, local and ovfl */
   u16 maskPage;        /* Mask for page offset */
@@ -293,7 +287,6 @@ struct MemPage {
   u8 *aData;           /* Pointer to disk image of the page data */
   DbPage *pDbPage;     /* Pager page handle */
   Pgno pgno;           /* Page number for this page */
-  MemPage *pParent;    /* The parent of this page.  NULL for root */
 };
 
 /*
@@ -331,6 +324,7 @@ struct Btree {
   u8 sharable;       /* True if we can share pBt with another db */
   u8 locked;         /* True if db currently has pBt locked */
   int wantToLock;    /* Number of nested calls to sqlite3BtreeEnter() */
+  int nBackup;       /* Number of backup operations reading this btree */
   Btree *pNext;      /* List of other sharable Btrees from the same db */
   Btree *pPrev;      /* Back pointer of the same list */
 };
@@ -374,20 +368,19 @@ struct BtShared {
 #ifndef SQLITE_OMIT_AUTOVACUUM
   u8 autoVacuum;        /* True if auto-vacuum is enabled */
   u8 incrVacuum;        /* True if incr-vacuum is enabled */
-  Pgno nTrunc;          /* Non-zero if the db will be truncated (incr vacuum) */
 #endif
   u16 pageSize;         /* Total number of bytes on a page */
   u16 usableSize;       /* Number of usable bytes on each page */
-  int maxLocal;         /* Maximum local payload in non-LEAFDATA tables */
-  int minLocal;         /* Minimum local payload in non-LEAFDATA tables */
-  int maxLeaf;          /* Maximum local payload in a LEAFDATA table */
-  int minLeaf;          /* Minimum local payload in a LEAFDATA table */
+  u16 maxLocal;         /* Maximum local payload in non-LEAFDATA tables */
+  u16 minLocal;         /* Minimum local payload in non-LEAFDATA tables */
+  u16 maxLeaf;          /* Maximum local payload in a LEAFDATA table */
+  u16 minLeaf;          /* Minimum local payload in a LEAFDATA table */
   u8 inTransaction;     /* Transaction state */
   int nTransaction;     /* Number of open transactions (read + write) */
   void *pSchema;        /* Pointer to space allocated by sqlite3BtreeSchema() */
   void (*xFreeSchema)(void*);  /* Destructor for BtShared.pSchema */
   sqlite3_mutex *mutex; /* Non-recursive mutex required to access this struct */
-  BusyHandler busyHdr;  /* The busy handler for this btree */
+  Bitvec *pHasContent;  /* Set of pages moved to free-list this transaction */
 #ifndef SQLITE_OMIT_SHARED_CACHE
   int nRef;             /* Number of references to this structure */
   BtShared *pNext;      /* Next on a list of sharable BtShared structs */
@@ -415,6 +408,17 @@ struct CellInfo {
 };
 
 /*
+** Maximum depth of an SQLite B-Tree structure. Any B-Tree deeper than
+** this will be declared corrupt. This value is calculated based on a
+** maximum database size of 2^31 pages a minimum fanout of 2 for a
+** root-node and 3 for all other internal nodes.
+**
+** If a tree that appears to be taller than this is encountered, it is
+** assumed that the database is corrupt.
+*/
+#define BTCURSOR_MAX_DEPTH 20
+
+/*
 ** A cursor is a pointer to a particular entry within a particular
 ** b-tree within a database file.
 **
@@ -434,8 +438,6 @@ struct BtCursor {
   BtCursor *pNext, *pPrev;  /* Forms a linked list of all cursors */
   struct KeyInfo *pKeyInfo; /* Argument passed to comparison function */
   Pgno pgnoRoot;            /* The root page of this tree */
-  MemPage *pPage;           /* Page that contains the entry */
-  int idx;                  /* Index of the entry in pPage->aCell[] */
   CellInfo info;            /* A parse of the cell we are pointing at */
   u8 wrFlag;                /* True if writable */
   u8 atLast;                /* Cursor pointing to the last entry */
@@ -448,6 +450,12 @@ struct BtCursor {
   u8 isIncrblobHandle;      /* True if this cursor is an incr. io handle */
   Pgno *aOverflow;          /* Cache of overflow page locations */
 #endif
+#ifndef NDEBUG
+  u8 pagesShuffled;         /* True if Btree pages are rearranged by balance()*/
+#endif
+  i16 iPage;                            /* Index of current page in apPage */
+  MemPage *apPage[BTCURSOR_MAX_DEPTH];  /* Pages from root to current page */
+  u16 aiIdx[BTCURSOR_MAX_DEPTH];        /* Current index in apPage[i] */
 };
 
 /*
@@ -480,18 +488,10 @@ struct BtCursor {
 #define CURSOR_REQUIRESEEK       2
 #define CURSOR_FAULT             3
 
-/* The database page the PENDING_BYTE occupies. This page is never used.
-** TODO: This macro is very similary to PAGER_MJ_PGNO() in pager.c. They
-** should possibly be consolidated (presumably in pager.h).
-**
-** If disk I/O is omitted (meaning that the database is stored purely
-** in memory) then there is no pending byte.
+/* 
+** The database page the PENDING_BYTE occupies. This page is never used.
 */
-#ifdef SQLITE_OMIT_DISKIO
-# define PENDING_BYTE_PAGE(pBt)  0x7fffffff
-#else
-# define PENDING_BYTE_PAGE(pBt) ((PENDING_BYTE/(pBt)->pageSize)+1)
-#endif
+# define PENDING_BYTE_PAGE(pBt) PAGER_MJ_PGNO(pBt)
 
 /*
 ** A linked list of the following structures is stored at BtShared.pLock.
@@ -597,7 +597,7 @@ typedef struct IntegrityCk IntegrityCk;
 struct IntegrityCk {
   BtShared *pBt;    /* The tree being checked out */
   Pager *pPager;    /* The associated pager.  Also accessible by pBt->pPager */
-  int nPage;        /* Number of pages in the database */
+  Pgno nPage;       /* Number of pages in the database */
   int *anRef;       /* Number of times each page is referenced */
   int mxErr;        /* Stop accumulating errors when this reaches zero */
   int nErr;         /* Number of messages written to zErrMsg so far */
@@ -609,7 +609,7 @@ struct IntegrityCk {
 ** Read or write a two- and four-byte big-endian integer values.
 */
 #define get2byte(x)   ((x)[0]<<8 | (x)[1])
-#define put2byte(p,v) ((p)[0] = (v)>>8, (p)[1] = (v))
+#define put2byte(p,v) ((p)[0] = (u8)((v)>>8), (p)[1] = (u8)(v))
 #define get4byte sqlite3Get4byte
 #define put4byte sqlite3Put4byte
 
@@ -617,11 +617,10 @@ struct IntegrityCk {
 ** Internal routines that should be accessed by the btree layer only.
 */
 int sqlite3BtreeGetPage(BtShared*, Pgno, MemPage**, int);
-int sqlite3BtreeInitPage(MemPage *pPage, MemPage *pParent);
+int sqlite3BtreeInitPage(MemPage *pPage);
 void sqlite3BtreeParseCellPtr(MemPage*, u8*, CellInfo*);
 void sqlite3BtreeParseCell(MemPage*, int, CellInfo*);
 int sqlite3BtreeRestoreCursorPosition(BtCursor *pCur);
 void sqlite3BtreeGetTempCursor(BtCursor *pCur, BtCursor *pTempCur);
 void sqlite3BtreeReleaseTempCursor(BtCursor *pCur);
-int sqlite3BtreeIsRootPage(MemPage *pPage);
 void sqlite3BtreeMoveToParent(BtCursor *pCur);

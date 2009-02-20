@@ -23,37 +23,15 @@
 ** This version of the memory allocation subsystem is included
 ** in the build only if SQLITE_ENABLE_MEMSYS5 is defined.
 **
-** $Id: mem5.c,v 1.11 2008/07/16 12:25:32 drh Exp $
+** $Id: mem5.c,v 1.19 2008/11/19 16:52:44 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
 /*
 ** This version of the memory allocator is used only when 
-** SQLITE_POW2_MEMORY_SIZE is defined.
+** SQLITE_ENABLE_MEMSYS5 is defined.
 */
 #ifdef SQLITE_ENABLE_MEMSYS5
-
-/*
-** Log2 of the minimum size of an allocation.  For example, if
-** 4 then all allocations will be rounded up to at least 16 bytes.
-** If 5 then all allocations will be rounded up to at least 32 bytes.
-*/
-#ifndef SQLITE_POW2_LOGMIN
-# define SQLITE_POW2_LOGMIN 6
-#endif
-
-/*
-** Log2 of the maximum size of an allocation.
-*/
-#ifndef SQLITE_POW2_LOGMAX
-# define SQLITE_POW2_LOGMAX 20
-#endif
-#define POW2_MAX (((unsigned int)1)<<SQLITE_POW2_LOGMAX)
-
-/*
-** Number of distinct allocation sizes.
-*/
-#define NSIZE (SQLITE_POW2_LOGMAX - SQLITE_POW2_LOGMIN + 1)
 
 /*
 ** A minimum allocation is an instance of the following structure.
@@ -85,18 +63,13 @@ struct Mem5Link {
 ** static variables organized and to reduce namespace pollution
 ** when this module is combined with other in the amalgamation.
 */
-static struct {
+static SQLITE_WSD struct Mem5Global {
   /*
-  ** The alarm callback and its arguments.  The mem5.mutex lock will
-  ** be held while the callback is running.  Recursive calls into
-  ** the memory subsystem are allowed, but no new callbacks will be
-  ** issued.  The alarmBusy variable is set to prevent recursive
-  ** callbacks.
+  ** Memory available for allocation
   */
-  sqlite3_int64 alarmThreshold;
-  void (*alarmCallback)(void*, sqlite3_int64,int);
-  void *alarmArg;
-  int alarmBusy;
+  int nAtom;       /* Smallest possible allocation in bytes */
+  int nBlock;      /* Number of nAtom sized blocks in zPool */
+  u8 *zPool;
   
   /*
   ** Mutex to control access to the memory allocation subsystem.
@@ -126,13 +99,9 @@ static struct {
   */
   u8 *aCtrl;
 
-  /*
-  ** Memory available for allocation
-  */
-  int nAtom;       /* Smallest possible allocation in bytes */
-  int nBlock;      /* Number of nAtom sized blocks in zPool */
-  u8 *zPool;
-} mem5;
+} mem5 = { 19804167 };
+
+#define mem5 GLOBAL(struct Mem5Global, mem5)
 
 #define MEM5LINK(idx) ((Mem5Link *)(&mem5.zPool[(idx)*mem5.nAtom]))
 
@@ -181,10 +150,10 @@ static void memsys5Link(int i, int iLogsize){
 /*
 ** If the STATIC_MEM mutex is not already held, obtain it now. The mutex
 ** will already be held (obtained by code in malloc.c) if
-** sqlite3Config.bMemStat is true.
+** sqlite3GlobalConfig.bMemStat is true.
 */
 static void memsys5Enter(void){
-  if( sqlite3Config.bMemstat==0 && mem5.mutex==0 ){
+  if( sqlite3GlobalConfig.bMemstat==0 && mem5.mutex==0 ){
     mem5.mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MEM);
   }
   sqlite3_mutex_enter(mem5.mutex);
@@ -239,12 +208,11 @@ static void *memsys5MallocUnsafe(int nByte){
 
   /* Keep track of the maximum allocation request.  Even unfulfilled
   ** requests are counted */
-  if( nByte>mem5.maxRequest ){
+  if( (u32)nByte>mem5.maxRequest ){
     mem5.maxRequest = nByte;
   }
 
   /* Round nByte up to the next valid power of two */
-  if( nByte>POW2_MAX ) return 0;
   for(iFullSz=mem5.nAtom, iLogsize=0; iFullSz<nByte; iFullSz *= 2, iLogsize++){}
 
   /* Make sure mem5.aiFreelist[iLogsize] contains at least one free
@@ -296,12 +264,12 @@ static void memsys5FreeUnsafe(void *pOld){
 
   iLogsize = mem5.aCtrl[iBlock] & CTRL_LOGSIZE;
   size = 1<<iLogsize;
-  assert( iBlock+size-1<mem5.nBlock );
+  assert( iBlock+size-1<(u32)mem5.nBlock );
 
   mem5.aCtrl[iBlock] |= CTRL_FREE;
   mem5.aCtrl[iBlock+size-1] |= CTRL_FREE;
   assert( mem5.currentCount>0 );
-  assert( mem5.currentOut>=0 );
+  assert( mem5.currentOut>=(size*mem5.nAtom) );
   mem5.currentCount--;
   mem5.currentOut -= size*mem5.nAtom;
   assert( mem5.currentOut>0 || mem5.currentCount==0 );
@@ -406,18 +374,20 @@ static int memsys5Log(int iValue){
 */
 static int memsys5Init(void *NotUsed){
   int ii;
-  int nByte = sqlite3Config.nHeap;
-  u8 *zByte = (u8 *)sqlite3Config.pHeap;
+  int nByte = sqlite3GlobalConfig.nHeap;
+  u8 *zByte = (u8 *)sqlite3GlobalConfig.pHeap;
   int nMinLog;                 /* Log of minimum allocation size in bytes*/
   int iOffset;
+
+  UNUSED_PARAMETER(NotUsed);
 
   if( !zByte ){
     return SQLITE_ERROR;
   }
 
-  nMinLog = memsys5Log(sqlite3Config.mnReq);
+  nMinLog = memsys5Log(sqlite3GlobalConfig.mnReq);
   mem5.nAtom = (1<<nMinLog);
-  while( sizeof(Mem5Link)>mem5.nAtom ){
+  while( (int)sizeof(Mem5Link)>mem5.nAtom ){
     mem5.nAtom = mem5.nAtom << 1;
   }
 
@@ -447,6 +417,7 @@ static int memsys5Init(void *NotUsed){
 ** Deinitialize this module.
 */
 static void memsys5Shutdown(void *NotUsed){
+  UNUSED_PARAMETER(NotUsed);
   return;
 }
 
@@ -490,6 +461,8 @@ void sqlite3Memsys5Dump(const char *zFilename){
   }else{
     fclose(out);
   }
+#else
+  UNUSED_PARAMETER(zFilename);
 #endif
 }
 

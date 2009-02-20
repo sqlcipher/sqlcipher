@@ -62,7 +62,8 @@
 
 /* The yyzerominor constant is used to initialize instances of
 ** YYMINORTYPE objects to zero. */
-static const YYMINORTYPE yyzerominor;
+static const YYMINORTYPE yyzerominor = { 0 };
+
 
 /* Next are the tables used to determine what action to take based on the
 ** current state and lookahead token.  These tables are used to implement
@@ -262,6 +263,8 @@ void *ParseAlloc(void *(*mallocProc)(size_t)){
     pParser->yyidxMax = 0;
 #endif
 #if YYSTACKDEPTH<=0
+    pParser->yystack = NULL;
+    pParser->yystksz = 0;
     yyGrowStack(pParser);
 #endif
   }
@@ -379,7 +382,7 @@ static int yy_find_shift_action(
   if( i<0 || i>=YY_SZ_ACTTAB || yy_lookahead[i]!=iLookAhead ){
     if( iLookAhead>0 ){
 #ifdef YYFALLBACK
-      int iFallback;            /* Fallback token */
+      YYCODETYPE iFallback;            /* Fallback token */
       if( iLookAhead<sizeof(yyFallback)/sizeof(yyFallback[0])
              && (iFallback = yyFallback[iLookAhead])!=0 ){
 #ifndef NDEBUG
@@ -496,8 +499,8 @@ static void yy_shift(
   }
 #endif
   yytos = &yypParser->yystack[yypParser->yyidx];
-  yytos->stateno = yyNewState;
-  yytos->major = yyMajor;
+  yytos->stateno = (YYACTIONTYPE)yyNewState;
+  yytos->major = (YYCODETYPE)yyMajor;
   yytos->minor = *yypMinor;
 #ifndef NDEBUG
   if( yyTraceFILE && yypParser->yyidx>0 ){
@@ -578,7 +581,7 @@ static void yy_reduce(
   yygoto = yyRuleInfo[yyruleno].lhs;
   yysize = yyRuleInfo[yyruleno].nrhs;
   yypParser->yyidx -= yysize;
-  yyact = yy_find_reduce_action(yymsp[-yysize].stateno,yygoto);
+  yyact = yy_find_reduce_action(yymsp[-yysize].stateno,(YYCODETYPE)yygoto);
   if( yyact < YYNSTATE ){
 #ifdef NDEBUG
     /* If we are not debugging and the reduce action popped at least
@@ -588,8 +591,8 @@ static void yy_reduce(
     if( yysize ){
       yypParser->yyidx++;
       yymsp -= yysize-1;
-      yymsp->stateno = yyact;
-      yymsp->major = yygoto;
+      yymsp->stateno = (YYACTIONTYPE)yyact;
+      yymsp->major = (YYCODETYPE)yygoto;
       yymsp->minor = yygotominor;
     }else
 #endif
@@ -714,7 +717,7 @@ void Parse(
 #endif
 
   do{
-    yyact = yy_find_shift_action(yypParser,yymajor);
+    yyact = yy_find_shift_action(yypParser,(YYCODETYPE)yymajor);
     if( yyact<YYNSTATE ){
       assert( !yyendofinput );  /* Impossible to shift the $ token */
       yy_shift(yypParser,yyact,yymajor,&yyminorunion);
@@ -763,7 +766,7 @@ void Parse(
              yyTracePrompt,yyTokenName[yymajor]);
         }
 #endif
-        yy_destructor(yypParser, yymajor,&yyminorunion);
+        yy_destructor(yypParser, (YYCODETYPE)yymajor,&yyminorunion);
         yymajor = YYNOCODE;
       }else{
          while(
@@ -776,7 +779,7 @@ void Parse(
           yy_pop_parser_stack(yypParser);
         }
         if( yypParser->yyidx < 0 || yymajor==0 ){
-          yy_destructor(yypParser,yymajor,&yyminorunion);
+          yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
           yy_parse_failed(yypParser);
           yymajor = YYNOCODE;
         }else if( yymx!=YYERRORSYMBOL ){
@@ -801,7 +804,7 @@ void Parse(
         yy_syntax_error(yypParser,yymajor,yyminorunion);
       }
       yypParser->yyerrcnt = 3;
-      yy_destructor(yypParser,yymajor,&yyminorunion);
+      yy_destructor(yypParser,(YYCODETYPE)yymajor,&yyminorunion);
       if( yyendofinput ){
         yy_parse_failed(yypParser);
       }

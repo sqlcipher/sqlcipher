@@ -11,7 +11,7 @@
 # This file implements some common TCL routines used for regression
 # testing the SQLite library
 #
-# $Id: tester.tcl,v 1.134 2008/08/05 17:53:24 drh Exp $
+# $Id: tester.tcl,v 1.139 2009/02/05 16:31:46 drh Exp $
 
 #
 # What for user input before continuing.  This gives an opportunity
@@ -27,7 +27,7 @@ for {set i 0} {$i<[llength $argv]} {incr i} {
 }
 
 set tcl_precision 15
-set sqlite_pending_byte 0x0010000
+sqlite3_test_control_pending_byte 0x0010000
 
 # 
 # Check the command-line arguments for a default soft-heap-limit.
@@ -137,14 +137,18 @@ if {![info exists nTest]} {
     sqlite3_instvfs marker binarylog "$argv0 $argv"
   }
 }
-catch {db close}
-file delete -force test.db
-file delete -force test.db-journal
-sqlite3 db ./test.db
-set ::DB [sqlite3_connection_pointer db]
-if {[info exists ::SETUP_SQL]} {
-  db eval $::SETUP_SQL
+
+proc reset_db {} {
+  catch {db close}
+  file delete -force test.db
+  file delete -force test.db-journal
+  sqlite3 db ./test.db
+  set ::DB [sqlite3_connection_pointer db]
+  if {[info exists ::SETUP_SQL]} {
+    db eval $::SETUP_SQL
+  }
 }
+reset_db
 
 # Abort early if this script has been run before.
 #
@@ -481,11 +485,9 @@ proc forcedelete {filename} {
 
 # Do an integrity check of the entire database
 #
-proc integrity_check {name} {
+proc integrity_check {name {db db}} {
   ifcapable integrityck {
-    do_test $name {
-      execsql {PRAGMA integrity_check}
-    } {ok}
+    do_test $name [list execsql {PRAGMA integrity_check} $db] {ok}
   }
 }
 
@@ -574,7 +576,7 @@ proc crashsql {args} {
   set f [open crash.tcl w]
   puts $f "sqlite3_crash_enable 1"
   puts $f "sqlite3_crashparams $blocksize $dc $crashdelay $cfile"
-  puts $f "set sqlite_pending_byte $::sqlite_pending_byte"
+  puts $f "sqlite3_test_control_pending_byte $::sqlite_pending_byte"
   puts $f "sqlite3 db test.db -vfs crash"
 
   # This block sets the cache size of the main database to 10
@@ -659,6 +661,7 @@ proc do_ioerr_test {testname args} {
     do_test $testname.$n.1 {
       set ::sqlite_io_error_pending 0
       catch {db close}
+      catch {db2 close}
       catch {file delete -force test.db}
       catch {file delete -force test.db-journal}
       catch {file delete -force test2.db}
@@ -863,6 +866,24 @@ proc allcksum {{db db}} {
     append txt $prag-[$db eval "PRAGMA $prag"]\n
   }
   # puts txt=$txt
+  return [md5 $txt]
+}
+
+# Generate a checksum based on the contents of a single database with
+# a database connection.  The name of the database is $dbname.  
+# Examples of $dbname are "temp" or "main".
+#
+proc dbcksum {db dbname} {
+  if {$dbname=="temp"} {
+    set master sqlite_temp_master
+  } else {
+    set master $dbname.sqlite_master
+  }
+  set alltab [$db eval "SELECT name FROM $master WHERE type='table'"]
+  set txt [$db eval "SELECT * FROM $master"]\n
+  foreach tab $alltab {
+    append txt [$db eval "SELECT * FROM $dbname.$tab"]\n
+  }
   return [md5 $txt]
 }
 

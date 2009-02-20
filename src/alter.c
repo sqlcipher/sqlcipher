@@ -12,10 +12,9 @@
 ** This file contains C code routines that used to generate VDBE code
 ** that implements the ALTER TABLE command.
 **
-** $Id: alter.c,v 1.47 2008/07/28 19:34:53 drh Exp $
+** $Id: alter.c,v 1.53 2009/02/13 03:43:32 drh Exp $
 */
 #include "sqliteInt.h"
-#include <ctype.h>
 
 /*
 ** The code in this file only exists if we are not omitting the
@@ -39,7 +38,7 @@
 */
 static void renameTableFunc(
   sqlite3_context *context,
-  int argc,
+  int NotUsed,
   sqlite3_value **argv
 ){
   unsigned char const *zSql = sqlite3_value_text(argv[0]);
@@ -52,6 +51,8 @@ static void renameTableFunc(
   char *zRet;
 
   sqlite3 *db = sqlite3_context_db_handle(context);
+
+  UNUSED_PARAMETER(NotUsed);
 
   /* The principle used to locate the table name in the CREATE TABLE 
   ** statement is that the table name is the first non-space token that
@@ -74,7 +75,7 @@ static void renameTableFunc(
       do {
         zCsr += len;
         len = sqlite3GetToken(zCsr, &token);
-      } while( token==TK_SPACE || token==TK_COMMENT );
+      } while( token==TK_SPACE );
       assert( len>0 );
     } while( token!=TK_LP && token!=TK_USING );
 
@@ -94,7 +95,7 @@ static void renameTableFunc(
 */
 static void renameTriggerFunc(
   sqlite3_context *context,
-  int argc,
+  int NotUsed,
   sqlite3_value **argv
 ){
   unsigned char const *zSql = sqlite3_value_text(argv[0]);
@@ -106,8 +107,9 @@ static void renameTriggerFunc(
   unsigned char const *zCsr = zSql;
   int len = 0;
   char *zRet;
-
   sqlite3 *db = sqlite3_context_db_handle(context);
+
+  UNUSED_PARAMETER(NotUsed);
 
   /* The principle used to locate the table name in the CREATE TRIGGER 
   ** statement is that the table name is the first token that is immediatedly
@@ -302,7 +304,9 @@ void sqlite3AlterRenameTable(
   /* Make sure it is not a system table being altered, or a reserved name
   ** that the table is being renamed to.
   */
-  if( strlen(pTab->zName)>6 && 0==sqlite3StrNICmp(pTab->zName, "sqlite_", 7) ){
+  if( sqlite3Strlen30(pTab->zName)>6 
+   && 0==sqlite3StrNICmp(pTab->zName, "sqlite_", 7)
+  ){
     sqlite3ErrorMsg(pParse, "table %s may not be altered", pTab->zName);
     goto exit_rename_table;
   }
@@ -441,15 +445,15 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
   Expr *pDflt;              /* Default value for the new column */
   sqlite3 *db;              /* The database connection; */
 
-  if( pParse->nErr ) return;
+  db = pParse->db;
+  if( pParse->nErr || db->mallocFailed ) return;
   pNew = pParse->pNewTable;
   assert( pNew );
 
-  db = pParse->db;
   assert( sqlite3BtreeHoldsAllMutexes(db) );
   iDb = sqlite3SchemaToIndex(db, pNew->pSchema);
   zDb = db->aDb[iDb].zName;
-  zTab = pNew->zName;
+  zTab = &pNew->zName[16];  /* Skip the "sqlite_altertab_" prefix on the name */
   pCol = &pNew->aCol[pNew->nCol-1];
   pDflt = pCol->pDflt;
   pTab = sqlite3FindTable(db, zTab, zDb);
@@ -508,7 +512,7 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
   zCol = sqlite3DbStrNDup(db, (char*)pColDef->z, pColDef->n);
   if( zCol ){
     char *zEnd = &zCol[pColDef->n-1];
-    while( (zEnd>zCol && *zEnd==';') || isspace(*(unsigned char *)zEnd) ){
+    while( (zEnd>zCol && *zEnd==';') || sqlite3Isspace(*zEnd) ){
       *zEnd-- = '\0';
     }
     sqlite3NestedParse(pParse, 
@@ -579,7 +583,11 @@ void sqlite3AlterBeginAddColumn(Parse *pParse, SrcList *pSrc){
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
 
   /* Put a copy of the Table struct in Parse.pNewTable for the
-  ** sqlite3AddColumn() function and friends to modify.
+  ** sqlite3AddColumn() function and friends to modify.  But modify
+  ** the name by adding an "sqlite_altertab_" prefix.  By adding this
+  ** prefix, we insure that the name will not collide with an existing
+  ** table because user table are not allowed to have the "sqlite_"
+  ** prefix on their name.
   */
   pNew = (Table*)sqlite3DbMallocZero(db, sizeof(Table));
   if( !pNew ) goto exit_begin_add_column;
@@ -591,7 +599,7 @@ void sqlite3AlterBeginAddColumn(Parse *pParse, SrcList *pSrc){
   nAlloc = (((pNew->nCol-1)/8)*8)+8;
   assert( nAlloc>=pNew->nCol && nAlloc%8==0 && nAlloc-pNew->nCol<8 );
   pNew->aCol = (Column*)sqlite3DbMallocZero(db, sizeof(Column)*nAlloc);
-  pNew->zName = sqlite3DbStrDup(db, pTab->zName);
+  pNew->zName = sqlite3MPrintf(db, "sqlite_altertab_%s", pTab->zName);
   if( !pNew->aCol || !pNew->zName ){
     db->mallocFailed = 1;
     goto exit_begin_add_column;

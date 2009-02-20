@@ -1,5 +1,5 @@
 
-set rcsid {$Id: omittest.tcl,v 1.6 2008/08/04 03:51:24 danielk1977 Exp $}
+set rcsid {$Id: omittest.tcl,v 1.8 2008/10/13 15:35:09 drh Exp $}
 
 # Documentation for this script. This may be output to stderr
 # if the script is invoked incorrectly.
@@ -47,9 +47,11 @@ they do not respect the OPTS variable.
 #
 proc run_quick_test {dir omit_symbol_list} {
   # Compile the value of the OPTS Makefile variable.
-  set opts "-DSQLITE_MEMDEBUG -DSQLITE_DEBUG" 
+  set opts "-DSQLITE_MEMDEBUG -DSQLITE_DEBUG -DSQLITE_NO_SYNC" 
   if {$::tcl_platform(platform)=="windows"} {
     append opts " -DSQLITE_OS_WIN=1"
+  } elseif {$::tcl_platform(platform)=="os2"} {
+    append opts " -DSQLITE_OS_OS2=1"
   } else {
     append opts " -DSQLITE_OS_UNIX=1"
   }
@@ -80,7 +82,7 @@ catch {
   # of trying to build the sqlite shell. The sqlite shell won't build 
   # with some of the OMIT options (i.e OMIT_COMPLETE).
   set sqlite3_dummy $dir/sqlite3
-  if {$::tcl_platform(platform)=="windows"} {
+  if {$::tcl_platform(platform)=="windows" || $::tcl_platform(platform)=="os2"} {
     append sqlite3_dummy ".exe"
   }
   if {![file exists $sqlite3_dummy]} {
@@ -109,7 +111,7 @@ catch {
 # option.
 #
 proc process_options {argv} {
-  if {$::tcl_platform(platform)=="windows"} {
+  if {$::tcl_platform(platform)=="windows" || $::tcl_platform(platform)=="os2"} {
       set ::MAKEFILE ../Makefile                        ;# Default value
   } else {
       set ::MAKEFILE ../Makefile.linux-gcc              ;# Default value
@@ -153,7 +155,7 @@ proc main {argv} {
     SQLITE_OMIT_CONFLICT_CLAUSE        \
     SQLITE_OMIT_DATETIME_FUNCS         \
     SQLITE_OMIT_DECLTYPE               \
-    SQLITE_OMIT_DISKIO                 \
+    off_SQLITE_OMIT_DISKIO                 \
     SQLITE_OMIT_EXPLAIN                \
     SQLITE_OMIT_FLAG_PRAGMAS           \
     SQLITE_OMIT_FLOATING_POINT         \
@@ -168,7 +170,6 @@ proc main {argv} {
     SQLITE_OMIT_MEMORYDB               \
     SQLITE_OMIT_OR_OPTIMIZATION        \
     SQLITE_OMIT_PAGER_PRAGMAS          \
-    SQLITE_OMIT_PARSER                 \
     SQLITE_OMIT_PRAGMA                 \
     SQLITE_OMIT_PROGRESS_CALLBACK      \
     SQLITE_OMIT_QUICKBALANCE           \

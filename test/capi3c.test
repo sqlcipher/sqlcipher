@@ -13,7 +13,7 @@
 # This is a copy of the capi3.test file that has been adapted to
 # test the new sqlite3_prepare_v2 interface.
 #
-# $Id: capi3c.test,v 1.19 2008/05/05 16:56:35 drh Exp $
+# $Id: capi3c.test,v 1.22 2008/11/05 16:37:35 drh Exp $
 #
 
 set testdir [file dirname $argv0]
@@ -63,8 +63,11 @@ do_test capi3c-1.1 {
   sqlite3_finalize $STMT
   set TAIL
 } {}
-do_test capi3c-1.2 {
+do_test capi3c-1.2.1 {
   sqlite3_errcode $DB
+} {SQLITE_OK}
+do_test capi3c-1.2.2 {
+  sqlite3_extended_errcode $DB
 } {SQLITE_OK}
 do_test capi3c-1.3 {
   sqlite3_errmsg $DB
@@ -81,8 +84,11 @@ do_test capi3c-1.5 {
     set STMT [sqlite3_prepare_v2 $DB $sql -1 TAIL]
   }
 } {1}
-do_test capi3c-1.6 {
+do_test capi3c-1.6.1 {
   sqlite3_errcode $DB
+} {SQLITE_ERROR}
+do_test capi3c-1.6.2 {
+  sqlite3_extended_errcode $DB
 } {SQLITE_ERROR}
 do_test capi3c-1.7 {
   sqlite3_errmsg $DB
@@ -108,8 +114,11 @@ ifcapable {utf16} {
       set STMT [sqlite3_prepare16_v2  $DB $sql -1 TAIL]
     }
   } {1}
-  do_test capi3c-2.4 {
+  do_test capi3c-2.4.1 {
     sqlite3_errcode $DB
+  } {SQLITE_ERROR}
+  do_test capi3c-2.4.2 {
+    sqlite3_extended_errcode $DB
   } {SQLITE_ERROR}
   do_test capi3c-2.5 {
     sqlite3_errmsg $DB
@@ -779,14 +788,25 @@ do_test capi3c-11.2 {
   set STMT [sqlite3_prepare_v2 $DB "SELECT func(b, a) FROM t1" -1 TAIL]
   sqlite3_step $STMT
 } {SQLITE_ROW}
-do_test capi3c-11.3 {
+
+# As of 3.6.5 a COMMIT is OK during while a query is still running -
+# as long as it is a read-only query and not an incremental BLOB write.
+#
+do_test capi3-11.3.1 {
   catchsql {
     COMMIT;
   }
-} {1 {cannot commit transaction - SQL statements in progress}}
-do_test capi3c-11.3.1 {
+} {0 {}}
+do_test capi3-11.3.2 {
+  sqlite3_extended_errcode $DB
+} {SQLITE_OK}
+do_test capi3-11.3.3 {
   sqlite3_get_autocommit $DB
-} 0
+} 1
+do_test capi3-11.3.4 {
+  db eval {PRAGMA lock_status}
+} {main shared temp closed}
+
 do_test capi3c-11.4 {
   sqlite3_step $STMT
 } {SQLITE_ERROR}
@@ -798,15 +818,7 @@ do_test capi3c-11.6 {
     SELECT * FROM t1;
   }
 } {0 {1 int 2 notatype}}
-do_test capi3c-11.6.1 {
-  sqlite3_get_autocommit $DB
-} 0
 do_test capi3c-11.7 {
-  catchsql {
-    COMMIT;
-  }
-} {0 {}}
-do_test capi3c-11.7.1 {
   sqlite3_get_autocommit $DB
 } 1
 do_test capi3c-11.8 {
@@ -893,13 +905,13 @@ do_test capi3c-11.20 {
     BEGIN;
     COMMIT;
   }
-} {1 {cannot commit transaction - SQL statements in progress}}
+} {0 {}}
 do_test capi3c-11.20 {
   sqlite3_reset $STMT
   catchsql {
     COMMIT;
   }
-} {0 {}}
+} {1 {cannot commit - no transaction is active}}
 do_test capi3c-11.21 {
   sqlite3_finalize $STMT
 } {SQLITE_OK}
@@ -1168,15 +1180,19 @@ do_test capi3c-19.4 {
 do_test capi3c-19.4.1 {
   sqlite3_errmsg $DB
 } {no such table: t3}
-do_test capi3c-19.4.2 {
-  sqlite3_expired $STMT
-} 1
+ifcapable deprecated {
+  do_test capi3c-19.4.2 {
+    sqlite3_expired $STMT
+  } 1
+}
 do_test capi3c-19.4.3 {
   sqlite3_errmsg $DB
 } {no such table: t3}
-do_test capi3c-19.4.4 {
-  sqlite3_expired 0
-} 1
+ifcapable deprecated {
+  do_test capi3c-19.4.4 {
+    sqlite3_expired 0
+  } 1
+}
 do_test capi3c-19.5 {
   sqlite3_reset $STMT
   db eval {
@@ -1185,9 +1201,11 @@ do_test capi3c-19.5 {
   }
   sqlite3_step $STMT
 } SQLITE_ROW
-do_test capi3c-19.5.2 {
-  sqlite3_expired $STMT
-} 0
+ifcapable deprecated {
+  do_test capi3c-19.5.2 {
+    sqlite3_expired $STMT
+  } 0
+}
 do_test capi3c-19.6 {
   sqlite3_column_int $STMT 1
 } 2
@@ -1225,7 +1243,7 @@ ifcapable progress {
     sqlite3_step $STMT
   } {SQLITE_INTERRUPT}
   do_test capi3c-21.2 {
-    sqlite3_errcode $DB
+    sqlite3_extended_errcode $DB
   } {SQLITE_INTERRUPT}
   do_test capi3c-21.3 {
     sqlite3_finalize $STMT
@@ -1243,6 +1261,9 @@ ifcapable progress {
   } {SQLITE_INTERRUPT}
   do_test capi3c-21.7 {
     sqlite3_errcode $DB
+  } {SQLITE_INTERRUPT}
+  do_test capi3c-21.8 {
+    sqlite3_extended_errcode $DB
   } {SQLITE_INTERRUPT}
 }
 

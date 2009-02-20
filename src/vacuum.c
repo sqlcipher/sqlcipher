@@ -14,7 +14,7 @@
 ** Most of the code in this file may be omitted by defining the
 ** SQLITE_OMIT_VACUUM macro.
 **
-** $Id: vacuum.c,v 1.81 2008/07/08 19:34:07 drh Exp $
+** $Id: vacuum.c,v 1.86 2009/02/03 16:51:25 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
@@ -81,13 +81,20 @@ void sqlite3Vacuum(Parse *pParse){
 int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
   int rc = SQLITE_OK;     /* Return code from service routines */
   Btree *pMain;           /* The database being vacuumed */
+  Pager *pMainPager;      /* Pager for database being vacuumed */
   Btree *pTemp;           /* The temporary database we vacuum into */
   char *zSql = 0;         /* SQL statements */
   int saved_flags;        /* Saved value of the db->flags */
   int saved_nChange;      /* Saved value of db->nChange */
   int saved_nTotalChange; /* Saved value of db->nTotalChange */
   Db *pDb = 0;            /* Database to detach at end of vacuum */
+  int isMemDb;            /* True is vacuuming a :memory: database */
   int nRes;
+
+  if( !db->autoCommit ){
+    sqlite3SetString(pzErrMsg, db, "cannot VACUUM from within a transaction");
+    return SQLITE_ERROR;
+  }
 
   /* Save the current value of the write-schema flag before setting it. */
   saved_flags = db->flags;
@@ -95,12 +102,9 @@ int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
   saved_nTotalChange = db->nTotalChange;
   db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks;
 
-  if( !db->autoCommit ){
-    sqlite3SetString(pzErrMsg, db, "cannot VACUUM from within a transaction");
-    rc = SQLITE_ERROR;
-    goto end_of_vacuum;
-  }
   pMain = db->aDb[0].pBt;
+  pMainPager = sqlite3BtreePager(pMain);
+  isMemDb = sqlite3PagerFile(pMainPager)->pMethods==0;
 
   /* Attach the temporary database as 'vacuum_db'. The synchronous pragma
   ** can be set to 'off' for this file, as it is not recovered if a crash
@@ -137,7 +141,7 @@ int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
 #endif
 
   if( sqlite3BtreeSetPageSize(pTemp, sqlite3BtreeGetPageSize(pMain), nRes)
-   || sqlite3BtreeSetPageSize(pTemp, db->nextPagesize, nRes)
+   || (!isMemDb && sqlite3BtreeSetPageSize(pTemp, db->nextPagesize, nRes))
    || db->mallocFailed 
   ){
     rc = SQLITE_NOMEM;
@@ -247,7 +251,7 @@ int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
     assert( 1==sqlite3BtreeIsInTrans(pMain) );
 
     /* Copy Btree meta values */
-    for(i=0; i<sizeof(aCopy)/sizeof(aCopy[0]); i+=2){
+    for(i=0; i<ArraySize(aCopy); i+=2){
       rc = sqlite3BtreeGetMeta(pMain, aCopy[i], &meta);
       if( rc!=SQLITE_OK ) goto end_of_vacuum;
       rc = sqlite3BtreeUpdateMeta(pTemp, aCopy[i], meta+aCopy[i+1]);
@@ -258,7 +262,9 @@ int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
     if( rc!=SQLITE_OK ) goto end_of_vacuum;
     rc = sqlite3BtreeCommit(pTemp);
     if( rc!=SQLITE_OK ) goto end_of_vacuum;
-    rc = sqlite3BtreeCommit(pMain);
+#ifndef SQLITE_OMIT_AUTOVACUUM
+    sqlite3BtreeSetAutoVacuum(pMain, sqlite3BtreeGetAutoVacuum(pTemp));
+#endif
   }
 
   if( rc==SQLITE_OK ){

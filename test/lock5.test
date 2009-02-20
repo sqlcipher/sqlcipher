@@ -11,7 +11,7 @@
 # This file implements regression tests for SQLite library.  The
 # focus of this script is database locks.
 #
-# $Id: lock5.test,v 1.2 2008/07/12 14:52:20 drh Exp $
+# $Id: lock5.test,v 1.6 2008/12/04 12:34:16 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -20,11 +20,21 @@ source $testdir/tester.tcl
 # SQLITE_ENABLE_LOCKING_STYLE macro.
 db close
 if {[catch {sqlite3 db test.db -vfs unix-none} msg]} {
-puts $msg
   finish_test
   return
 }
 db close
+file delete -force test.db.lock
+
+ifcapable lock_proxy_pragmas {
+  set ::using_proxy 0
+  foreach {name value} [array get env SQLITE_FORCE_PROXY_LOCKING] {
+    set ::using_proxy $value
+  }
+  # Disable the proxy locking for these tests
+  set env(SQLITE_FORCE_PROXY_LOCKING) "0"
+}
+
 
 do_test lock5-dotfile.1 {
   sqlite3 db test.db -vfs unix-dotfile
@@ -91,6 +101,10 @@ do_test lock5-dotfile.X {
 #####################################################################
 
 file delete -force test.db
+if {[catch {sqlite3 db test.db -vfs unix-flock} msg]} {
+  finish_test
+  return
+}
 
 do_test lock5-flock.1 {
   sqlite3 db test.db -vfs unix-flock
@@ -173,5 +187,9 @@ do_test lock5-flock.X {
   db close
   db2 close
 } {}
+
+ifcapable lock_proxy_pragmas {
+  set env(SQLITE_FORCE_PROXY_LOCKING) $::using_proxy
+}
 
 finish_test
