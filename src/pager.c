@@ -2649,10 +2649,10 @@ int sqlite3PagerClose(Pager *pPager){
   sqlite3OsClose(pPager->fd);
 
   /* BEGIN CRYPTO */
-  #ifdef SQLITE_HAS_CODEC
+#ifdef SQLITE_HAS_CODEC
   extern int sqlite3FreeCodecArg(void *);
   if(pPager->pCodecArg) sqlite3FreeCodecArg(pPager->pCodecArg);
-  #endif
+#endif
   /* END CRYPTO */
 
   sqlite3PageFree(pPager->pTmpSpace);
@@ -5205,7 +5205,7 @@ sqlite3_backup **sqlite3PagerBackupPtr(Pager *pPager){
 
 /* BEGIN CRYPTO */
 #ifdef SQLITE_HAS_CODEC
-int sqlite3pager_get_codec(Pager *pPager, void **ctx) {
+void sqlite3pager_get_codec(Pager *pPager, void **ctx) {
   *ctx = pPager->pCodecArg;
 }
 

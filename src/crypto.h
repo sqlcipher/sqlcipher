@@ -31,6 +31,7 @@
 **  
 */
 /* BEGIN CRYPTO */
+#if SQLITE_HAS_CODEC
 #ifndef CRYPTO_H
 #define CRYPTO_H
 
@@ -39,8 +40,9 @@
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
 
-int sqlite3pager_get_codec(Pager *pPager, void **ctx);
+void sqlite3pager_get_codec(Pager *pPager, void **ctx);
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
 
+#endif
 #endif
 /* END CRYPTO */

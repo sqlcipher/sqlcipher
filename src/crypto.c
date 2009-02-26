@@ -31,7 +31,7 @@
 **  
 */
 /* BEGIN CRYPTO */
-#if defined(SQLITE_HAS_CODEC)
+#ifdef SQLITE_HAS_CODEC
 
 #include <assert.h>
 #include <openssl/evp.h>
@@ -39,6 +39,7 @@
 #include "sqliteInt.h"
 #include "btreeInt.h"
 #include "crypto.h"
+
 
 typedef struct {
   int key_sz;
@@ -50,7 +51,7 @@ typedef struct {
   int  rekey_plaintext;
 } codec_ctx;
 
-static int codec_passphrase_hash(const void *in, int inLen, void *out, int *outLen) {
+static void codec_passphrase_hash(const void *in, int inLen, void *out, int *outLen) {
   EVP_MD_CTX mdctx;
   unsigned int md_sz;
   unsigned char md_value[EVP_MAX_MD_SIZE];
@@ -161,14 +162,10 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
 }
 
 int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
-  void *keyd;
-  int len;
-  char hout[1024];
   struct Db *pDb = &db->aDb[nDb];
   
   if(nKey && zKey && pDb->pBt) {
     codec_ctx *ctx;
-    int rc;
 
     ctx = sqlite3Malloc(sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
@@ -195,12 +192,14 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->iv_sz);
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
+    return SQLITE_OK;
   }
+  return SQLITE_ERROR;
 }
 
 int sqlite3FreeCodecArg(void *pCodecArg) {
   codec_ctx *ctx = (codec_ctx *) pCodecArg;
-  if(pCodecArg == NULL) return;
+  if(pCodecArg == NULL) return SQLITE_OK;
   
   if(ctx->key) {
     memset(ctx->key, 0, ctx->key_sz);
@@ -219,6 +218,7 @@ int sqlite3FreeCodecArg(void *pCodecArg) {
   
   memset(ctx, 0, sizeof(codec_ctx));
   sqlite3_free(ctx);
+  return SQLITE_OK;
 }
 
 void sqlite3_activate_see(const char* in) {
@@ -242,7 +242,9 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
     
     memset(key, 0, key_sz); /* cleanup temporary key data */
     sqlite3_free(key);
+    return SQLITE_OK;
   }
+  return SQLITE_ERROR;
 }
 
 /* sqlite3_rekey 
@@ -331,7 +333,9 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
     /* clear and free temporary key data */
     memset(key, 0, key_sz); 
     sqlite3_free(key);
+    return SQLITE_OK;
   }
+  return SQLITE_ERROR;
 }
 
 void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
@@ -354,5 +358,5 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
 }
 
 
-#endif
 /* END CRYPTO */
+#endif
