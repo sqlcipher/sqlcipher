@@ -143,6 +143,7 @@ CRYPTOLIBOBJ = \
 CRYPTOSRC = \
   $(TOP)/src/crypto.h \
   $(TOP)/src/crypto.c
+
 # END CRYPTO
 
 # The directory into which to store package information for
@@ -205,7 +206,6 @@ SRC = \
   $(TOP)/src/analyze.c \
   $(TOP)/src/attach.c \
   $(TOP)/src/auth.c \
-  $(TOP)/src/backup.h \
   $(TOP)/src/backup.c \
   $(TOP)/src/bitvec.c \
   $(TOP)/src/btmutex.c \
@@ -407,6 +407,7 @@ TESTSRC = \
 #
 HDR = \
    sqlite3.h  \
+   $(TOP)/src/backup.h \
    $(TOP)/src/btree.h \
    $(TOP)/src/btreeInt.h \
    $(TOP)/src/hash.h \
