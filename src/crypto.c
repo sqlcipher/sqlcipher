@@ -49,6 +49,7 @@ typedef struct {
   void *key;
   void *buffer;
   void *rekey;
+  void *salt;
   int  rekey_plaintext;
 } codec_ctx;
 
@@ -214,7 +215,24 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
       break;
   }
 
-  codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
+  if(pgno == 1 ) { 
+    memcpy(ctx->buffer, pData, FILE_HEADER_SZ); 
+    
+    /* if this is a read & decrypt operation on the first page then copy the 
+       first 16 bytes off the page into the context's random salt buffer
+    */
+    if(emode == CIPHER_ENCRYPT) {
+      memcpy(ctx->buffer, ctx->salt, FILE_HEADER_SZ);
+    } else {
+      memcpy(ctx->buffer, SQLITE_FILE_HEADER, FILE_HEADER_SZ);
+    }
+    
+    /* adjust starting pointers in data page for header offset */
+    codec_cipher(ctx, pgno, emode, pg_sz - FILE_HEADER_SZ, pData + FILE_HEADER_SZ, ctx->buffer + FILE_HEADER_SZ);
+  } else {
+    codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
+  }
+  
   if(emode == CIPHER_ENCRYPT) {
     return ctx->buffer; /* return persistent buffer data, pData remains intact */
   } else {
@@ -228,12 +246,19 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   
   if(nKey && zKey && pDb->pBt) {
     codec_ctx *ctx;
+    PgHdr *page;
+    Pager *pPager = pDb->pBt->pBt->pPager;
+    int prepared_key_sz;
 
     ctx = sqlite3Malloc(sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
     memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
  
     ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
+    
+    /* pre-allocate space for salt data */
+    ctx->salt = sqlite3Malloc(FILE_HEADER_SZ);
+    if(ctx->salt == NULL) return SQLITE_NOMEM;
     
     /* pre-allocate a page buffer of PageSize bytes. This will
        be used as a persistent buffer for encryption and decryption 
@@ -243,14 +268,30 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     
     ctx->key_sz = EVP_CIPHER_key_length(CIPHER);
     ctx->iv_sz = EVP_CIPHER_iv_length(CIPHER);
- 
-    /* key size should be exactly the same size as nKey since this is
-       raw key data at this point */
-    assert(nKey == ctx->key_sz);
     
     ctx->key = sqlite3Malloc(ctx->key_sz);
     if(ctx->key == NULL) return SQLITE_NOMEM;
-    memcpy(ctx->key, zKey, nKey);
+    
+#if 0
+    if(sqlite3PagerGet(pPager, 1, &page) == SQLITE_OK) {
+      fprintf(stderr,"got page1");
+      memcpy(ctx->salt, page->pData, FILE_HEADER_SZ);
+      sqlite3PagerUnref(page);
+    } else {
+      /* assign random salt data. This will be written to the first page
+         if this is a new database file. If an existing database file is
+         attached this will just be overwritten when the first page is
+         read from disk */
+      fprintf(stderr, "assigned random salt");
+     
+    }
+#endif
+     RAND_pseudo_bytes(ctx->salt, FILE_HEADER_SZ);
+     
+    codec_prepare_key(db, zKey, nKey, ctx->key, &prepared_key_sz);
+    /* key size should be exactly the same size as prepared_key_sz since this is
+       raw key data at this point */
+    assert(prepared_key_sz == ctx->key_sz);
 
     sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->iv_sz, 0);
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
@@ -278,6 +319,11 @@ int sqlite3FreeCodecArg(void *pCodecArg) {
     sqlite3_free(ctx->buffer);
   }
   
+  if(ctx->salt) {
+    memset(ctx->salt, 0, FILE_HEADER_SZ);
+    sqlite3_free(ctx->salt);
+  }
+  
   memset(ctx, 0, sizeof(codec_ctx));
   sqlite3_free(ctx);
   return SQLITE_OK;
@@ -290,20 +336,10 @@ void sqlite3_activate_see(const char* in) {
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
-    int i, prepared_key_sz;
-    int key_sz =  EVP_CIPHER_key_length(CIPHER);
-    void *key = sqlite3Malloc(key_sz);
-    if(key == NULL) return SQLITE_NOMEM;
-    
-    codec_prepare_key(db, pKey, nKey, key, &prepared_key_sz);
-    assert(prepared_key_sz == key_sz);
-    
+    int i;
     for(i=0; i<db->nDb; i++){
-      sqlite3CodecAttach(db, i, key, prepared_key_sz);
+      sqlite3CodecAttach(db, i, pKey, nKey);
     }
-    
-    memset(key, 0, key_sz); /* cleanup temporary key data */
-    sqlite3_free(key);
     return SQLITE_OK;
   }
   return SQLITE_ERROR;

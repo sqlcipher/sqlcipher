@@ -35,6 +35,8 @@
 #ifndef CRYPTO_H
 #define CRYPTO_H
 
+#define FILE_HEADER_SZ 16
+
 #define CIPHER EVP_aes_256_cfb()
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
