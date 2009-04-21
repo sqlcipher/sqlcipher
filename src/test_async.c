@@ -10,7 +10,7 @@
 **
 *************************************************************************
 **
-** $Id: test_async.c,v 1.48 2008/09/26 20:02:50 drh Exp $
+** $Id: test_async.c,v 1.57 2009/04/07 11:21:29 danielk1977 Exp $
 **
 ** This file contains an example implementation of an asynchronous IO 
 ** backend for SQLite.
@@ -109,7 +109,7 @@
 #define ENABLE_FILE_LOCKING
 
 #ifndef SQLITE_AMALGAMATION
-# include "sqlite3.h"
+# include "sqliteInt.h"
 # include <assert.h>
 # include <string.h>
 #endif
@@ -280,7 +280,7 @@ static struct TestAsyncStaticData {
   volatile int ioDelay;             /* Extra delay between write operations */
   volatile int writerHaltWhenIdle;  /* Writer thread halts when queue empty */
   volatile int writerHaltNow;       /* Writer thread halts after next op */
-  int ioError;                 /* True if an IO error has occured */
+  int ioError;                 /* True if an IO error has occurred */
   int nFile;                   /* Number of open files (from sqlite pov) */
 } async = {
   PTHREAD_MUTEX_INITIALIZER,
@@ -419,7 +419,7 @@ struct AsyncFileData {
   sqlite3_file *pBaseWrite;  /* Write handle to the underlying Os file */
   AsyncFileLock lock;        /* Lock state for this handle */
   AsyncLock *pLock;          /* AsyncLock object for this file system entry */
-  AsyncWrite close;
+  AsyncWrite closeOp;        /* Preallocated close operation */
 };
 
 /*
@@ -483,7 +483,6 @@ static int async_mutex_lock(pthread_mutex_t *pMutex){
   assert(&(aHolder[2])==&asyncdebug.writerMutexHolder);
 
   assert( pthread_self()!=0 );
-
   for(iIdx=0; iIdx<3; iIdx++){
     if( pMutex==&aMutex[iIdx] ) break;
 
@@ -610,7 +609,9 @@ static void assert_mutex_is_held(pthread_mutex_t *pMutex){
 */
 static void addAsyncWrite(AsyncWrite *pWrite){
   /* We must hold the queue mutex in order to modify the queue pointers */
-  pthread_mutex_lock(&async.queueMutex);
+  if( pWrite->op!=ASYNC_UNLOCK ){
+    pthread_mutex_lock(&async.queueMutex);
+  }
 
   /* Add the record to the end of the write-op queue */
   assert( !pWrite->pNext );
@@ -629,7 +630,9 @@ static void addAsyncWrite(AsyncWrite *pWrite){
   }
 
   /* Drop the queue mutex */
-  pthread_mutex_unlock(&async.queueMutex);
+  if( pWrite->op!=ASYNC_UNLOCK ){
+    pthread_mutex_unlock(&async.queueMutex);
+  }
 
   /* The writer thread might have been idle because there was nothing
   ** on the write-op queue for it to do.  So wake it up. */
@@ -639,7 +642,7 @@ static void addAsyncWrite(AsyncWrite *pWrite){
 /*
 ** Increment async.nFile in a thread-safe manner.
 */
-static void incrOpenFileCount(){
+static void incrOpenFileCount(void){
   /* We must hold the queue mutex in order to modify async.nFile */
   pthread_mutex_lock(&async.queueMutex);
   if( async.nFile==0 ){
@@ -701,7 +704,7 @@ static int asyncClose(sqlite3_file *pFile){
   p->lock.eLock = 0;
   pthread_mutex_unlock(&async.lockMutex);
 
-  addAsyncWrite(&p->close);
+  addAsyncWrite(&p->closeOp);
   return SQLITE_OK;
 }
 
@@ -956,10 +959,12 @@ static int asyncUnlock(sqlite3_file *pFile, int eLock){
   AsyncFileData *p = ((AsyncFile *)pFile)->pData;
   if( p->zName ){
     AsyncFileLock *pLock = &p->lock;
+    pthread_mutex_lock(&async.queueMutex);
     pthread_mutex_lock(&async.lockMutex);
     pLock->eLock = MIN(pLock->eLock, eLock);
-    pthread_mutex_unlock(&async.lockMutex);
     rc = addNewAsyncWrite(p, ASYNC_UNLOCK, 0, eLock, 0);
+    pthread_mutex_unlock(&async.lockMutex);
+    pthread_mutex_unlock(&async.queueMutex);
   }
   return rc;
 }
@@ -1042,6 +1047,25 @@ static int unlinkAsyncFile(AsyncFileData *pData){
 }
 
 /*
+** The parameter passed to this function is a copy of a 'flags' parameter
+** passed to this modules xOpen() method. This function returns true
+** if the file should be opened asynchronously, or false if it should
+** be opened immediately.
+**
+** If the file is to be opened asynchronously, then asyncOpen() will add
+** an entry to the event queue and the file will not actually be opened
+** until the event is processed. Otherwise, the file is opened directly
+** by the caller.
+*/
+static int doAsynchronousOpen(int flags){
+  return (flags&SQLITE_OPEN_CREATE) && (
+      (flags&SQLITE_OPEN_MAIN_JOURNAL) ||
+      (flags&SQLITE_OPEN_TEMP_JOURNAL) ||
+      (flags&SQLITE_OPEN_DELETEONCLOSE)
+  );
+}
+
+/*
 ** Open a file.
 */
 static int asyncOpen(
@@ -1075,7 +1099,7 @@ static int asyncOpen(
   AsyncFileData *pData;
   AsyncLock *pLock = 0;
   char *z;
-  int isExclusive = (flags&SQLITE_OPEN_EXCLUSIVE);
+  int isAsyncOpen = doAsynchronousOpen(flags);
 
   /* If zName is NULL, then the upper layer is requesting an anonymous file */
   if( zName ){
@@ -1097,8 +1121,8 @@ static int asyncOpen(
   pData->pBaseRead = (sqlite3_file*)z;
   z += pVfs->szOsFile;
   pData->pBaseWrite = (sqlite3_file*)z;
-  pData->close.pFileData = pData;
-  pData->close.op = ASYNC_CLOSE;
+  pData->closeOp.pFileData = pData;
+  pData->closeOp.op = ASYNC_CLOSE;
 
   if( zName ){
     z += pVfs->szOsFile;
@@ -1107,10 +1131,14 @@ static int asyncOpen(
     memcpy(pData->zName, zName, nName);
   }
 
-  if( !isExclusive ){
-    rc = pVfs->xOpen(pVfs, zName, pData->pBaseRead, flags, pOutFlags);
-    if( rc==SQLITE_OK && ((*pOutFlags)&SQLITE_OPEN_READWRITE) ){
-      rc = pVfs->xOpen(pVfs, zName, pData->pBaseWrite, flags, 0);
+  if( !isAsyncOpen ){
+    int flagsout;
+    rc = pVfs->xOpen(pVfs, pData->zName, pData->pBaseRead, flags, &flagsout);
+    if( rc==SQLITE_OK && (flagsout&SQLITE_OPEN_READWRITE) ){
+      rc = pVfs->xOpen(pVfs, pData->zName, pData->pBaseWrite, flags, 0);
+    }
+    if( pOutFlags ){
+      *pOutFlags = flagsout;
     }
   }
 
@@ -1126,7 +1154,7 @@ static int asyncOpen(
 #ifdef ENABLE_FILE_LOCKING
         if( flags&SQLITE_OPEN_MAIN_DB ){
           pLock->pFile = (sqlite3_file *)&pLock[1];
-          rc = pVfs->xOpen(pVfs, zName, pLock->pFile, flags, 0);
+          rc = pVfs->xOpen(pVfs, pData->zName, pLock->pFile, flags, 0);
           if( rc!=SQLITE_OK ){
             sqlite3_free(pLock);
             pLock = 0;
@@ -1175,7 +1203,7 @@ static int asyncOpen(
     pData->pLock = pLock;
   }
 
-  if( rc==SQLITE_OK && isExclusive ){
+  if( rc==SQLITE_OK && isAsyncOpen ){
     rc = addNewAsyncWrite(pData, ASYNC_OPENEXCLUSIVE, (sqlite3_int64)flags,0,0);
     if( rc==SQLITE_OK ){
       if( pOutFlags ) *pOutFlags = flags;
@@ -1185,6 +1213,9 @@ static int asyncOpen(
       pthread_mutex_unlock(&async.lockMutex);
       sqlite3_free(pData);
     }
+  }
+  if( rc!=SQLITE_OK ){
+    p->pMethod = 0;
   }
   return rc;
 }
@@ -1259,40 +1290,27 @@ static int asyncFullPathname(
   ** file-system uses unix style paths. 
   */
   if( rc==SQLITE_OK ){
-    int iIn;
-    int iOut = 0;
-    int nPathOut = strlen(zPathOut);
-
-    for(iIn=0; iIn<nPathOut; iIn++){
-
-      /* Replace any occurences of "//" with "/" */
-      if( iIn<=(nPathOut-2) && zPathOut[iIn]=='/' && zPathOut[iIn+1]=='/'
-      ){
-        continue;
+    int i, j;
+    int n = nPathOut;
+    char *z = zPathOut;
+    while( n>1 && z[n-1]=='/' ){ n--; }
+    for(i=j=0; i<n; i++){
+      if( z[i]=='/' ){
+        if( z[i+1]=='/' ) continue;
+        if( z[i+1]=='.' && i+2<n && z[i+2]=='/' ){
+          i += 1;
+          continue;
+        }
+        if( z[i+1]=='.' && i+3<n && z[i+2]=='.' && z[i+3]=='/' ){
+          while( j>0 && z[j-1]!='/' ){ j--; }
+          if( j>0 ){ j--; }
+          i += 2;
+          continue;
+        }
       }
-
-      /* Replace any occurences of "/./" with "/" */
-      if( iIn<=(nPathOut-3) 
-       && zPathOut[iIn]=='/' && zPathOut[iIn+1]=='.' && zPathOut[iIn+2]=='/'
-      ){
-        iIn++;
-        continue;
-      }
-
-      /* Replace any occurences of "<path-component>/../" with "" */
-      if( iOut>0 && iIn<=(nPathOut-4) 
-       && zPathOut[iIn]=='/' && zPathOut[iIn+1]=='.' 
-       && zPathOut[iIn+2]=='.' && zPathOut[iIn+3]=='/'
-      ){
-        iIn += 3;
-        iOut--;
-        for( ; iOut>0 && zPathOut[iOut-1]!='/'; iOut--);
-        continue;
-      }
-
-      zPathOut[iOut++] = zPathOut[iIn];
+      z[j++] = z[i];
     }
-    zPathOut[iOut] = '\0';
+    z[j] = 0;
   }
 
   return rc;
@@ -1305,11 +1323,11 @@ static void asyncDlError(sqlite3_vfs *pAsyncVfs, int nByte, char *zErrMsg){
   sqlite3_vfs *pVfs = (sqlite3_vfs *)pAsyncVfs->pAppData;
   pVfs->xDlError(pVfs, nByte, zErrMsg);
 }
-static void *asyncDlSym(
+static void (*asyncDlSym(
   sqlite3_vfs *pAsyncVfs, 
   void *pHandle, 
   const char *zSymbol
-){
+))(void){
   sqlite3_vfs *pVfs = (sqlite3_vfs *)pAsyncVfs->pAppData;
   return pVfs->xDlSym(pVfs, pHandle, zSymbol);
 }
@@ -1513,15 +1531,54 @@ static void *asyncWriterThread(void *pIsStarted){
       }
 
       case ASYNC_UNLOCK: {
+        AsyncWrite *pIter;
         AsyncFileData *pData = p->pFileData;
         int eLock = p->nByte;
-        pthread_mutex_lock(&async.lockMutex);
-        pData->lock.eAsyncLock = MIN(
-            pData->lock.eAsyncLock, MAX(pData->lock.eLock, eLock)
-        );
-        assert(pData->lock.eAsyncLock>=pData->lock.eLock);
-        rc = getFileLock(pData->pLock);
-        pthread_mutex_unlock(&async.lockMutex);
+
+        /* When a file is locked by SQLite using the async backend, it is 
+        ** locked within the 'real' file-system synchronously. When it is
+        ** unlocked, an ASYNC_UNLOCK event is added to the write-queue to
+        ** unlock the file asynchronously. The design of the async backend
+        ** requires that the 'real' file-system file be locked from the
+        ** time that SQLite first locks it (and probably reads from it)
+        ** until all asynchronous write events that were scheduled before
+        ** SQLite unlocked the file have been processed.
+        **
+        ** This is more complex if SQLite locks and unlocks the file multiple
+        ** times in quick succession. For example, if SQLite does: 
+        ** 
+        **   lock, write, unlock, lock, write, unlock
+        **
+        ** Each "lock" operation locks the file immediately. Each "write" 
+        ** and "unlock" operation adds an event to the event queue. If the
+        ** second "lock" operation is performed before the first "unlock"
+        ** operation has been processed asynchronously, then the first
+        ** "unlock" cannot be safely processed as is, since this would mean
+        ** the file was unlocked when the second "write" operation is
+        ** processed. To work around this, when processing an ASYNC_UNLOCK
+        ** operation, SQLite:
+        **
+        **   1) Unlocks the file to the minimum of the argument passed to
+        **      the xUnlock() call and the current lock from SQLite's point
+        **      of view, and
+        **
+        **   2) Only unlocks the file at all if this event is the last
+        **      ASYNC_UNLOCK event on this file in the write-queue.
+        */ 
+        assert( holdingMutex==1 );
+        assert( async.pQueueFirst==p );
+        for(pIter=async.pQueueFirst->pNext; pIter; pIter=pIter->pNext){
+          if( pIter->pFileData==pData && pIter->op==ASYNC_UNLOCK ) break;
+        }
+        if( !pIter ){
+          pthread_mutex_lock(&async.lockMutex);
+          pData->lock.eAsyncLock = MIN(
+              pData->lock.eAsyncLock, MAX(pData->lock.eLock, eLock)
+          );
+          assert(pData->lock.eAsyncLock>=pData->lock.eLock);
+          rc = getFileLock(pData->pLock);
+          pthread_mutex_unlock(&async.lockMutex);
+        }
         break;
       }
 
@@ -1564,12 +1621,12 @@ static void *asyncWriterThread(void *pIsStarted){
     }
     assert( holdingMutex );
 
-    /* An IO error has occured. We cannot report the error back to the
+    /* An IO error has occurred. We cannot report the error back to the
     ** connection that requested the I/O since the error happened 
     ** asynchronously.  The connection has already moved on.  There 
     ** really is nobody to report the error to.
     **
-    ** The file for which the error occured may have been a database or
+    ** The file for which the error occurred may have been a database or
     ** journal file. Regardless, none of the currently queued operations
     ** associated with the same database should now be performed. Nor should
     ** any subsequently requested IO on either a database or journal file 

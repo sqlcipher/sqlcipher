@@ -13,7 +13,7 @@
 ** interface, and routines that contribute to loading the database schema
 ** from disk.
 **
-** $Id: prepare.c,v 1.105 2009/01/20 16:53:41 danielk1977 Exp $
+** $Id: prepare.c,v 1.116 2009/04/02 18:32:27 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -77,21 +77,17 @@ int sqlite3InitCallback(void *pInit, int argc, char **argv, char **NotUsed){
     */
     char *zErr;
     int rc;
-    u8 lookasideEnabled;
     assert( db->init.busy );
     db->init.iDb = iDb;
     db->init.newTnum = atoi(argv[1]);
-    lookasideEnabled = db->lookaside.bEnabled;
-    db->lookaside.bEnabled = 0;
     rc = sqlite3_exec(db, argv[2], 0, 0, &zErr);
     db->init.iDb = 0;
-    db->lookaside.bEnabled = lookasideEnabled;
     assert( rc!=SQLITE_OK || zErr==0 );
     if( SQLITE_OK!=rc ){
       pData->rc = rc;
       if( rc==SQLITE_NOMEM ){
         db->mallocFailed = 1;
-      }else if( rc!=SQLITE_INTERRUPT ){
+      }else if( rc!=SQLITE_INTERRUPT && (rc&0xff)!=SQLITE_LOCKED ){
         corruptSchema(pData, argv[0], zErr);
       }
       sqlite3DbFree(db, zErr);
@@ -351,10 +347,10 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   }
   if( rc==SQLITE_OK || (db->flags&SQLITE_RecoveryMode)){
     /* Black magic: If the SQLITE_RecoveryMode flag is set, then consider
-    ** the schema loaded, even if errors occured. In this situation the 
+    ** the schema loaded, even if errors occurred. In this situation the 
     ** current sqlite3_prepare() operation will fail, but the following one
     ** will attempt to compile the supplied statement against whatever subset
-    ** of the schema was loaded before the error occured. The primary
+    ** of the schema was loaded before the error occurred. The primary
     ** purpose of this is to allow access to the sqlite_master table
     ** even when its contents have been corrupted.
     */
@@ -532,26 +528,45 @@ static int sqlite3Prepare(
   int rc = SQLITE_OK;
   int i;
 
-  assert( ppStmt );
-  *ppStmt = 0;
-  if( sqlite3SafetyOn(db) ){
-    return SQLITE_MISUSE;
-  }
+  if( sqlite3SafetyOn(db) ) return SQLITE_MISUSE;
+  assert( ppStmt && *ppStmt==0 );
   assert( !db->mallocFailed );
   assert( sqlite3_mutex_held(db->mutex) );
 
-  /* If any attached database schemas are locked, do not proceed with
-  ** compilation. Instead return SQLITE_LOCKED immediately.
+  /* Check to verify that it is possible to get a read lock on all
+  ** database schemas.  The inability to get a read lock indicates that
+  ** some other database connection is holding a write-lock, which in
+  ** turn means that the other connection has made uncommitted changes
+  ** to the schema.
+  **
+  ** Were we to proceed and prepare the statement against the uncommitted
+  ** schema changes and if those schema changes are subsequently rolled
+  ** back and different changes are made in their place, then when this
+  ** prepared statement goes to run the schema cookie would fail to detect
+  ** the schema change.  Disaster would follow.
+  **
+  ** This thread is currently holding mutexes on all Btrees (because
+  ** of the sqlite3BtreeEnterAll() in sqlite3LockAndPrepare()) so it
+  ** is not possible for another thread to start a new schema change
+  ** while this routine is running.  Hence, we do not need to hold 
+  ** locks on the schema, we just need to make sure nobody else is 
+  ** holding them.
+  **
+  ** Note that setting READ_UNCOMMITTED overrides most lock detection,
+  ** but it does *not* override schema lock detection, so this all still
+  ** works even if READ_UNCOMMITTED is set.
   */
   for(i=0; i<db->nDb; i++) {
     Btree *pBt = db->aDb[i].pBt;
     if( pBt ){
+      assert( sqlite3BtreeHoldsMutex(pBt) );
       rc = sqlite3BtreeSchemaLocked(pBt);
       if( rc ){
         const char *zDb = db->aDb[i].zName;
-        sqlite3Error(db, SQLITE_LOCKED, "database schema is locked: %s", zDb);
+        sqlite3Error(db, rc, "database schema is locked: %s", zDb);
         (void)sqlite3SafetyOff(db);
-        return sqlite3ApiExit(db, SQLITE_LOCKED);
+        testcase( db->flags & SQLITE_ReadUncommitted );
+        return sqlite3ApiExit(db, rc);
       }
     }
   }
@@ -621,11 +636,13 @@ static int sqlite3Prepare(
     rc = SQLITE_MISUSE;
   }
 
-  if( saveSqlFlag ){
-    sqlite3VdbeSetSql(sParse.pVdbe, zSql, (int)(sParse.zTail - zSql));
+  assert( db->init.busy==0 || saveSqlFlag==0 );
+  if( db->init.busy==0 ){
+    Vdbe *pVdbe = sParse.pVdbe;
+    sqlite3VdbeSetSql(pVdbe, zSql, (int)(sParse.zTail-zSql), saveSqlFlag);
   }
-  if( rc!=SQLITE_OK || db->mallocFailed ){
-    sqlite3_finalize((sqlite3_stmt*)sParse.pVdbe);
+  if( sParse.pVdbe && (rc!=SQLITE_OK || db->mallocFailed) ){
+    sqlite3VdbeFinalize(sParse.pVdbe);
     assert(!(*ppStmt));
   }else{
     *ppStmt = (sqlite3_stmt*)sParse.pVdbe;
@@ -651,6 +668,8 @@ static int sqlite3LockAndPrepare(
   const char **pzTail       /* OUT: End of parsed string */
 ){
   int rc;
+  assert( ppStmt!=0 );
+  *ppStmt = 0;
   if( !sqlite3SafetyCheckOk(db) ){
     return SQLITE_MISUSE;
   }
@@ -664,8 +683,11 @@ static int sqlite3LockAndPrepare(
 
 /*
 ** Rerun the compilation of a statement after a schema change.
-** Return true if the statement was recompiled successfully.
-** Return false if there is an error of some kind.
+**
+** If the statement is successfully recompiled, return SQLITE_OK. Otherwise,
+** if the statement cannot be recompiled because another connection has
+** locked the sqlite3_master table, return SQLITE_LOCKED. If any other error
+** occurs, return SQLITE_SCHEMA.
 */
 int sqlite3Reprepare(Vdbe *p){
   int rc;
@@ -684,7 +706,7 @@ int sqlite3Reprepare(Vdbe *p){
       db->mallocFailed = 1;
     }
     assert( pNew==0 );
-    return 0;
+    return (rc==SQLITE_LOCKED) ? SQLITE_LOCKED : SQLITE_SCHEMA;
   }else{
     assert( pNew!=0 );
   }
@@ -692,7 +714,7 @@ int sqlite3Reprepare(Vdbe *p){
   sqlite3TransferBindings(pNew, (sqlite3_stmt*)p);
   sqlite3VdbeResetStepResult((Vdbe*)pNew);
   sqlite3VdbeFinalize((Vdbe*)pNew);
-  return 1;
+  return SQLITE_OK;
 }
 
 
@@ -750,6 +772,8 @@ static int sqlite3Prepare16(
   const char *zTail8 = 0;
   int rc = SQLITE_OK;
 
+  assert( ppStmt );
+  *ppStmt = 0;
   if( !sqlite3SafetyCheckOk(db) ){
     return SQLITE_MISUSE;
   }

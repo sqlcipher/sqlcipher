@@ -15,7 +15,7 @@
 ** 6000 lines long) it was split up into several smaller files and
 ** this header information was factored out.
 **
-** $Id: vdbeInt.h,v 1.162 2009/02/03 15:39:01 drh Exp $
+** $Id: vdbeInt.h,v 1.167 2009/04/10 12:55:17 danielk1977 Exp $
 */
 #ifndef _VDBEINT_H_
 #define _VDBEINT_H_
@@ -59,13 +59,11 @@ struct VdbeCursor {
   BtCursor *pCursor;    /* The cursor structure of the backend */
   int iDb;              /* Index of cursor database in db->aDb[] (or -1) */
   i64 lastRowid;        /* Last rowid from a Next or NextIdx operation */
-  i64 nextRowid;        /* Next rowid returned by OP_NewRowid */
   Bool zeroed;          /* True if zeroed out and ready for reuse */
   Bool rowidIsValid;    /* True if lastRowid is valid */
   Bool atFirst;         /* True if pointing to first entry */
   Bool useRandomRowid;  /* Generate new record numbers semi-randomly */
   Bool nullRow;         /* True if pointing to a row with no data */
-  Bool nextRowidValid;  /* True if the nextRowid field is valid */
   Bool pseudoTable;     /* This is a NEW or OLD pseudo-tables of a trigger */
   Bool ephemPseudoTable;
   Bool deferredMoveto;  /* A call to sqlite3BtreeMoveto() is needed */
@@ -279,16 +277,13 @@ struct Vdbe {
   u32 magic;              /* Magic number for sanity checking */
   int nMem;               /* Number of memory locations currently allocated */
   Mem *aMem;              /* The memory locations */
-  int nCallback;          /* Number of callbacks invoked so far */
   int cacheCtr;           /* VdbeCursor row cache generation counter */
   int contextStackTop;    /* Index of top element in the context stack */
   int contextStackDepth;  /* The size of the "context" stack */
   Context *contextStack;  /* Stack used by opcodes ContextPush & ContextPop*/
   int pc;                 /* The program counter */
   int rc;                 /* Value to return */
-  unsigned uniqueCnt;     /* Used by OP_MakeRecord when P2!=0 */
   int errorAction;        /* Recovery action to do in case of an error */
-  int inTempTrans;        /* True if temp database is transactioned */
   int nResColumn;         /* Number of columns in one row of the result set */
   char **azResColumn;     /* Values for one row of result */ 
   char *zErrMsg;          /* Error message written here */
@@ -300,17 +295,18 @@ struct Vdbe {
   u8 inVtabMethod;        /* See comments above */
   u8 usesStmtJournal;     /* True if uses a statement journal */
   u8 readOnly;            /* True for read-only statements */
+  u8 isPrepareV2;         /* True if prepared with prepare_v2() */
   int nChange;            /* Number of db changes made since last reset */
   i64 startTime;          /* Time when query started - used for profiling */
   int btreeMask;          /* Bitmask of db->aDb[] entries referenced */
   BtreeMutexArray aMutex; /* An array of Btree used here and needing locks */
   int aCounter[2];        /* Counters used by sqlite3_stmt_status() */
-  int nSql;             /* Number of bytes in zSql */
   char *zSql;           /* Text of the SQL statement that generated this */
+  void *pFree;            /* Free this when deleting the vdbe */
 #ifdef SQLITE_DEBUG
   FILE *trace;          /* Write an execution trace here, if not NULL */
 #endif
-  int openedStatement;  /* True if this VM has opened a statement journal */
+  int iStatement;         /* Statement number (or 0 if has not opened stmt) */
 #ifdef SQLITE_SSE
   int fetchId;          /* Statement number used by sqlite3_fetch_statement */
   int lru;              /* Counter used for LRU cache replacement */
@@ -378,8 +374,15 @@ int sqlite3VdbeMemFinalize(Mem*, FuncDef*);
 const char *sqlite3OpcodeName(int);
 int sqlite3VdbeOpcodeHasProperty(int, int);
 int sqlite3VdbeMemGrow(Mem *pMem, int n, int preserve);
+int sqlite3VdbeCloseStatement(Vdbe *, int);
 #ifdef SQLITE_ENABLE_MEMORY_MANAGEMENT
 int sqlite3VdbeReleaseBuffers(Vdbe *p);
+#endif
+
+#ifndef SQLITE_OMIT_SHARED_CACHE
+void sqlite3VdbeMutexArrayEnter(Vdbe *p);
+#else
+# define sqlite3VdbeMutexArrayEnter(p)
 #endif
 
 int sqlite3VdbeMemTranslate(Mem*, u8);

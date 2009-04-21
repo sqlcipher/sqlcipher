@@ -14,7 +14,7 @@
 ** the parser.  Lemon will also generate a header file containing
 ** numeric codes for all of the tokens.
 **
-** @(#) $Id: parse.y,v 1.268 2009/01/29 19:27:47 drh Exp $
+** @(#) $Id: parse.y,v 1.274 2009/04/06 14:16:43 drh Exp $
 */
 
 // All token codes are small integers with #defines that begin with "TK_"
@@ -133,8 +133,12 @@ cmd ::= ROLLBACK trans_opt TO savepoint_opt nm(X). {
 ///////////////////// The CREATE TABLE statement ////////////////////////////
 //
 cmd ::= create_table create_table_args.
-create_table ::= CREATE temp(T) TABLE ifnotexists(E) nm(Y) dbnm(Z). {
+create_table ::= createkw temp(T) TABLE ifnotexists(E) nm(Y) dbnm(Z). {
    sqlite3StartTable(pParse,&Y,&Z,T,0,0,E);
+}
+createkw(A) ::= CREATE(X).  {
+  pParse->db->lookaside.bEnabled = 0;
+  A = X;
 }
 %type ifnotexists {int}
 ifnotexists(A) ::= .              {A = 0;}
@@ -174,6 +178,7 @@ columnid(A) ::= nm(X). {
 //
 %type id {Token}
 id(A) ::= ID(X).         {A = X;}
+id(A) ::= INDEXED(X).    {A = X;}
 
 // The following directive causes tokens ABORT, AFTER, ASC, etc. to
 // fallback to ID if they will not parse as their original value.
@@ -224,7 +229,7 @@ ids(A) ::= ID|STRING(X).   {A = X;}
 // The name of a column or table can be any of the following:
 //
 %type nm {Token}
-nm(A) ::= ID(X).         {A = X;}
+nm(A) ::= id(X).         {A = X;}
 nm(A) ::= STRING(X).     {A = X;}
 nm(A) ::= JOIN_KW(X).    {A = X;}
 
@@ -364,7 +369,7 @@ ifexists(A) ::= .            {A = 0;}
 ///////////////////// The CREATE VIEW statement /////////////////////////////
 //
 %ifndef SQLITE_OMIT_VIEW
-cmd ::= CREATE(X) temp(T) VIEW ifnotexists(E) nm(Y) dbnm(Z) AS select(S). {
+cmd ::= createkw(X) temp(T) VIEW ifnotexists(E) nm(Y) dbnm(Z) AS select(S). {
   sqlite3CreateView(pParse, &X, &Y, &Z, S, T, E);
 }
 cmd ::= DROP VIEW ifexists(E) fullname(X). {
@@ -697,7 +702,7 @@ inscollist(A) ::= nm(Y).
 expr(A) ::= term(X).             {A = X;}
 expr(A) ::= LP(B) expr(X) RP(E). {A = X; sqlite3ExprSpan(A,&B,&E); }
 term(A) ::= NULL(X).             {A = sqlite3PExpr(pParse, @X, 0, 0, &X);}
-expr(A) ::= ID(X).               {A = sqlite3PExpr(pParse, TK_ID, 0, 0, &X);}
+expr(A) ::= id(X).               {A = sqlite3PExpr(pParse, TK_ID, 0, 0, &X);}
 expr(A) ::= JOIN_KW(X).          {A = sqlite3PExpr(pParse, TK_ID, 0, 0, &X);}
 expr(A) ::= nm(X) DOT nm(Y). {
   Expr *temp1 = sqlite3PExpr(pParse, TK_ID, 0, 0, &X);
@@ -824,7 +829,7 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
   pList = sqlite3ExprListAppend(pParse,pList, Y, 0);
   A = sqlite3PExpr(pParse, TK_BETWEEN, W, 0, 0);
   if( A ){
-    A->pList = pList;
+    A->x.pList = pList;
   }else{
     sqlite3ExprListDelete(pParse->db, pList);
   } 
@@ -838,7 +843,7 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
   expr(A) ::= expr(X) in_op(N) LP exprlist(Y) RP(E). [IN] {
     A = sqlite3PExpr(pParse, TK_IN, X, 0, 0);
     if( A ){
-      A->pList = Y;
+      A->x.pList = Y;
       sqlite3ExprSetHeight(pParse, A);
     }else{
       sqlite3ExprListDelete(pParse->db, Y);
@@ -849,7 +854,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
   expr(A) ::= LP(B) select(X) RP(E). {
     A = sqlite3PExpr(pParse, TK_SELECT, 0, 0, 0);
     if( A ){
-      A->pSelect = X;
+      A->x.pSelect = X;
+      ExprSetProperty(A, EP_xIsSelect);
       sqlite3ExprSetHeight(pParse, A);
     }else{
       sqlite3SelectDelete(pParse->db, X);
@@ -859,7 +865,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
   expr(A) ::= expr(X) in_op(N) LP select(Y) RP(E).  [IN] {
     A = sqlite3PExpr(pParse, TK_IN, X, 0, 0);
     if( A ){
-      A->pSelect = Y;
+      A->x.pSelect = Y;
+      ExprSetProperty(A, EP_xIsSelect);
       sqlite3ExprSetHeight(pParse, A);
     }else{
       sqlite3SelectDelete(pParse->db, Y);
@@ -871,7 +878,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
     SrcList *pSrc = sqlite3SrcListAppend(pParse->db, 0,&Y,&Z);
     A = sqlite3PExpr(pParse, TK_IN, X, 0, 0);
     if( A ){
-      A->pSelect = sqlite3SelectNew(pParse, 0,pSrc,0,0,0,0,0,0,0);
+      A->x.pSelect = sqlite3SelectNew(pParse, 0,pSrc,0,0,0,0,0,0,0);
+      ExprSetProperty(A, EP_xIsSelect);
       sqlite3ExprSetHeight(pParse, A);
     }else{
       sqlite3SrcListDelete(pParse->db, pSrc);
@@ -882,7 +890,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
   expr(A) ::= EXISTS(B) LP select(Y) RP(E). {
     Expr *p = A = sqlite3PExpr(pParse, TK_EXISTS, 0, 0, 0);
     if( p ){
-      p->pSelect = Y;
+      p->x.pSelect = Y;
+      ExprSetProperty(A, EP_xIsSelect);
       sqlite3ExprSpan(p,&B,&E);
       sqlite3ExprSetHeight(pParse, A);
     }else{
@@ -895,7 +904,7 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
 expr(A) ::= CASE(C) case_operand(X) case_exprlist(Y) case_else(Z) END(E). {
   A = sqlite3PExpr(pParse, TK_CASE, X, Z, 0);
   if( A ){
-    A->pList = Y;
+    A->x.pList = Y;
     sqlite3ExprSetHeight(pParse, A);
   }else{
     sqlite3ExprListDelete(pParse->db, Y);
@@ -936,7 +945,7 @@ nexprlist(A) ::= expr(Y).
 
 ///////////////////////////// The CREATE INDEX command ///////////////////////
 //
-cmd ::= CREATE(S) uniqueflag(U) INDEX ifnotexists(NE) nm(X) dbnm(D)
+cmd ::= createkw(S) uniqueflag(U) INDEX ifnotexists(NE) nm(X) dbnm(D)
         ON nm(Y) LP idxlist(Z) RP(E). {
   sqlite3CreateIndex(pParse, &X, &D, 
                      sqlite3SrcListAppend(pParse->db,0,&Y,0), Z, U,
@@ -997,16 +1006,19 @@ cmd ::= VACUUM nm.             {sqlite3Vacuum(pParse);}
 //
 %ifndef SQLITE_OMIT_PARSER
 %ifndef SQLITE_OMIT_PRAGMA
-cmd ::= PRAGMA nm(X) dbnm(Z) EQ nmnum(Y).   {sqlite3Pragma(pParse,&X,&Z,&Y,0);}
-cmd ::= PRAGMA nm(X) dbnm(Z) EQ ON(Y).      {sqlite3Pragma(pParse,&X,&Z,&Y,0);}
-cmd ::= PRAGMA nm(X) dbnm(Z) EQ DELETE(Y).  {sqlite3Pragma(pParse,&X,&Z,&Y,0);}
-cmd ::= PRAGMA nm(X) dbnm(Z) EQ minus_num(Y). {
-  sqlite3Pragma(pParse,&X,&Z,&Y,1);
-}
+cmd ::= PRAGMA nm(X) dbnm(Z).                {sqlite3Pragma(pParse,&X,&Z,0,0);}
+cmd ::= PRAGMA nm(X) dbnm(Z) EQ nmnum(Y).    {sqlite3Pragma(pParse,&X,&Z,&Y,0);}
 cmd ::= PRAGMA nm(X) dbnm(Z) LP nmnum(Y) RP. {sqlite3Pragma(pParse,&X,&Z,&Y,0);}
-cmd ::= PRAGMA nm(X) dbnm(Z).             {sqlite3Pragma(pParse,&X,&Z,0,0);}
+cmd ::= PRAGMA nm(X) dbnm(Z) EQ minus_num(Y). 
+                                             {sqlite3Pragma(pParse,&X,&Z,&Y,1);}
+cmd ::= PRAGMA nm(X) dbnm(Z) LP minus_num(Y) RP.
+                                             {sqlite3Pragma(pParse,&X,&Z,&Y,1);}
+
 nmnum(A) ::= plus_num(X).             {A = X;}
 nmnum(A) ::= nm(X).                   {A = X;}
+nmnum(A) ::= ON(X).                   {A = X;}
+nmnum(A) ::= DELETE(X).               {A = X;}
+nmnum(A) ::= DEFAULT(X).              {A = X;}
 %endif SQLITE_OMIT_PRAGMA
 %endif SQLITE_OMIT_PARSER
 plus_num(A) ::= plus_opt number(X).   {A = X;}
@@ -1019,7 +1031,7 @@ plus_opt ::= .
 
 %ifndef SQLITE_OMIT_TRIGGER
 
-cmd ::= CREATE trigger_decl(A) BEGIN trigger_cmd_list(S) END(Z). {
+cmd ::= createkw trigger_decl(A) BEGIN trigger_cmd_list(S) END(Z). {
   Token all;
   all.z = A.z;
   all.n = (int)(Z.z - A.z) + Z.n;
@@ -1100,14 +1112,14 @@ trigger_cmd(A) ::= select(X).  {A = sqlite3TriggerSelectStep(pParse->db, X); }
 expr(A) ::= RAISE(X) LP IGNORE RP(Y).  {
   A = sqlite3PExpr(pParse, TK_RAISE, 0, 0, 0); 
   if( A ){
-    A->iColumn = OE_Ignore;
+    A->affinity = OE_Ignore;
     sqlite3ExprSpan(A, &X, &Y);
   }
 }
 expr(A) ::= RAISE(X) LP raisetype(T) COMMA nm(Z) RP(Y).  {
   A = sqlite3PExpr(pParse, TK_RAISE, 0, 0, &Z); 
   if( A ) {
-    A->iColumn = T;
+    A->affinity = (char)T;
     sqlite3ExprSpan(A, &X, &Y);
   }
 }
@@ -1165,6 +1177,7 @@ cmd ::= ALTER TABLE add_column_fullname ADD kwcolumn_opt column(Y). {
   sqlite3AlterFinishAddColumn(pParse, &Y);
 }
 add_column_fullname ::= fullname(X). {
+  pParse->db->lookaside.bEnabled = 0;
   sqlite3AlterBeginAddColumn(pParse, X);
 }
 kwcolumn_opt ::= .
@@ -1175,7 +1188,7 @@ kwcolumn_opt ::= COLUMNKW.
 %ifndef SQLITE_OMIT_VIRTUALTABLE
 cmd ::= create_vtab.                       {sqlite3VtabFinishParse(pParse,0);}
 cmd ::= create_vtab LP vtabarglist RP(X).  {sqlite3VtabFinishParse(pParse,&X);}
-create_vtab ::= CREATE VIRTUAL TABLE nm(X) dbnm(Y) USING nm(Z). {
+create_vtab ::= createkw VIRTUAL TABLE nm(X) dbnm(Y) USING nm(Z). {
     sqlite3VtabBeginParse(pParse, &X, &Y, &Z);
 }
 vtabarglist ::= vtabarg.

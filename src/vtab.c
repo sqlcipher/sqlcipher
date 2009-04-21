@@ -11,11 +11,16 @@
 *************************************************************************
 ** This file contains code used to help implement virtual tables.
 **
-** $Id: vtab.c,v 1.81 2008/12/10 19:26:24 drh Exp $
+** $Id: vtab.c,v 1.85 2009/04/11 16:27:20 drh Exp $
 */
 #ifndef SQLITE_OMIT_VIRTUALTABLE
 #include "sqliteInt.h"
 
+/*
+** The actual function that does the work of creating a new module.
+** This function implements the sqlite3_create_module() and
+** sqlite3_create_module_v2() interfaces.
+*/
 static int createModule(
   sqlite3 *db,                    /* Database in which module is registered */
   const char *zName,              /* Name assigned to this module */
@@ -97,6 +102,7 @@ void sqlite3VtabLock(sqlite3_vtab *pVtab){
 ** disconnect the virtual table.
 */
 void sqlite3VtabUnlock(sqlite3 *db, sqlite3_vtab *pVtab){
+  assert( pVtab->nRef>0 );
   pVtab->nRef--;
   assert(db);
   assert( sqlite3SafetyCheckOk(db) );
@@ -118,7 +124,8 @@ void sqlite3VtabUnlock(sqlite3 *db, sqlite3_vtab *pVtab){
 */
 void sqlite3VtabClear(Table *p){
   sqlite3_vtab *pVtab = p->pVtab;
-  sqlite3 *db = p->db;
+  Schema *pSchema = p->pSchema;
+  sqlite3 *db = pSchema ? pSchema->db : 0;
   if( pVtab ){
     assert( p->pMod && p->pMod->pModule );
     sqlite3VtabUnlock(db, pVtab);
@@ -571,7 +578,9 @@ int sqlite3_declare_vtab(sqlite3 *db, const char *zCreateTable){
   }
   sParse.declareVtab = 0;
 
-  sqlite3_finalize((sqlite3_stmt*)sParse.pVdbe);
+  if( sParse.pVdbe ){
+    sqlite3VdbeFinalize(sParse.pVdbe);
+  }
   sqlite3DeleteTable(sParse.pNewTable);
   sParse.pNewTable = 0;
 
@@ -711,7 +720,7 @@ int sqlite3VtabBegin(sqlite3 *db, sqlite3_vtab *pVtab){
   /* Special case: If db->aVTrans is NULL and db->nVTrans is greater
   ** than zero, then this function is being called from within a
   ** virtual module xSync() callback. It is illegal to write to 
-  ** virtual module tables in this case, so return SQLITE_LOCKED.
+  ** virtual module tables in this case, so return SQLITE_MISUSE.
   */
   if( sqlite3VtabInSync(db) ){
     return SQLITE_LOCKED;

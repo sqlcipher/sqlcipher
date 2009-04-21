@@ -13,7 +13,7 @@
 ** is not included in the SQLite library.  It is used for automated
 ** testing of the SQLite library.
 **
-** $Id: test1.c,v 1.347 2009/02/03 16:51:25 danielk1977 Exp $
+** $Id: test1.c,v 1.351 2009/04/08 15:45:32 drh Exp $
 */
 #include "sqliteInt.h"
 #include "tcl.h"
@@ -125,6 +125,7 @@ const char *sqlite3TestErrorName(int rc){
     case SQLITE_ABORT:               zName = "SQLITE_ABORT";             break;
     case SQLITE_BUSY:                zName = "SQLITE_BUSY";              break;
     case SQLITE_LOCKED:              zName = "SQLITE_LOCKED";            break;
+    case SQLITE_LOCKED_SHAREDCACHE:  zName = "SQLITE_LOCKED_SHAREDCACHE";break;
     case SQLITE_NOMEM:               zName = "SQLITE_NOMEM";             break;
     case SQLITE_READONLY:            zName = "SQLITE_READONLY";          break;
     case SQLITE_INTERRUPT:           zName = "SQLITE_INTERRUPT";         break;
@@ -495,7 +496,7 @@ static int test_exec_nr(
 /*
 ** Usage:  sqlite3_mprintf_z_test  SEPARATOR  ARG0  ARG1 ...
 **
-** Test the %z format of sqliteMPrintf().  Use multiple mprintf() calls to 
+** Test the %z format of sqlite_mprintf().  Use multiple mprintf() calls to 
 ** concatenate arg0 through argn using separator as the separator.
 ** Return the result.
 */
@@ -509,7 +510,7 @@ static int test_mprintf_z(
   int i;
 
   for(i=2; i<argc && (i==2 || zResult); i++){
-    zResult = sqlite3MPrintf(0, "%z%s%s", zResult, argv[1], argv[i]);
+    zResult = sqlite3_mprintf("%z%s%s", zResult, argv[1], argv[i]);
   }
   Tcl_AppendResult(interp, zResult, 0);
   sqlite3_free(zResult);
@@ -519,7 +520,7 @@ static int test_mprintf_z(
 /*
 ** Usage:  sqlite3_mprintf_n_test  STRING
 **
-** Test the %n format of sqliteMPrintf().  Return the length of the
+** Test the %n format of sqlite_mprintf().  Return the length of the
 ** input string.
 */
 static int test_mprintf_n(
@@ -530,7 +531,7 @@ static int test_mprintf_n(
 ){
   char *zStr;
   int n = 0;
-  zStr = sqlite3MPrintf(0, "%s%n", argv[1], &n);
+  zStr = sqlite3_mprintf("%s%n", argv[1], &n);
   sqlite3_free(zStr);
   Tcl_SetObjResult(interp, Tcl_NewIntObj(n));
   return TCL_OK;
@@ -3260,6 +3261,7 @@ static int test_errmsg16(
 #ifndef SQLITE_OMIT_UTF16
   sqlite3 *db;
   const void *zErr;
+  const char *z;
   int bytes = 0;
 
   if( objc!=2 ){
@@ -3271,7 +3273,8 @@ static int test_errmsg16(
 
   zErr = sqlite3_errmsg16(db);
   if( zErr ){
-    bytes = sqlite3Utf16ByteLen(zErr, -1);
+    z = zErr;
+    for(bytes=0; z[bytes] || z[bytes+1]; bytes+=2){}
   }
   Tcl_SetObjResult(interp, Tcl_NewByteArrayObj(zErr, bytes));
 #endif /* SQLITE_OMIT_UTF16 */
@@ -3661,6 +3664,24 @@ static int test_step(
   return TCL_OK;
 }
 
+static int test_sql(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  sqlite3_stmt *pStmt;
+
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "STMT");
+    return TCL_ERROR;
+  }
+
+  if( getStmtPointer(interp, Tcl_GetString(objv[1]), &pStmt) ) return TCL_ERROR;
+  Tcl_SetResult(interp, (char *)sqlite3_sql(pStmt), TCL_VOLATILE);
+  return TCL_OK;
+}
+
 /*
 ** Usage: sqlite3_column_count STMT 
 **
@@ -3934,7 +3955,10 @@ static int test_stmt_utf16(
 
   zName16 = xFunc(pStmt, col);
   if( zName16 ){
-    pRet = Tcl_NewByteArrayObj(zName16, sqlite3Utf16ByteLen(zName16, -1)+2);
+    int n;
+    const char *z = zName16;
+    for(n=0; z[n] || z[n+1]; n+=2){}
+    pRet = Tcl_NewByteArrayObj(zName16, n+2);
     Tcl_SetObjResult(interp, pRet);
   }
 #endif /* SQLITE_OMIT_UTF16 */
@@ -4816,6 +4840,42 @@ static int test_pcache_stats(
   return TCL_OK;
 }
 
+#ifdef SQLITE_ENABLE_UNLOCK_NOTIFY
+static void test_unlock_notify_cb(void **aArg, int nArg){
+  int ii;
+  for(ii=0; ii<nArg; ii++){
+    Tcl_EvalEx((Tcl_Interp *)aArg[ii], "unlock_notify", -1, TCL_EVAL_GLOBAL);
+  }
+}
+#endif /* SQLITE_ENABLE_UNLOCK_NOTIFY */
+
+/*
+** tclcmd:  sqlite3_unlock_notify db
+*/
+#ifdef SQLITE_ENABLE_UNLOCK_NOTIFY
+static int test_unlock_notify(
+  ClientData clientData, /* Unused */
+  Tcl_Interp *interp,    /* The TCL interpreter that invoked this command */
+  int objc,              /* Number of arguments */
+  Tcl_Obj *CONST objv[]  /* Command arguments */
+){
+  sqlite3 *db;
+  int rc;
+
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB");
+    return TCL_ERROR;
+  }
+
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
+    return TCL_ERROR;
+  }
+  rc = sqlite3_unlock_notify(db, test_unlock_notify_cb, (void *)interp);
+  Tcl_SetResult(interp, (char *)t1ErrorName(rc), TCL_STATIC);
+  return TCL_OK;
+}
+#endif
+
 
 /*
 ** Register commands with the TCL interpreter.
@@ -4916,6 +4976,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "sqlite3_transfer_bindings",     test_transfer_bind ,0 },
      { "sqlite3_changes",               test_changes       ,0 },
      { "sqlite3_step",                  test_step          ,0 },
+     { "sqlite3_sql",                   test_sql           ,0 },
      { "sqlite3_next_stmt",             test_next_stmt     ,0 },
 
      { "sqlite3_release_memory",        test_release_memory,     0},
@@ -5000,6 +5061,9 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "sqlite3_blob_write", test_blob_write, 0  },
 #endif
      { "pcache_stats",       test_pcache_stats, 0  },
+#ifdef SQLITE_ENABLE_UNLOCK_NOTIFY
+     { "sqlite3_unlock_notify", test_unlock_notify, 0  },
+#endif
   };
   static int bitmask_size = sizeof(Bitmask)*8;
   int i;

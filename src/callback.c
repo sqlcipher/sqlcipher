@@ -13,7 +13,7 @@
 ** This file contains functions used to access the internal hash tables
 ** of user defined functions and collation sequences.
 **
-** $Id: callback.c,v 1.35 2009/01/31 22:28:49 drh Exp $
+** $Id: callback.c,v 1.37 2009/03/24 15:08:10 drh Exp $
 */
 
 #include "sqliteInt.h"
@@ -175,7 +175,7 @@ static CollSeq *findCollSeqEntry(
       pColl[0].zName[nName] = 0;
       pDel = sqlite3HashInsert(&db->aCollSeq, pColl[0].zName, nName, pColl);
 
-      /* If a malloc() failure occured in sqlite3HashInsert(), it will 
+      /* If a malloc() failure occurred in sqlite3HashInsert(), it will 
       ** return the pColl pointer to be deleted (because it wasn't added
       ** to the hash table).
       */
@@ -423,6 +423,7 @@ void sqlite3SchemaFree(void *p){
   sqlite3HashInit(&pSchema->tblHash, 0);
   for(pElem=sqliteHashFirst(&temp1); pElem; pElem=sqliteHashNext(pElem)){
     Table *pTab = sqliteHashData(pElem);
+    assert( pTab->dbMem==0 );
     sqlite3DeleteTable(pTab);
   }
   sqlite3HashClear(&temp1);

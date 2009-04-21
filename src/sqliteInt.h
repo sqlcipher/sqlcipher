@@ -11,7 +11,7 @@
 *************************************************************************
 ** Internal interface definitions for SQLite.
 **
-** @(#) $Id: sqliteInt.h,v 1.833 2009/02/05 16:53:43 drh Exp $
+** @(#) $Id: sqliteInt.h,v 1.854 2009/04/08 13:51:51 drh Exp $
 */
 #ifndef _SQLITEINT_H_
 #define _SQLITEINT_H_
@@ -444,6 +444,22 @@ extern const int sqlite3one;
 #define LARGEST_INT64  (0xffffffff|(((i64)0x7fffffff)<<32))
 #define SMALLEST_INT64 (((i64)-1) - LARGEST_INT64)
 
+/* 
+** Round up a number to the next larger multiple of 8.  This is used
+** to force 8-byte alignment on 64-bit architectures.
+*/
+#define ROUND8(x)     (((x)+7)&~7)
+
+/*
+** Round down to the nearest multiple of 8
+*/
+#define ROUNDDOWN8(x) ((x)&~7)
+
+/*
+** Assert that the pointer X is aligned to an 8-byte boundary.
+*/
+#define EIGHT_BYTE_ALIGNMENT(X)   ((((char*)(X) - (char*)0)&7)==0)
+
 /*
 ** An instance of the following structure is used to store the busy-handler
 ** callback for a given sqlite handle. 
@@ -675,10 +691,17 @@ struct Schema {
 ** lookaside malloc subsystem.  Each available memory allocation in
 ** the lookaside subsystem is stored on a linked list of LookasideSlot
 ** objects.
+**
+** Lookaside allocations are only allowed for objects that are associated
+** with a particular database connection.  Hence, schema information cannot
+** be stored in lookaside because in shared cache mode the schema information
+** is shared by multiple database connections.  Therefore, while parsing
+** schema information, the Lookaside.bEnabled flag is cleared so that
+** lookaside allocations are not used to construct the schema objects.
 */
 struct Lookaside {
   u16 sz;                 /* Size of each buffer in bytes */
-  u8 bEnabled;            /* True if use lookaside.  False to ignore it */
+  u8 bEnabled;            /* False to disable new lookaside allocations */
   u8 bMalloced;           /* True if pStart obtained from sqlite3_malloc() */
   int nOut;               /* Number of buffers currently checked out */
   int mxOut;              /* Highwater mark for nOut */
@@ -807,7 +830,26 @@ struct sqlite3 {
 #endif
   Savepoint *pSavepoint;        /* List of active savepoints */
   int nSavepoint;               /* Number of non-transaction savepoints */
+  int nStatement;               /* Number of nested statement-transactions  */
   u8 isTransactionSavepoint;    /* True if the outermost savepoint is a TS */
+
+#ifdef SQLITE_ENABLE_UNLOCK_NOTIFY
+  /* The following variables are all protected by the STATIC_MASTER 
+  ** mutex, not by sqlite3.mutex. They are used by code in notify.c. 
+  **
+  ** When X.pUnlockConnection==Y, that means that X is waiting for Y to
+  ** unlock so that it can proceed.
+  **
+  ** When X.pBlockingConnection==Y, that means that something that X tried
+  ** tried to do recently failed with an SQLITE_LOCKED error due to locks
+  ** held by Y.
+  */
+  sqlite3 *pBlockingConnection; /* Connection that caused SQLITE_LOCKED */
+  sqlite3 *pUnlockConnection;           /* Connection to watch for unlock */
+  void *pUnlockArg;                     /* Argument to xUnlockNotify */
+  void (*xUnlockNotify)(void **, int);  /* Unlock notify callback */
+  sqlite3 *pNextBlocked;        /* Next in list of all blocked connections */
+#endif
 };
 
 /*
@@ -845,8 +887,8 @@ struct sqlite3 {
 
 #define SQLITE_RecoveryMode   0x00040000  /* Ignore schema errors */
 #define SQLITE_SharedCache    0x00080000  /* Cache sharing is enabled */
-#define SQLITE_Vtab           0x00100000  /* There exists a virtual table */
 #define SQLITE_CommitBusy     0x00200000  /* In the process of committing */
+#define SQLITE_ReverseOrder   0x00400000  /* Reverse unordered SELECTs */
 
 /*
 ** Possible values for the sqlite.magic field.
@@ -886,6 +928,7 @@ struct FuncDef {
 #define SQLITE_FUNC_EPHEM    0x04 /* Ephemeral.  Delete with VDBE */
 #define SQLITE_FUNC_NEEDCOLL 0x08 /* sqlite3GetFuncCollSeq() might be called */
 #define SQLITE_FUNC_PRIVATE  0x10 /* Allowed for internal use only */
+#define SQLITE_FUNC_COUNT    0x20 /* Built-in count(*) aggregate */
 
 /*
 ** The following three macros, FUNCTION(), LIKEFUNC() and AGGREGATE() are
@@ -1080,7 +1123,7 @@ struct CollSeq {
 ** of a SELECT statement.
 */
 struct Table {
-  sqlite3 *db;         /* Associated database connection.  Might be NULL. */
+  sqlite3 *dbMem;      /* DB connection used for lookaside allocations. */
   char *zName;         /* Name of the table or view */
   int iPKey;           /* If not negative, use aCol[iPKey] as the primary key */
   int nCol;            /* Number of columns in this table */
@@ -1091,7 +1134,6 @@ struct Table {
   u16 nRef;            /* Number of pointers to this Table */
   u8 tabFlags;         /* Mask of TF_* values */
   u8 keyConf;          /* What to do in case of uniqueness conflict on iPKey */
-  Trigger *pTrigger;   /* List of SQL triggers on this table */
   FKey *pFKey;         /* Linked list of all foreign keys in this table */
   char *zColAff;       /* String defining the affinity of each column */
 #ifndef SQLITE_OMIT_CHECK
@@ -1106,6 +1148,7 @@ struct Table {
   int nModuleArg;      /* Number of arguments to the module */
   char **azModuleArg;  /* Text of all module args. [0] is module name */
 #endif
+  Trigger *pTrigger;   /* List of triggers stored in pSchema */
   Schema *pSchema;     /* Schema that contains this table */
   Table *pNextZombie;  /* Next on the Parse.pZombieTab list */
 };
@@ -1363,19 +1406,27 @@ struct AggInfo {
 ** Each node of an expression in the parse tree is an instance
 ** of this structure.
 **
-** Expr.op is the opcode.  The integer parser token codes are reused
-** as opcodes here.  For example, the parser defines TK_GE to be an integer
-** code representing the ">=" operator.  This same integer code is reused
+** Expr.op is the opcode. The integer parser token codes are reused
+** as opcodes here. For example, the parser defines TK_GE to be an integer
+** code representing the ">=" operator. This same integer code is reused
 ** to represent the greater-than-or-equal-to operator in the expression
 ** tree.
 **
-** Expr.pRight and Expr.pLeft are subexpressions.  Expr.pList is a list
-** of argument if the expression is a function.
+** If the expression is an SQL literal (TK_INTEGER, TK_FLOAT, TK_BLOB, 
+** or TK_STRING), then Expr.token contains the text of the SQL literal. If
+** the expression is a variable (TK_VARIABLE), then Expr.token contains the 
+** variable name. Finally, if the expression is an SQL function (TK_FUNCTION),
+** then Expr.token contains the name of the function.
 **
-** Expr.token is the operator token for this node.  For some expressions
-** that have subexpressions, Expr.token can be the complete text that gave
-** rise to the Expr.  In the latter case, the token is marked as being
-** a compound token.
+** Expr.pRight and Expr.pLeft are the left and right subexpressions of a
+** binary operator. Either or both may be NULL.
+**
+** Expr.x.pList is a list of arguments if the expression is an SQL function,
+** a CASE expression or an IN expression of the form "<lhs> IN (<y>, <z>...)".
+** Expr.x.pSelect is used if the expression is a sub-select or an expression of
+** the form "<lhs> IN (SELECT ...)". If the EP_xIsSelect bit is set in the
+** Expr.flags mask, then Expr.x.pSelect is valid. Otherwise, Expr.x.pList is 
+** valid.
 **
 ** An expression of the form ID or ID.ID refers to a column in a table.
 ** For such expressions, Expr.op is set to TK_COLUMN and Expr.iTable is
@@ -1385,10 +1436,9 @@ struct AggInfo {
 ** value is also stored in the Expr.iAgg column in the aggregate so that
 ** it can be accessed after all aggregates are computed.
 **
-** If the expression is a function, the Expr.iTable is an integer code
-** representing which function.  If the expression is an unbound variable
-** marker (a question mark character '?' in the original SQL) then the
-** Expr.iTable holds the index number for that variable.
+** If the expression is an unbound variable marker (a question mark 
+** character '?' in the original SQL) then the Expr.iTable holds the index 
+** number for that variable.
 **
 ** If the expression is a subquery then Expr.iColumn holds an integer
 ** register number containing the result of the subquery.  If the
@@ -1396,32 +1446,62 @@ struct AggInfo {
 ** gives a different answer at different times during statement processing
 ** then iTable is the address of a subroutine that computes the subquery.
 **
-** The Expr.pSelect field points to a SELECT statement.  The SELECT might
-** be the right operand of an IN operator.  Or, if a scalar SELECT appears
-** in an expression the opcode is TK_SELECT and Expr.pSelect is the only
-** operand.
-**
 ** If the Expr is of type OP_Column, and the table it is selecting from
 ** is a disk table or the "old.*" pseudo-table, then pTab points to the
 ** corresponding table definition.
+**
+** ALLOCATION NOTES:
+**
+** Expr objects can use a lot of memory space in database schema.  To
+** help reduce memory requirements, sometimes an Expr object will be
+** truncated.  And to reduce the number of memory allocations, sometimes
+** two or more Expr objects will be stored in a single memory allocation,
+** together with Expr.token and/or Expr.span strings.
+**
+** If the EP_Reduced, EP_SpanToken, and EP_TokenOnly flags are set when
+** an Expr object is truncated.  When EP_Reduced is set, then all
+** the child Expr objects in the Expr.pLeft and Expr.pRight subtrees
+** are contained within the same memory allocation.  Note, however, that
+** the subtrees in Expr.x.pList or Expr.x.pSelect are always separately
+** allocated, regardless of whether or not EP_Reduced is set.
 */
 struct Expr {
   u8 op;                 /* Operation performed by this node */
   char affinity;         /* The affinity of the column or 0 if not a column */
-  u16 flags;             /* Various flags.  See below */
-  CollSeq *pColl;        /* The collation type of the column or 0 */
-  Expr *pLeft, *pRight;  /* Left and right subnodes */
-  ExprList *pList;       /* A list of expressions used as function arguments
-                         ** or in "<expr> IN (<expr-list)" */
+  VVA_ONLY(u8 vvaFlags;) /* Flags used for VV&A only.  EVVA_* below. */
+  u16 flags;             /* Various flags.  EP_* See below */
   Token token;           /* An operand token */
+
+  /* If the EP_TokenOnly flag is set in the Expr.flags mask, then no
+  ** space is allocated for the fields below this point. An attempt to
+  ** access them will result in a segfault or malfunction. 
+  *********************************************************************/
+
   Token span;            /* Complete text of the expression */
+
+  /* If the EP_SpanToken flag is set in the Expr.flags mask, then no
+  ** space is allocated for the fields below this point. An attempt to
+  ** access them will result in a segfault or malfunction. 
+  *********************************************************************/
+
+  Expr *pLeft;           /* Left subnode */
+  Expr *pRight;          /* Right subnode */
+  union {
+    ExprList *pList;     /* Function arguments or in "<expr> IN (<expr-list)" */
+    Select *pSelect;     /* Used for sub-selects and "<expr> IN (<select>)" */
+  } x;
+  CollSeq *pColl;        /* The collation type of the column or 0 */
+
+  /* If the EP_Reduced flag is set in the Expr.flags mask, then no
+  ** space is allocated for the fields below this point. An attempt to
+  ** access them will result in a segfault or malfunction.
+  *********************************************************************/
+
   int iTable, iColumn;   /* When op==TK_COLUMN, then this expr node means the
                          ** iColumn-th field of the iTable-th table. */
   AggInfo *pAggInfo;     /* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
   int iAgg;              /* Which entry in pAggInfo->aCol[] or ->aFunc[] */
   int iRightJoinTable;   /* If EP_FromJoin, the right table of the join */
-  Select *pSelect;       /* When the expression is a sub-select.  Also the
-                         ** right side of "<expr> IN (<select>)" */
   Table *pTab;           /* Table for TK_COLUMN expressions. */
 #if SQLITE_MAX_EXPR_DEPTH>0
   int nHeight;           /* Height of the tree headed by this node */
@@ -1443,6 +1523,21 @@ struct Expr {
 #define EP_AnyAff     0x0200  /* Can take a cached column of any affinity */
 #define EP_FixedDest  0x0400  /* Result needed in a specific register */
 #define EP_IntValue   0x0800  /* Integer value contained in iTable */
+#define EP_xIsSelect  0x1000  /* x.pSelect is valid (otherwise x.pList is) */
+
+#define EP_Reduced    0x2000  /* Expr struct is EXPR_REDUCEDSIZE bytes only */
+#define EP_TokenOnly  0x4000  /* Expr struct is EXPR_TOKENONLYSIZE bytes only */
+#define EP_SpanToken  0x8000  /* Expr size is EXPR_SPANTOKENSIZE bytes */
+
+/*
+** The following are the meanings of bits in the Expr.vvaFlags field.
+** This information is only used when SQLite is compiled with
+** SQLITE_DEBUG defined.
+*/
+#ifndef NDEBUG
+#define EVVA_ReadOnlyToken  0x01  /* Expr.token.z is read-only */
+#endif
+
 /*
 ** These macros can be used to test, set, or clear bits in the 
 ** Expr.flags field.
@@ -1451,6 +1546,23 @@ struct Expr {
 #define ExprHasAnyProperty(E,P)  (((E)->flags&(P))!=0)
 #define ExprSetProperty(E,P)     (E)->flags|=(P)
 #define ExprClearProperty(E,P)   (E)->flags&=~(P)
+
+/*
+** Macros to determine the number of bytes required by a normal Expr 
+** struct, an Expr struct with the EP_Reduced flag set in Expr.flags 
+** and an Expr struct with the EP_TokenOnly flag set.
+*/
+#define EXPR_FULLSIZE           sizeof(Expr)           /* Full size */
+#define EXPR_REDUCEDSIZE        offsetof(Expr,iTable)  /* Common features */
+#define EXPR_SPANTOKENSIZE      offsetof(Expr,pLeft)   /* Fewer features */
+#define EXPR_TOKENONLYSIZE      offsetof(Expr,span)    /* Smallest possible */
+
+/*
+** Flags passed to the sqlite3ExprDup() function. See the header comment 
+** above sqlite3ExprDup() for details.
+*/
+#define EXPRDUP_REDUCE         0x0001  /* Used reduced-size Expr nodes */
+#define EXPRDUP_SPAN           0x0002  /* Make a copy of Expr.span */
 
 /*
 ** A list of expressions.  Each expression may optionally have a
@@ -2237,7 +2349,7 @@ void sqlite3SetString(char **, sqlite3*, const char*, ...);
 void sqlite3ErrorMsg(Parse*, const char*, ...);
 void sqlite3ErrorClear(Parse*);
 void sqlite3Dequote(char*);
-void sqlite3DequoteExpr(sqlite3*, Expr*);
+void sqlite3DequoteExpr(Expr*);
 int sqlite3KeywordCode(const unsigned char*, int);
 int sqlite3RunParser(Parse*, const char*, char **);
 void sqlite3FinishCoding(Parse*);
@@ -2379,12 +2491,12 @@ void sqlite3GenerateConstraintChecks(Parse*,Table*,int,int,
 void sqlite3CompleteInsertion(Parse*, Table*, int, int, int*, int, int, int);
 int sqlite3OpenTableAndIndices(Parse*, Table*, int, int);
 void sqlite3BeginWriteOperation(Parse*, int, int);
-Expr *sqlite3ExprDup(sqlite3*,Expr*);
-void sqlite3TokenCopy(sqlite3*,Token*, Token*);
-ExprList *sqlite3ExprListDup(sqlite3*,ExprList*);
-SrcList *sqlite3SrcListDup(sqlite3*,SrcList*);
+Expr *sqlite3ExprDup(sqlite3*,Expr*,int);
+void sqlite3TokenCopy(sqlite3*,Token*,const Token*);
+ExprList *sqlite3ExprListDup(sqlite3*,ExprList*,int);
+SrcList *sqlite3SrcListDup(sqlite3*,SrcList*,int);
 IdList *sqlite3IdListDup(sqlite3*,IdList*);
-Select *sqlite3SelectDup(sqlite3*,Select*);
+Select *sqlite3SelectDup(sqlite3*,Select*,int);
 void sqlite3FuncDefInsert(FuncDefHash*, FuncDef*);
 FuncDef *sqlite3FindFunction(sqlite3*,const char*,int,int,u8,int);
 void sqlite3RegisterBuiltinFunctions(sqlite3*);
@@ -2411,9 +2523,10 @@ void sqlite3MaterializeView(Parse*, Table*, Expr*, int);
   void sqlite3FinishTrigger(Parse*, TriggerStep*, Token*);
   void sqlite3DropTrigger(Parse*, SrcList*, int);
   void sqlite3DropTriggerPtr(Parse*, Trigger*);
-  int sqlite3TriggersExist(Table*, int, ExprList*);
-  int sqlite3CodeRowTrigger(Parse*, int, ExprList*, int, Table *, int, int, 
-                           int, int, u32*, u32*);
+  Trigger *sqlite3TriggersExist(Parse *, Table*, int, ExprList*, int *pMask);
+  Trigger *sqlite3TriggerList(Parse *, Table *);
+  int sqlite3CodeRowTrigger(Parse*, Trigger *, int, ExprList*, int, Table *,
+                            int, int, int, int, u32*, u32*);
   void sqliteViewTriggers(Parse*, Table*, Expr*, int, ExprList*);
   void sqlite3DeleteTriggerStep(sqlite3*, TriggerStep*);
   TriggerStep *sqlite3TriggerSelectStep(sqlite3*,Select*);
@@ -2428,7 +2541,8 @@ void sqlite3MaterializeView(Parse*, Table*, Expr*, int);
 # define sqlite3DeleteTrigger(A,B)
 # define sqlite3DropTriggerPtr(A,B)
 # define sqlite3UnlinkAndDeleteTrigger(A,B,C)
-# define sqlite3CodeRowTrigger(A,B,C,D,E,F,G,H,I,J,K) 0
+# define sqlite3CodeRowTrigger(A,B,C,D,E,F,G,H,I,J,K,L) 0
+# define sqlite3TriggerList(X, Y) 0
 #endif
 
 int sqlite3JoinType(Parse*, Token*, Token*, Token*);
@@ -2460,7 +2574,7 @@ int sqlite3GetInt32(const char *, int*);
 int sqlite3FitsIn64Bits(const char *, int);
 int sqlite3Utf16ByteLen(const void *pData, int nChar);
 int sqlite3Utf8CharLen(const char *pData, int nByte);
-int sqlite3Utf8Read(const u8*, const u8*, const u8**);
+int sqlite3Utf8Read(const u8*, const u8**);
 
 /*
 ** Routines to read and write variable-length integers.  These used to
@@ -2685,6 +2799,17 @@ int sqlite3IsMemJournal(sqlite3_file *);
 
 u32 sqlite3Get4byte(const u8*);
 void sqlite3Put4byte(u8*, u32);
+
+#ifdef SQLITE_ENABLE_UNLOCK_NOTIFY
+  void sqlite3ConnectionBlocked(sqlite3 *, sqlite3 *);
+  void sqlite3ConnectionUnlocked(sqlite3 *db);
+  void sqlite3ConnectionClosed(sqlite3 *db);
+#else
+  #define sqlite3ConnectionBlocked(x,y)
+  #define sqlite3ConnectionUnlocked(x)
+  #define sqlite3ConnectionClosed(x)
+#endif
+
 
 #ifdef SQLITE_SSE
 #include "sseInt.h"

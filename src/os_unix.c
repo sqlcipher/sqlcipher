@@ -43,7 +43,7 @@
 **   *  Definitions of sqlite3_vfs objects for all locking methods
 **      plus implementations of sqlite3_os_init() and sqlite3_os_end().
 **
-** $Id: os_unix.c,v 1.241 2009/02/09 17:34:07 drh Exp $
+** $Id: os_unix.c,v 1.250 2009/04/07 05:35:04 chw Exp $
 */
 #include "sqliteInt.h"
 #if SQLITE_OS_UNIX              /* This file is used on unix only */
@@ -1454,11 +1454,12 @@ static int unixUnlock(sqlite3_file *id, int locktype){
       if( IS_LOCK_ERROR(rc) ){
         pFile->lastErrno = tErrno;
       }
-			goto end_unlock;
+      goto end_unlock;
     }
   }
   if( locktype==NO_LOCK ){
     struct unixOpenCnt *pOpen;
+    int rc2 = SQLITE_OK;
 
     /* Decrement the shared lock counter.  Release the lock using an
     ** OS call only when all threads in this same process have released
@@ -1480,8 +1481,8 @@ static int unixUnlock(sqlite3_file *id, int locktype){
         if( IS_LOCK_ERROR(rc) ){
           pFile->lastErrno = tErrno;
         }
-        pLock->cnt = 1;
-				goto end_unlock;
+        pLock->locktype = NO_LOCK;
+        pFile->locktype = NO_LOCK;
       }
     }
 
@@ -1489,30 +1490,31 @@ static int unixUnlock(sqlite3_file *id, int locktype){
     ** count reaches zero, close any other file descriptors whose close
     ** was deferred because of outstanding locks.
     */
-    if( rc==SQLITE_OK ){
-      pOpen = pFile->pOpen;
-      pOpen->nLock--;
-      assert( pOpen->nLock>=0 );
-      if( pOpen->nLock==0 && pOpen->nPending>0 ){
-        int i;
-        for(i=0; i<pOpen->nPending; i++){
-          /* close pending fds, but if closing fails don't free the array
-          ** assign -1 to the successfully closed descriptors and record the
-          ** error.  The next attempt to unlock will try again. */
-          if( pOpen->aPending[i] < 0 ) continue;
-          if( close(pOpen->aPending[i]) ){
-            pFile->lastErrno = errno;
-            rc = SQLITE_IOERR_CLOSE;
-          }else{
-            pOpen->aPending[i] = -1;
-          }
-        }
-        if( rc==SQLITE_OK ){
-          sqlite3_free(pOpen->aPending);
-          pOpen->nPending = 0;
-          pOpen->aPending = 0;
+    pOpen = pFile->pOpen;
+    pOpen->nLock--;
+    assert( pOpen->nLock>=0 );
+    if( pOpen->nLock==0 && pOpen->nPending>0 ){
+      int i;
+      for(i=0; i<pOpen->nPending; i++){
+        /* close pending fds, but if closing fails don't free the array
+        ** assign -1 to the successfully closed descriptors and record the
+        ** error.  The next attempt to unlock will try again. */
+        if( pOpen->aPending[i] < 0 ) continue;
+        if( close(pOpen->aPending[i]) ){
+          pFile->lastErrno = errno;
+          rc2 = SQLITE_IOERR_CLOSE;
+        }else{
+          pOpen->aPending[i] = -1;
         }
       }
+      if( rc2==SQLITE_OK ){
+        sqlite3_free(pOpen->aPending);
+        pOpen->nPending = 0;
+        pOpen->aPending = 0;
+      }
+    }
+    if( rc==SQLITE_OK ){
+      rc = rc2;
     }
   }
 	
@@ -2211,8 +2213,8 @@ static int semClose(sqlite3_file *id) {
     unixEnterMutex();
     releaseLockInfo(pFile->pLock);
     releaseOpenCnt(pFile->pOpen);
-    closeUnixFile(id);
     unixLeaveMutex();
+    closeUnixFile(id);
   }
   return SQLITE_OK;
 }
@@ -2824,10 +2826,12 @@ int sqlite3_fullsync_count = 0;
 #endif
 
 /*
-** Use the fdatasync() API only if the HAVE_FDATASYNC macro is defined.
-** Otherwise use fsync() in its place.
+** We do not trust systems to provide a working fdatasync().  Some do.
+** Others do no.  To be safe, we will stick with the (slower) fsync().
+** If you know that your system does support fdatasync() correctly,
+** then simply compile with -Dfdatasync=fdatasync
 */
-#ifndef HAVE_FDATASYNC
+#if !defined(fdatasync) && !defined(__linux__)
 # define fdatasync fsync
 #endif
 
@@ -2853,6 +2857,19 @@ int sqlite3_fullsync_count = 0;
 ** You are strongly advised *not* to deploy with SQLITE_NO_SYNC
 ** enabled, however, since with SQLITE_NO_SYNC enabled, an OS crash
 ** or power failure will likely corrupt the database file.
+**
+** SQLite sets the dataOnly flag if the size of the file is unchanged.
+** The idea behind dataOnly is that it should only write the file content
+** to disk, not the inode.  We only set dataOnly if the file size is 
+** unchanged since the file size is part of the inode.  However, 
+** Ted Ts'o tells us that fdatasync() will also write the inode if the
+** file size has changed.  The only real difference between fdatasync()
+** and fsync(), Ted tells us, is that fdatasync() will not flush the
+** inode if the mtime or owner or other inode attributes have changed.
+** We only care about the file size, not the other file attributes, so
+** as far as SQLite is concerned, an fdatasync() is always adequate.
+** So, we always use fdatasync() if it is available, regardless of
+** the value of the dataOnly flag.
 */
 static int full_fsync(int fd, int fullSync, int dataOnly){
   int rc;
@@ -2869,6 +2886,7 @@ static int full_fsync(int fd, int fullSync, int dataOnly){
   UNUSED_PARAMETER(dataOnly);
 #else
   UNUSED_PARAMETER(fullSync);
+  UNUSED_PARAMETER(dataOnly);
 #endif
 
   /* Record the number of times that we do a normal fsync() and 
@@ -2902,16 +2920,12 @@ static int full_fsync(int fd, int fullSync, int dataOnly){
   if( rc ) rc = fsync(fd);
 
 #else 
-  if( dataOnly ){
-    rc = fdatasync(fd);
+  rc = fdatasync(fd);
 #if OS_VXWORKS
-    if( rc==-1 && errno==ENOTSUP ){
-      rc = fsync(fd);
-    }
-#endif
-  }else{
+  if( rc==-1 && errno==ENOTSUP ){
     rc = fsync(fd);
   }
+#endif /* OS_VXWORKS */
 #endif /* ifdef SQLITE_NO_SYNC elif HAVE_FULLFSYNC */
 
   if( OS_VXWORKS && rc!= -1 ){
@@ -3193,7 +3207,7 @@ IOMETHODS(
   dotlockCheckReservedLock  /* xCheckReservedLock method */
 )
 
-#if SQLITE_ENABLE_LOCKING_STYLE
+#if SQLITE_ENABLE_LOCKING_STYLE && !OS_VXWORKS
 IOMETHODS(
   flockIoFinder,            /* Finder function name */
   flockIoMethods,           /* sqlite3_io_methods object name */
@@ -3316,6 +3330,44 @@ static const sqlite3_io_methods *(*const autolockIoFinder)(const char*,int)
         = autolockIoFinderImpl;
 
 #endif /* defined(__APPLE__) && SQLITE_ENABLE_LOCKING_STYLE */
+
+#if OS_VXWORKS && SQLITE_ENABLE_LOCKING_STYLE
+/* 
+** This "finder" function attempts to determine the best locking strategy 
+** for the database file "filePath".  It then returns the sqlite3_io_methods
+** object that implements that strategy.
+**
+** This is for VXWorks only.
+*/
+static const sqlite3_io_methods *autolockIoFinderImpl(
+  const char *filePath,    /* name of the database file */
+  int fd                   /* file descriptor open on the database file */
+){
+  struct flock lockInfo;
+
+  if( !filePath ){
+    /* If filePath==NULL that means we are dealing with a transient file
+    ** that does not need to be locked. */
+    return &nolockIoMethods;
+  }
+
+  /* Test if fcntl() is supported and use POSIX style locks.
+  ** Otherwise fall back to the named semaphore method.
+  */
+  lockInfo.l_len = 1;
+  lockInfo.l_start = 0;
+  lockInfo.l_whence = SEEK_SET;
+  lockInfo.l_type = F_RDLCK;
+  if( fcntl(fd, F_GETLK, &lockInfo)!=-1 ) {
+    return &posixIoMethods;
+  }else{
+    return &semIoMethods;
+  }
+}
+static const sqlite3_io_methods *(*const autolockIoFinder)(const char*,int)
+        = autolockIoFinderImpl;
+
+#endif /* OS_VXWORKS && SQLITE_ENABLE_LOCKING_STYLE */
 
 /*
 ** An abstract type for a pointer to a IO method finder function:
@@ -3599,7 +3651,7 @@ static int unixOpen(
   int flags,                   /* Input flags to control the opening */
   int *pOutFlags               /* Output flags returned to SQLite core */
 ){
-  int fd = 0;                    /* File descriptor returned by open() */
+  int fd = -1;                    /* File descriptor returned by open() */
   int dirfd = -1;                /* Directory file descriptor */
   int openFlags = 0;             /* Flags to pass to open() */
   int eType = flags&0xFFFFFF00;  /* Type of file to open */
@@ -3702,7 +3754,7 @@ static int unixOpen(
   }
 #endif
 
-  assert(fd!=0);
+  assert( fd>=0 );
   if( isOpenDirectory ){
     rc = openDirectory(zPath, &dirfd);
     if( rc!=SQLITE_OK ){
@@ -3984,16 +4036,18 @@ static int unixSleep(sqlite3_vfs *NotUsed, int microseconds){
   sp.tv_sec = microseconds / 1000000;
   sp.tv_nsec = (microseconds % 1000000) * 1000;
   nanosleep(&sp, NULL);
+  UNUSED_PARAMETER(NotUsed);
   return microseconds;
 #elif defined(HAVE_USLEEP) && HAVE_USLEEP
   usleep(microseconds);
+  UNUSED_PARAMETER(NotUsed);
   return microseconds;
 #else
   int seconds = (microseconds+999999)/1000000;
   sleep(seconds);
+  UNUSED_PARAMETER(NotUsed);
   return seconds*1000000;
 #endif
-  UNUSED_PARAMETER(NotUsed);
 }
 
 /*
@@ -5045,7 +5099,7 @@ int sqlite3_os_init(void){
   ** array cannot be const.
   */
   static sqlite3_vfs aVfs[] = {
-#if SQLITE_ENABLE_LOCKING_STYLE && defined(__APPLE__)
+#if SQLITE_ENABLE_LOCKING_STYLE && (OS_VXWORKS || defined(__APPLE__))
     UNIXVFS("unix",          autolockIoFinder ),
 #else
     UNIXVFS("unix",          posixIoFinder ),
@@ -5057,7 +5111,9 @@ int sqlite3_os_init(void){
 #endif
 #if SQLITE_ENABLE_LOCKING_STYLE
     UNIXVFS("unix-posix",    posixIoFinder ),
+#if !OS_VXWORKS
     UNIXVFS("unix-flock",    flockIoFinder ),
+#endif
 #endif
 #if SQLITE_ENABLE_LOCKING_STYLE && defined(__APPLE__)
     UNIXVFS("unix-afp",      afpIoFinder ),
