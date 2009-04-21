@@ -12,7 +12,7 @@
 **
 ** This file contains code used to implement incremental BLOB I/O.
 **
-** $Id: vdbeblob.c,v 1.26 2008/10/02 14:49:02 danielk1977 Exp $
+** $Id: vdbeblob.c,v 1.31 2009/03/24 15:08:10 drh Exp $
 */
 
 #include "sqliteInt.h"
@@ -70,17 +70,15 @@ int sqlite3_blob_open(
     /* One of the following two instructions is replaced by an
     ** OP_Noop before exection.
     */
-    {OP_SetNumColumns, 0, 0, 0},   /* 2: Num cols for cursor */
-    {OP_OpenRead, 0, 0, 0},        /* 3: Open cursor 0 for reading */
-    {OP_SetNumColumns, 0, 0, 0},   /* 4: Num cols for cursor */
-    {OP_OpenWrite, 0, 0, 0},       /* 5: Open cursor 0 for read/write */
+    {OP_OpenRead, 0, 0, 0},        /* 2: Open cursor 0 for reading */
+    {OP_OpenWrite, 0, 0, 0},       /* 3: Open cursor 0 for read/write */
 
-    {OP_Variable, 1, 1, 0},        /* 6: Push the rowid to the stack */
-    {OP_NotExists, 0, 10, 1},      /* 7: Seek the cursor */
-    {OP_Column, 0, 0, 1},          /* 8  */
-    {OP_ResultRow, 1, 0, 0},       /* 9  */
-    {OP_Close, 0, 0, 0},           /* 10  */
-    {OP_Halt, 0, 0, 0},            /* 11 */
+    {OP_Variable, 1, 1, 1},        /* 4: Push the rowid to the stack */
+    {OP_NotExists, 0, 8, 1},       /* 5: Seek the cursor */
+    {OP_Column, 0, 0, 1},          /* 6  */
+    {OP_ResultRow, 1, 0, 0},       /* 7  */
+    {OP_Close, 0, 0, 0},           /* 8  */
+    {OP_Halt, 0, 0, 0},            /* 9 */
   };
 
   Vdbe *v = 0;
@@ -178,19 +176,19 @@ int sqlite3_blob_open(
       /* Remove either the OP_OpenWrite or OpenRead. Set the P2 
       ** parameter of the other to pTab->tnum. 
       */
-      sqlite3VdbeChangeToNoop(v, (flags ? 3 : 5), 1);
-      sqlite3VdbeChangeP2(v, (flags ? 5 : 3), pTab->tnum);
-      sqlite3VdbeChangeP3(v, (flags ? 5 : 3), iDb);
+      sqlite3VdbeChangeToNoop(v, (flags ? 2 : 3), 1);
+      sqlite3VdbeChangeP2(v, (flags ? 3 : 2), pTab->tnum);
+      sqlite3VdbeChangeP3(v, (flags ? 3 : 2), iDb);
 
-      /* Configure the OP_SetNumColumns. Configure the cursor to
+      /* Configure the number of columns. Configure the cursor to
       ** think that the table has one more column than it really
       ** does. An OP_Column to retrieve this imaginary column will
       ** always return an SQL NULL. This is useful because it means
       ** we can invoke OP_Column to fill in the vdbe cursors type 
       ** and offset cache without causing any IO.
       */
-      sqlite3VdbeChangeP2(v, flags ? 4 : 2, pTab->nCol+1);
-      sqlite3VdbeChangeP2(v, 8, pTab->nCol);
+      sqlite3VdbeChangeP4(v, flags ? 3 : 2, SQLITE_INT_TO_PTR(pTab->nCol+1), P4_INT32);
+      sqlite3VdbeChangeP2(v, 6, pTab->nCol);
       if( !db->mallocFailed ){
         sqlite3VdbeMakeReady(v, 1, 1, 1, 0);
       }
@@ -250,8 +248,8 @@ int sqlite3_blob_open(
 
 blob_open_out:
   zErr[sizeof(zErr)-1] = '\0';
-  if( rc!=SQLITE_OK || db->mallocFailed ){
-    sqlite3_finalize((sqlite3_stmt *)v);
+  if( v && (rc!=SQLITE_OK || db->mallocFailed) ){
+    sqlite3VdbeFinalize(v);
   }
   sqlite3Error(db, rc, (rc==SQLITE_OK?0:zErr));
   rc = sqlite3ApiExit(db, rc);
@@ -266,9 +264,13 @@ blob_open_out:
 int sqlite3_blob_close(sqlite3_blob *pBlob){
   Incrblob *p = (Incrblob *)pBlob;
   int rc;
+  sqlite3 *db;
 
+  db = p->db;
+  sqlite3_mutex_enter(db->mutex);
   rc = sqlite3_finalize(p->pStmt);
-  sqlite3DbFree(p->db, p);
+  sqlite3DbFree(db, p);
+  sqlite3_mutex_leave(db->mutex);
   return rc;
 }
 

@@ -11,7 +11,7 @@
 # This file implements some common TCL routines used for regression
 # testing the SQLite library
 #
-# $Id: tester.tcl,v 1.139 2009/02/05 16:31:46 drh Exp $
+# $Id: tester.tcl,v 1.143 2009/04/09 01:23:49 drh Exp $
 
 #
 # What for user input before continuing.  This gives an opportunity
@@ -132,6 +132,7 @@ if {![info exists nTest]} {
   sqlite3_shutdown 
   install_malloc_faultsim 1 
   sqlite3_initialize
+  autoinstall_test_functions
   if {[info exists tester_do_binarylog]} {
     sqlite3_instvfs binarylog -default binarylog ostrace.bin
     sqlite3_instvfs marker binarylog "$argv0 $argv"
@@ -290,6 +291,7 @@ proc finalize_testing {} {
   if {$nErr>0} {
     puts "Failures on these tests: $::failList"
   }
+  run_thread_tests 1
   if {[llength $omitList]>0} {
     puts "Omitted test cases:"
     set prec {}
@@ -643,7 +645,7 @@ proc do_ioerr_test {testname args} {
   set ::go 1
   #reset_prng_state
   save_prng_state
-  for {set n $::ioerropts(-start)} {$::go && $n<200} {incr n} {
+  for {set n $::ioerropts(-start)} {$::go} {incr n} {
     set ::TN $n
     incr ::ioerropts(-count) -1
     if {$::ioerropts(-count)<0} break
@@ -895,16 +897,16 @@ proc memdebug_log_sql {{filename mallocs.sql}} {
 
   set database temp
 
-  set tbl "CREATE TABLE ${database}.malloc(nCall, nByte"
-  for {set ii 1} {$ii <= $nFrame} {incr ii} {
-    append tbl ", f${ii}"
-  }
-  append tbl ");\n"
+  set tbl "CREATE TABLE ${database}.malloc(zTest, nCall, nByte, lStack);"
 
   set sql ""
   foreach e $data {
-    append sql "INSERT INTO ${database}.malloc VALUES([join $e ,]);\n"
-    foreach f [lrange $e 2 end] {
+    set nCall [lindex $e 0]
+    set nByte [lindex $e 1]
+    set lStack [lrange $e 2 end]
+    append sql "INSERT INTO ${database}.malloc VALUES"
+    append sql "('test', $nCall, $nByte, '$lStack');\n"
+    foreach f $lStack {
       set frames($f) 1
     }
   }
@@ -959,3 +961,5 @@ proc copy_file {from to} {
 # If the library is compiled with the SQLITE_DEFAULT_AUTOVACUUM macro set
 # to non-zero, then set the global variable $AUTOVACUUM to 1.
 set AUTOVACUUM $sqlite_options(default_autovacuum)
+
+source $testdir/thread_common.tcl

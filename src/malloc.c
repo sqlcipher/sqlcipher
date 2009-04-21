@@ -12,7 +12,7 @@
 **
 ** Memory allocation functions used throughout sqlite.
 **
-** $Id: malloc.c,v 1.56 2009/02/17 18:37:29 drh Exp $
+** $Id: malloc.c,v 1.61 2009/03/24 15:08:10 drh Exp $
 */
 #include "sqliteInt.h"
 #include <stdarg.h>
@@ -121,7 +121,7 @@ int sqlite3MallocInit(void){
   if( sqlite3GlobalConfig.pScratch && sqlite3GlobalConfig.szScratch>=100
       && sqlite3GlobalConfig.nScratch>=0 ){
     int i;
-    sqlite3GlobalConfig.szScratch = (sqlite3GlobalConfig.szScratch - 4) & ~7;
+    sqlite3GlobalConfig.szScratch = ROUNDDOWN8(sqlite3GlobalConfig.szScratch-4);
     mem0.aScratchFree = (u32*)&((char*)sqlite3GlobalConfig.pScratch)
                   [sqlite3GlobalConfig.szScratch*sqlite3GlobalConfig.nScratch];
     for(i=0; i<sqlite3GlobalConfig.nScratch; i++){ mem0.aScratchFree[i] = i; }
@@ -134,7 +134,7 @@ int sqlite3MallocInit(void){
       && sqlite3GlobalConfig.nPage>=1 ){
     int i;
     int overhead;
-    int sz = sqlite3GlobalConfig.szPage & ~7;
+    int sz = ROUNDDOWN8(sqlite3GlobalConfig.szPage);
     int n = sqlite3GlobalConfig.nPage;
     overhead = (4*n + sz - 1)/sz;
     sqlite3GlobalConfig.nPage -= overhead;
@@ -408,95 +408,6 @@ void sqlite3ScratchFree(void *p){
 }
 
 /*
-** Allocate memory to be used by the page cache.  Make use of the
-** memory buffer provided by SQLITE_CONFIG_PAGECACHE if there is one
-** and that memory is of the right size and is not completely
-** consumed.  Otherwise, failover to sqlite3Malloc().
-*/
-#if 0
-void *sqlite3PageMalloc(int n){
-  void *p;
-  assert( n>0 );
-  assert( (n & (n-1))==0 );
-  assert( n>=512 && n<=32768 );
-
-  if( sqlite3GlobalConfig.szPage<n ){
-    goto page_overflow;
-  }else{  
-    sqlite3_mutex_enter(mem0.mutex);
-    if( mem0.nPageFree==0 ){
-      sqlite3_mutex_leave(mem0.mutex);
-      goto page_overflow;
-    }else{
-      int i;
-      i = mem0.aPageFree[--mem0.nPageFree];
-      sqlite3_mutex_leave(mem0.mutex);
-      i *= sqlite3GlobalConfig.szPage;
-      sqlite3StatusSet(SQLITE_STATUS_PAGECACHE_SIZE, n);
-      sqlite3StatusAdd(SQLITE_STATUS_PAGECACHE_USED, 1);
-      p = (void*)&((char*)sqlite3GlobalConfig.pPage)[i];
-    }
-  }
-  return p;
-
-page_overflow:
-  if( sqlite3GlobalConfig.bMemstat ){
-    sqlite3_mutex_enter(mem0.mutex);
-    sqlite3StatusSet(SQLITE_STATUS_PAGECACHE_SIZE, n);
-    n = mallocWithAlarm(n, &p);
-    if( p ) sqlite3StatusAdd(SQLITE_STATUS_PAGECACHE_OVERFLOW, n);
-    sqlite3_mutex_leave(mem0.mutex);
-  }else{
-    p = sqlite3GlobalConfig.m.xMalloc(n);
-  }
-  return p;    
-}
-void sqlite3PageFree(void *p){
-  if( p ){
-    if( sqlite3GlobalConfig.pPage==0
-           || p<sqlite3GlobalConfig.pPage
-           || p>=(void*)mem0.aPageFree ){
-      /* In this case, the page allocation was obtained from a regular 
-      ** call to sqlite3_mem_methods.xMalloc() (a page-cache-memory 
-      ** "overflow"). Free the block with sqlite3_mem_methods.xFree().
-      */
-      if( sqlite3GlobalConfig.bMemstat ){
-        int iSize = sqlite3MallocSize(p);
-        sqlite3_mutex_enter(mem0.mutex);
-        sqlite3StatusAdd(SQLITE_STATUS_PAGECACHE_OVERFLOW, -iSize);
-        sqlite3StatusAdd(SQLITE_STATUS_MEMORY_USED, -iSize);
-        sqlite3GlobalConfig.m.xFree(p);
-        sqlite3_mutex_leave(mem0.mutex);
-      }else{
-        sqlite3GlobalConfig.m.xFree(p);
-      }
-    }else{
-      /* The page allocation was allocated from the sqlite3GlobalConfig.pPage
-      ** buffer. In this case all that is add the index of the page in
-      ** the sqlite3GlobalConfig.pPage array to the set of free indexes stored
-      ** in the mem0.aPageFree[] array.
-      */
-      int i;
-      i = (u8 *)p - (u8 *)sqlite3GlobalConfig.pPage;
-      i /= sqlite3GlobalConfig.szPage;
-      assert( i>=0 && i<sqlite3GlobalConfig.nPage );
-      sqlite3_mutex_enter(mem0.mutex);
-      assert( mem0.nPageFree<sqlite3GlobalConfig.nPage );
-      mem0.aPageFree[mem0.nPageFree++] = i;
-      sqlite3StatusAdd(SQLITE_STATUS_PAGECACHE_USED, -1);
-      sqlite3_mutex_leave(mem0.mutex);
-#if !defined(NDEBUG) && 0
-      /* Assert that a duplicate was not just inserted into aPageFree[]. */
-      for(i=0; i<mem0.nPageFree-1; i++){
-        assert( mem0.aPageFree[i]!=mem0.aPageFree[mem0.nPageFree-1] );
-      }
-#endif
-    }
-  }
-}
-#endif
-
-/*
 ** TRUE if p is a lookaside memory allocation from db
 */
 #ifndef SQLITE_OMIT_LOOKASIDE
@@ -515,6 +426,7 @@ int sqlite3MallocSize(void *p){
   return sqlite3GlobalConfig.m.xSize(p);
 }
 int sqlite3DbMallocSize(sqlite3 *db, void *p){
+  assert( db==0 || sqlite3_mutex_held(db->mutex) );
   if( p==0 ){
     return 0;
   }else if( isLookaside(db, p) ){
@@ -544,6 +456,7 @@ void sqlite3_free(void *p){
 ** connection.
 */
 void sqlite3DbFree(sqlite3 *db, void *p){
+  assert( db==0 || sqlite3_mutex_held(db->mutex) );
   if( isLookaside(db, p) ){
     LookasideSlot *pBuf = (LookasideSlot*)p;
     pBuf->pNext = db->lookaside.pFree;
@@ -652,6 +565,7 @@ void *sqlite3DbMallocZero(sqlite3 *db, int n){
 */
 void *sqlite3DbMallocRaw(sqlite3 *db, int n){
   void *p;
+  assert( db==0 || sqlite3_mutex_held(db->mutex) );
 #ifndef SQLITE_OMIT_LOOKASIDE
   if( db ){
     LookasideSlot *pBuf;
@@ -686,6 +600,8 @@ void *sqlite3DbMallocRaw(sqlite3 *db, int n){
 */
 void *sqlite3DbRealloc(sqlite3 *db, void *p, int n){
   void *pNew = 0;
+  assert( db!=0 );
+  assert( sqlite3_mutex_held(db->mutex) );
   if( db->mallocFailed==0 ){
     if( p==0 ){
       return sqlite3DbMallocRaw(db, n);
@@ -780,10 +696,10 @@ void sqlite3SetString(char **pz, sqlite3 *db, const char *zFormat, ...){
 ** sqlite3_realloc.
 **
 ** The returned value is normally a copy of the second argument to this
-** function. However, if a malloc() failure has occured since the previous
+** function. However, if a malloc() failure has occurred since the previous
 ** invocation SQLITE_NOMEM is returned instead. 
 **
-** If the first argument, db, is not NULL and a malloc() error has occured,
+** If the first argument, db, is not NULL and a malloc() error has occurred,
 ** then the connection error-code (the value returned by sqlite3_errcode())
 ** is set to SQLITE_NOMEM.
 */

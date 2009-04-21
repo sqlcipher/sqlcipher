@@ -22,7 +22,7 @@
 **     COMMIT
 **     ROLLBACK
 **
-** $Id: build.c,v 1.518 2009/02/13 03:43:32 drh Exp $
+** $Id: build.c,v 1.528 2009/04/08 13:51:51 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -178,19 +178,6 @@ void sqlite3FinishCoding(Parse *pParse){
       codeTableLocks(pParse);
       sqlite3VdbeAddOp2(v, OP_Goto, 0, pParse->cookieGoto);
     }
-
-#ifndef SQLITE_OMIT_TRACE
-    if( !db->init.busy ){
-      /* Change the P4 argument of the first opcode (which will always be
-      ** an OP_Trace) to be the complete text of the current SQL statement.
-      */
-      VdbeOp *pOp = sqlite3VdbeGetOp(v, 0);
-      if( pOp && pOp->opcode==OP_Trace ){
-        sqlite3VdbeChangeP4(v, 0, pParse->zSql,
-                            (int)(pParse->zTail - pParse->zSql));
-      }
-    }
-#endif /* SQLITE_OMIT_TRACE */
   }
 
 
@@ -202,8 +189,8 @@ void sqlite3FinishCoding(Parse *pParse){
     sqlite3VdbeTrace(v, trace);
 #endif
     assert( pParse->disableColCache==0 );  /* Disables and re-enables match */
-    sqlite3VdbeMakeReady(v, pParse->nVar, pParse->nMem+3,
-                         pParse->nTab+3, pParse->explain);
+    sqlite3VdbeMakeReady(v, pParse->nVar, pParse->nMem,
+                         pParse->nTab, pParse->explain);
     pParse->rc = SQLITE_DONE;
     pParse->colNamesSet = 0;
   }else if( pParse->rc==SQLITE_OK ){
@@ -352,7 +339,7 @@ Index *sqlite3FindIndex(sqlite3 *db, const char *zName, const char *zDb){
 ** Reclaim the memory used by an index
 */
 static void freeIndex(Index *p){
-  sqlite3 *db = p->pTable->db;
+  sqlite3 *db = p->pTable->dbMem;
   sqlite3DbFree(db, p->zColAff);
   sqlite3DbFree(db, p);
 }
@@ -480,7 +467,7 @@ void sqlite3CommitInternalChanges(sqlite3 *db){
 static void sqliteResetColumnNames(Table *pTable){
   int i;
   Column *pCol;
-  sqlite3 *db = pTable->db;
+  sqlite3 *db = pTable->dbMem;
   assert( pTable!=0 );
   if( (pCol = pTable->aCol)!=0 ){
     for(i=0; i<pTable->nCol; i++, pCol++){
@@ -511,7 +498,7 @@ void sqlite3DeleteTable(Table *pTable){
   sqlite3 *db;
 
   if( pTable==0 ) return;
-  db = pTable->db;
+  db = pTable->dbMem;
 
   /* Do not delete the table until the reference count reaches zero. */
   pTable->nRef--;
@@ -616,8 +603,11 @@ char *sqlite3NameFromToken(sqlite3 *db, Token *pName){
 void sqlite3OpenMasterTable(Parse *p, int iDb){
   Vdbe *v = sqlite3GetVdbe(p);
   sqlite3TableLock(p, iDb, MASTER_ROOT, 1, SCHEMA_TABLE(iDb));
-  sqlite3VdbeAddOp2(v, OP_SetNumColumns, 0, 5);/* sqlite_master has 5 columns */
   sqlite3VdbeAddOp3(v, OP_OpenWrite, 0, MASTER_ROOT, iDb);
+  sqlite3VdbeChangeP4(v, -1, (char *)5, P4_INT32);  /* 5 column table */
+  if( p->nTab==0 ){
+    p->nTab = 1;
+  }
 }
 
 /*
@@ -846,7 +836,7 @@ void sqlite3StartTable(
   pTable->iPKey = -1;
   pTable->pSchema = db->aDb[iDb].pSchema;
   pTable->nRef = 1;
-  pTable->db = db;
+  pTable->dbMem = db->lookaside.bEnabled ? db : 0;
   if( pParse->pNewTable ) sqlite3DeleteTable(pParse->pNewTable);
   pParse->pNewTable = pTable;
 
@@ -901,9 +891,10 @@ void sqlite3StartTable(
     ** The record created does not contain anything yet.  It will be replaced
     ** by the real entry in code generated at sqlite3EndTable().
     **
-    ** The rowid for the new entry is left on the top of the stack.
-    ** The rowid value is needed by the code that sqlite3EndTable will
-    ** generate.
+    ** The rowid for the new entry is left in register pParse->regRowid.
+    ** The root page number of the new table is left in reg pParse->regRoot.
+    ** The rowid and root page number values are needed by the code that
+    ** sqlite3EndTable will generate.
     */
 #if !defined(SQLITE_OMIT_VIEW) || !defined(SQLITE_OMIT_VIRTUALTABLE)
     if( isView || isVirtual ){
@@ -1116,12 +1107,12 @@ void sqlite3AddDefaultValue(Parse *pParse, Expr *pExpr){
       sqlite3ErrorMsg(pParse, "default value of column [%s] is not constant",
           pCol->zName);
     }else{
-      Expr *pCopy;
+      /* A copy of pExpr is used instead of the original, as pExpr contains
+      ** tokens that point to volatile memory. The 'span' of the expression
+      ** is required by pragma table_info.
+      */
       sqlite3ExprDelete(db, pCol->pDflt);
-      pCol->pDflt = pCopy = sqlite3ExprDup(db, pExpr);
-      if( pCopy ){
-        sqlite3TokenCopy(db, &pCopy->span, &pExpr->span);
-      }
+      pCol->pDflt = sqlite3ExprDup(db, pExpr, EXPRDUP_REDUCE|EXPRDUP_SPAN);
     }
   }
   sqlite3ExprDelete(db, pExpr);
@@ -1217,7 +1208,7 @@ void sqlite3AddCheckConstraint(
     ** to malloced space and not the (ephemeral) text of the CREATE TABLE
     ** statement */
     pTab->pCheck = sqlite3ExprAnd(db, pTab->pCheck, 
-                                  sqlite3ExprDup(db, pCheckExpr));
+                                  sqlite3ExprDup(db, pCheckExpr, 0));
   }
 #endif
   sqlite3ExprDelete(db, pCheckExpr);
@@ -1340,18 +1331,100 @@ static int identLength(const char *z){
 }
 
 /*
-** Write an identifier onto the end of the given string.  Add
-** quote characters as needed.
+** This function is a wrapper around sqlite3GetToken() used by 
+** isValidDimension(). This function differs from sqlite3GetToken() in
+** that:
+**
+**   * Whitespace is ignored, and
+**   * The output variable *peToken is set to 0 if the end of the
+**     nul-terminated input string is reached.
 */
-static void identPut(char *z, int *pIdx, char *zSignedIdent){
+static int getTokenNoSpace(unsigned char *z, int *peToken){
+  int n = 0;
+  while( sqlite3Isspace(z[n]) ) n++;
+  if( !z[n] ){
+    *peToken = 0;
+    return 0;
+  }
+  return n + sqlite3GetToken(&z[n], peToken);
+}
+
+/*
+** Parameter z points to a nul-terminated string. Return true if, when
+** whitespace is ignored, the contents of this string matches one of 
+** the following patterns:
+**
+**     ""
+**     "(number)"
+**     "(number,number)"
+*/
+static int isValidDimension(unsigned char *z){
+  int eToken;
+  int n = 0;
+  n += getTokenNoSpace(&z[n], &eToken);
+  if( eToken ){
+    if( eToken!=TK_LP ) return 0;
+    n += getTokenNoSpace(&z[n], &eToken);
+    if( eToken==TK_PLUS || eToken==TK_MINUS ){
+      n += getTokenNoSpace(&z[n], &eToken);
+    }
+    if( eToken!=TK_INTEGER && eToken!=TK_FLOAT ) return 0;
+    n += getTokenNoSpace(&z[n], &eToken);
+    if( eToken==TK_COMMA ){
+      n += getTokenNoSpace(&z[n], &eToken);
+      if( eToken==TK_PLUS || eToken==TK_MINUS ){
+        n += getTokenNoSpace(&z[n], &eToken);
+      }
+      if( eToken!=TK_INTEGER && eToken!=TK_FLOAT ) return 0;
+      n += getTokenNoSpace(&z[n], &eToken);
+    }
+    if( eToken!=TK_RP ) return 0;
+    getTokenNoSpace(&z[n], &eToken);
+  }
+  if( eToken ) return 0;
+  return 1;
+}
+
+/*
+** The first parameter is a pointer to an output buffer. The second 
+** parameter is a pointer to an integer that contains the offset at
+** which to write into the output buffer. This function copies the
+** nul-terminated string pointed to by the third parameter, zSignedIdent,
+** to the specified offset in the buffer and updates *pIdx to refer
+** to the first byte after the last byte written before returning.
+** 
+** If the string zSignedIdent consists entirely of alpha-numeric
+** characters, does not begin with a digit and is not an SQL keyword,
+** then it is copied to the output buffer exactly as it is. Otherwise,
+** it is quoted using double-quotes.
+*/
+static void identPut(char *z, int *pIdx, char *zSignedIdent, int isTypename){
   unsigned char *zIdent = (unsigned char*)zSignedIdent;
   int i, j, needQuote;
   i = *pIdx;
+
   for(j=0; zIdent[j]; j++){
     if( !sqlite3Isalnum(zIdent[j]) && zIdent[j]!='_' ) break;
   }
-  needQuote =  zIdent[j]!=0 || sqlite3Isdigit(zIdent[0])
-                  || sqlite3KeywordCode(zIdent, j)!=TK_ID;
+  needQuote = sqlite3Isdigit(zIdent[0]) || sqlite3KeywordCode(zIdent, j)!=TK_ID;
+  if( !needQuote ){
+    if( isTypename ){
+      /* If this is a type-name, allow a little more flexibility. In SQLite,
+      ** a type-name is specified as:
+      **
+      **   ids [ids] [(number [, number])]
+      **
+      ** where "ids" is either a quoted string or a simple identifier (in the
+      ** above notation, [] means optional). It is a bit tricky to check
+      ** for all cases, but it is good to avoid unnecessarily quoting common
+      ** typenames like VARCHAR(10).
+      */
+      needQuote = !isValidDimension(&zIdent[j]);
+    }else{
+      needQuote = zIdent[j];
+    }
+  }
+
   if( needQuote ) z[i++] = '"';
   for(j=0; zIdent[j]; j++){
     z[i++] = zIdent[j];
@@ -1377,7 +1450,7 @@ static char *createTableStmt(sqlite3 *db, Table *p){
     n += identLength(pCol->zName);
     z = pCol->zType;
     if( z ){
-      n += (sqlite3Strlen30(z) + 1);
+      n += identLength(z);
     }
   }
   n += identLength(p->zName);
@@ -1398,18 +1471,17 @@ static char *createTableStmt(sqlite3 *db, Table *p){
   }
   sqlite3_snprintf(n, zStmt, "CREATE TABLE ");
   k = sqlite3Strlen30(zStmt);
-  identPut(zStmt, &k, p->zName);
+  identPut(zStmt, &k, p->zName, 0);
   zStmt[k++] = '(';
   for(pCol=p->aCol, i=0; i<p->nCol; i++, pCol++){
     sqlite3_snprintf(n-k, &zStmt[k], zSep);
     k += sqlite3Strlen30(&zStmt[k]);
     zSep = zSep2;
-    identPut(zStmt, &k, pCol->zName);
+    identPut(zStmt, &k, pCol->zName, 0);
     if( (z = pCol->zType)!=0 ){
       zStmt[k++] = ' ';
       assert( (int)(sqlite3Strlen30(z)+k+1)<=n );
-      sqlite3_snprintf(n-k, &zStmt[k], "%s", z);
-      k += sqlite3Strlen30(z);
+      identPut(zStmt, &k, z, 1);
     }
   }
   sqlite3_snprintf(n-k, &zStmt[k], "%s", zEnd);
@@ -1489,8 +1561,7 @@ void sqlite3EndTable(
   }
 
   /* If not initializing, then create a record for the new table
-  ** in the SQLITE_MASTER table of the database.  The record number
-  ** for the new table entry should already be on the stack.
+  ** in the SQLITE_MASTER table of the database.
   **
   ** If this is a TEMPORARY table, write the entry into the auxiliary
   ** file instead of into the main database file.
@@ -1507,9 +1578,8 @@ void sqlite3EndTable(
 
     sqlite3VdbeAddOp1(v, OP_Close, 0);
 
-    /* Create the rootpage for the new table and push it onto the stack.
-    ** A view has no rootpage, so just push a zero onto the stack for
-    ** views.  Initialize zType at the same time.
+    /* 
+    ** Initialize zType for the new view or table.
     */
     if( p->pSelect==0 ){
       /* A regular table */
@@ -1525,7 +1595,7 @@ void sqlite3EndTable(
 
     /* If this is a CREATE TABLE xx AS SELECT ..., execute the SELECT
     ** statement to populate the new table. The root-page number for the
-    ** new table is on the top of the vdbe stack.
+    ** new table is in register pParse->regRoot.
     **
     ** Once the SELECT has been coded by sqlite3Select(), it is in a
     ** suitable state to query for the column names and types to be used
@@ -1540,7 +1610,7 @@ void sqlite3EndTable(
       SelectDest dest;
       Table *pSelTab;
 
-      assert(pParse->nTab==0);
+      assert(pParse->nTab==1);
       sqlite3VdbeAddOp3(v, OP_OpenWrite, 1, pParse->regRoot, iDb);
       sqlite3VdbeChangeP5(v, 1);
       pParse->nTab = 2;
@@ -1571,9 +1641,7 @@ void sqlite3EndTable(
 
     /* A slot for the record has already been allocated in the 
     ** SQLITE_MASTER table.  We just need to update that slot with all
-    ** the information we've collected.  The rowid for the preallocated
-    ** slot is the 2nd item on the stack.  The top of the stack is the
-    ** root page for the new table (or a 0 if this is a view).
+    ** the information we've collected.
     */
     sqlite3NestedParse(pParse,
       "UPDATE %Q.%s "
@@ -1701,7 +1769,7 @@ void sqlite3CreateView(
   ** allocated rather than point to the input string - which means that
   ** they will persist after the current sqlite3_exec() call returns.
   */
-  p->pSelect = sqlite3SelectDup(db, pSelect);
+  p->pSelect = sqlite3SelectDup(db, pSelect, EXPRDUP_REDUCE);
   sqlite3SelectDelete(db, pSelect);
   if( db->mallocFailed ){
     return;
@@ -1783,11 +1851,13 @@ int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
   ** statement that defines the view.
   */
   assert( pTable->pSelect );
-  pSel = sqlite3SelectDup(db, pTable->pSelect);
+  pSel = sqlite3SelectDup(db, pTable->pSelect, 0);
   if( pSel ){
+    u8 enableLookaside = db->lookaside.bEnabled;
     n = pParse->nTab;
     sqlite3SrcListAssignCursors(pParse, pSel->pSrc);
     pTable->nCol = -1;
+    db->lookaside.bEnabled = 0;
 #ifndef SQLITE_OMIT_AUTHORIZATION
     xAuth = db->xAuth;
     db->xAuth = 0;
@@ -1796,6 +1866,7 @@ int sqlite3ViewGetColumnNames(Parse *pParse, Table *pTable){
 #else
     pSelTab = sqlite3ResultSetOfSelect(pParse, pSel);
 #endif
+    db->lookaside.bEnabled = enableLookaside;
     pParse->nTab = n;
     if( pSelTab ){
       assert( pTable->aCol==0 );
@@ -1892,8 +1963,8 @@ static void destroyRootPage(Parse *pParse, int iTable, int iDb){
   ** location iTable. The following code modifies the sqlite_master table to
   ** reflect this.
   **
-  ** The "#%d" in the SQL is a special constant that means whatever value
-  ** is on the top of the stack.  See sqlite3RegisterExpr().
+  ** The "#NNN" in the SQL is a special constant that means whatever value
+  ** is in register NNN.  See sqlite3RegisterExpr().
   */
   sqlite3NestedParse(pParse, 
      "UPDATE %Q.%s SET rootpage=%d WHERE #%d AND rootpage=#%d",
@@ -2068,7 +2139,7 @@ void sqlite3DropTable(Parse *pParse, SrcList *pName, int isView, int noErr){
     ** is generated to remove entries from sqlite_master and/or
     ** sqlite_temp_master if required.
     */
-    pTrigger = pTab->pTrigger;
+    pTrigger = sqlite3TriggerList(pParse, pTab);
     while( pTrigger ){
       assert( pTrigger->pSchema==pTab->pSchema || 
           pTrigger->pSchema==db->aDb[1].pSchema );
@@ -2277,8 +2348,8 @@ void sqlite3DeferForeignKey(Parse *pParse, int isDeferred){
 */
 static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
   Table *pTab = pIndex->pTable;  /* The table that is indexed */
-  int iTab = pParse->nTab;       /* Btree cursor used for pTab */
-  int iIdx = pParse->nTab+1;     /* Btree cursor used for pIndex */
+  int iTab = pParse->nTab++;     /* Btree cursor used for pTab */
+  int iIdx = pParse->nTab++;     /* Btree cursor used for pIndex */
   int addr1;                     /* Address of top of loop */
   int tnum;                      /* Root page of index */
   Vdbe *v;                       /* Generate code into this virtual machine */
@@ -2773,7 +2844,8 @@ void sqlite3CreateIndex(
   /* Clean up before exiting */
 exit_create_index:
   if( pIndex ){
-    freeIndex(pIndex);
+    sqlite3_free(pIndex->zColAff);
+    sqlite3DbFree(db, pIndex);
   }
   sqlite3ExprListDelete(db, pList);
   sqlite3SrcListDelete(db, pTblName);

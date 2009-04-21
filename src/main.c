@@ -14,7 +14,7 @@
 ** other files are for internal use by SQLite and should not be
 ** accessed by users of the library.
 **
-** $Id: main.c,v 1.528 2009/02/05 16:31:46 drh Exp $
+** $Id: main.c,v 1.536 2009/04/09 01:23:49 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -219,6 +219,7 @@ int sqlite3_shutdown(void){
   if( sqlite3GlobalConfig.isInit ){
     sqlite3_os_end();
   }
+  sqlite3_reset_auto_extension();
   sqlite3MallocEnd();
   sqlite3MutexEnd();
   sqlite3GlobalConfig.isInit = 0;
@@ -404,12 +405,12 @@ static int setupLookaside(sqlite3 *db, void *pBuf, int sz, int cnt){
     sz = 0;
     pStart = 0;
   }else if( pBuf==0 ){
-    sz = (sz + 7)&~7;
+    sz = ROUND8(sz);
     sqlite3BeginBenignMalloc();
     pStart = sqlite3Malloc( sz*cnt );
     sqlite3EndBenignMalloc();
   }else{
-    sz = sz&~7;
+    sz = ROUNDDOWN8(sz);
     pStart = pBuf;
   }
   db->lookaside.pStart = pStart;
@@ -418,7 +419,7 @@ static int setupLookaside(sqlite3 *db, void *pBuf, int sz, int cnt){
   if( pStart ){
     int i;
     LookasideSlot *p;
-    assert( sz > sizeof(LookasideSlot*) );
+    assert( sz > (int)sizeof(LookasideSlot*) );
     p = (LookasideSlot*)pStart;
     for(i=cnt-1; i>=0; i--){
       p->pNext = db->lookaside.pFree;
@@ -560,6 +561,7 @@ void sqlite3CloseSavepoints(sqlite3 *db){
     sqlite3DbFree(db, pTmp);
   }
   db->nSavepoint = 0;
+  db->nStatement = 0;
   db->isTransactionSavepoint = 0;
 }
 
@@ -629,6 +631,12 @@ int sqlite3_close(sqlite3 *db){
     }
   }
   sqlite3ResetInternalSchema(db, 0);
+
+  /* Tell the code in notify.c that the connection no longer holds any
+  ** locks and does not require any further unlock-notify callbacks.
+  */
+  sqlite3ConnectionClosed(db);
+
   assert( db->nDb<=2 );
   assert( db->aDb==db->aDbStatic );
   for(j=0; j<ArraySize(db->aFunc.a); j++){
@@ -1238,15 +1246,15 @@ const char *sqlite3_errmsg(sqlite3 *db){
   if( !sqlite3SafetyCheckSickOrOk(db) ){
     return sqlite3ErrStr(SQLITE_MISUSE);
   }
-  if( db->mallocFailed ){
-    return sqlite3ErrStr(SQLITE_NOMEM);
-  }
   sqlite3_mutex_enter(db->mutex);
-  assert( !db->mallocFailed );
-  z = (char*)sqlite3_value_text(db->pErr);
-  assert( !db->mallocFailed );
-  if( z==0 ){
-    z = sqlite3ErrStr(db->errCode);
+  if( db->mallocFailed ){
+    z = sqlite3ErrStr(SQLITE_NOMEM);
+  }else{
+    z = (char*)sqlite3_value_text(db->pErr);
+    assert( !db->mallocFailed );
+    if( z==0 ){
+      z = sqlite3ErrStr(db->errCode);
+    }
   }
   sqlite3_mutex_leave(db->mutex);
   return z;
@@ -1258,46 +1266,42 @@ const char *sqlite3_errmsg(sqlite3 *db){
 ** error.
 */
 const void *sqlite3_errmsg16(sqlite3 *db){
-  /* Because all the characters in the string are in the unicode
-  ** range 0x00-0xFF, if we pad the big-endian string with a 
-  ** zero byte, we can obtain the little-endian string with
-  ** &big_endian[1].
-  */
-  static const char outOfMemBe[] = {
-    0, 'o', 0, 'u', 0, 't', 0, ' ', 
-    0, 'o', 0, 'f', 0, ' ', 
-    0, 'm', 0, 'e', 0, 'm', 0, 'o', 0, 'r', 0, 'y', 0, 0, 0
+  static const u16 outOfMem[] = {
+    'o', 'u', 't', ' ', 'o', 'f', ' ', 'm', 'e', 'm', 'o', 'r', 'y', 0
   };
-  static const char misuseBe [] = {
-    0, 'l', 0, 'i', 0, 'b', 0, 'r', 0, 'a', 0, 'r', 0, 'y', 0, ' ', 
-    0, 'r', 0, 'o', 0, 'u', 0, 't', 0, 'i', 0, 'n', 0, 'e', 0, ' ', 
-    0, 'c', 0, 'a', 0, 'l', 0, 'l', 0, 'e', 0, 'd', 0, ' ', 
-    0, 'o', 0, 'u', 0, 't', 0, ' ', 
-    0, 'o', 0, 'f', 0, ' ', 
-    0, 's', 0, 'e', 0, 'q', 0, 'u', 0, 'e', 0, 'n', 0, 'c', 0, 'e', 0, 0, 0
+  static const u16 misuse[] = {
+    'l', 'i', 'b', 'r', 'a', 'r', 'y', ' ', 
+    'r', 'o', 'u', 't', 'i', 'n', 'e', ' ', 
+    'c', 'a', 'l', 'l', 'e', 'd', ' ', 
+    'o', 'u', 't', ' ', 
+    'o', 'f', ' ', 
+    's', 'e', 'q', 'u', 'e', 'n', 'c', 'e', 0
   };
 
   const void *z;
   if( !db ){
-    return (void *)(&outOfMemBe[SQLITE_UTF16NATIVE==SQLITE_UTF16LE?1:0]);
+    return (void *)outOfMem;
   }
   if( !sqlite3SafetyCheckSickOrOk(db) ){
-    return (void *)(&misuseBe[SQLITE_UTF16NATIVE==SQLITE_UTF16LE?1:0]);
+    return (void *)misuse;
   }
   sqlite3_mutex_enter(db->mutex);
-  assert( !db->mallocFailed );
-  z = sqlite3_value_text16(db->pErr);
-  if( z==0 ){
-    sqlite3ValueSetStr(db->pErr, -1, sqlite3ErrStr(db->errCode),
-         SQLITE_UTF8, SQLITE_STATIC);
+  if( db->mallocFailed ){
+    z = (void *)outOfMem;
+  }else{
     z = sqlite3_value_text16(db->pErr);
+    if( z==0 ){
+      sqlite3ValueSetStr(db->pErr, -1, sqlite3ErrStr(db->errCode),
+           SQLITE_UTF8, SQLITE_STATIC);
+      z = sqlite3_value_text16(db->pErr);
+    }
+    /* A malloc() may have failed within the call to sqlite3_value_text16()
+    ** above. If this is the case, then the db->mallocFailed flag needs to
+    ** be cleared before returning. Do this directly, instead of via
+    ** sqlite3ApiExit(), to avoid setting the database handle error message.
+    */
+    db->mallocFailed = 0;
   }
-  /* A malloc() may have failed within the call to sqlite3_value_text16()
-  ** above. If this is the case, then the db->mallocFailed flag needs to
-  ** be cleared before returning. Do this directly, instead of via
-  ** sqlite3ApiExit(), to avoid setting the database handle error message.
-  */
-  db->mallocFailed = 0;
   sqlite3_mutex_leave(db->mutex);
   return z;
 }
@@ -1940,7 +1944,6 @@ int sqlite3_table_column_metadata(
   (void)sqlite3SafetyOn(db);
   sqlite3BtreeEnterAll(db);
   rc = sqlite3Init(db, &zErrMsg);
-  sqlite3BtreeLeaveAll(db);
   if( SQLITE_OK!=rc ){
     goto error_out;
   }
@@ -1996,6 +1999,7 @@ int sqlite3_table_column_metadata(
   }
 
 error_out:
+  sqlite3BtreeLeaveAll(db);
   (void)sqlite3SafetyOff(db);
 
   /* Whether the function call succeeded or failed, set the output parameters

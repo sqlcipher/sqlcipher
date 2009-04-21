@@ -14,7 +14,7 @@
 ** test that sqlite3 database handles may be concurrently accessed by 
 ** multiple threads. Right now this only works on unix.
 **
-** $Id: test_thread.c,v 1.10 2009/02/03 19:55:20 shane Exp $
+** $Id: test_thread.c,v 1.15 2009/03/27 12:32:56 drh Exp $
 */
 
 #include "sqliteInt.h"
@@ -55,7 +55,18 @@ struct EvalEvent {
 
 static Tcl_ObjCmdProc sqlthread_proc;
 static Tcl_ObjCmdProc clock_seconds_proc;
+#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+static Tcl_ObjCmdProc blocking_step_proc;
+static Tcl_ObjCmdProc blocking_prepare_v2_proc;
+#endif
 int Sqlitetest1_Init(Tcl_Interp *);
+
+/* Functions from test1.c */
+void *sqlite3TestTextToPtr(const char *);
+const char *sqlite3TestErrorName(int);
+int getDbPointer(Tcl_Interp *, const char *, sqlite3 **);
+int sqlite3TestMakePointerStr(Tcl_Interp *, char *, void *);
+int sqlite3TestErrCode(Tcl_Interp *, sqlite3 *, int);
 
 /*
 ** Handler for events of type EvalEvent.
@@ -106,6 +117,13 @@ static Tcl_ThreadCreateType tclScriptThread(ClientData pSqlThread){
   interp = Tcl_CreateInterp();
   Tcl_CreateObjCommand(interp, "clock_seconds", clock_seconds_proc, 0, 0);
   Tcl_CreateObjCommand(interp, "sqlthread", sqlthread_proc, pSqlThread, 0);
+#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+  Tcl_CreateObjCommand(interp, "sqlite3_blocking_step", blocking_step_proc,0,0);
+  Tcl_CreateObjCommand(interp, 
+      "sqlite3_blocking_prepare_v2", blocking_prepare_v2_proc, (void *)1, 0);
+  Tcl_CreateObjCommand(interp, 
+      "sqlite3_nonblocking_prepare_v2", blocking_prepare_v2_proc, 0, 0);
+#endif
   Sqlitetest1_Init(interp);
   Sqlitetest_mutex_Init(interp);
 
@@ -359,12 +377,248 @@ static int clock_seconds_proc(
   return TCL_OK;
 }
 
+/*************************************************************************
+** This block contains the implementation of the [sqlite3_blocking_step]
+** command available to threads created by [sqlthread spawn] commands. It
+** is only available on UNIX for now. This is because pthread condition
+** variables are used.
+**
+** The source code for the C functions sqlite3_blocking_step(),
+** blocking_step_notify() and the structure UnlockNotification is
+** automatically extracted from this file and used as part of the
+** documentation for the sqlite3_unlock_notify() API function. This
+** should be considered if these functions are to be extended (i.e. to 
+** support windows) in the future.
+*/ 
+#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+
+/* BEGIN_SQLITE_BLOCKING_STEP */
+/* This example uses the pthreads API */
+#include <pthread.h>
+
+/*
+** A pointer to an instance of this structure is passed as the user-context
+** pointer when registering for an unlock-notify callback.
+*/
+typedef struct UnlockNotification UnlockNotification;
+struct UnlockNotification {
+  int fired;                           /* True after unlock event has occured */
+  pthread_cond_t cond;                 /* Condition variable to wait on */
+  pthread_mutex_t mutex;               /* Mutex to protect structure */
+};
+
+/*
+** This function is an unlock-notify callback registered with SQLite.
+*/
+static void unlock_notify_cb(void **apArg, int nArg){
+  int i;
+  for(i=0; i<nArg; i++){
+    UnlockNotification *p = (UnlockNotification *)apArg[i];
+    pthread_mutex_lock(&p->mutex);
+    p->fired = 1;
+    pthread_cond_signal(&p->cond);
+    pthread_mutex_unlock(&p->mutex);
+  }
+}
+
+/*
+** This function assumes that an SQLite API call (either sqlite3_prepare_v2() 
+** or sqlite3_step()) has just returned SQLITE_LOCKED. The argument is the
+** associated database connection.
+**
+** This function calls sqlite3_unlock_notify() to register for an 
+** unlock-notify callback, then blocks until that callback is delivered 
+** and returns SQLITE_OK. The caller should then retry the failed operation.
+**
+** Or, if sqlite3_unlock_notify() indicates that to block would deadlock 
+** the system, then this function returns SQLITE_LOCKED immediately. In 
+** this case the caller should not retry the operation and should roll 
+** back the current transaction (if any).
+*/
+static int wait_for_unlock_notify(sqlite3 *db){
+  int rc;
+  UnlockNotification un;
+
+  /* Initialize the UnlockNotification structure. */
+  un.fired = 0;
+  pthread_mutex_init(&un.mutex, 0);
+  pthread_cond_init(&un.cond, 0);
+
+  /* Register for an unlock-notify callback. */
+  rc = sqlite3_unlock_notify(db, unlock_notify_cb, (void *)&un);
+  assert( rc==SQLITE_LOCKED || rc==SQLITE_OK );
+
+  /* The call to sqlite3_unlock_notify() always returns either SQLITE_LOCKED 
+  ** or SQLITE_OK. 
+  **
+  ** If SQLITE_LOCKED was returned, then the system is deadlocked. In this
+  ** case this function needs to return SQLITE_LOCKED to the caller so 
+  ** that the current transaction can be rolled back. Otherwise, block
+  ** until the unlock-notify callback is invoked, then return SQLITE_OK.
+  */
+  if( rc==SQLITE_OK ){
+    pthread_mutex_lock(&un.mutex);
+    if( !un.fired ){
+      pthread_cond_wait(&un.cond, &un.mutex);
+    }
+    pthread_mutex_unlock(&un.mutex);
+  }
+
+  /* Destroy the mutex and condition variables. */
+  pthread_cond_destroy(&un.cond);
+  pthread_mutex_destroy(&un.mutex);
+
+  return rc;
+}
+
+/*
+** This function is a wrapper around the SQLite function sqlite3_step().
+** It functions in the same way as step(), except that if a required
+** shared-cache lock cannot be obtained, this function may block waiting for
+** the lock to become available. In this scenario the normal API step()
+** function always returns SQLITE_LOCKED.
+**
+** If this function returns SQLITE_LOCKED, the caller should rollback
+** the current transaction (if any) and try again later. Otherwise, the
+** system may become deadlocked.
+*/
+int sqlite3_blocking_step(sqlite3_stmt *pStmt){
+  int rc;
+  while( SQLITE_LOCKED==(rc = sqlite3_step(pStmt)) ){
+    rc = wait_for_unlock_notify(sqlite3_db_handle(pStmt));
+    if( rc!=SQLITE_OK ) break;
+    sqlite3_reset(pStmt);
+  }
+  return rc;
+}
+
+/*
+** This function is a wrapper around the SQLite function sqlite3_prepare_v2().
+** It functions in the same way as prepare_v2(), except that if a required
+** shared-cache lock cannot be obtained, this function may block waiting for
+** the lock to become available. In this scenario the normal API prepare_v2()
+** function always returns SQLITE_LOCKED.
+**
+** If this function returns SQLITE_LOCKED, the caller should rollback
+** the current transaction (if any) and try again later. Otherwise, the
+** system may become deadlocked.
+*/
+int sqlite3_blocking_prepare_v2(
+  sqlite3 *db,              /* Database handle. */
+  const char *zSql,         /* UTF-8 encoded SQL statement. */
+  int nSql,                 /* Length of zSql in bytes. */
+  sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
+  const char **pz           /* OUT: End of parsed string */
+){
+  int rc;
+  while( SQLITE_LOCKED==(rc = sqlite3_prepare_v2(db, zSql, nSql, ppStmt, pz)) ){
+    rc = wait_for_unlock_notify(db);
+    if( rc!=SQLITE_OK ) break;
+  }
+  return rc;
+}
+/* END_SQLITE_BLOCKING_STEP */
+
+/*
+** Usage: sqlite3_blocking_step STMT
+**
+** Advance the statement to the next row.
+*/
+static int blocking_step_proc(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+
+  sqlite3_stmt *pStmt;
+  int rc;
+
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "STMT");
+    return TCL_ERROR;
+  }
+
+  pStmt = (sqlite3_stmt*)sqlite3TestTextToPtr(Tcl_GetString(objv[1]));
+  rc = sqlite3_blocking_step(pStmt);
+
+  Tcl_SetResult(interp, (char *)sqlite3TestErrorName(rc), 0);
+  return TCL_OK;
+}
+
+/*
+** Usage: sqlite3_blocking_prepare_v2 DB sql bytes ?tailvar?
+** Usage: sqlite3_nonblocking_prepare_v2 DB sql bytes ?tailvar?
+*/
+static int blocking_prepare_v2_proc(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  sqlite3 *db;
+  const char *zSql;
+  int bytes;
+  const char *zTail = 0;
+  sqlite3_stmt *pStmt = 0;
+  char zBuf[50];
+  int rc;
+  int isBlocking = !(clientData==0);
+
+  if( objc!=5 && objc!=4 ){
+    Tcl_AppendResult(interp, "wrong # args: should be \"", 
+       Tcl_GetString(objv[0]), " DB sql bytes tailvar", 0);
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
+  zSql = Tcl_GetString(objv[2]);
+  if( Tcl_GetIntFromObj(interp, objv[3], &bytes) ) return TCL_ERROR;
+
+  if( isBlocking ){
+    rc = sqlite3_blocking_prepare_v2(db, zSql, bytes, &pStmt, &zTail);
+  }else{
+    rc = sqlite3_prepare_v2(db, zSql, bytes, &pStmt, &zTail);
+  }
+
+  assert(rc==SQLITE_OK || pStmt==0);
+  if( zTail && objc>=5 ){
+    if( bytes>=0 ){
+      bytes = bytes - (zTail-zSql);
+    }
+    Tcl_ObjSetVar2(interp, objv[4], 0, Tcl_NewStringObj(zTail, bytes), 0);
+  }
+  if( rc!=SQLITE_OK ){
+    assert( pStmt==0 );
+    sprintf(zBuf, "%s ", (char *)sqlite3TestErrorName(rc));
+    Tcl_AppendResult(interp, zBuf, sqlite3_errmsg(db), 0);
+    return TCL_ERROR;
+  }
+
+  if( pStmt ){
+    if( sqlite3TestMakePointerStr(interp, zBuf, pStmt) ) return TCL_ERROR;
+    Tcl_AppendResult(interp, zBuf, 0);
+  }
+  return TCL_OK;
+}
+
+#endif /* SQLITE_OS_UNIX && SQLITE_ENABLE_UNLOCK_NOTIFY */
+/*
+** End of implementation of [sqlite3_blocking_step].
+************************************************************************/
+
 /*
 ** Register commands with the TCL interpreter.
 */
 int SqlitetestThread_Init(Tcl_Interp *interp){
   Tcl_CreateObjCommand(interp, "sqlthread", sqlthread_proc, 0, 0);
   Tcl_CreateObjCommand(interp, "clock_seconds", clock_seconds_proc, 0, 0);
+#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+  Tcl_CreateObjCommand(interp, "sqlite3_blocking_step", blocking_step_proc,0,0);
+  Tcl_CreateObjCommand(interp, 
+      "sqlite3_blocking_prepare_v2", blocking_prepare_v2_proc, (void *)1, 0);
+  Tcl_CreateObjCommand(interp, 
+      "sqlite3_nonblocking_prepare_v2", blocking_prepare_v2_proc, 0, 0);
+#endif
   return TCL_OK;
 }
 #else

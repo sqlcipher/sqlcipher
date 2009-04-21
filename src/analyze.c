@@ -11,7 +11,7 @@
 *************************************************************************
 ** This file contains code associated with the ANALYZE command.
 **
-** @(#) $Id: analyze.c,v 1.48 2009/02/13 16:59:53 drh Exp $
+** @(#) $Id: analyze.c,v 1.51 2009/02/28 10:47:42 danielk1977 Exp $
 */
 #ifndef SQLITE_OMIT_ANALYZE
 #include "sqliteInt.h"
@@ -74,8 +74,8 @@ static void openStatTable(
   if( !createStat1 ){
     sqlite3TableLock(pParse, iDb, iRootPage, 1, "sqlite_stat1");
   }
-  sqlite3VdbeAddOp2(v, OP_SetNumColumns, 0, 3);
   sqlite3VdbeAddOp3(v, OP_OpenWrite, iStatCur, iRootPage, iDb);
+  sqlite3VdbeChangeP4(v, -1, (char *)3, P4_INT32);
   sqlite3VdbeChangeP5(v, createStat1);
 }
 
@@ -117,7 +117,7 @@ static void analyzeOneTable(
   /* Establish a read-lock on the table at the shared-cache level. */
   sqlite3TableLock(pParse, iDb, pTab->tnum, 0, pTab->zName);
 
-  iIdxCur = pParse->nTab;
+  iIdxCur = pParse->nTab++;
   for(pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext){
     KeyInfo *pKey = sqlite3IndexKeyinfo(pParse, pIdx);
     int regFields;    /* Register block for building records */
@@ -131,7 +131,6 @@ static void analyzeOneTable(
     */
     assert( iDb==sqlite3SchemaToIndex(pParse->db, pIdx->pSchema) );
     nCol = pIdx->nColumn;
-    sqlite3VdbeAddOp2(v, OP_SetNumColumns, 0, nCol+1);
     sqlite3VdbeAddOp4(v, OP_OpenRead, iIdxCur, pIdx->tnum, iDb,
         (char *)pKey, P4_KEYINFO_HANDOFF);
     VdbeComment((v, "%s", pIdx->zName));
@@ -189,7 +188,7 @@ static void analyzeOneTable(
     ** The result is a single row of the sqlite_stat1 table.  The first
     ** two columns are the names of the table and index.  The third column
     ** is a string composed of a list of integer statistics about the
-    ** index.  The first integer in the list is the total number of entires
+    ** index.  The first integer in the list is the total number of entries
     ** in the index.  There is one additional integer in the list for each
     ** column of the table.  This additional integer is a guess of how many
     ** rows of the table the index will select.  If D is the count of distinct

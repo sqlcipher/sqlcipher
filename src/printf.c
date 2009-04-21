@@ -5,7 +5,7 @@
 ** an historical reference.  Most of the "enhancements" have been backed
 ** out so that the functionality is now the same as standard printf().
 **
-** $Id: printf.c,v 1.99 2008/12/10 19:26:24 drh Exp $
+** $Id: printf.c,v 1.102 2009/04/08 16:10:04 drh Exp $
 **
 **************************************************************************
 **
@@ -77,6 +77,8 @@
 #define etSQLESCAPE3 15 /* %w -> Strings with '\"' doubled */
 #define etORDINAL    16 /* %r -> 1st, 2nd, 3rd, 4th, etc.  English only */
 
+#define etINVALID     0 /* Any unrecognized conversion type */
+
 
 /*
 ** An "etByte" is an 8-bit unsigned value.
@@ -133,6 +135,9 @@ static const et_info fmtinfo[] = {
   {  'n',  0, 0, etSIZE,       0,  0 },
   {  '%',  0, 0, etPERCENT,    0,  0 },
   {  'p', 16, 0, etPOINTER,    0,  1 },
+
+/* All the rest have the FLAG_INTERN bit set and are thus for internal
+** use only */
   {  'T',  0, 2, etTOKEN,      0,  0 },
   {  'S',  0, 2, etSRCLIST,    0,  0 },
   {  'r', 10, 3, etORDINAL,    0,  0 },
@@ -335,7 +340,8 @@ void sqlite3VXPrintf(
       flag_long = flag_longlong = 0;
     }
     /* Fetch the info entry for the field */
-    infop = 0;
+    infop = &fmtinfo[0];
+    xtype = etINVALID;
     for(idx=0; idx<ArraySize(fmtinfo); idx++){
       if( c==fmtinfo[idx].fmttype ){
         infop = &fmtinfo[idx];
@@ -348,9 +354,6 @@ void sqlite3VXPrintf(
       }
     }
     zExtra = 0;
-    if( infop==0 ){
-      return;
-    }
 
 
     /* Limit the precision to prevent overflowing buf[] during conversion */
@@ -688,6 +691,10 @@ void sqlite3VXPrintf(
         length = width = 0;
         break;
       }
+      default: {
+        assert( xtype==etINVALID );
+        return;
+      }
     }/* End switch over the format type */
     /*
     ** The text of the conversion is pointed to by "bufpt" and is
@@ -721,13 +728,16 @@ void sqlite3VXPrintf(
 ** Append N bytes of text from z to the StrAccum object.
 */
 void sqlite3StrAccumAppend(StrAccum *p, const char *z, int N){
+  assert( z!=0 || N==0 );
   if( p->tooBig | p->mallocFailed ){
+    testcase(p->tooBig);
+    testcase(p->mallocFailed);
     return;
   }
   if( N<0 ){
     N = sqlite3Strlen30(z);
   }
-  if( N==0 || z==0 ){
+  if( N==0 || NEVER(z==0) ){
     return;
   }
   if( p->nChar+N >= p->nAlloc ){
@@ -816,12 +826,13 @@ char *sqlite3VMPrintf(sqlite3 *db, const char *zFormat, va_list ap){
   char *z;
   char zBase[SQLITE_PRINT_BUF_SIZE];
   StrAccum acc;
+  assert( db!=0 );
   sqlite3StrAccumInit(&acc, zBase, sizeof(zBase),
-                      db ? db->aLimit[SQLITE_LIMIT_LENGTH] : SQLITE_MAX_LENGTH);
+                      db->aLimit[SQLITE_LIMIT_LENGTH]);
   acc.db = db;
   sqlite3VXPrintf(&acc, 1, zFormat, ap);
   z = sqlite3StrAccumFinish(&acc);
-  if( acc.mallocFailed && db ){
+  if( acc.mallocFailed ){
     db->mallocFailed = 1;
   }
   return z;

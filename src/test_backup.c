@@ -10,7 +10,7 @@
 **
 *************************************************************************
 **
-** $Id: test_backup.c,v 1.1 2009/02/03 16:51:25 danielk1977 Exp $
+** $Id: test_backup.c,v 1.3 2009/03/30 12:56:52 drh Exp $
 */
 
 #include "tcl.h"
@@ -61,12 +61,13 @@ static int backupTestCmd(
   switch( aSub[iCmd].eCmd ){
 
     case BACKUP_FINISH: {
+      const char *zCmdName;
       Tcl_CmdInfo cmdInfo;
-      Tcl_Command cmd = Tcl_GetCommandFromObj(interp, objv[0]);
-      Tcl_GetCommandInfoFromToken(cmd, &cmdInfo);
+      zCmdName = Tcl_GetString(objv[0]);
+      Tcl_GetCommandInfo(interp, zCmdName, &cmdInfo);
       cmdInfo.deleteProc = 0;
-      Tcl_SetCommandInfoFromToken(cmd, &cmdInfo);
-      Tcl_DeleteCommandFromToken(interp, cmd);
+      Tcl_SetCommandInfo(interp, zCmdName, &cmdInfo);
+      Tcl_DeleteCommand(interp, zCmdName);
 
       rc = sqlite3_backup_finish(p);
       Tcl_SetResult(interp, (char *)sqlite3TestErrorName(rc), TCL_STATIC);
@@ -145,4 +146,3 @@ int Sqlitetestbackup_Init(Tcl_Interp *interp){
   Tcl_CreateObjCommand(interp, "sqlite3_backup", backupTestInit, 0, 0);
   return TCL_OK;
 }
-
