@@ -19,12 +19,12 @@ Building SQLite Cipher is almost the same as compiling a regular version of SQLi
  
 Example Static linking (replace /opt/local/lib with the path to libcrypto.a)
 
-  ./configure --disable-amalgamation CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="/opt/local/lib/libcrypto.a"
+  ./configure CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="/opt/local/lib/libcrypto.a"
   make
 
 Example Dynamic linking
 
-  ./configure --disable-amalgamation CFLAGS="-DSQLITE_HAS_CODEC -lcrypto"
+  ./configure CFLAGS="-DSQLITE_HAS_CODEC -lcrypto"
   make
 
 [Encrypting a database]
@@ -40,7 +40,7 @@ use this method it is your responsibility to ensure that the data you provide a
 64 character hex string, which will be converted directly to 32 bytes (256 bits) of 
 key data.
 
-  PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+  PRAGMA hexkey = '2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99';
 
 To encrypt a database programatically you can use the sqlite3_key function. The data provided
 in pKey is converted to an encryption key according to the same rules as PRAGMA key.
@@ -49,8 +49,26 @@ in pKey is converted to an encryption key according to the same rules as PRAGMA 
 
 PRAGMA key or sqlite3_key should be called as the first operation when a database is open.
 
-Note: It is not currently possible to change the encryption key once a database is created. We're
-working on implementing rekey functionality.
+[Changing a database key]
+
+To change the encryption passphrase for an existing database you should use the rekey pragma
+after you've supplied the correct database password;
+
+  PRAGMA key = 'passphrase'; -- start with the existing database passphrase
+  PRAGMA rekey = 'new-passphrase'; -- rekey will reencrypt the database with the new passphrase
+
+The hexrekey pragma may be used to rekey to a specific binary value
+
+  PRAGMA hexrekey = '2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99';
+
+This can be accomplished programtically by using sqlite3_rekey;
+  
+  sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey)
+
+[Encrypting a standard database]
+
+To encrypt a standard (non-enrypted) database file, use the rekey methods described above, but 
+don't provide an initial key..
 
 [License]
 
