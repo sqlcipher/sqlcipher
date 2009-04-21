@@ -408,7 +408,6 @@ TESTSRC = \
 #
 HDR = \
    sqlite3.h  \
-   $(TOP)/src/backup.h \
    $(TOP)/src/btree.h \
    $(TOP)/src/btreeInt.h \
    $(TOP)/src/hash.h \

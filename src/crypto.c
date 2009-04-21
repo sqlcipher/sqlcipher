@@ -190,7 +190,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     if(ctx->key == NULL) return SQLITE_NOMEM;
     memcpy(ctx->key, zKey, nKey);
 
-    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->iv_sz);
+    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->iv_sz, 0);
     sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, (void *) ctx);
     return SQLITE_OK;
   }
@@ -286,7 +286,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
           char *error;
           db->nextPagesize =  sqlite3BtreeGetPageSize(pDb->pBt);
           pDb->pBt->pBt->pageSizeFixed = 0; /* required for sqlite3BtreeSetPageSize to modify pagesize setting */
-          sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, EVP_CIPHER_iv_length(CIPHER));
+          sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, EVP_CIPHER_iv_length(CIPHER), 0);
           sqlite3RunVacuum(&error, db);
           sqlite3CodecAttach(db, i, key, prepared_key_sz);
           sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
