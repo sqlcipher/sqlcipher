@@ -36,6 +36,7 @@
 #include <assert.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/hmac.h>
 #include "sqliteInt.h"
 #include "btreeInt.h"
 #include "crypto.h"
@@ -51,19 +52,78 @@ typedef struct {
   int  rekey_plaintext;
 } codec_ctx;
 
-static void codec_passphrase_hash(const void *in, int inLen, void *out, int *outLen) {
-  EVP_MD_CTX mdctx;
-  unsigned int md_sz;
-  unsigned char md_value[EVP_MAX_MD_SIZE];
-  
-  EVP_MD_CTX_init(&mdctx);
-  EVP_DigestInit_ex(&mdctx, DIGEST, NULL);
-  EVP_DigestUpdate(&mdctx, in, inLen);
-  EVP_DigestFinal_ex(&mdctx, md_value, &md_sz);
-  memcpy(out, md_value, md_sz);
-  EVP_MD_CTX_cleanup(&mdctx);
-  memset(md_value, 0, md_sz);
-  *outLen = md_sz;
+
+/* 
+ * The following two functions PKCS5_PBKDF2_HMAC_SHA256 and h__dump implement a 
+ * PBKDF2 (rfc2898) variant using SHA 256 instead of SHA1. These functions were extracted directly from 
+ * from openssl-0.9.8j crypto/evp/p5_crpt2.c. The only modifications have been to use a variable 
+ * defined HMAC_HASH to allow selection of the message digest (instead of fixing it to EVP_sha1().
+ * - Stephen
+*/
+
+#ifdef DEBUG_PKCS5V2
+static void h__dump (const unsigned char *p, int len)
+{
+  for (; len --; p++) fprintf(stderr, "%02X ", *p);
+  fprintf(stderr, "\n");
+}
+#endif
+
+
+ /* This is an implementation of PKCS#5 v2.0 password based encryption key
+ * derivation function PBKDF2 using the only currently defined function HMAC
+ * with SHA1. Verified against test vectors posted by Peter Gutmann
+ * <pgut001@cs.auckland.ac.nz> to the PKCS-TNG <pkcs-tng@rsa.com> mailing list.
+ */
+static int PKCS5_PBKDF2_HMAC_SHA256(const char *pass, int passlen,
+         const unsigned char *salt, int saltlen, int iter,
+         int keylen, unsigned char *out)
+{
+  unsigned char digtmp[SHA_DIGEST_LENGTH], *p, itmp[4];
+  int cplen, j, k, tkeylen;
+  unsigned long i = 1;
+  HMAC_CTX hctx;
+
+  HMAC_CTX_init(&hctx);
+  p = out;
+  tkeylen = keylen;
+  if(!pass) passlen = 0;
+  else if(passlen == -1) passlen = strlen(pass);
+  while(tkeylen) {
+    if(tkeylen > SHA_DIGEST_LENGTH) cplen = SHA_DIGEST_LENGTH;
+    else cplen = tkeylen;
+    /* We are unlikely to ever use more than 256 blocks (5120 bits!)
+     * but just in case...
+     */
+    itmp[0] = (unsigned char)((i >> 24) & 0xff);
+    itmp[1] = (unsigned char)((i >> 16) & 0xff);
+    itmp[2] = (unsigned char)((i >> 8) & 0xff);
+    itmp[3] = (unsigned char)(i & 0xff);
+    HMAC_Init_ex(&hctx, pass, passlen, HMAC_HASH, NULL);
+    HMAC_Update(&hctx, salt, saltlen);
+    HMAC_Update(&hctx, itmp, 4);
+    HMAC_Final(&hctx, digtmp, NULL);
+    memcpy(p, digtmp, cplen);
+    for(j = 1; j < iter; j++) {
+      HMAC(HMAC_HASH, pass, passlen,
+         digtmp, SHA_DIGEST_LENGTH, digtmp, NULL);
+      for(k = 0; k < cplen; k++) p[k] ^= digtmp[k];
+    }
+    tkeylen-= cplen;
+    i++;
+    p+= cplen;
+  }
+  HMAC_CTX_cleanup(&hctx);
+#ifdef DEBUG_PKCS5V2
+  fprintf(stderr, "Password:\n");
+  h__dump (pass, passlen);
+  fprintf(stderr, "Salt:\n");
+  h__dump (salt, saltlen);
+  fprintf(stderr, "Iteration count %d\n", iter);
+  fprintf(stderr, "Key:\n");
+  h__dump (out, keylen);
+#endif
+  return 1;
 }
 
 static void codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *out, int *nOut) {
@@ -73,7 +133,9 @@ static void codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *out
     *nOut = nKey;
   /* otherwise the key is provided as a string so hash it to get key data */
   } else {
-    codec_passphrase_hash(zKey, nKey, out, nOut);
+    unsigned char salt[] = PBKDF2_SALT;
+    *nOut = SHA_DIGEST_LENGTH;
+    PKCS5_PBKDF2_HMAC_SHA256(zKey, nKey, salt, PBKDF2_SALT_SZ, PBKDF2_ITER, SHA_DIGEST_LENGTH, out);
   }
 }
 
