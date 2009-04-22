@@ -55,6 +55,7 @@ typedef struct {
   Btree *pBt;
 } codec_ctx;
 
+static int convertnosalt = 0;
 
 /* 
  * The following two functions PKCS5_PBKDF2_HMAC_SHA256 and h__dump implement a 
@@ -129,11 +130,18 @@ static int PKCS5_PBKDF2_HMAC_SHA256(const char *pass, int passlen,
   return 1;
 }
 
-static void codec_prepare_key(const void *zKey, int nKey, void *salt, int nSalt, void *out, int *nOut) {
+static void codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *salt, int nSalt, void *out, int *nOut) {
   /* if key data lenth is exactly 256 bits / 32 bytes use the data directly */
-  if (nKey == 32) {
-    memcpy(out, zKey, nKey);
-    *nOut = nKey;
+  if (nKey == 35 && sqlite3StrNICmp(zKey ,"x'", 2) == 0) { 
+    int n = nKey - 3; /* adjust for leading x' and tailing ' */
+    int half_n = n/2;
+    const char *z = zKey + 2; /* adjust lead offset of x' */ 
+    void *key = sqlite3HexToBlob(db, z, n);
+    memcpy(out, key, half_n);
+    *nOut = half_n;
+    memset(key, 0, half_n); /* cleanup temporary key data */
+    sqlite3DbFree(db, key);
+    fprintf(stderr, "\nusing hex key\n"); 
   /* otherwise the key is provided as a string so hash it to get key data */
   } else {
     *nOut = SHA_DIGEST_LENGTH;
@@ -216,7 +224,7 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
       break;
   }
 
-  if(pgno == 1 ) { 
+  if(pgno == 1 && !convertnosalt) { 
     /* if this is a read & decrypt operation on the first page then copy the 
        first 16 bytes off the page into the context's random salt buffer
     */
@@ -231,7 +239,11 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
   } else {
     codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
   }
-  
+ 
+  if(emode == CIPHER_DECRYPT && convertnosalt) {
+    convertnosalt = 0;
+  }
+
   if(emode == CIPHER_ENCRYPT) {
     return ctx->buffer; /* return persistent buffer data, pData remains intact */
   } else {
@@ -284,7 +296,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
       RAND_pseudo_bytes(ctx->salt, FILE_HEADER_SZ);
     }
     
-    codec_prepare_key(zKey, nKey, ctx->salt, FILE_HEADER_SZ, ctx->key, &prepared_key_sz);
+    codec_prepare_key(db, zKey, nKey, ctx->salt, FILE_HEADER_SZ, ctx->key, &prepared_key_sz);
     assert(prepared_key_sz == ctx->key_sz);
     
     sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->iv_sz, 0);
@@ -330,6 +342,9 @@ int sqlite3FreeCodecArg(void *pCodecArg) {
 
 void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
+  if(sqlite3StrICmp(in, "convertnosalt")==0) {
+    convertnosalt = 1;
+  }
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
@@ -390,7 +405,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
           ctx->rekey_plaintext = 1;
         }
         
-        codec_prepare_key(pKey, nKey, ctx->salt, FILE_HEADER_SZ, key, &prepared_key_sz);  
+        codec_prepare_key(db, pKey, nKey, ctx->salt, FILE_HEADER_SZ, key, &prepared_key_sz);  
         assert(prepared_key_sz == key_sz);
         
         ctx->rekey = key; /* set rekey to new key data - note that ctx->key is original encryption key */

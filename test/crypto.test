@@ -39,6 +39,7 @@
 file delete -force test.db
 file delete -force test2.db
 file delete -force test3.db
+file delete -force test4.db
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -59,9 +60,36 @@ do_test codec-1.1 {
 } {}
 db close
 
-# set an encryption key and create some basic data
+# set an hex key create some basic data
 # create table and insert operations should work
 do_test codec-1.2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES ('test1', 'test2'); 
+  }
+} {}
+db close
+
+# close database, open it again with the same
+# hex key. verify that the table is readable
+# and the data just inserted is visible
+do_test codec-1.3 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
+    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT * from t1;
+  }
+} {t1 test1 test2}
+db close
+
+file delete -force test.db
+
+# set an encryption key and create some basic data
+# create table and insert operations should work
+do_test codec-1.4 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -74,7 +102,7 @@ db close
 # close database, open it again with the same
 # key. verify that the table is readable
 # and the data just inserted is visible
-do_test codec-1.3 {
+do_test codec-1.5 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -87,7 +115,7 @@ db close
 # open the database and try to read from it without
 # providing a passphrase. verify that the 
 # an error is returned from the library
-do_test codec-1.4 {
+do_test codec-1.6 {
   sqlite_orig db test.db
   catchsql {
     SELECT name FROM sqlite_master WHERE type='table';
@@ -98,7 +126,7 @@ db close
 # open the database and try to set an invalid
 # passphrase. verify that an error is returned
 # and that data couldn't be read
-do_test codec-1.5 {
+do_test codec-1.7 {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey2';
@@ -107,8 +135,18 @@ do_test codec-1.5 {
 } {1 {file is encrypted or is not a database}}
 db close
 
+# test invalid hex key fails
+do_test codec-1.8 {
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {1 {file is encrypted or is not a database}}
+db close
+
 # test a large number of inserts in a transaction to a memory database 
-do_test codec-1.6 {
+do_test codec-1.9 {
   sqlite_orig db :memory:
   execsql {
     PRAGMA key = 'testkey3';
@@ -128,18 +166,8 @@ do_test codec-1.6 {
 } {25000 0}
 db close
 
-# test invalid hex key fails
-do_test codec-1.7 {
-  sqlite_orig db test.db
-  catchsql {
-    PRAGMA hexkey = '98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480';
-    SELECT name FROM sqlite_master WHERE type='table';
-  }
-} {1 {file is encrypted or is not a database}}
-db close
-
 # test a large number of inserts in a transaction for multiple pages
-do_test codec-1.8 {
+do_test codec-1.10 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -158,7 +186,7 @@ do_test codec-1.8 {
 db close
 
 # test initial rekey
-do_test codec-1.9 {
+do_test codec-1.11 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -169,7 +197,7 @@ db close
 
 # test that now the new key opens the database
 # now close database re-open with new key
-do_test codec-1.10 {
+do_test codec-1.12 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkeynew';
@@ -179,7 +207,7 @@ do_test codec-1.10 {
 db close
 
 # test rekey on an unecrypted database
-do_test codec-1.11 {
+do_test codec-1.13 {
   sqlite_orig db2 test2.db
   execsql {
     BEGIN;
@@ -208,7 +236,7 @@ do_test codec-1.11 {
 db2 close
 
 # attach an encrypted database
-do_test codec-1.12 {
+do_test codec-1.14 {
   sqlite_orig db3 test3.db
   
   execsql {
@@ -239,7 +267,7 @@ do_test codec-1.12 {
 } {25000 15000}
 db3 close
 
-do_test codec-1.13 {
+do_test codec-1.15 {
   execsql {
     BEGIN;
   } db2
@@ -260,7 +288,7 @@ do_test codec-1.13 {
 db2 close
 
 # test locking across multiple handles
-do_test codec-1.14 {
+do_test codec-1.16 {
   sqlite_orig db3 test3.db
 
   execsql {
@@ -278,7 +306,7 @@ do_test codec-1.14 {
 } {1 {database is locked}} 
 
 # test locks are released
-do_test codec-1.15 {
+do_test codec-1.17 {
   execsql {
     COMMIT;
   } db3
@@ -293,7 +321,7 @@ db3 close
 db3a close
 
 # alter schema
-do_test codec-1.16 {
+do_test codec-1.18 {
   sqlite_orig db3 test3.db
   execsql {
     PRAGMA key = 'testkey';
@@ -306,7 +334,7 @@ do_test codec-1.16 {
 } {}
 db3 close
 
-do_test codec-1.17 {
+do_test codec-1.19 {
   sqlite_orig db3 test3.db
   execsql {
     PRAGMA key = 'testkey';

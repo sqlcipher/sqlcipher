@@ -40,7 +40,7 @@ use this method it is your responsibility to ensure that the data you provide a
 64 character hex string, which will be converted directly to 32 bytes (256 bits) of 
 key data.
 
-  PRAGMA hexkey = '2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99';
+  PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
 
 To encrypt a database programatically you can use the sqlite3_key function. The data provided
 in pKey is converted to an encryption key according to the same rules as PRAGMA key.
@@ -59,7 +59,7 @@ after you've supplied the correct database password;
 
 The hexrekey pragma may be used to rekey to a specific binary value
 
-  PRAGMA hexrekey = '2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99';
+  PRAGMA rekey = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
 
 This can be accomplished programtically by using sqlite3_rekey;
   
