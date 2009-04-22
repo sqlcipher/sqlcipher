@@ -243,10 +243,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   
   if(nKey && zKey && pDb->pBt) {
     codec_ctx *ctx;
-    MemPage *pPage1;
-    PgHdr *page;
     Pager *pPager = pDb->pBt->pBt->pPager;
-    int rc, prepared_key_sz;
+    int prepared_key_sz;
 
     ctx = sqlite3Malloc(sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
