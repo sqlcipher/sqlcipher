@@ -235,8 +235,26 @@ do_test codec-1.12 {
     ATTACH 'test3.db' AS db3;
     SELECT count(*) FROM db3.t3;
   } db2
-  
+
 } {25000 15000}
 
+do_test codec-1.13 {
+  execsql {
+    BEGIN;
+  } db2
+ 
+  for {set i 1} {$i<=10000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t2 VALUES($i,$r);" db2
+    execsql "INSERT INTO db3.t3 VALUES($i,$r);" db2
+  }
+
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t2;
+    SELECT count(*) FROM db3.t3;
+    DETACH db3;
+  } db2
+} {35000 25000} 
 
 finish_test
