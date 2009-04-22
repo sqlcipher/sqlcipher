@@ -55,8 +55,6 @@ typedef struct {
   Btree *pBt;
 } codec_ctx;
 
-static int convertnosalt = 0;
-
 /* 
  * The following two functions PKCS5_PBKDF2_HMAC_SHA256 and h__dump implement a 
  * PBKDF2 (rfc2898) variant using SHA 256 instead of SHA1. These functions were extracted directly from 
@@ -224,7 +222,7 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
       break;
   }
 
-  if(pgno == 1 && !convertnosalt) { 
+  if(pgno == 1) { 
     /* if this is a read & decrypt operation on the first page then copy the 
        first 16 bytes off the page into the context's random salt buffer
     */
@@ -240,10 +238,6 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
     codec_cipher(ctx, pgno, emode, pg_sz, pData, ctx->buffer);
   }
  
-  if(emode == CIPHER_DECRYPT && convertnosalt) {
-    convertnosalt = 0;
-  }
-
   if(emode == CIPHER_ENCRYPT) {
     return ctx->buffer; /* return persistent buffer data, pData remains intact */
   } else {
@@ -342,9 +336,6 @@ int sqlite3FreeCodecArg(void *pCodecArg) {
 
 void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
-  if(sqlite3StrICmp(in, "convertnosalt")==0) {
-    convertnosalt = 1;
-  }
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
