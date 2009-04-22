@@ -292,4 +292,29 @@ do_test codec-1.15 {
 db3 close
 db3a close
 
+# alter schema
+do_test codec-1.16 {
+  sqlite_orig db3 test3.db
+  execsql {
+    PRAGMA key = 'testkey';
+    ALTER TABLE t3 ADD COLUMN c;
+    INSERT INTO t3 VALUES (1,2,3);
+    INSERT INTO t3 VALUES (1,2,4);
+    CREATE TABLE t3a (a);
+    INSERT INTO t3a VALUES ('teststring');
+  } db3
+} {}
+db3 close
+
+do_test codec-1.17 {
+  sqlite_orig db3 test3.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t3 WHERE a IS NOT NULL;
+    SELECT count(*) FROM t3 WHERE c IS NOT NULL;
+    SELECT * FROM t3a;
+  } db3
+} {25003 2 teststring}
+db3 close
+
 finish_test
