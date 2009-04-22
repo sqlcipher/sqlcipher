@@ -45,11 +45,13 @@
 typedef struct {
   int key_sz;
   int iv_sz;
+  int pass_sz;
   int rekey_plaintext;
   void *key;
   void *buffer;
   void *rekey;
   void *salt;
+  void *pass;
   Btree *pBt;
 } codec_ctx;
 
@@ -268,7 +270,13 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* allocate space for salt data */
     ctx->key = sqlite3Malloc(ctx->key_sz);
     if(ctx->key == NULL) return SQLITE_NOMEM;
-    
+   
+    /* allocate space for raw key data */
+    ctx->pass = sqlite3Malloc(nKey);
+    if(ctx->pass == NULL) return SQLITE_NOMEM;
+    memcpy(ctx->pass, zKey, nKey);
+    ctx->pass_sz = nKey;
+
     /* read the first 16 bytes directly off the database file. This is the salt. */
     sqlite3_file *fd = sqlite3Pager_get_fd(pPager);
     if(fd == NULL || sqlite3OsRead(fd, ctx->salt, 16, 0) != SQLITE_OK) {
@@ -308,6 +316,11 @@ int sqlite3FreeCodecArg(void *pCodecArg) {
   if(ctx->salt) {
     memset(ctx->salt, 0, FILE_HEADER_SZ);
     sqlite3_free(ctx->salt);
+  }
+
+  if(ctx->pass) {
+    memset(ctx->pass, 0, ctx->pass_sz);
+    sqlite3_free(ctx->pass);
   }
   
   memset(ctx, 0, sizeof(codec_ctx));
@@ -407,6 +420,15 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         if(rc == SQLITE_OK) { 
           rc = sqlite3BtreeCommit(pDb->pBt); 
           memcpy(ctx->key, ctx->rekey, key_sz); 
+          if(ctx->pass) {
+            memset(ctx->pass, 0, ctx->pass_sz);
+            sqlite3_free(ctx->pass);
+          }
+          ctx->pass = sqlite3Malloc(nKey);
+          if(ctx->pass == NULL) return SQLITE_NOMEM;
+          memcpy(ctx->pass, pKey, nKey);
+          ctx->pass_sz = nKey;
+
         } else {
           printf("error\n");
           sqlite3BtreeRollback(pDb->pBt);
@@ -435,8 +457,8 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
 
     /* if the codec has an attached codec_context user the raw key data */
     if(ctx) {
-      *zKey = ctx->key;
-      *nKey = ctx->key_sz;
+      *zKey = ctx->pass;
+      *nKey = ctx->pass_sz;
     } else {
       *zKey = 0;
       *nKey = 0;  

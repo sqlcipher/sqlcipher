@@ -38,6 +38,7 @@
 
 file delete -force test.db
 file delete -force test2.db
+file delete -force test3.db
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -203,6 +204,39 @@ do_test codec-1.11 {
 } {25000}
 
 db close
+db2 close
+
+# attach an encrypted database
+do_test codec-1.12 {
+  sqlite_orig db3 test3.db
+  
+  execsql {
+    BEGIN;
+    PRAGMA key = 'testkey';
+    CREATE TABLE t3(a,b);
+  } db3
+ 
+  for {set i 1} {$i<=15000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t3 VALUES($i,$r);" db3
+  }
+  
+  execsql {
+    COMMIT;
+  } db3
+  
+  db3 close
+  
+  sqlite_orig db2 test2.db
+  
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t2;
+    ATTACH 'test3.db' AS db3;
+    SELECT count(*) FROM db3.t3;
+  } db2
+  
+} {25000 15000}
 
 
 finish_test
