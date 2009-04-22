@@ -130,7 +130,7 @@ static int PKCS5_PBKDF2_HMAC_SHA256(const char *pass, int passlen,
 
 static void codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *salt, int nSalt, void *out, int *nOut) {
   /* if key data lenth is exactly 256 bits / 32 bytes use the data directly */
-  if (nKey == 35 && sqlite3StrNICmp(zKey ,"x'", 2) == 0) { 
+  if (nKey == 67 && sqlite3StrNICmp(zKey ,"x'", 2) == 0) { 
     int n = nKey - 3; /* adjust for leading x' and tailing ' */
     int half_n = n/2;
     const char *z = zKey + 2; /* adjust lead offset of x' */ 
@@ -139,7 +139,6 @@ static void codec_prepare_key(sqlite3 *db, const void *zKey, int nKey, void *sal
     *nOut = half_n;
     memset(key, 0, half_n); /* cleanup temporary key data */
     sqlite3DbFree(db, key);
-    fprintf(stderr, "\nusing hex key\n"); 
   /* otherwise the key is provided as a string so hash it to get key data */
   } else {
     *nOut = SHA_DIGEST_LENGTH;
