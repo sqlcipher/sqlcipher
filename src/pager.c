@@ -5249,6 +5249,11 @@ void sqlite3pager_get_codec(Pager *pPager, void **ctx) {
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno) {
   return (PAGER_MJ_PGNO(pPager) == pgno) ? 1 : 0;
 }
+
+sqlite3_file *sqlite3Pager_get_fd(Pager *pPager) {
+  return (isOpen(pPager->fd)) ? pPager->fd : NULL;
+}
+
 #endif
 /* END CRYPTO */
 
