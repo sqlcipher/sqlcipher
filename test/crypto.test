@@ -259,4 +259,37 @@ do_test codec-1.13 {
 } {35000 25000} 
 db2 close
 
+# test locking across multiple handles
+do_test codec-1.14 {
+  sqlite_orig db3 test3.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    BEGIN EXCLUSIVE;
+    INSERT INTO t3 VALUES(1,2);
+  } db3
+  
+  sqlite_orig db3a test3.db
+	catchsql {
+    PRAGMA key = 'testkey';
+		SELECT count(*) FROM t3;
+	} db3a
+
+} {1 {database is locked}} 
+
+# test locks are released
+do_test codec-1.15 {
+  execsql {
+    COMMIT;
+  } db3
+  
+	catchsql {
+		SELECT count(*) FROM t3;
+	} db3a
+
+} {0 25001}
+
+db3 close
+db3a close
+
 finish_test
