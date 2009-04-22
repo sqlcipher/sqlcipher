@@ -57,11 +57,11 @@ do_test codec-1.1 {
     SELECT name FROM sqlite_master WHERE type='table';
   }
 } {}
+db close
 
 # set an encryption key and create some basic data
 # create table and insert operations should work
 do_test codec-1.2 {
-  db close
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -69,12 +69,12 @@ do_test codec-1.2 {
     INSERT INTO t1 VALUES ('test1', 'test2'); 
   }
 } {}
+db close
 
 # close database, open it again with the same
 # key. verify that the table is readable
 # and the data just inserted is visible
 do_test codec-1.3 {
-  db close
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -82,33 +82,33 @@ do_test codec-1.3 {
     SELECT * from t1;
   }
 } {t1 test1 test2}
+db close
 
 # open the database and try to read from it without
 # providing a passphrase. verify that the 
 # an error is returned from the library
 do_test codec-1.4 {
-  db close
   sqlite_orig db test.db
   catchsql {
     SELECT name FROM sqlite_master WHERE type='table';
   }
 } {1 {file is encrypted or is not a database}}
+db close
 
 # open the database and try to set an invalid
 # passphrase. verify that an error is returned
 # and that data couldn't be read
 do_test codec-1.5 {
-  db close
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey2';
     SELECT name FROM sqlite_master WHERE type='table';
   }
 } {1 {file is encrypted or is not a database}}
+db close
 
 # test a large number of inserts in a transaction to a memory database 
 do_test codec-1.6 {
-  db close
   sqlite_orig db :memory:
   execsql {
     PRAGMA key = 'testkey3';
@@ -122,22 +122,24 @@ do_test codec-1.6 {
   execsql {
     COMMIT;
     SELECT count(*) FROM t2;
+    DELETE FROM t2;
+    SELECT count(*) FROM t2;
   } 
-} {25000}
+} {25000 0}
+db close
 
 # test invalid hex key fails
 do_test codec-1.7 {
-  db close
   sqlite_orig db test.db
   catchsql {
     PRAGMA hexkey = '98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480';
     SELECT name FROM sqlite_master WHERE type='table';
   }
 } {1 {file is encrypted or is not a database}}
+db close
 
 # test a large number of inserts in a transaction for multiple pages
 do_test codec-1.8 {
-  db close
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -153,17 +155,17 @@ do_test codec-1.8 {
     SELECT count(*) FROM t2;
   } 
 } {25000}
+db close
 
 # test initial rekey
 do_test codec-1.9 {
-  db close
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA rekey = 'testkeynew';
   }
-  db close
 } {}
+db close
 
 # test that now the new key opens the database
 # now close database re-open with new key
@@ -174,6 +176,7 @@ do_test codec-1.10 {
     SELECT count(*) FROM t2;
   }
 } {25000}
+db close
 
 # test rekey on an unecrypted database
 do_test codec-1.11 {
@@ -202,8 +205,6 @@ do_test codec-1.11 {
   } db2
 
 } {25000}
-
-db close
 db2 close
 
 # attach an encrypted database
@@ -225,7 +226,6 @@ do_test codec-1.12 {
     COMMIT;
   } db3
   
-  db3 close
   
   sqlite_orig db2 test2.db
   
@@ -237,6 +237,7 @@ do_test codec-1.12 {
   } db2
 
 } {25000 15000}
+db3 close
 
 do_test codec-1.13 {
   execsql {
@@ -256,5 +257,6 @@ do_test codec-1.13 {
     DETACH db3;
   } db2
 } {35000 25000} 
+db2 close
 
 finish_test
