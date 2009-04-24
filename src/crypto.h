@@ -41,16 +41,7 @@
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
 
-#define HMAC_HASH EVP_sha256()
-#define SHA_DIGEST_LENGTH 32
-
-#ifndef PBKDF2_SALT
-#define PBKDF2_SALT {0x99, 0x76, 0x93, 0x7a, 0xc7, 0x2e, 0xd3, 0x88} 
-#endif 
-
-#ifndef PBKDF2_SALT_SZ
-#define PBKDF2_SALT_SZ 8
-#endif 
+#define KEY_LENGTH 32
 
 #ifndef PBKDF2_ITER
 #define PBKDF2_ITER 4000
