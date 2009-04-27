@@ -301,8 +301,8 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       struct Db *pDb = &db->aDb[i];
       if(pDb->pBt) {
         codec_ctx *ctx;
-        int rc;
-        Pgno page_count, pgno;
+        int rc, page_count;
+        Pgno pgno;
         PgHdr *page;
         Pager *pPager = pDb->pBt->pBt->pPager;
  
