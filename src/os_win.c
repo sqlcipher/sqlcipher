@@ -12,7 +12,7 @@
 **
 ** This file contains code that is specific to windows.
 **
-** $Id: os_win.c,v 1.154 2009/04/09 14:27:07 chw Exp $
+** $Id: os_win.c,v 1.156 2009/04/23 19:08:33 shane Exp $
 */
 #include "sqliteInt.h"
 #if SQLITE_OS_WIN               /* This file is used for windows only */
@@ -1312,16 +1312,23 @@ static int winOpen(
   }else{
     dwDesiredAccess = GENERIC_READ;
   }
-  if( flags & SQLITE_OPEN_CREATE ){
+  /* SQLITE_OPEN_EXCLUSIVE is used to make sure that a new file is 
+  ** created. SQLite doesn't use it to indicate "exclusive access" 
+  ** as it is usually understood.
+  */
+  assert(!(flags & SQLITE_OPEN_EXCLUSIVE) || (flags & SQLITE_OPEN_CREATE));
+  if( flags & SQLITE_OPEN_EXCLUSIVE ){
+    /* Creates a new file, only if it does not already exist. */
+    /* If the file exists, it fails. */
+    dwCreationDisposition = CREATE_NEW;
+  }else if( flags & SQLITE_OPEN_CREATE ){
+    /* Open existing file, or create if it doesn't exist */
     dwCreationDisposition = OPEN_ALWAYS;
   }else{
+    /* Opens a file, only if it exists. */
     dwCreationDisposition = OPEN_EXISTING;
   }
-  if( flags & SQLITE_OPEN_MAIN_DB ){
-    dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-  }else{
-    dwShareMode = 0;
-  }
+  dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
   if( flags & SQLITE_OPEN_DELETEONCLOSE ){
 #if SQLITE_OS_WINCE
     dwFlagsAndAttributes = FILE_ATTRIBUTE_HIDDEN;
@@ -1600,13 +1607,11 @@ static int getSectorSize(
     void *zConverted = convertUtf8Filename(zFullpath);
     if( zConverted ){
       if( isNT() ){
-        int i;
         /* trim path to just drive reference */
         WCHAR *p = zConverted;
-        for(i=0;i<MAX_PATH;i++){
-          if( p[i] == '\\' ){
-            i++;
-            p[i] = '\0';
+        for(;*p;p++){
+          if( *p == '\\' ){
+            *p = '\0';
             break;
           }
         }
@@ -1617,13 +1622,11 @@ static int getSectorSize(
                                   &dwDummy);
 #if SQLITE_OS_WINCE==0
       }else{
-        int i;
         /* trim path to just drive reference */
         CHAR *p = (CHAR *)zConverted;
-        for(i=0;i<MAX_PATH;i++){
-          if( p[i] == '\\' ){
-            i++;
-            p[i] = '\0';
+        for(;*p;p++){
+          if( *p == '\\' ){
+            *p = '\0';
             break;
           }
         }

@@ -15,7 +15,7 @@
 ** only within the VDBE.  Interface routines refer to a Mem using the
 ** name sqlite_value
 **
-** $Id: vdbemem.c,v 1.140 2009/04/05 12:22:09 drh Exp $
+** $Id: vdbemem.c,v 1.144 2009/05/05 12:54:50 drh Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
@@ -270,16 +270,18 @@ int sqlite3VdbeMemFinalize(Mem *pMem, FuncDef *pFunc){
 */
 void sqlite3VdbeMemReleaseExternal(Mem *p){
   assert( p->db==0 || sqlite3_mutex_held(p->db->mutex) );
-  if( p->flags&MEM_Agg ){
-    sqlite3VdbeMemFinalize(p, p->u.pDef);
-    assert( (p->flags & MEM_Agg)==0 );
-    sqlite3VdbeMemRelease(p);
-  }else if( p->flags&MEM_Dyn && p->xDel ){
-    assert( (p->flags&MEM_RowSet)==0 );
-    p->xDel((void *)p->z);
-    p->xDel = 0;
-  }else if( p->flags&MEM_RowSet ){
-    sqlite3RowSetClear(p->u.pRowSet);
+  if( p->flags&(MEM_Agg|MEM_Dyn|MEM_RowSet) ){
+    if( p->flags&MEM_Agg ){
+      sqlite3VdbeMemFinalize(p, p->u.pDef);
+      assert( (p->flags & MEM_Agg)==0 );
+      sqlite3VdbeMemRelease(p);
+    }else if( p->flags&MEM_Dyn && p->xDel ){
+      assert( (p->flags&MEM_RowSet)==0 );
+      p->xDel((void *)p->z);
+      p->xDel = 0;
+    }else if( p->flags&MEM_RowSet ){
+      sqlite3RowSetClear(p->u.pRowSet);
+    }
   }
 }
 
@@ -975,12 +977,14 @@ int sqlite3ValueFromExpr(
     zVal = sqlite3DbStrNDup(db, (char*)pExpr->token.z, pExpr->token.n);
     pVal = sqlite3ValueNew(db);
     if( !zVal || !pVal ) goto no_mem;
-    sqlite3Dequote(zVal);
     sqlite3ValueSetStr(pVal, -1, zVal, SQLITE_UTF8, SQLITE_DYNAMIC);
     if( (op==TK_INTEGER || op==TK_FLOAT ) && affinity==SQLITE_AFF_NONE ){
-      sqlite3ValueApplyAffinity(pVal, SQLITE_AFF_NUMERIC, enc);
+      sqlite3ValueApplyAffinity(pVal, SQLITE_AFF_NUMERIC, SQLITE_UTF8);
     }else{
-      sqlite3ValueApplyAffinity(pVal, affinity, enc);
+      sqlite3ValueApplyAffinity(pVal, affinity, SQLITE_UTF8);
+    }
+    if( enc!=SQLITE_UTF8 ){
+      sqlite3VdbeChangeEncoding(pVal, enc);
     }
   }else if( op==TK_UMINUS ) {
     if( SQLITE_OK==sqlite3ValueFromExpr(db,pExpr->pLeft,enc,affinity,&pVal) ){

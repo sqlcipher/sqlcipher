@@ -12,7 +12,7 @@
 ** This file contains C code routines that are called by the parser
 ** in order to generate code for DELETE FROM statements.
 **
-** $Id: delete.c,v 1.198 2009/03/05 03:48:07 shane Exp $
+** $Id: delete.c,v 1.201 2009/05/01 21:13:37 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -62,26 +62,6 @@ int sqlite3IsReadOnly(Parse *pParse, Table *pTab, int viewOk){
   return 0;
 }
 
-/*
-** Generate code that will open a table for reading.
-*/
-void sqlite3OpenTable(
-  Parse *p,       /* Generate code into this VDBE */
-  int iCur,       /* The cursor number of the table */
-  int iDb,        /* The database index in sqlite3.aDb[] */
-  Table *pTab,    /* The table to be opened */
-  int opcode      /* OP_OpenRead or OP_OpenWrite */
-){
-  Vdbe *v;
-  if( IsVirtual(pTab) ) return;
-  v = sqlite3GetVdbe(p);
-  assert( opcode==OP_OpenWrite || opcode==OP_OpenRead );
-  sqlite3TableLock(p, iDb, pTab->tnum, (opcode==OP_OpenWrite)?1:0, pTab->zName);
-  sqlite3VdbeAddOp3(v, opcode, iCur, pTab->tnum, iDb);
-  sqlite3VdbeChangeP4(v, -1, SQLITE_INT_TO_PTR(pTab->nCol), P4_INT32);
-  VdbeComment((v, "%s", pTab->zName));
-}
-
 
 #if !defined(SQLITE_OMIT_VIEW) && !defined(SQLITE_OMIT_TRIGGER)
 /*
@@ -107,6 +87,7 @@ void sqlite3MaterializeView(
     pWhere = sqlite3ExprDup(db, pWhere, 0);
     viewName.z = (u8*)pView->zName;
     viewName.n = (unsigned int)sqlite3Strlen30((const char*)viewName.z);
+    viewName.quoted = 0;
     pFrom = sqlite3SrcListAppendFromTerm(pParse, 0, 0, 0, &viewName, pDup, 0,0);
     pDup = sqlite3SelectNew(pParse, 0, pFrom, pWhere, 0, 0, 0, 0, 0, 0);
   }
@@ -377,10 +358,8 @@ void sqlite3DeleteFrom(
   */
   if( rcauth==SQLITE_OK && pWhere==0 && !pTrigger && !IsVirtual(pTab) ){
     assert( !isView );
-    sqlite3VdbeAddOp3(v, OP_Clear, pTab->tnum, iDb, memCnt);
-    if( !pParse->nested ){
-      sqlite3VdbeChangeP4(v, -1, pTab->zName, P4_STATIC);
-    }
+    sqlite3VdbeAddOp4(v, OP_Clear, pTab->tnum, iDb, memCnt,
+                      pTab->zName, P4_STATIC);
     for(pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext){
       assert( pIdx->pSchema==pTab->pSchema );
       sqlite3VdbeAddOp2(v, OP_Clear, pIdx->tnum, iDb);
@@ -393,13 +372,15 @@ void sqlite3DeleteFrom(
   {
     int iRowid = ++pParse->nMem;    /* Used for storing rowid values. */
     int iRowSet = ++pParse->nMem;   /* Register for rowset of rows to delete */
+    int regRowid;                   /* Actual register containing rowids */
 
     /* Collect rowids of every row to be deleted.
     */
     sqlite3VdbeAddOp2(v, OP_Null, 0, iRowSet);
-    pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, 0,
-                               WHERE_FILL_ROWSET, iRowSet);
+    pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere,0,WHERE_DUPLICATES_OK);
     if( pWInfo==0 ) goto delete_from_cleanup;
+    regRowid = sqlite3ExprCodeGetColumn(pParse, pTab, -1, iCur, iRowid, 0);
+    sqlite3VdbeAddOp2(v, OP_RowSetAdd, iRowSet, regRowid);
     if( db->flags & SQLITE_CountRows ){
       sqlite3VdbeAddOp2(v, OP_AddImm, memCnt, 1);
     }

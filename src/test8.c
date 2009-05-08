@@ -13,7 +13,7 @@
 ** is not included in the SQLite library.  It is used for automated
 ** testing of the SQLite library.
 **
-** $Id: test8.c,v 1.76 2009/04/08 15:45:32 drh Exp $
+** $Id: test8.c,v 1.78 2009/04/29 11:50:54 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 #include "tcl.h"
@@ -695,7 +695,7 @@ static int echoFilter(
   rc = sqlite3_prepare(db, idxStr, -1, &pCur->pStmt, 0);
   assert( pCur->pStmt || rc!=SQLITE_OK );
   for(i=0; rc==SQLITE_OK && i<argc; i++){
-    sqlite3_bind_value(pCur->pStmt, i+1, argv[i]);
+    rc = sqlite3_bind_value(pCur->pStmt, i+1, argv[i]);
   }
 
   /* If everything was successful, advance to the first row of the scan */
@@ -893,16 +893,16 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
   pIdxInfo->idxNum = hashString(zQuery);
   pIdxInfo->idxStr = zQuery;
   pIdxInfo->needToFreeIdxStr = 1;
-  if (useCost) {
+  if( useCost ){
     pIdxInfo->estimatedCost = cost;
-  } else if( useIdx ){
+  }else if( useIdx ){
     /* Approximation of log2(nRow). */
     for( ii=0; ii<(sizeof(int)*8); ii++ ){
       if( nRow & (1<<ii) ){
         pIdxInfo->estimatedCost = (double)ii;
       }
     }
-  } else {
+  }else{
     pIdxInfo->estimatedCost = (double)nRow;
   }
   return rc;
