@@ -10,7 +10,7 @@
 *************************************************************************
 **
 **
-** $Id: trigger.c,v 1.135 2009/02/28 10:47:42 danielk1977 Exp $
+** $Id: trigger.c,v 1.138 2009/05/06 18:42:21 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -285,7 +285,7 @@ void sqlite3FinishTrigger(
       db->mallocFailed = 1;
     }else if( pLink->pSchema==pLink->pTabSchema ){
       Table *pTab;
-      int n = sqlite3Strlen30(pLink->table) + 1;
+      int n = sqlite3Strlen30(pLink->table);
       pTab = sqlite3HashFind(&pLink->pTabSchema->tblHash, pLink->table, n);
       assert( pTab!=0 );
       pLink->pNext = pTab->pTrigger;
@@ -512,7 +512,7 @@ drop_trigger_cleanup:
 ** is set on.
 */
 static Table *tableOfTrigger(Trigger *pTrigger){
-  int n = sqlite3Strlen30(pTrigger->table) + 1;
+  int n = sqlite3Strlen30(pTrigger->table);
   return sqlite3HashFind(&pTrigger->pTabSchema->tblHash, pTrigger->table, n);
 }
 
@@ -663,6 +663,7 @@ static SrcList *targetSrcList(
     assert( iDb<pParse->db->nDb );
     sDb.z = (u8*)pParse->db->aDb[iDb].zName;
     sDb.n = sqlite3Strlen30((char*)sDb.z);
+    sDb.quoted = 0;
     pSrc = sqlite3SrcListAppend(pParse->db, 0, &sDb, &pStep->target);
   } else {
     pSrc = sqlite3SrcListAppend(pParse->db, 0, &pStep->target, 0);
@@ -689,7 +690,7 @@ static int codeTriggerProgram(
   sqlite3VdbeAddOp2(v, OP_ContextPush, 0, 0);
   VdbeComment((v, "begin trigger %s", pStepList->pTrig->name));
   while( pTriggerStep ){
-    sqlite3ExprClearColumnCache(pParse, -1);
+    sqlite3ExprCacheClear(pParse);
     orconf = (orconfin == OE_Default)?pTriggerStep->orconf:orconfin;
     pParse->trigStack->orconf = orconf;
     switch( pTriggerStep->op ){

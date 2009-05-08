@@ -16,7 +16,7 @@
 ** sqliteRegisterBuildinFunctions() found at the bottom of the file.
 ** All other code has file scope.
 **
-** $Id: func.c,v 1.231 2009/04/08 23:04:14 drh Exp $
+** $Id: func.c,v 1.234 2009/04/20 12:07:37 drh Exp $
 */
 #include "sqliteInt.h"
 #include <stdlib.h>
@@ -1179,12 +1179,14 @@ static void countStep(sqlite3_context *context, int argc, sqlite3_value **argv){
     p->n++;
   }
 
+#ifndef SQLITE_OMIT_DEPRECATED
   /* The sqlite3_aggregate_count() function is deprecated.  But just to make
   ** sure it still operates correctly, verify that its count agrees with our 
   ** internal count when using count(*) and when the total count can be
   ** expressed as a 32-bit integer. */
   assert( argc==1 || p==0 || p->n>0x7fffffff
           || p->n==sqlite3_aggregate_count(context) );
+#endif
 }   
 static void countFinalize(sqlite3_context *context){
   CountCtx *p;
@@ -1258,9 +1260,15 @@ static void groupConcatStep(
 
   if( pAccum ){
     sqlite3 *db = sqlite3_context_db_handle(context);
+    int n;
     pAccum->useMalloc = 1;
     pAccum->mxAlloc = db->aLimit[SQLITE_LIMIT_LENGTH];
-    if( pAccum->nChar ){
+#ifdef SQLITE_OMIT_DEPRECATED
+    n = context->pMem->n;
+#else
+    n = sqlite3_aggregate_count(context);
+#endif
+    if( n>1 ){
       if( argc==2 ){
         zSep = (char*)sqlite3_value_text(argv[1]);
         nSep = sqlite3_value_bytes(argv[1]);

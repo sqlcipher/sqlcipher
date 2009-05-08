@@ -14,7 +14,7 @@
 ** to version 2.8.7, all this code was combined into the vdbe.c source file.
 ** But that file was getting too big so this subroutines were split out.
 **
-** $Id: vdbeaux.c,v 1.451 2009/04/10 15:42:36 shane Exp $
+** $Id: vdbeaux.c,v 1.457 2009/05/06 18:57:10 shane Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
@@ -730,9 +730,9 @@ static char *displayP4(Op *pOp, char *zTemp, int nTemp){
 */
 void sqlite3VdbeUsesBtree(Vdbe *p, int i){
   int mask;
-  assert( i>=0 && i<p->db->nDb );
+  assert( i>=0 && i<p->db->nDb && i<sizeof(u32)*8 );
   assert( i<(int)sizeof(p->btreeMask)*8 );
-  mask = 1<<i;
+  mask = ((u32)1)<<i;
   if( (p->btreeMask & mask)==0 ){
     p->btreeMask |= mask;
     sqlite3BtreeMutexArrayInsert(&p->aMutex, p->db->aDb[i].pBt);
@@ -1940,7 +1940,7 @@ void sqlite3VdbeDeleteAuxData(VdbeFunc *pVdbeFunc, int mask){
   int i;
   for(i=0; i<pVdbeFunc->nAux; i++){
     struct AuxData *pAux = &pVdbeFunc->apAux[i];
-    if( (i>31 || !(mask&(1<<i))) && pAux->pAux ){
+    if( (i>31 || !(mask&(((u32)1)<<i))) && pAux->pAux ){
       if( pAux->xDelete ){
         pAux->xDelete(pAux->pAux);
       }
@@ -2002,8 +2002,8 @@ int sqlite3VdbeCursorMoveto(VdbeCursor *p){
     rc = sqlite3BtreeMovetoUnpacked(p->pCursor, 0, p->movetoTarget, 0, &res);
     if( rc ) return rc;
     p->lastRowid = keyToInt(p->movetoTarget);
-    p->rowidIsValid = res==0 ?1:0;
-    if( res<0 ){
+    p->rowidIsValid = ALWAYS(res==0) ?1:0;
+    if( NEVER(res<0) ){
       rc = sqlite3BtreeNext(p->pCursor, &res);
       if( rc ) return rc;
     }
@@ -2466,6 +2466,7 @@ int sqlite3VdbeRecordCompare(
   mem1.enc = pKeyInfo->enc;
   mem1.db = pKeyInfo->db;
   mem1.flags = 0;
+  mem1.u.i = 0;  /* not needed, here to silence compiler warning */
   mem1.zMalloc = 0;
   
   idx1 = getVarint32(aKey1, szHdr1);
@@ -2495,6 +2496,18 @@ int sqlite3VdbeRecordCompare(
     i++;
   }
   if( mem1.zMalloc ) sqlite3VdbeMemRelease(&mem1);
+
+  /* If the PREFIX_SEARCH flag is set and all fields except the final
+  ** rowid field were equal, then clear the PREFIX_SEARCH flag and set 
+  ** pPKey2->rowid to the value of the rowid field in (pKey1, nKey1).
+  ** This is used by the OP_IsUnique opcode.
+  */
+  if( (pPKey2->flags & UNPACKED_PREFIX_SEARCH) && i==(pPKey2->nField-1) ){
+    assert( idx1==szHdr1 && rc );
+    assert( mem1.flags & MEM_Int );
+    pPKey2->flags &= ~UNPACKED_PREFIX_SEARCH;
+    pPKey2->rowid = mem1.u.i;
+  }
 
   if( rc==0 ){
     /* rc==0 here means that one of the keys ran out of fields and

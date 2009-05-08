@@ -14,7 +14,7 @@
 ** other files are for internal use by SQLite and should not be
 ** accessed by users of the library.
 **
-** $Id: main.c,v 1.536 2009/04/09 01:23:49 drh Exp $
+** $Id: main.c,v 1.548 2009/05/06 19:03:14 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -162,14 +162,16 @@ int sqlite3_initialize(void){
     sqlite3GlobalConfig.inProgress = 1;
     memset(pHash, 0, sizeof(sqlite3GlobalFunctions));
     sqlite3RegisterGlobalFunctions();
-    rc = sqlite3_os_init();
+    rc = sqlite3PcacheInitialize();
     if( rc==SQLITE_OK ){
-      rc = sqlite3PcacheInitialize();
+      rc = sqlite3_os_init();
+    }
+    if( rc==SQLITE_OK ){
       sqlite3PCacheBufferSetup( sqlite3GlobalConfig.pPage, 
           sqlite3GlobalConfig.szPage, sqlite3GlobalConfig.nPage);
+      sqlite3GlobalConfig.isInit = 1;
     }
     sqlite3GlobalConfig.inProgress = 0;
-    sqlite3GlobalConfig.isInit = (rc==SQLITE_OK ? 1 : 0);
   }
   sqlite3_mutex_leave(sqlite3GlobalConfig.pInitMutex);
 
@@ -211,18 +213,20 @@ int sqlite3_initialize(void){
 ** Undo the effects of sqlite3_initialize().  Must not be called while
 ** there are outstanding database connections or memory allocations or
 ** while any part of SQLite is otherwise in use in any thread.  This
-** routine is not threadsafe.  Not by a long shot.
+** routine is not threadsafe.  But it is safe to invoke this routine
+** on when SQLite is already shut down.  If SQLite is already shut down
+** when this routine is invoked, then this routine is a harmless no-op.
 */
 int sqlite3_shutdown(void){
-  sqlite3GlobalConfig.isMallocInit = 0;
-  sqlite3PcacheShutdown();
   if( sqlite3GlobalConfig.isInit ){
+    sqlite3GlobalConfig.isMallocInit = 0;
+    sqlite3PcacheShutdown();
     sqlite3_os_end();
+    sqlite3_reset_auto_extension();
+    sqlite3MallocEnd();
+    sqlite3MutexEnd();
+    sqlite3GlobalConfig.isInit = 0;
   }
-  sqlite3_reset_auto_extension();
-  sqlite3MallocEnd();
-  sqlite3MutexEnd();
-  sqlite3GlobalConfig.isInit = 0;
   return SQLITE_OK;
 }
 
@@ -734,37 +738,41 @@ void sqlite3RollbackAll(sqlite3 *db){
 ** argument.
 */
 const char *sqlite3ErrStr(int rc){
-  const char *z;
-  switch( rc & 0xff ){
-    case SQLITE_ROW:
-    case SQLITE_DONE:
-    case SQLITE_OK:         z = "not an error";                          break;
-    case SQLITE_ERROR:      z = "SQL logic error or missing database";   break;
-    case SQLITE_PERM:       z = "access permission denied";              break;
-    case SQLITE_ABORT:      z = "callback requested query abort";        break;
-    case SQLITE_BUSY:       z = "database is locked";                    break;
-    case SQLITE_LOCKED:     z = "database table is locked";              break;
-    case SQLITE_NOMEM:      z = "out of memory";                         break;
-    case SQLITE_READONLY:   z = "attempt to write a readonly database";  break;
-    case SQLITE_INTERRUPT:  z = "interrupted";                           break;
-    case SQLITE_IOERR:      z = "disk I/O error";                        break;
-    case SQLITE_CORRUPT:    z = "database disk image is malformed";      break;
-    case SQLITE_FULL:       z = "database or disk is full";              break;
-    case SQLITE_CANTOPEN:   z = "unable to open database file";          break;
-    case SQLITE_EMPTY:      z = "table contains no data";                break;
-    case SQLITE_SCHEMA:     z = "database schema has changed";           break;
-    case SQLITE_TOOBIG:     z = "String or BLOB exceeded size limit";    break;
-    case SQLITE_CONSTRAINT: z = "constraint failed";                     break;
-    case SQLITE_MISMATCH:   z = "datatype mismatch";                     break;
-    case SQLITE_MISUSE:     z = "library routine called out of sequence";break;
-    case SQLITE_NOLFS:      z = "large file support is disabled";        break;
-    case SQLITE_AUTH:       z = "authorization denied";                  break;
-    case SQLITE_FORMAT:     z = "auxiliary database format error";       break;
-    case SQLITE_RANGE:      z = "bind or column index out of range";     break;
-    case SQLITE_NOTADB:     z = "file is encrypted or is not a database";break;
-    default:                z = "unknown error";                         break;
+  static const char* const aMsg[] = {
+    /* SQLITE_OK          */ "not an error",
+    /* SQLITE_ERROR       */ "SQL logic error or missing database",
+    /* SQLITE_INTERNAL    */ 0,
+    /* SQLITE_PERM        */ "access permission denied",
+    /* SQLITE_ABORT       */ "callback requested query abort",
+    /* SQLITE_BUSY        */ "database is locked",
+    /* SQLITE_LOCKED      */ "database table is locked",
+    /* SQLITE_NOMEM       */ "out of memory",
+    /* SQLITE_READONLY    */ "attempt to write a readonly database",
+    /* SQLITE_INTERRUPT   */ "interrupted",
+    /* SQLITE_IOERR       */ "disk I/O error",
+    /* SQLITE_CORRUPT     */ "database disk image is malformed",
+    /* SQLITE_NOTFOUND    */ 0,
+    /* SQLITE_FULL        */ "database or disk is full",
+    /* SQLITE_CANTOPEN    */ "unable to open database file",
+    /* SQLITE_PROTOCOL    */ 0,
+    /* SQLITE_EMPTY       */ "table contains no data",
+    /* SQLITE_SCHEMA      */ "database schema has changed",
+    /* SQLITE_TOOBIG      */ "String or BLOB exceeded size limit",
+    /* SQLITE_CONSTRAINT  */ "constraint failed",
+    /* SQLITE_MISMATCH    */ "datatype mismatch",
+    /* SQLITE_MISUSE      */ "library routine called out of sequence",
+    /* SQLITE_NOLFS       */ "large file support is disabled",
+    /* SQLITE_AUTH        */ "authorization denied",
+    /* SQLITE_FORMAT      */ "auxiliary database format error",
+    /* SQLITE_RANGE       */ "bind or column index out of range",
+    /* SQLITE_NOTADB      */ "file is encrypted or is not a database",
+  };
+  rc &= 0xff;
+  if( ALWAYS(rc>=0) && rc<(int)(sizeof(aMsg)/sizeof(aMsg[0])) && aMsg[rc]!=0 ){
+    return aMsg[rc];
+  }else{
+    return "unknown error";
   }
-  return z;
 }
 
 /*
@@ -922,7 +930,7 @@ int sqlite3CreateFunc(
       (!xFunc && (xFinal && !xStep)) ||
       (!xFunc && (!xFinal && xStep)) ||
       (nArg<-1 || nArg>SQLITE_MAX_FUNCTION_ARG) ||
-      (255<(nName = sqlite3Strlen(db, zFunctionName))) ){
+      (255<(nName = sqlite3Strlen30( zFunctionName))) ){
     sqlite3Error(db, SQLITE_ERROR, "bad parameters");
     return SQLITE_ERROR;
   }
@@ -1048,7 +1056,7 @@ int sqlite3_overload_function(
   const char *zName,
   int nArg
 ){
-  int nName = sqlite3Strlen(db, zName);
+  int nName = sqlite3Strlen30(zName);
   int rc;
   sqlite3_mutex_enter(db->mutex);
   if( sqlite3FindFunction(db, zName, nName, nArg, SQLITE_UTF8, 0)==0 ){
@@ -1158,6 +1166,39 @@ void *sqlite3_rollback_hook(
 }
 
 /*
+** This function returns true if main-memory should be used instead of
+** a temporary file for transient pager files and statement journals.
+** The value returned depends on the value of db->temp_store (runtime
+** parameter) and the compile time value of SQLITE_TEMP_STORE. The
+** following table describes the relationship between these two values
+** and this functions return value.
+**
+**   SQLITE_TEMP_STORE     db->temp_store     Location of temporary database
+**   -----------------     --------------     ------------------------------
+**   0                     any                file      (return 0)
+**   1                     1                  file      (return 0)
+**   1                     2                  memory    (return 1)
+**   1                     0                  file      (return 0)
+**   2                     1                  file      (return 0)
+**   2                     2                  memory    (return 1)
+**   2                     0                  memory    (return 1)
+**   3                     any                memory    (return 1)
+*/
+int sqlite3TempInMemory(const sqlite3 *db){
+#if SQLITE_TEMP_STORE==1
+  return ( db->temp_store==2 );
+#endif
+#if SQLITE_TEMP_STORE==2
+  return ( db->temp_store!=1 );
+#endif
+#if SQLITE_TEMP_STORE==3
+  return 1;
+#else
+  return 0;
+#endif
+}
+
+/*
 ** This routine is called to create a connection to a database BTree
 ** driver.  If zFilename is the name of a file, then that file is
 ** opened and used.  If zFilename is the magic name ":memory:" then
@@ -1167,20 +1208,8 @@ void *sqlite3_rollback_hook(
 ** soon as the connection is closed.
 **
 ** A virtual database can be either a disk file (that is automatically
-** deleted when the file is closed) or it an be held entirely in memory,
-** depending on the values of the SQLITE_TEMP_STORE compile-time macro and the
-** db->temp_store variable, according to the following chart:
-**
-**   SQLITE_TEMP_STORE     db->temp_store     Location of temporary database
-**   -----------------     --------------     ------------------------------
-**   0                     any                file
-**   1                     1                  file
-**   1                     2                  memory
-**   1                     0                  file
-**   2                     1                  file
-**   2                     2                  memory
-**   2                     0                  memory
-**   3                     any                memory
+** deleted when the file is closed) or it an be held entirely in memory.
+** The sqlite3TempInMemory() function is used to determine which.
 */
 int sqlite3BtreeFactory(
   const sqlite3 *db,        /* Main database when opening aux otherwise 0 */
@@ -1201,22 +1230,11 @@ int sqlite3BtreeFactory(
   if( db->flags & SQLITE_NoReadlock ){
     btFlags |= BTREE_NO_READLOCK;
   }
-  if( zFilename==0 ){
-#if SQLITE_TEMP_STORE==0
-    /* Do nothing */
-#endif
 #ifndef SQLITE_OMIT_MEMORYDB
-#if SQLITE_TEMP_STORE==1
-    if( db->temp_store==2 ) zFilename = ":memory:";
-#endif
-#if SQLITE_TEMP_STORE==2
-    if( db->temp_store!=1 ) zFilename = ":memory:";
-#endif
-#if SQLITE_TEMP_STORE==3
+  if( zFilename==0 && sqlite3TempInMemory(db) ){
     zFilename = ":memory:";
-#endif
-#endif /* SQLITE_OMIT_MEMORYDB */
   }
+#endif
 
   if( (vfsFlags & SQLITE_OPEN_MAIN_DB)!=0 && (zFilename==0 || *zFilename==0) ){
     vfsFlags = (vfsFlags & ~SQLITE_OPEN_MAIN_DB) | SQLITE_OPEN_TEMP_DB;
@@ -1352,11 +1370,13 @@ static int createCollation(
   ** to one of SQLITE_UTF16LE or SQLITE_UTF16BE using the
   ** SQLITE_UTF16NATIVE macro. SQLITE_UTF16 is not used internally.
   */
-  enc2 = enc & ~SQLITE_UTF16_ALIGNED;
-  if( enc2==SQLITE_UTF16 ){
+  enc2 = enc;
+  testcase( enc2==SQLITE_UTF16 );
+  testcase( enc2==SQLITE_UTF16_ALIGNED );
+  if( enc2==SQLITE_UTF16 || enc2==SQLITE_UTF16_ALIGNED ){
     enc2 = SQLITE_UTF16NATIVE;
   }
-  if( (enc2&~3)!=0 ){
+  if( enc2<SQLITE_UTF8 || enc2>SQLITE_UTF16BE ){
     return SQLITE_MISUSE;
   }
 
@@ -1364,7 +1384,7 @@ static int createCollation(
   ** sequence. If so, and there are active VMs, return busy. If there
   ** are no active VMs, invalidate any pre-compiled statements.
   */
-  nName = sqlite3Strlen(db, zName);
+  nName = sqlite3Strlen30(zName);
   pColl = sqlite3FindCollSeq(db, (u8)enc2, zName, nName, 0);
   if( pColl && pColl->xCmp ){
     if( db->activeVdbeCnt ){
@@ -1501,6 +1521,7 @@ static int openDatabase(
   CollSeq *pColl;
   int isThreadsafe;
 
+  *ppDb = 0;
 #ifndef SQLITE_OMIT_AUTOINIT
   rc = sqlite3_initialize();
   if( rc ) return rc;
@@ -1560,9 +1581,9 @@ static int openDatabase(
                  | SQLITE_LoadExtension
 #endif
       ;
-  sqlite3HashInit(&db->aCollSeq, 0);
+  sqlite3HashInit(&db->aCollSeq);
 #ifndef SQLITE_OMIT_VIRTUALTABLE
-  sqlite3HashInit(&db->aModule, 0);
+  sqlite3HashInit(&db->aModule);
 #endif
 
   db->pVfs = sqlite3_vfs_find(zVfs);

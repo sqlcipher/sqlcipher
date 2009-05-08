@@ -12,7 +12,7 @@
 ** This file contains C code routines that are called by the parser
 ** to handle SELECT statements in SQLite.
 **
-** $Id: select.c,v 1.507 2009/04/02 16:59:47 drh Exp $
+** $Id: select.c,v 1.512 2009/05/03 20:23:54 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -193,42 +193,7 @@ static void setToken(Token *p, const char *z){
   p->z = (u8*)z;
   p->n = z ? sqlite3Strlen30(z) : 0;
   p->dyn = 0;
-}
-
-/*
-** Set the token to the double-quoted and escaped version of the string pointed
-** to by z. For example;
-**
-**    {a"bc}  ->  {"a""bc"}
-*/
-static void setQuotedToken(Parse *pParse, Token *p, const char *z){
-
-  /* Check if the string appears to be quoted using "..." or `...`
-  ** or [...] or '...' or if the string contains any " characters.  
-  ** If it does, then record a version of the string with the special
-  ** characters escaped.
-  */
-  const char *z2 = z;
-  if( *z2!='[' && *z2!='`' && *z2!='\'' ){
-    while( *z2 ){
-      if( *z2=='"' ) break;
-      z2++;
-    }
-  }
-
-  if( *z2 ){
-    /* String contains " characters - copy and quote the string. */
-    p->z = (u8 *)sqlite3MPrintf(pParse->db, "\"%w\"", z);
-    if( p->z ){
-      p->n = sqlite3Strlen30((char *)p->z);
-      p->dyn = 1;
-    }
-  }else{
-    /* String contains no " characters - copy the pointer. */
-    p->z = (u8*)z;
-    p->n = (int)(z2 - z);
-    p->dyn = 0;
-  }
+  p->quoted = 0;
 }
 
 /*
@@ -421,6 +386,7 @@ static void pushOntoSorter(
   int nExpr = pOrderBy->nExpr;
   int regBase = sqlite3GetTempRange(pParse, nExpr+2);
   int regRecord = sqlite3GetTempReg(pParse);
+  sqlite3ExprCacheClear(pParse);
   sqlite3ExprCodeExprList(pParse, pOrderBy, regBase, 0);
   sqlite3VdbeAddOp2(v, OP_Sequence, pOrderBy->iECursor, regBase+nExpr);
   sqlite3ExprCodeMove(pParse, regData, regBase+nExpr+1, 1);
@@ -573,6 +539,7 @@ static void selectInnerLoop(
     /* If the destination is an EXISTS(...) expression, the actual
     ** values returned by the SELECT are not required.
     */
+    sqlite3ExprCacheClear(pParse);
     sqlite3ExprCodeExprList(pParse, pEList, regResult, eDest==SRT_Output);
   }
   nColumn = nResultCol;
@@ -1190,7 +1157,6 @@ static int selectColumnsFromExprList(
       sqlite3DbFree(db, zName);
       break;
     }
-    sqlite3Dequote(zName);
 
     /* Make sure the column name is unique.  If the name is not unique,
     ** append a integer to the name so that it becomes unique.
@@ -1346,6 +1312,7 @@ static void computeLimitRegisters(Parse *pParse, Select *p, int iBreak){
   ** The current implementation interprets "LIMIT 0" to mean
   ** no rows.
   */
+  sqlite3ExprCacheClear(pParse);
   if( p->pLimit ){
     p->iLimit = iLimit = ++pParse->nMem;
     v = sqlite3GetVdbe(pParse);
@@ -1394,7 +1361,8 @@ static CollSeq *multiSelectCollSeq(Parse *pParse, Select *p, int iCol){
   }else{
     pRet = 0;
   }
-  if( pRet==0 ){
+  assert( iCol>=0 );
+  if( pRet==0 && iCol<p->pEList->nExpr ){
     pRet = sqlite3ExprCollSeq(pParse, p->pEList->a[iCol].pExpr);
   }
   return pRet;
@@ -2101,7 +2069,7 @@ static int multiSelectOrderBy(
   }
 
   /* Compute the comparison permutation and keyinfo that is used with
-  ** the permutation in order to comparisons to determine if the next
+  ** the permutation used to determine if the next
   ** row of results comes from selectA or selectB.  Also add explicit
   ** collations to the ORDER BY clause terms so that when the subqueries
   ** to the right and the left are evaluated, they use the correct
@@ -3224,12 +3192,12 @@ static int selectExpander(Walker *pWalker, Select *p){
             }
             pRight = sqlite3PExpr(pParse, TK_ID, 0, 0, 0);
             if( pRight==0 ) break;
-            setQuotedToken(pParse, &pRight->token, zName);
+            setToken(&pRight->token, zName);
             if( longNames || pTabList->nSrc>1 ){
               Expr *pLeft = sqlite3PExpr(pParse, TK_ID, 0, 0, 0);
               pExpr = sqlite3PExpr(pParse, TK_DOT, pLeft, pRight, 0);
               if( pExpr==0 ) break;
-              setQuotedToken(pParse, &pLeft->token, zTabName);
+              setToken(&pLeft->token, zTabName);
               setToken(&pExpr->span, 
                   sqlite3MPrintf(db, "%s.%s", zTabName, zName));
               pExpr->span.dyn = 1;
@@ -3455,6 +3423,7 @@ static void updateAccumulator(Parse *pParse, AggInfo *pAggInfo){
   struct AggInfo_col *pC;
 
   pAggInfo->directMode = 1;
+  sqlite3ExprCacheClear(pParse);
   for(i=0, pF=pAggInfo->aFunc; i<pAggInfo->nFunc; i++, pF++){
     int nArg;
     int addrNext = 0;
@@ -3494,12 +3463,14 @@ static void updateAccumulator(Parse *pParse, AggInfo *pAggInfo){
     sqlite3ExprCacheAffinityChange(pParse, regAgg, nArg);
     if( addrNext ){
       sqlite3VdbeResolveLabel(v, addrNext);
+      sqlite3ExprCacheClear(pParse);
     }
   }
   for(i=0, pC=pAggInfo->aCol; i<pAggInfo->nAccumulator; i++, pC++){
     sqlite3ExprCode(pParse, pC->pExpr, pC->iMem);
   }
   pAggInfo->directMode = 0;
+  sqlite3ExprCacheClear(pParse);
 }
 
 /*
@@ -3764,7 +3735,7 @@ int sqlite3Select(
     /* This case is for non-aggregate queries
     ** Begin the database scan
     */
-    pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, &pOrderBy, 0, 0);
+    pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, &pOrderBy, 0);
     if( pWInfo==0 ) goto select_end;
 
     /* If sorting index that was created by a prior OP_OpenEphemeral 
@@ -3886,7 +3857,7 @@ int sqlite3Select(
       ** in the right order to begin with.
       */
       sqlite3VdbeAddOp2(v, OP_Gosub, regReset, addrReset);
-      pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, &pGroupBy, 0, 0);
+      pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, &pGroupBy, 0);
       if( pWInfo==0 ) goto select_end;
       if( pGroupBy==0 ){
         /* The optimizer is able to deliver rows in group by order so
@@ -3917,6 +3888,7 @@ int sqlite3Select(
           }
         }
         regBase = sqlite3GetTempRange(pParse, nCol);
+        sqlite3ExprCacheClear(pParse);
         sqlite3ExprCodeExprList(pParse, pGroupBy, regBase, 0);
         sqlite3VdbeAddOp2(v, OP_Sequence, sAggInfo.sortingIdx,regBase+nGroupBy);
         j = nGroupBy+1;
@@ -3943,6 +3915,7 @@ int sqlite3Select(
         sqlite3VdbeAddOp2(v, OP_Sort, sAggInfo.sortingIdx, addrEnd);
         VdbeComment((v, "GROUP BY sort"));
         sAggInfo.useSortingIdx = 1;
+        sqlite3ExprCacheClear(pParse);
       }
 
       /* Evaluate the current GROUP BY terms and store in b0, b1, b2...
@@ -3951,6 +3924,7 @@ int sqlite3Select(
       ** from the previous row currently stored in a0, a1, a2...
       */
       addrTopOfLoop = sqlite3VdbeCurrentAddr(v);
+      sqlite3ExprCacheClear(pParse);
       for(j=0; j<pGroupBy->nExpr; j++){
         if( groupBySort ){
           sqlite3VdbeAddOp3(v, OP_Column, sAggInfo.sortingIdx, j, iBMem+j);
@@ -4141,7 +4115,7 @@ int sqlite3Select(
         ** of output.
         */
         resetAccumulator(pParse, &sAggInfo);
-        pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, &pMinMax, flag, 0);
+        pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere, &pMinMax, flag);
         if( pWInfo==0 ){
           sqlite3ExprListDelete(db, pDel);
           goto select_end;
