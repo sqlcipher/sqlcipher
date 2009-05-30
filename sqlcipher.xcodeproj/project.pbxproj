@@ -181,7 +181,11 @@
 				GCC_OPTIMIZATION_LEVEL = 0;
 				HEADER_SEARCH_PATHS = "$(OPENSSL_SRC)/include";
 				INSTALL_PATH = /usr/local/lib;
-				OTHER_CFLAGS = "-DSQLITE_HAS_CODEC";
+				OTHER_CFLAGS = (
+					"-DSQLITE_HAS_CODEC",
+					"-DNDEBUG",
+					"-DSQLITE_OS_UNIX=1",
+				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
 			};
@@ -195,7 +199,11 @@
 				GCC_MODEL_TUNING = G5;
 				HEADER_SEARCH_PATHS = "$(OPENSSL_SRC)/include";
 				INSTALL_PATH = /usr/local/lib;
-				OTHER_CFLAGS = "-DSQLITE_HAS_CODEC";
+				OTHER_CFLAGS = (
+					"-DSQLITE_HAS_CODEC",
+					"-DNDEBUG",
+					"-DSQLITE_OS_UNIX=1",
+				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
 			};
