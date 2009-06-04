@@ -1,9 +1,9 @@
-# SQLite Cipher
+# SQLCipher
 # codec.test developed by Stephen Lombardo (Zetetic LLC) 
 # sjlombardo at zetetic dot net
 # http://zetetic.net
 # 
-# Copyright (c) 2008, ZETETIC LLC
+# Copyright (c) 2009, ZETETIC LLC
 # All rights reserved.
 # 
 # Redistribution and use in source and binary forms, with or without
@@ -36,6 +36,7 @@
 # should explicitly close and open db with sqlite_orig in order
 # to bypass default key assignment.
 
+
 file delete -force test.db
 file delete -force test2.db
 file delete -force test3.db
@@ -51,31 +52,24 @@ if {![sqlite_orig -has-codec]} {
   return
 }
 
-# The database is initially empty.
-do_test codec-1.1 {
-  sqlite_orig db test.db
+proc setup {file key} {
+  sqlite_orig db $file
+  execsql "PRAGMA key=$key;"
   execsql {
-    SELECT name FROM sqlite_master WHERE type='table';
-  }
-} {}
-db close
-
-# set an hex key create some basic data
-# create table and insert operations should work
-do_test codec-1.2 {
-  sqlite_orig db test.db
-  execsql {
-    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
     CREATE table t1(a,b);
     INSERT INTO t1 VALUES ('test1', 'test2'); 
-  }
-} {}
-db close
+  } db
+  db close
+}
 
+# The database is initially empty.
+# set an hex key create some basic data
+# create table and insert operations should work
 # close database, open it again with the same
 # hex key. verify that the table is readable
 # and the data just inserted is visible
-do_test codec-1.3 {
+setup test.db "\"x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'\""
+do_test codec-1.1 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
@@ -84,25 +78,16 @@ do_test codec-1.3 {
   }
 } {t1 test1 test2}
 db close
-
 file delete -force test.db
 
-# set an encryption key and create some basic data
+# set an encryption key (non-hex) and create some basic data
 # create table and insert operations should work
-do_test codec-1.4 {
-  sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
-    CREATE table t1(a,b);
-    INSERT INTO t1 VALUES ('test1', 'test2'); 
-  }
-} {}
-db close
-
 # close database, open it again with the same
 # key. verify that the table is readable
 # and the data just inserted is visible
-do_test codec-1.5 {
+setup test.db "'testkey'"
+do_test codec-1.2 {
+
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -111,22 +96,26 @@ do_test codec-1.5 {
   }
 } {t1 test1 test2}
 db close
+file delete -force test.db
 
 # open the database and try to read from it without
 # providing a passphrase. verify that the 
 # an error is returned from the library
-do_test codec-1.6 {
+setup test.db "'testkey'"
+do_test codec-1.3 {
   sqlite_orig db test.db
   catchsql {
     SELECT name FROM sqlite_master WHERE type='table';
   }
 } {1 {file is encrypted or is not a database}}
 db close
+file delete -force test.db
 
 # open the database and try to set an invalid
 # passphrase. verify that an error is returned
 # and that data couldn't be read
-do_test codec-1.7 {
+setup test.db "'testkey'"
+do_test codec-1.3.1 {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey2';
@@ -134,9 +123,25 @@ do_test codec-1.7 {
   }
 } {1 {file is encrypted or is not a database}}
 db close
+file delete -force test.db
 
-# test invalid hex key fails
-do_test codec-1.8 {
+setup test.db "'testkey'"
+do_test codec-1.3.2 {
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+
+} {1 {file is encrypted or is not a database}}
+db close
+file delete -force test.db
+
+# open the database and try to set an invalid
+# hex key. verify that an error is returned
+# and that data couldn't be read
+setup test.db "'testkey'"
+do_test codec-1.5 {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
@@ -144,9 +149,10 @@ do_test codec-1.8 {
   }
 } {1 {file is encrypted or is not a database}}
 db close
+file delete -force test.db
 
 # test a large number of inserts in a transaction to a memory database 
-do_test codec-1.9 {
+do_test codec-1.6 {
   sqlite_orig db :memory:
   execsql {
     PRAGMA key = 'testkey3';
@@ -167,12 +173,12 @@ do_test codec-1.9 {
 db close
 
 # test a large number of inserts in a transaction for multiple pages
-do_test codec-1.10 {
+do_test codec-1.7 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    BEGIN;
     CREATE TABLE t2(a,b);
+    BEGIN;
   }
   for {set i 1} {$i<=25000} {incr i} {
     set r [expr {int(rand()*500000)}]
@@ -184,165 +190,253 @@ do_test codec-1.10 {
   } 
 } {25000}
 db close
+file delete -force test.db
 
-# test initial rekey
-do_test codec-1.11 {
+# test a rekey operation as the first op on a database
+# then test that now the new key opens the database
+# now close database re-open with new key
+setup test.db "'testkey'"
+do_test codec-1.8 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA rekey = 'testkeynew';
   }
-} {}
-db close
+  db close
 
-# test that now the new key opens the database
-# now close database re-open with new key
-do_test codec-1.12 {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkeynew';
-    SELECT count(*) FROM t2;
+    SELECT name FROM sqlite_master WHERE type='table';
   }
-} {25000}
+} {t1}
 db close
+file delete -force test.db
 
 # test rekey on an unecrypted database
-do_test codec-1.13 {
-  sqlite_orig db2 test2.db
+do_test codec-1.9 {
+  sqlite_orig db test.db
   execsql {
     BEGIN;
     CREATE TABLE t2(a,b);
-  } db2
+  } db
 
   for {set i 1} {$i<=25000} {incr i} {
     set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t2 VALUES($i,$r);" db2
+    execsql "INSERT INTO t2 VALUES($i,$r);" db
   }
 
   execsql {
     COMMIT;
     PRAGMA rekey = 'testkey';
-  } db2
+  } db
 
-  db2 close
-  sqlite_orig db2 test2.db
+  db close
+  sqlite_orig db test.db
 
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t2;
-  } db2
+  } db
 
 } {25000}
-db2 close
+db close
+file delete -force test.db
 
 # attach an encrypted database
-do_test codec-1.14 {
-  sqlite_orig db3 test3.db
-  
-  execsql {
-    BEGIN;
-    PRAGMA key = 'testkey';
-    CREATE TABLE t3(a,b);
-  } db3
- 
-  for {set i 1} {$i<=15000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t3 VALUES($i,$r);" db3
-  }
-  
-  execsql {
-    COMMIT;
-  } db3
-  
-  
+# where both database have the same
+# key
+setup test.db "'testkey'"
+do_test codec-1.10 {
   sqlite_orig db2 test2.db
-  
+
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM t2;
-    ATTACH 'test3.db' AS db3;
-    SELECT count(*) FROM db3.t3;
-  } db2
-
-} {25000 15000}
-db3 close
-
-do_test codec-1.15 {
-  execsql {
-    BEGIN;
+    CREATE TABLE t2(a,b);
+    INSERT INTO t2 VALUES ('test1', 'test2'); 
   } db2
  
-  for {set i 1} {$i<=10000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t2 VALUES($i,$r);" db2
-    execsql "INSERT INTO db3.t3 VALUES($i,$r);" db2
-  }
+  execsql {
+    SELECT count(*) FROM t2;
+    ATTACH 'test.db' AS db;
+    SELECT count(*) FROM db.t1;
+  } db2
+
+} {1 1}
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an encrypted database
+# where databases have different keys
+setup test.db "'testkey'"
+do_test codec-1.11 {
+  sqlite_orig db2 test2.db
 
   execsql {
-    COMMIT;
-    SELECT count(*) FROM t2;
-    SELECT count(*) FROM db3.t3;
-    DETACH db3;
+    PRAGMA key = 'testkey2';
+    CREATE TABLE t2(a,b);
+    INSERT INTO t2 VALUES ('test1', 'test2'); 
   } db2
-} {35000 25000} 
+  
+  execsql {
+    ATTACH 'test.db' AS db KEY 'testkey';
+    SELECT count(*) FROM db.t1;
+    SELECT count(*) FROM t2;
+  } db2
+
+} {1 1}
 db2 close
+file delete -force test.db
+file delete -force test2.db
 
 # test locking across multiple handles
-do_test codec-1.16 {
-  sqlite_orig db3 test3.db
+setup test.db "'testkey'"
+do_test codec-1.12 {
+  sqlite_orig db test.db
 
   execsql {
     PRAGMA key = 'testkey';
     BEGIN EXCLUSIVE;
-    INSERT INTO t3 VALUES(1,2);
-  } db3
+    INSERT INTO t1 VALUES(1,2);
+  } 
   
-  sqlite_orig db3a test3.db
-	catchsql {
+  sqlite_orig dba test.db
+  catchsql {
     PRAGMA key = 'testkey';
-		SELECT count(*) FROM t3;
-	} db3a
+      SELECT count(*) FROM t1;
+  } dba
 
-} {1 {database is locked}} 
+ } {1 {database is locked}} 
 
-# test locks are released
-do_test codec-1.17 {
-  execsql {
+do_test codec-1.12.1 {
+ execsql {
     COMMIT;
-  } db3
-  
-	catchsql {
-		SELECT count(*) FROM t3;
-	} db3a
+  }
 
-} {0 25001}
-
-db3 close
-db3a close
+  execsql {
+    SELECT count(*) FROM t1;
+  } dba
+} {2}
+db close
+dba close
+file delete -force test.db
 
 # alter schema
-do_test codec-1.18 {
-  sqlite_orig db3 test3.db
+setup test.db "'testkey'"
+do_test codec-1.13 {
+  sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    ALTER TABLE t3 ADD COLUMN c;
-    INSERT INTO t3 VALUES (1,2,3);
-    INSERT INTO t3 VALUES (1,2,4);
-    CREATE TABLE t3a (a);
-    INSERT INTO t3a VALUES ('teststring');
-  } db3
-} {}
-db3 close
+    ALTER TABLE t1 ADD COLUMN c;
+    INSERT INTO t1 VALUES (1,2,3);
+    INSERT INTO t1 VALUES (1,2,4);
+    CREATE TABLE t1a (a);
+    INSERT INTO t1a VALUES ('teststring');
+  }
+  db close
 
-do_test codec-1.19 {
-  sqlite_orig db3 test3.db
+  sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM t3 WHERE a IS NOT NULL;
-    SELECT count(*) FROM t3 WHERE c IS NOT NULL;
-    SELECT * FROM t3a;
-  } db3
-} {25003 2 teststring}
-db3 close
+    SELECT count(*) FROM t1 WHERE a IS NOT NULL;
+    SELECT count(*) FROM t1 WHERE c IS NOT NULL;
+    SELECT * FROM t1a;
+  } 
+
+} {3 2 teststring}
+db close
+file delete -force test.db
+
+# test alterations of KDF iterations and ciphers
+setup test.db "'testkey'"
+do_test codec-1.14 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA rekey_kdf_iter = 1000;
+    PRAGMA rekey_cipher = 'aes-256-cfb';
+    PRAGMA rekey = 'testkey2';
+  } 
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey2';
+    PRAGMA kdf_iter = 1000;
+    PRAGMA cipher = 'aes-256-cfb';
+    SELECT count(*) FROM t1;
+  } 
+
+} {1}
+db close
+file delete -force test.db
+
+# test alterations of CIPHER from CBC Mode requiring
+# IV to ECB mode that does not
+setup test.db "'testkey'"
+do_test codec-1.15 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,$r);" 
+  }
+  
+  execsql {
+    COMMIT;
+    PRAGMA rekey_kdf_iter = 1000;
+    PRAGMA rekey_cipher = 'aes-128-ecb';
+    PRAGMA rekey = 'testkey';
+  } 
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA kdf_iter = 1000;
+    PRAGMA cipher = 'aes-128-ecb';
+    SELECT count(*) FROM t1;
+  } 
+
+} {1001}
+db close
+file delete -force test.db
+
+# test alterations of CIPHER from ECB Mode (no IV) to CBC Mode
+do_test codec-1.16 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher = 'aes-256-ecb';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,$r);" 
+  }
+  
+  execsql {
+    COMMIT;
+    PRAGMA rekey_cipher = 'aes-256-cbc';
+    PRAGMA rekey = 'testkey';
+  } 
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  } 
+
+} {1000}
+db close
+file delete -force test.db
 
 finish_test

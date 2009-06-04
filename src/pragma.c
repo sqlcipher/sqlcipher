@@ -1385,6 +1385,24 @@ void sqlite3Pragma(
       sqlite3_rekey(db, zKey, i/2);
     }
   }else
+/** BEGIN CRYPTO **/
+  if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
+    extern int codec_set_cipher_name(sqlite3*, int, const char *, int);
+    codec_set_cipher_name(db,0,zRight,2); // change cipher for both
+  }else
+  if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
+    extern int codec_set_cipher_name(sqlite3*, int, const char *, int); 
+    codec_set_cipher_name(db,0,zRight,1); // change write cipher only
+  }else
+  if( sqlite3StrICmp(zLeft, "kdf_iter")==0 && zRight ){
+    extern int codec_set_kdf_iter(sqlite3*, int, int, int);
+    codec_set_kdf_iter(db,0,atoi(zRight),2); // change cipher for both
+  }else
+  if( sqlite3StrICmp(zLeft, "rekey_kdf_iter")==0 && zRight ){
+    extern int codec_set_kdf_iter(sqlite3*, int, int, int); 
+    codec_set_kdf_iter(db,0,atoi(zRight),1); // change write cipher only
+  }else
+/** END CRYPTO **/
 #endif
 #if SQLITE_HAS_CODEC || defined(SQLITE_ENABLE_CEROD)
   if( sqlite3StrICmp(zLeft, "activate_extensions")==0 ){

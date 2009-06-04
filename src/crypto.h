@@ -1,5 +1,5 @@
 /* 
-** SQLite Cipher
+** SQLCipher
 ** crypto.h developed by Stephen Lombardo (Zetetic LLC) 
 ** sjlombardo at zetetic dot net
 ** http://zetetic.net
@@ -37,11 +37,12 @@
 
 #define FILE_HEADER_SZ 16
 
-#define CIPHER EVP_aes_256_cfb()
+#ifndef CIPHER
+#define CIPHER "aes-256-cbc"
+#endif
+
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
-
-#define KEY_LENGTH 32
 
 #ifndef PBKDF2_ITER
 #define PBKDF2_ITER 4000
