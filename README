@@ -5,9 +5,18 @@ Pages are encrypted before being written to disk and are decrypted when read bac
 
 Encryption is provided by the OpenSSL crypto library.
 
-SQLite Cipher was developed by Stephen Lombardo at Zetetic LLC. 
-sjlombardo at zetetic.net
-http://zetetic.net
+SQLite Cipher was initially developed by Stephen Lombardo at Zetetic LLC (sjlombardo@zetetic.net)  to provide 
+the encrypted database layer for Strip, an iPhone data vault and password manager ( http://www.zetetic.net/products/strip ).  
+
+The official SQLCipher software site can be found at http://www.zetetic.net/software/sqlcipher
+
+Issues or support questions on using SQLCipher should be entered into the GitHub Issue tracker:
+
+http://github.com/sjlombardo/sqlcipher/issues
+
+Please DO NOT post issues, support questions, or other problems to blog posts about SQLCipher as we do not monitor them frequently.
+
+If you are using SQLCipher in your own software please let us know at support@zetetic.net!
 
 [Compiling]
 
@@ -67,8 +76,10 @@ This can be accomplished programtically by using sqlite3_rekey;
 
 [Encrypting a standard database]
 
-To encrypt a standard (non-enrypted) database file, use the rekey methods described above, but 
-don't provide an initial key..
+Encrypting a standard, plaintext SQLite database is not supported at this time. We are currently
+working on a resolution to the problem. In the mean time it is easiest to start out with an 
+encrypted database if possible. Alternately it should be possible to open a standard database, 
+ATTACH an encrypted DB, and then copy your tables and data between the two. 
 
 [License]
 
