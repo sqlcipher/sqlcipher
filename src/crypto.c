@@ -488,6 +488,7 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 */
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_rekey: entered db=%d pKey=%s, nKey=%d\n", db, pKey, nKey));
+  OpenSSL_add_all_algorithms();
   if(db && pKey && nKey) {
     struct Db *pDb = &db->aDb[0];
     CODEC_TRACE(("sqlite3_rekey: database pDb=%d\n", pDb));
