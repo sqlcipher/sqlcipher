@@ -323,11 +323,13 @@ objects: $(LIBOBJ_ORIG)
 # files are automatically generated.  This target takes care of
 # all that automatic generation.
 #
-target_source:	$(SRC)
+target_source:	$(SRC) $(TOP)/tool/vdbe-compress.tcl
 	rm -rf tsrc
 	mkdir tsrc
 	cp -f $(SRC) tsrc
 	rm tsrc/sqlite.h.in tsrc/parse.y
+	tclsh $(TOP)/tool/vdbe-compress.tcl <tsrc/vdbe.c >vdbe.new
+	mv vdbe.new tsrc/vdbe.c
 	touch target_source
 
 sqlite3.c:	target_source $(TOP)/tool/mksqlite3c.tcl
@@ -343,9 +345,9 @@ fts3amal.c:	target_source $(TOP)/ext/fts3/mkfts3amal.tcl
 
 # Rules to build the LEMON compiler generator
 #
-lemon:	$(TOP)/tool/lemon.c $(TOP)/tool/lempar.c
+lemon:	$(TOP)/tool/lemon.c $(TOP)/src/lempar.c
 	$(BCC) -o lemon $(TOP)/tool/lemon.c
-	cp $(TOP)/tool/lempar.c .
+	cp $(TOP)/src/lempar.c .
 
 # Rules to build individual *.o files from generated *.c files. This
 # applies to:

@@ -43,7 +43,7 @@
 **   *  Definitions of sqlite3_vfs objects for all locking methods
 **      plus implementations of sqlite3_os_init() and sqlite3_os_end().
 **
-** $Id: os_unix.c,v 1.250 2009/04/07 05:35:04 chw Exp $
+** $Id: os_unix.c,v 1.254 2009/07/03 12:57:58 drh Exp $
 */
 #include "sqliteInt.h"
 #if SQLITE_OS_UNIX              /* This file is used on unix only */
@@ -839,13 +839,14 @@ static void testThreadLockingBehavior(int fd_orig){
   d.fd = fd;
   d.lock = l;
   d.lock.l_type = F_WRLCK;
-  pthread_create(&t, 0, threadLockingTest, &d);
-  pthread_join(t, 0);
+  if( pthread_create(&t, 0, threadLockingTest, &d)==0 ){
+    pthread_join(t, 0);
+  }
   close(fd);
   if( d.result!=0 ) return;
   threadsOverrideEachOthersLocks = (d.lock.l_type==F_UNLCK);
 }
-#endif /* SQLITE_THERADSAFE && defined(__linux__) */
+#endif /* SQLITE_THREADSAFE && defined(__linux__) */
 
 /*
 ** Release a unixLockInfo structure previously allocated by findLockInfo().
@@ -911,7 +912,7 @@ static int findLockInfo(
   struct unixLockKey lockKey;    /* Lookup key for the unixLockInfo structure */
   struct unixFileId fileId;      /* Lookup key for the unixOpenCnt struct */
   struct stat statbuf;           /* Low-level file information */
-  struct unixLockInfo *pLock;    /* Candidate unixLockInfo object */
+  struct unixLockInfo *pLock = 0;/* Candidate unixLockInfo object */
   struct unixOpenCnt *pOpen;     /* Candidate unixOpenCnt object */
 
   /* Get low-level information about the file that we can used to
@@ -1815,7 +1816,8 @@ static int dotlockUnlock(sqlite3_file *id, int locktype) {
   /* To fully unlock the database, delete the lock file */
   assert( locktype==NO_LOCK );
   if( unlink(zLockFile) ){
-    int rc, tErrno = errno;
+    int rc = 0;
+    int tErrno = errno;
     if( ENOENT != tErrno ){
       rc = sqliteErrorFromPosixError(tErrno, SQLITE_IOERR_UNLOCK);
     }
@@ -4065,7 +4067,11 @@ int sqlite3_current_time = 0;  /* Fake system time in seconds since 1970. */
 ** return 0.  Return 1 if the time and date cannot be found.
 */
 static int unixCurrentTime(sqlite3_vfs *NotUsed, double *prNow){
-#if defined(NO_GETTOD)
+#if defined(SQLITE_OMIT_FLOATING_POINT)
+  time_t t;
+  time(&t);
+  *prNow = (((sqlite3_int64)t)/8640 + 24405875)/10;
+#elif defined(NO_GETTOD)
   time_t t;
   time(&t);
   *prNow = t/86400.0 + 2440587.5;
@@ -4427,8 +4433,8 @@ static int proxyGetLockPath(const char *dbPath, char *lPath, size_t maxLen){
     len = strlcat(lPath, "sqliteplocks", maxLen);
     if( mkdir(lPath, SQLITE_DEFAULT_PROXYDIR_PERMISSIONS) ){
       /* if mkdir fails, handle as lock file creation failure */
-      int err = errno;
 #  ifdef SQLITE_DEBUG
+      int err = errno;
       if( err!=EEXIST ){
         fprintf(stderr, "proxyGetLockPath: mkdir(%s,0%o) error %d %s\n", lPath,
                 SQLITE_DEFAULT_PROXYDIR_PERMISSIONS, err, strerror(err));

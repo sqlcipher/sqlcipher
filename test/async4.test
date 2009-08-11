@@ -9,10 +9,21 @@
 #
 #***********************************************************************
 #
-# $Id: async4.test,v 1.1 2009/04/25 08:39:15 danielk1977 Exp $
+# $Id: async4.test,v 1.4 2009/06/05 17:09:12 drh Exp $
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
+
+# These tests only work for Tcl version 8.5 and later on Windows (for now)
+#
+if {$tcl_platform(platform)=="windows"} {
+  scan $::tcl_version %f vx
+  if {$vx<8.5} {
+    finish_test
+    return
+  }
+}
+
 if {[info commands sqlite3async_initialize] eq ""} {
   # The async logic is not built into this system
   finish_test
@@ -92,6 +103,9 @@ do_test async4.1.16 {
   sqlite3async_start
   sqlite3async_wait
 } {}
+do_test async4.1.17 {
+  sqlite3async_control lockfiles true
+} {1}
 
 do_test async4.2.1 {
   sqlite3async_control delay
@@ -146,4 +160,3 @@ do_test async4.2.8 {
 } {}
 
 finish_test
-

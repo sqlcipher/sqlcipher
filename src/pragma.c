@@ -11,13 +11,13 @@
 *************************************************************************
 ** This file contains code used to implement the PRAGMA command.
 **
-** $Id: pragma.c,v 1.209 2009/04/07 22:05:43 drh Exp $
+** $Id: pragma.c,v 1.214 2009/07/02 07:47:33 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
 /* Ignore this whole file if pragmas are disabled
 */
-#if !defined(SQLITE_OMIT_PRAGMA) && !defined(SQLITE_OMIT_PARSER)
+#if !defined(SQLITE_OMIT_PRAGMA)
 
 /*
 ** Interpret the given string as a safety level.  Return 0 for OFF,
@@ -318,12 +318,13 @@ void sqlite3Pragma(
   */
   if( sqlite3StrICmp(zLeft,"default_cache_size")==0 ){
     static const VdbeOpList getCacheSize[] = {
-      { OP_ReadCookie,  0, 1,        2},  /* 0 */
-      { OP_IfPos,       1, 6,        0},
+      { OP_Transaction, 0, 0,        0},                         /* 0 */
+      { OP_ReadCookie,  0, 1,        BTREE_DEFAULT_CACHE_SIZE},  /* 1 */
+      { OP_IfPos,       1, 7,        0},
       { OP_Integer,     0, 2,        0},
       { OP_Subtract,    1, 2,        1},
-      { OP_IfPos,       1, 6,        0},
-      { OP_Integer,     0, 1,        0},  /* 5 */
+      { OP_IfPos,       1, 7,        0},
+      { OP_Integer,     0, 1,        0},                         /* 6 */
       { OP_ResultRow,   1, 1,        0},
     };
     int addr;
@@ -335,17 +336,18 @@ void sqlite3Pragma(
       pParse->nMem += 2;
       addr = sqlite3VdbeAddOpList(v, ArraySize(getCacheSize), getCacheSize);
       sqlite3VdbeChangeP1(v, addr, iDb);
-      sqlite3VdbeChangeP1(v, addr+5, SQLITE_DEFAULT_CACHE_SIZE);
+      sqlite3VdbeChangeP1(v, addr+1, iDb);
+      sqlite3VdbeChangeP1(v, addr+6, SQLITE_DEFAULT_CACHE_SIZE);
     }else{
       int size = atoi(zRight);
       if( size<0 ) size = -size;
       sqlite3BeginWriteOperation(pParse, 0, iDb);
       sqlite3VdbeAddOp2(v, OP_Integer, size, 1);
-      sqlite3VdbeAddOp3(v, OP_ReadCookie, iDb, 2, 2);
+      sqlite3VdbeAddOp3(v, OP_ReadCookie, iDb, 2, BTREE_DEFAULT_CACHE_SIZE);
       addr = sqlite3VdbeAddOp2(v, OP_IfPos, 2, 0);
       sqlite3VdbeAddOp2(v, OP_Integer, -size, 1);
       sqlite3VdbeJumpHere(v, addr);
-      sqlite3VdbeAddOp3(v, OP_SetCookie, iDb, 2, 1);
+      sqlite3VdbeAddOp3(v, OP_SetCookie, iDb, BTREE_DEFAULT_CACHE_SIZE, 1);
       pDb->pSchema->cache_size = size;
       sqlite3BtreeSetCacheSize(pDb->pBt, pDb->pSchema->cache_size);
     }
@@ -582,12 +584,12 @@ void sqlite3Pragma(
           ** that this really is an auto-vacuum capable database.
           */
           static const VdbeOpList setMeta6[] = {
-            { OP_Transaction,    0,               1,        0},    /* 0 */
-            { OP_ReadCookie,     0,               1,        3},    /* 1 */
-            { OP_If,             1,               0,        0},    /* 2 */
-            { OP_Halt,           SQLITE_OK,       OE_Abort, 0},    /* 3 */
-            { OP_Integer,        0,               1,        0},    /* 4 */
-            { OP_SetCookie,      0,               6,        1},    /* 5 */
+            { OP_Transaction,    0,         1,                 0},    /* 0 */
+            { OP_ReadCookie,     0,         1,         BTREE_LARGEST_ROOT_PAGE},
+            { OP_If,             1,         0,                 0},    /* 2 */
+            { OP_Halt,           SQLITE_OK, OE_Abort,          0},    /* 3 */
+            { OP_Integer,        0,         1,                 0},    /* 4 */
+            { OP_SetCookie,      0,         BTREE_INCR_VACUUM, 1},    /* 5 */
           };
           int iAddr;
           iAddr = sqlite3VdbeAddOpList(v, ArraySize(setMeta6), setMeta6);
@@ -840,10 +842,8 @@ void sqlite3Pragma(
         sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0,
            pCol->zType ? pCol->zType : "", 0);
         sqlite3VdbeAddOp2(v, OP_Integer, (pCol->notNull ? 1 : 0), 4);
-        if( pCol->pDflt ){
-          const Token *p = &pCol->pDflt->span;
-          assert( p->z );
-          sqlite3VdbeAddOp4(v, OP_String8, 0, 5, 0, (char*)p->z, p->n);
+        if( pCol->zDflt ){
+          sqlite3VdbeAddOp4(v, OP_String8, 0, 5, 0, (char*)pCol->zDflt, 0);
         }else{
           sqlite3VdbeAddOp2(v, OP_Null, 0, 5);
         }
@@ -1275,23 +1275,21 @@ void sqlite3Pragma(
    || sqlite3StrICmp(zLeft, "user_version")==0 
    || sqlite3StrICmp(zLeft, "freelist_count")==0 
   ){
-    int iCookie;   /* Cookie index. 0 for schema-cookie, 6 for user-cookie. */
+    int iCookie;   /* Cookie index. 1 for schema-cookie, 6 for user-cookie. */
     sqlite3VdbeUsesBtree(v, iDb);
     switch( zLeft[0] ){
-      case 's': case 'S':
-        iCookie = 0;
-        break;
       case 'f': case 'F':
-        iCookie = 1;
-        iDb = (-1*(iDb+1));
-        assert(iDb<=0);
+        iCookie = BTREE_FREE_PAGE_COUNT;
+        break;
+      case 's': case 'S':
+        iCookie = BTREE_SCHEMA_VERSION;
         break;
       default:
-        iCookie = 5;
+        iCookie = BTREE_USER_VERSION;
         break;
     }
 
-    if( zRight && iDb>=0 ){
+    if( zRight && iCookie!=BTREE_FREE_PAGE_COUNT ){
       /* Write the specified cookie value */
       static const VdbeOpList setCookie[] = {
         { OP_Transaction,    0,  1,  0},    /* 0 */
@@ -1306,12 +1304,14 @@ void sqlite3Pragma(
     }else{
       /* Read the specified cookie value */
       static const VdbeOpList readCookie[] = {
-        { OP_ReadCookie,      0,  1,  0},    /* 0 */
+        { OP_Transaction,     0,  0,  0},    /* 0 */
+        { OP_ReadCookie,      0,  1,  0},    /* 1 */
         { OP_ResultRow,       1,  1,  0}
       };
       int addr = sqlite3VdbeAddOpList(v, ArraySize(readCookie), readCookie);
       sqlite3VdbeChangeP1(v, addr, iDb);
-      sqlite3VdbeChangeP3(v, addr, iCookie);
+      sqlite3VdbeChangeP1(v, addr+1, iDb);
+      sqlite3VdbeChangeP3(v, addr+1, iCookie);
       sqlite3VdbeSetNumCols(v, 1);
       sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLeft, SQLITE_TRANSIENT);
     }
@@ -1349,17 +1349,6 @@ void sqlite3Pragma(
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 2);
     }
 
-  }else
-#endif
-
-#ifdef SQLITE_SSE
-  /*
-  ** Check to see if the sqlite_statements table exists.  Create it
-  ** if it does not.
-  */
-  if( sqlite3StrICmp(zLeft, "create_sqlite_statement_table")==0 ){
-    extern int sqlite3CreateStatementsTable(Parse*);
-    sqlite3CreateStatementsTable(pParse);
   }else
 #endif
 
@@ -1427,4 +1416,4 @@ pragma_out:
   sqlite3DbFree(db, zRight);
 }
 
-#endif /* SQLITE_OMIT_PRAGMA || SQLITE_OMIT_PARSER */
+#endif /* SQLITE_OMIT_PRAGMA */

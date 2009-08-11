@@ -15,18 +15,10 @@
 ** 6000 lines long) it was split up into several smaller files and
 ** this header information was factored out.
 **
-** $Id: vdbeInt.h,v 1.170 2009/05/04 11:42:30 danielk1977 Exp $
+** $Id: vdbeInt.h,v 1.174 2009/06/23 14:15:04 drh Exp $
 */
 #ifndef _VDBEINT_H_
 #define _VDBEINT_H_
-
-/*
-** intToKey() and keyToInt() used to transform the rowid.  But with
-** the latest versions of the design they are no-ops.
-*/
-#define keyToInt(X)   (X)
-#define intToKey(X)   (X)
-
 
 /*
 ** SQL is translated into a sequence of instructions to be
@@ -262,22 +254,25 @@ struct Context {
 ** method function.
 */
 struct Vdbe {
-  sqlite3 *db;        /* The whole database */
-  Vdbe *pPrev,*pNext; /* Linked list of VDBEs with the same Vdbe.db */
-  int nOp;            /* Number of instructions in the program */
-  int nOpAlloc;       /* Number of slots allocated for aOp[] */
-  Op *aOp;            /* Space to hold the virtual machine's program */
-  int nLabel;         /* Number of labels used */
-  int nLabelAlloc;    /* Number of slots allocated in aLabel[] */
-  int *aLabel;        /* Space to hold the labels */
-  Mem **apArg;        /* Arguments to currently executing user function */
-  Mem *aColName;      /* Column names to return */
-  int nCursor;        /* Number of slots in apCsr[] */
-  VdbeCursor **apCsr; /* One element of this array for each open cursor */
-  int nVar;           /* Number of entries in aVar[] */
-  Mem *aVar;          /* Values for the OP_Variable opcode. */
-  char **azVar;       /* Name of variables */
-  int okVar;          /* True if azVar[] has been initialized */
+  sqlite3 *db;            /* The database connection that owns this statement */
+  Vdbe *pPrev,*pNext;     /* Linked list of VDBEs with the same Vdbe.db */
+  int nOp;                /* Number of instructions in the program */
+  int nOpAlloc;           /* Number of slots allocated for aOp[] */
+  Op *aOp;                /* Space to hold the virtual machine's program */
+  int nLabel;             /* Number of labels used */
+  int nLabelAlloc;        /* Number of slots allocated in aLabel[] */
+  int *aLabel;            /* Space to hold the labels */
+  Mem **apArg;            /* Arguments to currently executing user function */
+  Mem *aColName;          /* Column names to return */
+  Mem *pResultSet;        /* Pointer to an array of results */
+  u16 nResColumn;         /* Number of columns in one row of the result set */
+  u16 nCursor;            /* Number of slots in apCsr[] */
+  VdbeCursor **apCsr;     /* One element of this array for each open cursor */
+  u8 errorAction;         /* Recovery action to do in case of an error */
+  u8 okVar;               /* True if azVar[] has been initialized */
+  u16 nVar;               /* Number of entries in aVar[] */
+  Mem *aVar;              /* Values for the OP_Variable opcode. */
+  char **azVar;           /* Name of variables */
   u32 magic;              /* Magic number for sanity checking */
   int nMem;               /* Number of memory locations currently allocated */
   Mem *aMem;              /* The memory locations */
@@ -287,11 +282,7 @@ struct Vdbe {
   Context *contextStack;  /* Stack used by opcodes ContextPush & ContextPop*/
   int pc;                 /* The program counter */
   int rc;                 /* Value to return */
-  int errorAction;        /* Recovery action to do in case of an error */
-  int nResColumn;         /* Number of columns in one row of the result set */
-  char **azResColumn;     /* Values for one row of result */ 
   char *zErrMsg;          /* Error message written here */
-  Mem *pResultSet;        /* Pointer to an array of results */
   u8 explain;             /* True if EXPLAIN present on SQL command */
   u8 changeCntOn;         /* True to update the change-counter */
   u8 expired;             /* True if the VM needs to be recompiled */
@@ -301,23 +292,15 @@ struct Vdbe {
   u8 readOnly;            /* True for read-only statements */
   u8 isPrepareV2;         /* True if prepared with prepare_v2() */
   int nChange;            /* Number of db changes made since last reset */
-  i64 startTime;          /* Time when query started - used for profiling */
   int btreeMask;          /* Bitmask of db->aDb[] entries referenced */
+  i64 startTime;          /* Time when query started - used for profiling */
   BtreeMutexArray aMutex; /* An array of Btree used here and needing locks */
   int aCounter[2];        /* Counters used by sqlite3_stmt_status() */
-  char *zSql;           /* Text of the SQL statement that generated this */
+  char *zSql;             /* Text of the SQL statement that generated this */
   void *pFree;            /* Free this when deleting the vdbe */
-#ifdef SQLITE_DEBUG
-  FILE *trace;          /* Write an execution trace here, if not NULL */
-#endif
   int iStatement;         /* Statement number (or 0 if has not opened stmt) */
-#ifdef SQLITE_SSE
-  int fetchId;          /* Statement number used by sqlite3_fetch_statement */
-  int lru;              /* Counter used for LRU cache replacement */
-#endif
-#ifdef SQLITE_ENABLE_MEMORY_MANAGEMENT
-  Vdbe *pLruPrev;
-  Vdbe *pLruNext;
+#ifdef SQLITE_DEBUG
+  FILE *trace;            /* Write an execution trace here, if not NULL */
 #endif
 };
 
@@ -338,15 +321,15 @@ int sqlite3VdbeCursorMoveto(VdbeCursor*);
 #if defined(SQLITE_DEBUG) || defined(VDBE_PROFILE)
 void sqlite3VdbePrintOp(FILE*, int, Op*);
 #endif
-int sqlite3VdbeSerialTypeLen(u32);
+u32 sqlite3VdbeSerialTypeLen(u32);
 u32 sqlite3VdbeSerialType(Mem*, int);
-int sqlite3VdbeSerialPut(unsigned char*, int, Mem*, int);
-int sqlite3VdbeSerialGet(const unsigned char*, u32, Mem*);
+u32 sqlite3VdbeSerialPut(unsigned char*, int, Mem*, int);
+u32 sqlite3VdbeSerialGet(const unsigned char*, u32, Mem*);
 void sqlite3VdbeDeleteAuxData(VdbeFunc*, int);
 
 int sqlite2BtreeKeyCompare(BtCursor *, const void *, int, int, int *);
 int sqlite3VdbeIdxKeyCompare(VdbeCursor*,UnpackedRecord*,int*);
-int sqlite3VdbeIdxRowid(BtCursor *, i64 *);
+int sqlite3VdbeIdxRowid(sqlite3*, BtCursor *, i64 *);
 int sqlite3MemCompare(const Mem*, const Mem*, const CollSeq*);
 int sqlite3VdbeExec(Vdbe*);
 int sqlite3VdbeList(Vdbe*);

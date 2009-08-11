@@ -16,7 +16,7 @@
 ** so is applicable.  Because this module is responsible for selecting
 ** indices, you might also think of this module as the "query optimizer".
 **
-** $Id: where.c,v 1.396 2009/05/06 19:03:14 drh Exp $
+** $Id: where.c,v 1.411 2009/07/31 06:14:52 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
@@ -127,11 +127,16 @@ struct WhereTerm {
 struct WhereClause {
   Parse *pParse;           /* The parser context */
   WhereMaskSet *pMaskSet;  /* Mapping of table cursor numbers to bitmasks */
+  Bitmask vmask;           /* Bitmask identifying virtual table cursors */
   u8 op;                   /* Split operator.  TK_AND or TK_OR */
   int nTerm;               /* Number of terms */
   int nSlot;               /* Number of entries in a[] */
   WhereTerm *a;            /* Each a[] describes a term of the WHERE cluase */
-  WhereTerm aStatic[4];    /* Initial static space for a[] */
+#if defined(SQLITE_SMALL_STACK)
+  WhereTerm aStatic[1];    /* Initial static space for a[] */
+#else
+  WhereTerm aStatic[8];    /* Initial static space for a[] */
+#endif
 };
 
 /*
@@ -254,6 +259,7 @@ static void whereClauseInit(
   pWC->nTerm = 0;
   pWC->nSlot = ArraySize(pWC->aStatic);
   pWC->a = pWC->aStatic;
+  pWC->vmask = 0;
 }
 
 /* Forward reference */
@@ -626,7 +632,6 @@ static int isLikeOrGlob(
   Expr *pRight, *pLeft;      /* Right and left size of LIKE operator */
   ExprList *pList;           /* List of operands to the LIKE operator */
   int c;                     /* One character in z[] */
-  int n;                     /* Length of string z[] */
   int cnt;                   /* Number of non-wildcard prefix characters */
   char wc[3];                /* Wildcard characters */
   CollSeq *pColl;            /* Collating sequence for LHS */
@@ -649,28 +654,25 @@ static int isLikeOrGlob(
   }
   pColl = sqlite3ExprCollSeq(pParse, pLeft);
   assert( pColl!=0 || pLeft->iColumn==-1 );
-  if( pColl==0 ){
-    /* No collation is defined for the ROWID.  Use the default. */
-    pColl = db->pDfltColl;
-  }
+  if( pColl==0 ) return 0;
   if( (pColl->type!=SQLITE_COLL_BINARY || *pnoCase) &&
       (pColl->type!=SQLITE_COLL_NOCASE || !*pnoCase) ){
     return 0;
   }
-  z = (const char*)pRight->token.z;
-  cnt = 0;
-  if( z ){
-    n = pRight->token.n;
-    while( cnt<n && (c=z[cnt])!=0 && c!=wc[0] && c!=wc[1] && c!=wc[2] ){
+  if( sqlite3ExprAffinity(pLeft)!=SQLITE_AFF_TEXT ) return 0;
+  z = pRight->u.zToken;
+  if( ALWAYS(z) ){
+    cnt = 0;
+    while( (c=z[cnt])!=0 && c!=wc[0] && c!=wc[1] && c!=wc[2] ){
       cnt++;
     }
+    if( cnt!=0 && c!=0 && 255!=(u8)z[cnt-1] ){
+      *pisComplete = z[cnt]==wc[0] && z[cnt+1]==0;
+      *pnPattern = cnt;
+      return 1;
+    }
   }
-  if( cnt==0 || 255==(u8)z[cnt-1] ){
-    return 0;
-  }
-  *pisComplete = z[cnt]==wc[0] && z[cnt+1]==0;
-  *pnPattern = cnt;
-  return 1;
+  return 0;
 }
 #endif /* SQLITE_OMIT_LIKE_OPTIMIZATION */
 
@@ -691,8 +693,7 @@ static int isMatchOfColumn(
   if( pExpr->op!=TK_FUNCTION ){
     return 0;
   }
-  if( pExpr->token.n!=5 ||
-       sqlite3StrNICmp((const char*)pExpr->token.z,"match",5)!=0 ){
+  if( sqlite3StrICmp(pExpr->u.zToken,"match")!=0 ){
     return 0;
   }
   pList = pExpr->x.pList;
@@ -829,7 +830,8 @@ static void exprAnalyzeOrTerm(
   /*
   ** Compute the set of tables that might satisfy cases 1 or 2.
   */
-  indexable = chngToIN = ~(Bitmask)0;
+  indexable = ~(Bitmask)0;
+  chngToIN = ~(pWC->vmask);
   for(i=pOrWc->nTerm-1, pOrTerm=pOrWc->a; i>=0 && indexable; i--, pOrTerm++){
     if( (pOrTerm->eOperator & WO_SINGLE)==0 ){
       WhereAndInfo *pAndInfo;
@@ -890,6 +892,22 @@ static void exprAnalyzeOrTerm(
   ** chngToIN holds a set of tables that *might* satisfy case 1.  But
   ** we have to do some additional checking to see if case 1 really
   ** is satisfied.
+  **
+  ** chngToIN will hold either 0, 1, or 2 bits.  The 0-bit case means
+  ** that there is no possibility of transforming the OR clause into an
+  ** IN operator because one or more terms in the OR clause contain
+  ** something other than == on a column in the single table.  The 1-bit
+  ** case means that every term of the OR clause is of the form
+  ** "table.column=expr" for some single table.  The one bit that is set
+  ** will correspond to the common table.  We still need to check to make
+  ** sure the same column is used on all terms.  The 2-bit case is when
+  ** the all terms are of the form "table1.column=table2.column".  It
+  ** might be possible to form an IN operator with either table1.column
+  ** or table2.column as the LHS if either is common to every term of
+  ** the OR clause.
+  **
+  ** Note that terms of the form "table.column1=table.column2" (the
+  ** same table on both sizes of the ==) cannot be optimized.
   */
   if( chngToIN ){
     int okToChngToIN = 0;     /* True if the conversion to IN is valid */
@@ -908,18 +926,38 @@ static void exprAnalyzeOrTerm(
       for(i=pOrWc->nTerm-1; i>=0; i--, pOrTerm++){
         assert( pOrTerm->eOperator==WO_EQ );
         pOrTerm->wtFlags &= ~TERM_OR_OK;
-        if( pOrTerm->leftCursor==iColumn ) continue;
-        if( (chngToIN & getMask(pMaskSet, pOrTerm->leftCursor))==0 ) continue;
+        if( pOrTerm->leftCursor==iCursor ){
+          /* This is the 2-bit case and we are on the second iteration and
+          ** current term is from the first iteration.  So skip this term. */
+          assert( j==1 );
+          continue;
+        }
+        if( (chngToIN & getMask(pMaskSet, pOrTerm->leftCursor))==0 ){
+          /* This term must be of the form t1.a==t2.b where t2 is in the
+          ** chngToIN set but t1 is not.  This term will be either preceeded
+          ** or follwed by an inverted copy (t2.b==t1.a).  Skip this term 
+          ** and use its inversion. */
+          testcase( pOrTerm->wtFlags & TERM_COPIED );
+          testcase( pOrTerm->wtFlags & TERM_VIRTUAL );
+          assert( pOrTerm->wtFlags & (TERM_COPIED|TERM_VIRTUAL) );
+          continue;
+        }
         iColumn = pOrTerm->u.leftColumn;
         iCursor = pOrTerm->leftCursor;
         break;
       }
       if( i<0 ){
+        /* No candidate table+column was found.  This can only occur
+        ** on the second iteration */
         assert( j==1 );
         assert( (chngToIN&(chngToIN-1))==0 );
-        assert( chngToIN==getMask(pMaskSet, iColumn) );
+        assert( chngToIN==getMask(pMaskSet, iCursor) );
         break;
       }
+      testcase( j==1 );
+
+      /* We have found a candidate table and column.  Check to see if that
+      ** table and column is common to every term in the OR clause */
       okToChngToIN = 1;
       for(; i>=0 && okToChngToIN; i--, pOrTerm++){
         assert( pOrTerm->eOperator==WO_EQ );
@@ -960,12 +998,12 @@ static void exprAnalyzeOrTerm(
         assert( pOrTerm->leftCursor==iCursor );
         assert( pOrTerm->u.leftColumn==iColumn );
         pDup = sqlite3ExprDup(db, pOrTerm->pExpr->pRight, 0);
-        pList = sqlite3ExprListAppend(pWC->pParse, pList, pDup, 0);
+        pList = sqlite3ExprListAppend(pWC->pParse, pList, pDup);
         pLeft = pOrTerm->pExpr->pLeft;
       }
       assert( pLeft!=0 );
       pDup = sqlite3ExprDup(db, pLeft, 0);
-      pNew = sqlite3Expr(db, TK_IN, pDup, 0, 0);
+      pNew = sqlite3PExpr(pParse, TK_IN, pDup, 0, 0);
       if( pNew ){
         int idxNew;
         transferJoinMarkings(pNew, pExpr);
@@ -1118,7 +1156,8 @@ static void exprAnalyze(
     for(i=0; i<2; i++){
       Expr *pNewExpr;
       int idxNew;
-      pNewExpr = sqlite3Expr(db, ops[i], sqlite3ExprDup(db, pExpr->pLeft, 0),
+      pNewExpr = sqlite3PExpr(pParse, ops[i], 
+                             sqlite3ExprDup(db, pExpr->pLeft, 0),
                              sqlite3ExprDup(db, pList->a[i].pExpr, 0), 0);
       idxNew = whereClauseInsert(pWC, pNewExpr, TERM_VIRTUAL|TERM_DYNAMIC);
       testcase( idxNew==0 );
@@ -1137,6 +1176,7 @@ static void exprAnalyze(
   else if( pExpr->op==TK_OR ){
     assert( pWC->op==TK_AND );
     exprAnalyzeOrTerm(pSrc, pWC, idxTerm);
+    pTerm = &pWC->a[idxTerm];
   }
 #endif /* SQLITE_OMIT_OR_OPTIMIZATION */
 
@@ -1160,19 +1200,22 @@ static void exprAnalyze(
 
     pLeft = pExpr->x.pList->a[1].pExpr;
     pRight = pExpr->x.pList->a[0].pExpr;
-    pStr1 = sqlite3PExpr(pParse, TK_STRING, 0, 0, 0);
-    if( pStr1 ){
-      sqlite3TokenCopy(db, &pStr1->token, &pRight->token);
-      pStr1->token.n = nPattern;
-    }
+    pStr1 = sqlite3Expr(db, TK_STRING, pRight->u.zToken);
+    if( pStr1 ) pStr1->u.zToken[nPattern] = 0;
     pStr2 = sqlite3ExprDup(db, pStr1, 0);
     if( !db->mallocFailed ){
-      u8 c, *pC;
-      /* assert( pStr2->token.dyn ); */
-      pC = (u8*)&pStr2->token.z[nPattern-1];
+      u8 c, *pC;       /* Last character before the first wildcard */
+      pC = (u8*)&pStr2->u.zToken[nPattern-1];
       c = *pC;
       if( noCase ){
-        if( c=='@' ) isComplete = 0;
+        /* The point is to increment the last character before the first
+        ** wildcard.  But if we increment '@', that will push it into the
+        ** alphabetic range where case conversions will mess up the 
+        ** inequality.  To avoid this, make sure to also run the full
+        ** LIKE on all candidate expressions by clearing the isComplete flag
+        */
+        if( c=='A'-1 ) isComplete = 0;
+
         c = sqlite3UpperToLower[c];
       }
       *pC = c + 1;
@@ -1213,7 +1256,8 @@ static void exprAnalyze(
     prereqColumn = exprTableUsage(pMaskSet, pLeft);
     if( (prereqExpr & prereqColumn)==0 ){
       Expr *pNewExpr;
-      pNewExpr = sqlite3Expr(db, TK_MATCH, 0, sqlite3ExprDup(db, pRight, 0), 0);
+      pNewExpr = sqlite3PExpr(pParse, TK_MATCH, 
+                              0, sqlite3ExprDup(db, pRight, 0), 0);
       idxNew = whereClauseInsert(pWC, pNewExpr, TERM_VIRTUAL|TERM_DYNAMIC);
       testcase( idxNew==0 );
       pNewTerm = &pWC->a[idxNew];
@@ -1683,7 +1727,7 @@ static sqlite3_index_info *allocateIndexInfo(
 ** that this is required.
 */
 static int vtabBestIndex(Parse *pParse, Table *pTab, sqlite3_index_info *p){
-  sqlite3_vtab *pVtab = pTab->pVtab;
+  sqlite3_vtab *pVtab = sqlite3GetVTable(pParse->db, pTab)->pVtab;
   int i;
   int rc;
 
@@ -1780,7 +1824,7 @@ static void bestVirtualIndex(
   ** sqlite3ViewGetColumnNames() would have picked up the error. 
   */
   assert( pTab->azModuleArg && pTab->azModuleArg[0] );
-  assert( pTab->pVtab );
+  assert( sqlite3GetVTable(pParse->db, pTab) );
 
   /* Set the aConstraint[].usable fields and initialize all 
   ** output variables to zero.
@@ -1841,7 +1885,7 @@ static void bestVirtualIndex(
     pCost->rCost = pIdxInfo->estimatedCost;
   }
   pCost->plan.u.pVtabIdx = pIdxInfo;
-  if( pIdxInfo && pIdxInfo->orderByConsumed ){
+  if( pIdxInfo->orderByConsumed ){
     pCost->plan.wsFlags |= WHERE_ORDERBY;
   }
   pCost->plan.nEq = 0;
@@ -2127,7 +2171,7 @@ static void bestBtreeIndex(
         cost += cost*estLog(cost);
         WHERETRACE(("...... orderby increases cost to %.9g\n", cost));
       }
-    }else if( pParse->db->flags & SQLITE_ReverseOrder ){
+    }else if( wsFlags!=0 && (pParse->db->flags & SQLITE_ReverseOrder)!=0 ){
       /* For application testing, randomly reverse the output order for
       ** SELECT statements that omit the ORDER BY clause.  This will help
       ** to find cases where
@@ -2170,7 +2214,7 @@ static void bestBtreeIndex(
   /* Report the best result
   */
   pCost->plan.wsFlags |= eqTermMask;
-  WHERETRACE(("best index is %s, cost=%.9g, nrow=%.9g, wsFlags=%x, nEq=%d\n",
+  WHERETRACE(("best index is %s, nrow=%.9g, cost=%.9g, wsFlags=%x, nEq=%d\n",
         (pCost->plan.wsFlags & WHERE_INDEXED)!=0 ?
              pCost->plan.u.pIdx->zName : "(none)", pCost->nRow,
         pCost->rCost, pCost->plan.wsFlags, pCost->plan.nEq));
@@ -2190,6 +2234,7 @@ static void bestIndex(
   ExprList *pOrderBy,         /* The ORDER BY clause */
   WhereCost *pCost            /* Lowest cost query plan */
 ){
+#ifndef SQLITE_OMIT_VIRTUALTABLE
   if( IsVirtual(pSrc->pTab) ){
     sqlite3_index_info *p = 0;
     bestVirtualIndex(pParse, pWC, pSrc, notReady, pOrderBy, pCost, &p);
@@ -2197,7 +2242,9 @@ static void bestIndex(
       sqlite3_free(p->idxStr);
     }
     sqlite3DbFree(pParse->db, p);
-  }else{
+  }else
+#endif
+  {
     bestBtreeIndex(pParse, pWC, pSrc, notReady, pOrderBy, pCost);
   }
 }
@@ -2293,7 +2340,6 @@ static int codeEqualityTerm(
     eType = sqlite3FindInIndex(pParse, pX, 0);
     iTab = pX->iTable;
     sqlite3VdbeAddOp2(v, OP_Rewind, iTab, 0);
-    VdbeComment((v, "%.*s", pX->span.n, pX->span.z));
     assert( pLevel->plan.wsFlags & WHERE_IN_ABLE );
     if( pLevel->u.in.nIn==0 ){
       pLevel->addrNxt = sqlite3VdbeMakeLabel(v);
@@ -2834,8 +2880,8 @@ static Bitmask codeOneLoopStart(
     SrcList oneTab;        /* Shortened table list */
 
     int regReturn = ++pParse->nMem;           /* Register used with OP_Gosub */
-    int regRowset;                            /* Register for RowSet object */
-    int regRowid;                             /* Register holding rowid */
+    int regRowset = 0;                        /* Register for RowSet object */
+    int regRowid = 0;                         /* Register holding rowid */
     int iLoopBody = sqlite3VdbeMakeLabel(v);  /* Start of loop body */
     int iRetInit;                             /* Address of regReturn init */
     int ii;
@@ -2874,7 +2920,6 @@ static Bitmask codeOneLoopStart(
       WhereTerm *pOrTerm = &pOrWc->a[ii];
       if( pOrTerm->leftCursor==iCur || pOrTerm->eOperator==WO_AND ){
         WhereInfo *pSubWInfo;          /* Info for single OR-term scan */
-
         /* Loop through table entries that match term pOrTerm. */
         pSubWInfo = sqlite3WhereBegin(pParse, &oneTab, pOrTerm->pExpr, 0,
                         WHERE_OMIT_OPEN | WHERE_OMIT_CLOSE | WHERE_FORCE_TABLE);
@@ -2884,7 +2929,7 @@ static Bitmask codeOneLoopStart(
             int r;
             r = sqlite3ExprCodeGetColumn(pParse, pTabItem->pTab, -1, iCur, 
                                          regRowid, 0);
-            sqlite3VdbeAddOp4(v, OP_RowSetTest, regRowset, 
+            sqlite3VdbeAddOp4(v, OP_RowSetTest, regRowset,
                               sqlite3VdbeCurrentAddr(v)+2,
                               r, SQLITE_INT_TO_PTR(iSet), P4_INT32);
           }
@@ -3166,9 +3211,20 @@ WhereInfo *sqlite3WhereBegin(
   ** of the join.  Subtracting one from the right table bitmask gives a
   ** bitmask for all tables to the left of the join.  Knowing the bitmask
   ** for all tables to the left of a left join is important.  Ticket #3015.
+  **
+  ** Configure the WhereClause.vmask variable so that bits that correspond
+  ** to virtual table cursors are set. This is used to selectively disable 
+  ** the OR-to-IN transformation in exprAnalyzeOrTerm(). It is not helpful 
+  ** with virtual tables.
   */
+  assert( pWC->vmask==0 && pMaskSet->n==0 );
   for(i=0; i<pTabList->nSrc; i++){
     createMask(pMaskSet, pTabList->a[i].iCursor);
+#ifndef SQLITE_OMIT_VIRTUALTABLE
+    if( ALWAYS(pTabList->a[i].pTab) && IsVirtual(pTabList->a[i].pTab) ){
+      pWC->vmask |= ((Bitmask)1 << i);
+    }
+#endif
   }
 #ifndef NDEBUG
   {
@@ -3349,13 +3405,13 @@ WhereInfo *sqlite3WhereBegin(
 #endif /* SQLITE_OMIT_EXPLAIN */
     pTabItem = &pTabList->a[pLevel->iFrom];
     pTab = pTabItem->pTab;
-    iDb = sqlite3SchemaToIndex(pParse->db, pTab->pSchema);
+    iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
     if( (pTab->tabFlags & TF_Ephemeral)!=0 || pTab->pSelect ) continue;
 #ifndef SQLITE_OMIT_VIRTUALTABLE
     if( (pLevel->plan.wsFlags & WHERE_VIRTUALTABLE)!=0 ){
+      const char *pVTab = (const char *)sqlite3GetVTable(db, pTab);
       int iCur = pTabItem->iCursor;
-      sqlite3VdbeAddOp4(v, OP_VOpen, iCur, 0, 0,
-                        (const char*)pTab->pVtab, P4_VTAB);
+      sqlite3VdbeAddOp4(v, OP_VOpen, iCur, 0, 0, pVTab, P4_VTAB);
     }else
 #endif
     if( (pLevel->plan.wsFlags & WHERE_IDX_ONLY)==0
@@ -3541,7 +3597,7 @@ void sqlite3WhereEnd(WhereInfo *pWInfo){
     ** that reference the table and converts them into opcodes that
     ** reference the index.
     */
-    if( (pLevel->plan.wsFlags & WHERE_INDEXED)!=0 ){
+    if( (pLevel->plan.wsFlags & WHERE_INDEXED)!=0 && !db->mallocFailed){
       int k, j, last;
       VdbeOp *pOp;
       Index *pIdx = pLevel->plan.u.pIdx;

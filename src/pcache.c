@@ -11,7 +11,7 @@
 *************************************************************************
 ** This file implements that page cache.
 **
-** @(#) $Id: pcache.c,v 1.44 2009/03/31 01:32:18 drh Exp $
+** @(#) $Id: pcache.c,v 1.47 2009/07/25 11:46:49 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
@@ -208,6 +208,7 @@ int sqlite3PcacheFetch(
   int eCreate;
 
   assert( pCache!=0 );
+  assert( createFlag==1 || createFlag==0 );
   assert( pgno>0 );
 
   /* If the pluggable cache (sqlite3_pcache*) has not been allocated,
@@ -225,10 +226,7 @@ int sqlite3PcacheFetch(
     pCache->pCache = p;
   }
 
-  eCreate = createFlag ? 1 : 0;
-  if( eCreate && (!pCache->bPurgeable || !pCache->pDirty) ){
-    eCreate = 2;
-  }
+  eCreate = createFlag * (1 + (!pCache->bPurgeable || !pCache->pDirty));
   if( pCache->pCache ){
     pPage = sqlite3GlobalConfig.pcache.xFetch(pCache->pCache, pgno, eCreate);
   }
@@ -470,24 +468,22 @@ static PgHdr *pcacheMergeDirtyList(PgHdr *pA, PgHdr *pB){
 ** Sort the list of pages in accending order by pgno.  Pages are
 ** connected by pDirty pointers.  The pDirtyPrev pointers are
 ** corrupted by this sort.
+**
+** Since there cannot be more than 2^31 distinct pages in a database,
+** there cannot be more than 31 buckets required by the merge sorter.
+** One extra bucket is added to catch overflow in case something
+** ever changes to make the previous sentence incorrect.
 */
-#define N_SORT_BUCKET_ALLOC 25
-#define N_SORT_BUCKET       25
-#ifdef SQLITE_TEST
-  int sqlite3_pager_n_sort_bucket = 0;
-  #undef N_SORT_BUCKET
-  #define N_SORT_BUCKET \
-   (sqlite3_pager_n_sort_bucket?sqlite3_pager_n_sort_bucket:N_SORT_BUCKET_ALLOC)
-#endif
+#define N_SORT_BUCKET  32
 static PgHdr *pcacheSortDirtyList(PgHdr *pIn){
-  PgHdr *a[N_SORT_BUCKET_ALLOC], *p;
+  PgHdr *a[N_SORT_BUCKET], *p;
   int i;
   memset(a, 0, sizeof(a));
   while( pIn ){
     p = pIn;
     pIn = p->pDirty;
     p->pDirty = 0;
-    for(i=0; i<N_SORT_BUCKET-1; i++){
+    for(i=0; ALWAYS(i<N_SORT_BUCKET-1); i++){
       if( a[i]==0 ){
         a[i] = p;
         break;
@@ -496,11 +492,9 @@ static PgHdr *pcacheSortDirtyList(PgHdr *pIn){
         a[i] = 0;
       }
     }
-    if( i==N_SORT_BUCKET-1 ){
-      /* Coverage: To get here, there need to be 2^(N_SORT_BUCKET) 
-      ** elements in the input list. This is possible, but impractical.
-      ** Testing this line is the point of global variable
-      ** sqlite3_pager_n_sort_bucket.
+    if( NEVER(i==N_SORT_BUCKET-1) ){
+      /* To get here, there need to be 2^(N_SORT_BUCKET) elements in
+      ** the input list.  But that is impossible.
       */
       a[i] = pcacheMergeDirtyList(a[i], p);
     }
@@ -567,7 +561,7 @@ void sqlite3PcacheSetCachesize(PCache *pCache, int mxPage){
   }
 }
 
-#ifdef SQLITE_CHECK_PAGES
+#if defined(SQLITE_CHECK_PAGES) || defined(SQLITE_DEBUG)
 /*
 ** For all dirty pages currently in the cache, invoke the specified
 ** callback. This is only used if the SQLITE_CHECK_PAGES macro is

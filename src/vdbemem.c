@@ -15,7 +15,7 @@
 ** only within the VDBE.  Interface routines refer to a Mem using the
 ** name sqlite_value
 **
-** $Id: vdbemem.c,v 1.144 2009/05/05 12:54:50 drh Exp $
+** $Id: vdbemem.c,v 1.152 2009/07/22 18:07:41 drh Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
@@ -96,7 +96,7 @@ int sqlite3VdbeMemGrow(Mem *pMem, int n, int preserve){
     }
   }
 
-  if( preserve && pMem->z && pMem->zMalloc && pMem->z!=pMem->zMalloc ){
+  if( pMem->z && preserve && pMem->zMalloc && pMem->z!=pMem->zMalloc ){
     memcpy(pMem->zMalloc, pMem->z, pMem->n);
   }
   if( pMem->flags&MEM_Dyn && pMem->xDel ){
@@ -245,7 +245,7 @@ int sqlite3VdbeMemStringify(Mem *pMem, int enc){
 */
 int sqlite3VdbeMemFinalize(Mem *pMem, FuncDef *pFunc){
   int rc = SQLITE_OK;
-  if( pFunc && pFunc->xFinalize ){
+  if( ALWAYS(pFunc && pFunc->xFinalize) ){
     sqlite3_context ctx;
     assert( (pMem->flags & MEM_Null)!=0 || pFunc==pMem->u.pDef );
     assert( pMem->db==0 || sqlite3_mutex_held(pMem->db->mutex) );
@@ -258,7 +258,7 @@ int sqlite3VdbeMemFinalize(Mem *pMem, FuncDef *pFunc){
     assert( 0==(pMem->flags&MEM_Dyn) && !pMem->xDel );
     sqlite3DbFree(pMem->db, pMem->zMalloc);
     memcpy(pMem, &ctx.s, sizeof(ctx.s));
-    rc = (ctx.isError?SQLITE_ERROR:SQLITE_OK);
+    rc = ctx.isError;
   }
   return rc;
 }
@@ -411,7 +411,18 @@ void sqlite3VdbeIntegerAffinity(Mem *pMem){
   assert( EIGHT_BYTE_ALIGNMENT(pMem) );
 
   pMem->u.i = doubleToInt64(pMem->r);
-  if( pMem->r==(double)pMem->u.i ){
+
+  /* Only mark the value as an integer if
+  **
+  **    (1) the round-trip conversion real->int->real is a no-op, and
+  **    (2) The integer is neither the largest nor the smallest
+  **        possible integer (ticket #3922)
+  **
+  ** The second term in the following conditional enforces the second
+  ** condition under the assumption that additional overflow causes
+  ** values to wrap around.
+  */
+  if( pMem->r==(double)pMem->u.i && (pMem->u.i-1) < (pMem->u.i+1) ){
     pMem->flags |= MEM_Int;
   }
 }
@@ -487,6 +498,14 @@ void sqlite3VdbeMemSetZeroBlob(Mem *pMem, int n){
   if( n<0 ) n = 0;
   pMem->u.nZero = n;
   pMem->enc = SQLITE_UTF8;
+
+#ifdef SQLITE_OMIT_INCRBLOB
+  sqlite3VdbeMemGrow(pMem, n, 0);
+  if( pMem->z ){
+    pMem->n = n;
+    memset(pMem->z, 0, n);
+  }
+#endif
 }
 
 /*
@@ -522,12 +541,9 @@ void sqlite3VdbeMemSetDouble(Mem *pMem, double val){
 void sqlite3VdbeMemSetRowSet(Mem *pMem){
   sqlite3 *db = pMem->db;
   assert( db!=0 );
-  if( pMem->flags & MEM_RowSet ){
-    sqlite3RowSetClear(pMem->u.pRowSet);
-  }else{
-    sqlite3VdbeMemRelease(pMem);
-    pMem->zMalloc = sqlite3DbMallocRaw(db, 64);
-  }
+  assert( (pMem->flags & MEM_RowSet)==0 );
+  sqlite3VdbeMemRelease(pMem);
+  pMem->zMalloc = sqlite3DbMallocRaw(db, 64);
   if( db->mallocFailed ){
     pMem->flags = MEM_Null;
   }else{
@@ -626,6 +642,12 @@ void sqlite3VdbeMemMove(Mem *pTo, Mem *pFrom){
 ** string is copied into a (possibly existing) buffer managed by the 
 ** Mem structure. Otherwise, any existing buffer is freed and the
 ** pointer copied.
+**
+** If the string is too large (if it exceeds the SQLITE_LIMIT_LENGTH
+** size limit) then no memory allocation occurs.  If the string can be
+** stored without allocating memory, then it is.  If a memory allocation
+** is required to store the string, then value of pMem is unchanged.  In
+** either case, SQLITE_TOOBIG is returned.
 */
 int sqlite3VdbeMemSetStr(
   Mem *pMem,          /* Memory cell to set to string value */
@@ -689,9 +711,6 @@ int sqlite3VdbeMemSetStr(
     pMem->xDel = xDel;
     flags |= ((xDel==SQLITE_STATIC)?MEM_Static:MEM_Dyn);
   }
-  if( nByte>iLimit ){
-    return SQLITE_TOOBIG;
-  }
 
   pMem->n = nByte;
   pMem->flags = flags;
@@ -703,6 +722,10 @@ int sqlite3VdbeMemSetStr(
     return SQLITE_NOMEM;
   }
 #endif
+
+  if( nByte>iLimit ){
+    return SQLITE_TOOBIG;
+  }
 
   return SQLITE_OK;
 }
@@ -848,13 +871,14 @@ int sqlite3VdbeMemFromBtree(
   int key,          /* If true, retrieve from the btree key, not data. */
   Mem *pMem         /* OUT: Return data in this Mem structure. */
 ){
-  char *zData;       /* Data from the btree layer */
-  int available = 0; /* Number of bytes available on the local btree page */
-  sqlite3 *db;       /* Database connection */
-  int rc = SQLITE_OK;
+  char *zData;        /* Data from the btree layer */
+  int available = 0;  /* Number of bytes available on the local btree page */
+  int rc = SQLITE_OK; /* Return code */
 
-  db = sqlite3BtreeCursorDb(pCur);
-  assert( sqlite3_mutex_held(db->mutex) );
+  assert( sqlite3BtreeCursorIsValid(pCur) );
+
+  /* Note: the calls to BtreeKeyFetch() and DataFetch() below assert() 
+  ** that both the BtShared and database handle mutexes are held. */
   assert( (pMem->flags & MEM_RowSet)==0 );
   if( key ){
     zData = (char *)sqlite3BtreeKeyFetch(pCur, &available);
@@ -863,7 +887,7 @@ int sqlite3VdbeMemFromBtree(
   }
   assert( zData!=0 );
 
-  if( offset+amt<=available && ((pMem->flags&MEM_Dyn)==0 || pMem->xDel) ){
+  if( offset+amt<=available && (pMem->flags&MEM_Dyn)==0 ){
     sqlite3VdbeMemRelease(pMem);
     pMem->z = &zData[offset];
     pMem->flags = MEM_Blob|MEM_Ephem;
@@ -974,10 +998,15 @@ int sqlite3ValueFromExpr(
   op = pExpr->op;
 
   if( op==TK_STRING || op==TK_FLOAT || op==TK_INTEGER ){
-    zVal = sqlite3DbStrNDup(db, (char*)pExpr->token.z, pExpr->token.n);
     pVal = sqlite3ValueNew(db);
-    if( !zVal || !pVal ) goto no_mem;
-    sqlite3ValueSetStr(pVal, -1, zVal, SQLITE_UTF8, SQLITE_DYNAMIC);
+    if( pVal==0 ) goto no_mem;
+    if( ExprHasProperty(pExpr, EP_IntValue) ){
+      sqlite3VdbeMemSetInt64(pVal, (i64)pExpr->u.iValue);
+    }else{
+      zVal = sqlite3DbStrDup(db, pExpr->u.zToken);
+      if( zVal==0 ) goto no_mem;
+      sqlite3ValueSetStr(pVal, -1, zVal, SQLITE_UTF8, SQLITE_DYNAMIC);
+    }
     if( (op==TK_INTEGER || op==TK_FLOAT ) && affinity==SQLITE_AFF_NONE ){
       sqlite3ValueApplyAffinity(pVal, SQLITE_AFF_NUMERIC, SQLITE_UTF8);
     }else{
@@ -996,14 +1025,13 @@ int sqlite3ValueFromExpr(
 #ifndef SQLITE_OMIT_BLOB_LITERAL
   else if( op==TK_BLOB ){
     int nVal;
-    assert( pExpr->token.n>=3 );
-    assert( pExpr->token.z[0]=='x' || pExpr->token.z[0]=='X' );
-    assert( pExpr->token.z[1]=='\'' );
-    assert( pExpr->token.z[pExpr->token.n-1]=='\'' );
+    assert( pExpr->u.zToken[0]=='x' || pExpr->u.zToken[0]=='X' );
+    assert( pExpr->u.zToken[1]=='\'' );
     pVal = sqlite3ValueNew(db);
     if( !pVal ) goto no_mem;
-    nVal = pExpr->token.n - 3;
-    zVal = (char*)pExpr->token.z + 2;
+    zVal = &pExpr->u.zToken[2];
+    nVal = sqlite3Strlen30(zVal)-1;
+    assert( zVal[nVal]=='\'' );
     sqlite3VdbeMemSetStr(pVal, sqlite3HexToBlob(db, zVal, nVal), nVal/2,
                          0, SQLITE_DYNAMIC);
   }

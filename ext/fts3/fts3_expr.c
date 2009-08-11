@@ -421,7 +421,9 @@ static int getNextNode(
   for(ii=0; ii<pParse->nCol; ii++){
     const char *zStr = pParse->azCol[ii];
     int nStr = strlen(zStr);
-    if( nInput>nStr && zInput[nStr]==':' && memcmp(zStr, zInput, nStr)==0 ){
+    if( nInput>nStr && zInput[nStr]==':' 
+     && sqlite3_strnicmp(zStr, zInput, nStr)==0 
+    ){
       iCol = ii;
       iColLen = ((zInput - z) + nStr + 1);
       break;
@@ -538,10 +540,10 @@ static int fts3ExprParse(
         pNot->eType = FTSQUERY_NOT;
         pNot->pRight = p;
         if( pNotBranch ){
-          pNotBranch->pLeft = p;
-          pNot->pRight = pNotBranch;
+          pNot->pLeft = pNotBranch;
         }
         pNotBranch = pNot;
+        p = pPrev;
       }else{
         int eType = p->eType;
         assert( eType!=FTSQUERY_PHRASE || !p->pPhrase->isNot );
@@ -623,7 +625,11 @@ static int fts3ExprParse(
       if( !pRet ){
         rc = SQLITE_ERROR;
       }else{
-        pNotBranch->pLeft = pRet;
+        Fts3Expr *pIter = pNotBranch;
+        while( pIter->pLeft ){
+          pIter = pIter->pLeft;
+        }
+        pIter->pLeft = pRet;
         pRet = pNotBranch;
       }
     }

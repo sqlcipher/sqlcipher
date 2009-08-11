@@ -13,166 +13,10 @@
 ** This file contains code use to implement APIs that are part of the
 ** VDBE.
 **
-** $Id: vdbeapi.c,v 1.164 2009/04/27 18:46:06 drh Exp $
+** $Id: vdbeapi.c,v 1.167 2009/06/25 01:47:12 drh Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
-
-#if 0 && defined(SQLITE_ENABLE_MEMORY_MANAGEMENT)
-/*
-** The following structure contains pointers to the end points of a
-** doubly-linked list of all compiled SQL statements that may be holding
-** buffers eligible for release when the sqlite3_release_memory() interface is
-** invoked. Access to this list is protected by the SQLITE_MUTEX_STATIC_LRU2
-** mutex.
-**
-** Statements are added to the end of this list when sqlite3_reset() is
-** called. They are removed either when sqlite3_step() or sqlite3_finalize()
-** is called. When statements are added to this list, the associated 
-** register array (p->aMem[1..p->nMem]) may contain dynamic buffers that
-** can be freed using sqlite3VdbeReleaseMemory().
-**
-** When statements are added or removed from this list, the mutex
-** associated with the Vdbe being added or removed (Vdbe.db->mutex) is
-** already held. The LRU2 mutex is then obtained, blocking if necessary,
-** the linked-list pointers manipulated and the LRU2 mutex relinquished.
-*/
-struct StatementLruList {
-  Vdbe *pFirst;
-  Vdbe *pLast;
-};
-static struct StatementLruList sqlite3LruStatements;
-
-/*
-** Check that the list looks to be internally consistent. This is used
-** as part of an assert() statement as follows:
-**
-**   assert( stmtLruCheck() );
-*/
-#ifndef NDEBUG
-static int stmtLruCheck(){
-  Vdbe *p;
-  for(p=sqlite3LruStatements.pFirst; p; p=p->pLruNext){
-    assert(p->pLruNext || p==sqlite3LruStatements.pLast);
-    assert(!p->pLruNext || p->pLruNext->pLruPrev==p);
-    assert(p->pLruPrev || p==sqlite3LruStatements.pFirst);
-    assert(!p->pLruPrev || p->pLruPrev->pLruNext==p);
-  }
-  return 1;
-}
-#endif
-
-/*
-** Add vdbe p to the end of the statement lru list. It is assumed that
-** p is not already part of the list when this is called. The lru list
-** is protected by the SQLITE_MUTEX_STATIC_LRU mutex.
-*/
-static void stmtLruAdd(Vdbe *p){
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_LRU2));
-
-  if( p->pLruPrev || p->pLruNext || sqlite3LruStatements.pFirst==p ){
-    sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_LRU2));
-    return;
-  }
-
-  assert( stmtLruCheck() );
-
-  if( !sqlite3LruStatements.pFirst ){
-    assert( !sqlite3LruStatements.pLast );
-    sqlite3LruStatements.pFirst = p;
-    sqlite3LruStatements.pLast = p;
-  }else{
-    assert( !sqlite3LruStatements.pLast->pLruNext );
-    p->pLruPrev = sqlite3LruStatements.pLast;
-    sqlite3LruStatements.pLast->pLruNext = p;
-    sqlite3LruStatements.pLast = p;
-  }
-
-  assert( stmtLruCheck() );
-
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_LRU2));
-}
-
-/*
-** Assuming the SQLITE_MUTEX_STATIC_LRU2 mutext is already held, remove
-** statement p from the least-recently-used statement list. If the 
-** statement is not currently part of the list, this call is a no-op.
-*/
-static void stmtLruRemoveNomutex(Vdbe *p){
-  if( p->pLruPrev || p->pLruNext || p==sqlite3LruStatements.pFirst ){
-    assert( stmtLruCheck() );
-    if( p->pLruNext ){
-      p->pLruNext->pLruPrev = p->pLruPrev;
-    }else{
-      sqlite3LruStatements.pLast = p->pLruPrev;
-    }
-    if( p->pLruPrev ){
-      p->pLruPrev->pLruNext = p->pLruNext;
-    }else{
-      sqlite3LruStatements.pFirst = p->pLruNext;
-    }
-    p->pLruNext = 0;
-    p->pLruPrev = 0;
-    assert( stmtLruCheck() );
-  }
-}
-
-/*
-** Assuming the SQLITE_MUTEX_STATIC_LRU2 mutext is not held, remove
-** statement p from the least-recently-used statement list. If the 
-** statement is not currently part of the list, this call is a no-op.
-*/
-static void stmtLruRemove(Vdbe *p){
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_LRU2));
-  stmtLruRemoveNomutex(p);
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_LRU2));
-}
-
-/*
-** Try to release n bytes of memory by freeing buffers associated 
-** with the memory registers of currently unused vdbes.
-*/
-int sqlite3VdbeReleaseMemory(int n){
-  Vdbe *p;
-  Vdbe *pNext;
-  int nFree = 0;
-
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_LRU2));
-  for(p=sqlite3LruStatements.pFirst; p && nFree<n; p=pNext){
-    pNext = p->pLruNext;
-
-    /* For each statement handle in the lru list, attempt to obtain the
-    ** associated database mutex. If it cannot be obtained, continue
-    ** to the next statement handle. It is not possible to block on
-    ** the database mutex - that could cause deadlock.
-    */
-    if( SQLITE_OK==sqlite3_mutex_try(p->db->mutex) ){
-      nFree += sqlite3VdbeReleaseBuffers(p);
-      stmtLruRemoveNomutex(p);
-      sqlite3_mutex_leave(p->db->mutex);
-    }
-  }
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_LRU2));
-
-  return nFree;
-}
-
-/*
-** Call sqlite3Reprepare() on the statement. Remove it from the
-** lru list before doing so, as Reprepare() will free all the
-** memory register buffers anyway.
-*/
-int vdbeReprepare(Vdbe *p){
-  stmtLruRemove(p);
-  return sqlite3Reprepare(p);
-}
-
-#else       /* !SQLITE_ENABLE_MEMORY_MANAGEMENT */
-  #define stmtLruRemove(x)
-  #define stmtLruAdd(x)
-  #define vdbeReprepare(x) sqlite3Reprepare(x)
-#endif
-
 
 #ifndef SQLITE_OMIT_DEPRECATED
 /*
@@ -209,7 +53,6 @@ int sqlite3_finalize(sqlite3_stmt *pStmt){
     sqlite3_mutex *mutex = v->db->mutex;
 #endif
     sqlite3_mutex_enter(mutex);
-    stmtLruRemove(v);
     rc = sqlite3VdbeFinalize(v);
     rc = sqlite3ApiExit(db, rc);
     sqlite3_mutex_leave(mutex);
@@ -233,7 +76,6 @@ int sqlite3_reset(sqlite3_stmt *pStmt){
     Vdbe *v = (Vdbe*)pStmt;
     sqlite3_mutex_enter(v->db->mutex);
     rc = sqlite3VdbeReset(v);
-    stmtLruAdd(v);
     sqlite3VdbeMakeReady(v, -1, 0, 0, 0);
     assert( (rc & (v->db->errMask))==rc );
     rc = sqlite3ApiExit(v->db, rc);
@@ -313,7 +155,22 @@ int sqlite3_value_type(sqlite3_value* pVal){
 /**************************** sqlite3_result_  *******************************
 ** The following routines are used by user-defined functions to specify
 ** the function result.
+**
+** The setStrOrError() funtion calls sqlite3VdbeMemSetStr() to store the
+** result as a string or blob but if the string or blob is too large, it
+** then sets the error code to SQLITE_TOOBIG
 */
+static void setResultStrOrError(
+  sqlite3_context *pCtx,  /* Function context */
+  const char *z,          /* String pointer */
+  int n,                  /* Bytes in string, or negative */
+  u8 enc,                 /* Encoding of z.  0 for BLOBs */
+  void (*xDel)(void*)     /* Destructor function */
+){
+  if( sqlite3VdbeMemSetStr(&pCtx->s, z, n, enc, xDel)==SQLITE_TOOBIG ){
+    sqlite3_result_error_toobig(pCtx);
+  }
+}
 void sqlite3_result_blob(
   sqlite3_context *pCtx, 
   const void *z, 
@@ -322,7 +179,7 @@ void sqlite3_result_blob(
 ){
   assert( n>=0 );
   assert( sqlite3_mutex_held(pCtx->s.db->mutex) );
-  sqlite3VdbeMemSetStr(&pCtx->s, z, n, 0, xDel);
+  setResultStrOrError(pCtx, z, n, 0, xDel);
 }
 void sqlite3_result_double(sqlite3_context *pCtx, double rVal){
   assert( sqlite3_mutex_held(pCtx->s.db->mutex) );
@@ -359,7 +216,7 @@ void sqlite3_result_text(
   void (*xDel)(void *)
 ){
   assert( sqlite3_mutex_held(pCtx->s.db->mutex) );
-  sqlite3VdbeMemSetStr(&pCtx->s, z, n, SQLITE_UTF8, xDel);
+  setResultStrOrError(pCtx, z, n, SQLITE_UTF8, xDel);
 }
 #ifndef SQLITE_OMIT_UTF16
 void sqlite3_result_text16(
@@ -369,7 +226,7 @@ void sqlite3_result_text16(
   void (*xDel)(void *)
 ){
   assert( sqlite3_mutex_held(pCtx->s.db->mutex) );
-  sqlite3VdbeMemSetStr(&pCtx->s, z, n, SQLITE_UTF16NATIVE, xDel);
+  setResultStrOrError(pCtx, z, n, SQLITE_UTF16NATIVE, xDel);
 }
 void sqlite3_result_text16be(
   sqlite3_context *pCtx, 
@@ -378,7 +235,7 @@ void sqlite3_result_text16be(
   void (*xDel)(void *)
 ){
   assert( sqlite3_mutex_held(pCtx->s.db->mutex) );
-  sqlite3VdbeMemSetStr(&pCtx->s, z, n, SQLITE_UTF16BE, xDel);
+  setResultStrOrError(pCtx, z, n, SQLITE_UTF16BE, xDel);
 }
 void sqlite3_result_text16le(
   sqlite3_context *pCtx, 
@@ -387,7 +244,7 @@ void sqlite3_result_text16le(
   void (*xDel)(void *)
 ){
   assert( sqlite3_mutex_held(pCtx->s.db->mutex) );
-  sqlite3VdbeMemSetStr(&pCtx->s, z, n, SQLITE_UTF16LE, xDel);
+  setResultStrOrError(pCtx, z, n, SQLITE_UTF16LE, xDel);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 void sqlite3_result_value(sqlite3_context *pCtx, sqlite3_value *pValue){
@@ -477,7 +334,6 @@ static int sqlite3Step(Vdbe *p){
     db->activeVdbeCnt++;
     if( p->readOnly==0 ) db->writeVdbeCnt++;
     p->pc = 0;
-    stmtLruRemove(p);
   }
 #ifndef SQLITE_OMIT_EXPLAIN
   if( p->explain ){
@@ -537,19 +393,6 @@ end_of_step:
 ** sqlite3Step() to do most of the work.  If a schema error occurs,
 ** call sqlite3Reprepare() and try again.
 */
-#ifdef SQLITE_OMIT_PARSER
-int sqlite3_step(sqlite3_stmt *pStmt){
-  int rc = SQLITE_MISUSE;
-  if( pStmt ){
-    Vdbe *v;
-    v = (Vdbe*)pStmt;
-    sqlite3_mutex_enter(v->db->mutex);
-    rc = sqlite3Step(v);
-    sqlite3_mutex_leave(v->db->mutex);
-  }
-  return rc;
-}
-#else
 int sqlite3_step(sqlite3_stmt *pStmt){
   int rc = SQLITE_MISUSE;
   if( pStmt ){
@@ -559,7 +402,7 @@ int sqlite3_step(sqlite3_stmt *pStmt){
     sqlite3_mutex_enter(db->mutex);
     while( (rc = sqlite3Step(v))==SQLITE_SCHEMA
            && cnt++ < 5
-           && (rc = vdbeReprepare(v))==SQLITE_OK ){
+           && (rc = sqlite3Reprepare(v))==SQLITE_OK ){
       sqlite3_reset(pStmt);
       v->expired = 0;
     }
@@ -586,7 +429,6 @@ int sqlite3_step(sqlite3_stmt *pStmt){
   }
   return rc;
 }
-#endif
 
 /*
 ** Extract the user data from a sqlite3_context structure and return a
@@ -766,8 +608,23 @@ static Mem *columnMem(sqlite3_stmt *pStmt, int i){
     vals = sqlite3_data_count(pStmt);
     pOut = &pVm->pResultSet[i];
   }else{
-    /* ((double)0) In case of SQLITE_OMIT_FLOATING_POINT... */
-    static const Mem nullMem = {{0}, (double)0, 0, "", 0, MEM_Null, SQLITE_NULL, 0, 0, 0 };
+    /* If the value passed as the second argument is out of range, return
+    ** a pointer to the following static Mem object which contains the
+    ** value SQL NULL. Even though the Mem structure contains an element
+    ** of type i64, on certain architecture (x86) with certain compiler
+    ** switches (-Os), gcc may align this Mem object on a 4-byte boundary
+    ** instead of an 8-byte one. This all works fine, except that when
+    ** running with SQLITE_DEBUG defined the SQLite code sometimes assert()s
+    ** that a Mem structure is located on an 8-byte boundary. To prevent
+    ** this assert() from failing, when building with SQLITE_DEBUG defined
+    ** using gcc, force nullMem to be 8-byte aligned using the magical
+    ** __attribute__((aligned(8))) macro.  */
+    static const Mem nullMem 
+#if defined(SQLITE_DEBUG) && defined(__GNUC__)
+      __attribute__((aligned(8))) 
+#endif
+      = {{0}, (double)0, 0, "", 0, MEM_Null, SQLITE_NULL, 0, 0, 0 };
+
     if( pVm && ALWAYS(pVm->db) ){
       sqlite3_mutex_enter(pVm->db->mutex);
       sqlite3Error(pVm->db, SQLITE_RANGE, 0);
