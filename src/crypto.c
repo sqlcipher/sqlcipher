@@ -386,9 +386,13 @@ void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
       return pData;
       break;
     case 6: /* encrypt */
-    case 7:
       if(pgno == 1) memcpy(ctx->buffer, ctx->kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
       codec_cipher(ctx->write_ctx, pgno, CIPHER_ENCRYPT, pg_sz - offset, pData + offset, ctx->buffer + offset);
+      return ctx->buffer; /* return persistent buffer data, pData remains intact */
+      break;
+    case 7:
+      if(pgno == 1) memcpy(ctx->buffer, ctx->kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
+      codec_cipher(ctx->read_ctx, pgno, CIPHER_ENCRYPT, pg_sz - offset, pData + offset, ctx->buffer + offset);
       return ctx->buffer; /* return persistent buffer data, pData remains intact */
       break;
     default:
