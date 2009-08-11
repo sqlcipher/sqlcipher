@@ -16,7 +16,7 @@
 ** The focus of this file is providing the TCL testing layer
 ** access to compile-time constants.
 **
-** $Id: test_config.c,v 1.48 2009/03/16 13:19:36 danielk1977 Exp $
+** $Id: test_config.c,v 1.50 2009/06/19 14:06:03 drh Exp $
 */
 
 #include "sqliteLimit.h"
@@ -176,6 +176,16 @@ static void set_options(Tcl_Interp *interp){
 #else
   Tcl_SetVar2(interp, "sqlite_options", "columnmetadata", "0", TCL_GLOBAL_ONLY);
 #endif
+
+#ifdef SQLITE_ENABLE_OVERSIZE_CELL_CHECK
+  Tcl_SetVar2(interp, "sqlite_options", "oversize_cell_check", "1",
+              TCL_GLOBAL_ONLY);
+#else
+  Tcl_SetVar2(interp, "sqlite_options", "oversize_cell_check", "0",
+              TCL_GLOBAL_ONLY);
+#endif
+
+
 
 #ifdef SQLITE_OMIT_COMPLETE
   Tcl_SetVar2(interp, "sqlite_options", "complete", "0", TCL_GLOBAL_ONLY);
@@ -347,12 +357,6 @@ Tcl_SetVar2(interp, "sqlite_options", "long_double",
   Tcl_SetVar2(interp, "sqlite_options", "pager_pragmas", "0", TCL_GLOBAL_ONLY);
 #else
   Tcl_SetVar2(interp, "sqlite_options", "pager_pragmas", "1", TCL_GLOBAL_ONLY);
-#endif
-
-#ifdef SQLITE_OMIT_PARSER
-  Tcl_SetVar2(interp, "sqlite_options", "parser", "0", TCL_GLOBAL_ONLY);
-#else
-  Tcl_SetVar2(interp, "sqlite_options", "parser", "1", TCL_GLOBAL_ONLY);
 #endif
 
 #if defined(SQLITE_OMIT_PRAGMA) || defined(SQLITE_OMIT_FLAG_PRAGMAS)

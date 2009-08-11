@@ -14,7 +14,7 @@
 ** other files are for internal use by SQLite and should not be
 ** accessed by users of the library.
 **
-** $Id: main.c,v 1.548 2009/05/06 19:03:14 drh Exp $
+** $Id: main.c,v 1.562 2009/07/20 11:32:03 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -310,7 +310,7 @@ int sqlite3_config(int op, ...){
       break;
     }
     case SQLITE_CONFIG_PAGECACHE: {
-      /* Designate a buffer for scratch memory space */
+      /* Designate a buffer for page cache memory space */
       sqlite3GlobalConfig.pPage = va_arg(ap, void*);
       sqlite3GlobalConfig.szPage = va_arg(ap, int);
       sqlite3GlobalConfig.nPage = va_arg(ap, int);
@@ -318,7 +318,7 @@ int sqlite3_config(int op, ...){
     }
 
     case SQLITE_CONFIG_PCACHE: {
-      /* Specify an alternative malloc implementation */
+      /* Specify an alternative page cache implementation */
       sqlite3GlobalConfig.pcache = *va_arg(ap, sqlite3_pcache_methods*);
       break;
     }
@@ -349,7 +349,6 @@ int sqlite3_config(int op, ...){
         /* The heap pointer is not NULL, then install one of the
         ** mem5.c/mem3.c methods. If neither ENABLE_MEMSYS3 nor
         ** ENABLE_MEMSYS5 is defined, return an error.
-        ** the default case and return an error.
         */
 #ifdef SQLITE_ENABLE_MEMSYS3
         sqlite3GlobalConfig.m = *sqlite3MemGetMemsys3();
@@ -584,13 +583,6 @@ int sqlite3_close(sqlite3 *db){
   }
   sqlite3_mutex_enter(db->mutex);
 
-#ifdef SQLITE_SSE
-  {
-    extern void sqlite3SseCleanup(sqlite3*);
-    sqlite3SseCleanup(db);
-  }
-#endif 
-
   sqlite3ResetInternalSchema(db, 0);
 
   /* If a transaction is open, the ResetInternalSchema() call above
@@ -757,7 +749,7 @@ const char *sqlite3ErrStr(int rc){
     /* SQLITE_PROTOCOL    */ 0,
     /* SQLITE_EMPTY       */ "table contains no data",
     /* SQLITE_SCHEMA      */ "database schema has changed",
-    /* SQLITE_TOOBIG      */ "String or BLOB exceeded size limit",
+    /* SQLITE_TOOBIG      */ "string or blob too big",
     /* SQLITE_CONSTRAINT  */ "constraint failed",
     /* SQLITE_MISMATCH    */ "datatype mismatch",
     /* SQLITE_MISUSE      */ "library routine called out of sequence",
@@ -931,8 +923,7 @@ int sqlite3CreateFunc(
       (!xFunc && (!xFinal && xStep)) ||
       (nArg<-1 || nArg>SQLITE_MAX_FUNCTION_ARG) ||
       (255<(nName = sqlite3Strlen30( zFunctionName))) ){
-    sqlite3Error(db, SQLITE_ERROR, "bad parameters");
-    return SQLITE_ERROR;
+    return SQLITE_MISUSE;
   }
   
 #ifndef SQLITE_OMIT_UTF16
@@ -1193,7 +1184,8 @@ int sqlite3TempInMemory(const sqlite3 *db){
 #endif
 #if SQLITE_TEMP_STORE==3
   return 1;
-#else
+#endif
+#if SQLITE_TEMP_STORE<1 || SQLITE_TEMP_STORE>3
   return 0;
 #endif
 }
@@ -1362,7 +1354,7 @@ static int createCollation(
 ){
   CollSeq *pColl;
   int enc2;
-  int nName;
+  int nName = sqlite3Strlen30(zName);
   
   assert( sqlite3_mutex_held(db->mutex) );
 
@@ -1384,8 +1376,7 @@ static int createCollation(
   ** sequence. If so, and there are active VMs, return busy. If there
   ** are no active VMs, invalidate any pre-compiled statements.
   */
-  nName = sqlite3Strlen30(zName);
-  pColl = sqlite3FindCollSeq(db, (u8)enc2, zName, nName, 0);
+  pColl = sqlite3FindCollSeq(db, (u8)enc2, zName, 0);
   if( pColl && pColl->xCmp ){
     if( db->activeVdbeCnt ){
       sqlite3Error(db, SQLITE_BUSY, 
@@ -1415,7 +1406,7 @@ static int createCollation(
     }
   }
 
-  pColl = sqlite3FindCollSeq(db, (u8)enc2, zName, nName, 1);
+  pColl = sqlite3FindCollSeq(db, (u8)enc2, zName, 1);
   if( pColl ){
     pColl->xCmp = xCompare;
     pColl->pUser = pCtx;
@@ -1537,8 +1528,16 @@ static int openDatabase(
     isThreadsafe = sqlite3GlobalConfig.bFullMutex;
   }
 
-  /* Remove harmful bits from the flags parameter */
+  /* Remove harmful bits from the flags parameter
+  **
+  ** The SQLITE_OPEN_NOMUTEX and SQLITE_OPEN_FULLMUTEX flags were
+  ** dealt with in the previous code block.  Besides these, the only
+  ** valid input flags for sqlite3_open_v2() are SQLITE_OPEN_READONLY,
+  ** SQLITE_OPEN_READWRITE, and SQLITE_OPEN_CREATE.  Silently mask
+  ** off all other flags.
+  */
   flags &=  ~( SQLITE_OPEN_DELETEONCLOSE |
+               SQLITE_OPEN_EXCLUSIVE |
                SQLITE_OPEN_MAIN_DB |
                SQLITE_OPEN_TEMP_DB | 
                SQLITE_OPEN_TRANSIENT_DB | 
@@ -1563,7 +1562,6 @@ static int openDatabase(
   }
   sqlite3_mutex_enter(db->mutex);
   db->errMask = 0xff;
-  db->priorNewRowid = 0;
   db->nDb = 2;
   db->magic = SQLITE_MAGIC_BUSY;
   db->aDb = db->aDbStatic;
@@ -1604,7 +1602,7 @@ static int openDatabase(
   if( db->mallocFailed ){
     goto opendb_out;
   }
-  db->pDfltColl = sqlite3FindCollSeq(db, SQLITE_UTF8, "BINARY", 6, 0);
+  db->pDfltColl = sqlite3FindCollSeq(db, SQLITE_UTF8, "BINARY", 0);
   assert( db->pDfltColl!=0 );
 
   /* Also add a UTF-8 case-insensitive collation sequence. */
@@ -1612,7 +1610,7 @@ static int openDatabase(
 
   /* Set flags on the built-in collating sequences */
   db->pDfltColl->type = SQLITE_COLL_BINARY;
-  pColl = sqlite3FindCollSeq(db, SQLITE_UTF8, "NOCASE", 6, 0);
+  pColl = sqlite3FindCollSeq(db, SQLITE_UTF8, "NOCASE", 0);
   if( pColl ){
     pColl->type = SQLITE_COLL_NOCASE;
   }
@@ -1638,10 +1636,8 @@ static int openDatabase(
   */
   db->aDb[0].zName = "main";
   db->aDb[0].safety_level = 3;
-#ifndef SQLITE_OMIT_TEMPDB
   db->aDb[1].zName = "temp";
   db->aDb[1].safety_level = 1;
-#endif
 
   db->magic = SQLITE_MAGIC_OPEN;
   if( db->mallocFailed ){
@@ -1658,8 +1654,9 @@ static int openDatabase(
   /* Load automatic extensions - extensions that have been registered
   ** using the sqlite3_automatic_extension() API.
   */
-  (void)sqlite3AutoLoadExtensions(db);
-  if( sqlite3_errcode(db)!=SQLITE_OK ){
+  sqlite3AutoLoadExtensions(db);
+  rc = sqlite3_errcode(db);
+  if( rc!=SQLITE_OK ){
     goto opendb_out;
   }
 
@@ -2177,7 +2174,7 @@ int sqlite3_test_control(int op, ...){
     }
 
     /*
-    **  sqlite3_test_control(PENDING_BYTE, unsigned int X)
+    **  sqlite3_test_control(SQLITE_TESTCTRL_PENDING_BYTE, unsigned int X)
     **
     ** Set the PENDING byte to the value in the argument, if X>0.
     ** Make no changes if X==0.  Return the value of the pending byte
@@ -2194,6 +2191,73 @@ int sqlite3_test_control(int op, ...){
       if( newVal ) sqlite3PendingByte = newVal;
       break;
     }
+
+    /*
+    **  sqlite3_test_control(SQLITE_TESTCTRL_ASSERT, int X)
+    **
+    ** This action provides a run-time test to see whether or not
+    ** assert() was enabled at compile-time.  If X is true and assert()
+    ** is enabled, then the return value is true.  If X is true and
+    ** assert() is disabled, then the return value is zero.  If X is
+    ** false and assert() is enabled, then the assertion fires and the
+    ** process aborts.  If X is false and assert() is disabled, then the
+    ** return value is zero.
+    */
+    case SQLITE_TESTCTRL_ASSERT: {
+      volatile int x = 0;
+      assert( (x = va_arg(ap,int))!=0 );
+      rc = x;
+      break;
+    }
+
+
+    /*
+    **  sqlite3_test_control(SQLITE_TESTCTRL_ALWAYS, int X)
+    **
+    ** This action provides a run-time test to see how the ALWAYS and
+    ** NEVER macros were defined at compile-time.
+    **
+    ** The return value is ALWAYS(X).  
+    **
+    ** The recommended test is X==2.  If the return value is 2, that means
+    ** ALWAYS() and NEVER() are both no-op pass-through macros, which is the
+    ** default setting.  If the return value is 1, then ALWAYS() is either
+    ** hard-coded to true or else it asserts if its argument is false.
+    ** The first behavior (hard-coded to true) is the case if
+    ** SQLITE_TESTCTRL_ASSERT shows that assert() is disabled and the second
+    ** behavior (assert if the argument to ALWAYS() is false) is the case if
+    ** SQLITE_TESTCTRL_ASSERT shows that assert() is enabled.
+    **
+    ** The run-time test procedure might look something like this:
+    **
+    **    if( sqlite3_test_control(SQLITE_TESTCTRL_ALWAYS, 2)==2 ){
+    **      // ALWAYS() and NEVER() are no-op pass-through macros
+    **    }else if( sqlite3_test_control(SQLITE_TESTCTRL_ASSERT, 1) ){
+    **      // ALWAYS(x) asserts that x is true. NEVER(x) asserts x is false.
+    **    }else{
+    **      // ALWAYS(x) is a constant 1.  NEVER(x) is a constant 0.
+    **    }
+    */
+    case SQLITE_TESTCTRL_ALWAYS: {
+      int x = va_arg(ap,int);
+      rc = ALWAYS(x);
+      break;
+    }
+
+    /*   sqlite3_test_control(SQLITE_TESTCTRL_RESERVE, sqlite3 *db, int N)
+    **
+    ** Set the nReserve size to N for the main database on the database
+    ** connection db.
+    */
+    case SQLITE_TESTCTRL_RESERVE: {
+      sqlite3 *db = va_arg(ap, sqlite3*);
+      int x = va_arg(ap,int);
+      sqlite3_mutex_enter(db->mutex);
+      sqlite3BtreeSetPageSize(db->aDb[0].pBt, 0, x, 0);
+      sqlite3_mutex_leave(db->mutex);
+      break;
+    }
+
   }
   va_end(ap);
 #endif /* SQLITE_OMIT_BUILTIN_TEST */

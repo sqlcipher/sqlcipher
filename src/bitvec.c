@@ -34,7 +34,7 @@
 ** start of a transaction, and is thus usually less than a few thousand,
 ** but can be as large as 2 billion for a really big database.
 **
-** @(#) $Id: bitvec.c,v 1.14 2009/04/01 23:49:04 drh Exp $
+** @(#) $Id: bitvec.c,v 1.17 2009/07/25 17:33:26 drh Exp $
 */
 #include "sqliteInt.h"
 
@@ -146,8 +146,7 @@ int sqlite3BitvecTest(Bitvec *p, u32 i){
     u32 h = BITVEC_HASH(i++);
     while( p->u.aHash[h] ){
       if( p->u.aHash[h]==i ) return 1;
-      h++;
-      if( h>=BITVEC_NINT ) h = 0;
+      h = (h+1) % BITVEC_NINT;
     }
     return 0;
   }
@@ -167,7 +166,7 @@ int sqlite3BitvecTest(Bitvec *p, u32 i){
 */
 int sqlite3BitvecSet(Bitvec *p, u32 i){
   u32 h;
-  assert( p!=0 );
+  if( p==0 ) return SQLITE_OK;
   assert( i>0 );
   assert( i<=p->iSize );
   i--;
@@ -209,15 +208,20 @@ bitvec_set_rehash:
   if( p->nSet>=BITVEC_MXHASH ){
     unsigned int j;
     int rc;
-    u32 aiValues[BITVEC_NINT];
-    memcpy(aiValues, p->u.aHash, sizeof(aiValues));
-    memset(p->u.apSub, 0, sizeof(aiValues));
-    p->iDivisor = (p->iSize + BITVEC_NPTR - 1)/BITVEC_NPTR;
-    rc = sqlite3BitvecSet(p, i);
-    for(j=0; j<BITVEC_NINT; j++){
-      if( aiValues[j] ) rc |= sqlite3BitvecSet(p, aiValues[j]);
+    u32 *aiValues = sqlite3StackAllocRaw(0, sizeof(p->u.aHash));
+    if( aiValues==0 ){
+      return SQLITE_NOMEM;
+    }else{
+      memcpy(aiValues, p->u.aHash, sizeof(p->u.aHash));
+      memset(p->u.apSub, 0, sizeof(p->u.apSub));
+      p->iDivisor = (p->iSize + BITVEC_NPTR - 1)/BITVEC_NPTR;
+      rc = sqlite3BitvecSet(p, i);
+      for(j=0; j<BITVEC_NINT; j++){
+        if( aiValues[j] ) rc |= sqlite3BitvecSet(p, aiValues[j]);
+      }
+      sqlite3StackFree(0, aiValues);
+      return rc;
     }
-    return rc;
   }
 bitvec_set_end:
   p->nSet++;
@@ -227,9 +231,12 @@ bitvec_set_end:
 
 /*
 ** Clear the i-th bit.
+**
+** pBuf must be a pointer to at least BITVEC_SZ bytes of temporary storage
+** that BitvecClear can use to rebuilt its hash table.
 */
-void sqlite3BitvecClear(Bitvec *p, u32 i){
-  assert( p!=0 );
+void sqlite3BitvecClear(Bitvec *p, u32 i, void *pBuf){
+  if( p==0 ) return;
   assert( i>0 );
   i--;
   while( p->iDivisor ){
@@ -244,9 +251,9 @@ void sqlite3BitvecClear(Bitvec *p, u32 i){
     p->u.aBitmap[i/BITVEC_SZELEM] &= ~(1 << (i&(BITVEC_SZELEM-1)));
   }else{
     unsigned int j;
-    u32 aiValues[BITVEC_NINT];
-    memcpy(aiValues, p->u.aHash, sizeof(aiValues));
-    memset(p->u.aHash, 0, sizeof(aiValues));
+    u32 *aiValues = pBuf;
+    memcpy(aiValues, p->u.aHash, sizeof(p->u.aHash));
+    memset(p->u.aHash, 0, sizeof(p->u.aHash));
     p->nSet = 0;
     for(j=0; j<BITVEC_NINT; j++){
       if( aiValues[j] && aiValues[j]!=(i+1) ){
@@ -330,13 +337,19 @@ int sqlite3BitvecBuiltinTest(int sz, int *aOp){
   unsigned char *pV = 0;
   int rc = -1;
   int i, nx, pc, op;
+  void *pTmpSpace;
 
   /* Allocate the Bitvec to be tested and a linear array of
   ** bits to act as the reference */
   pBitvec = sqlite3BitvecCreate( sz );
   pV = sqlite3_malloc( (sz+7)/8 + 1 );
-  if( pBitvec==0 || pV==0 ) goto bitvec_end;
+  pTmpSpace = sqlite3_malloc(BITVEC_SZ);
+  if( pBitvec==0 || pV==0 || pTmpSpace==0  ) goto bitvec_end;
   memset(pV, 0, (sz+7)/8 + 1);
+
+  /* NULL pBitvec tests */
+  sqlite3BitvecSet(0, 1);
+  sqlite3BitvecClear(0, 1, pTmpSpace);
 
   /* Run the program */
   pc = 0;
@@ -368,7 +381,7 @@ int sqlite3BitvecBuiltinTest(int sz, int *aOp){
       }
     }else{
       CLEARBIT(pV, (i+1));
-      sqlite3BitvecClear(pBitvec, i+1);
+      sqlite3BitvecClear(pBitvec, i+1, pTmpSpace);
     }
   }
 
@@ -389,6 +402,7 @@ int sqlite3BitvecBuiltinTest(int sz, int *aOp){
 
   /* Free allocated structure */
 bitvec_end:
+  sqlite3_free(pTmpSpace);
   sqlite3_free(pV);
   sqlite3BitvecDestroy(pBitvec);
   return rc;

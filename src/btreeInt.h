@@ -9,7 +9,7 @@
 **    May you share freely, never taking more than you give.
 **
 *************************************************************************
-** $Id: btreeInt.h,v 1.46 2009/03/20 14:18:52 danielk1977 Exp $
+** $Id: btreeInt.h,v 1.52 2009/07/15 17:25:46 drh Exp $
 **
 ** This file implements a external (disk-based) database using BTrees.
 ** For a detailed discussion of BTrees, refer to
@@ -70,6 +70,17 @@
 **     32       4     First freelist page
 **     36       4     Number of freelist pages in the file
 **     40      60     15 4-byte meta values passed to higher layers
+**
+**     40       4     Schema cookie
+**     44       4     File format of schema layer
+**     48       4     Size of page cache
+**     52       4     Largest root-page (auto/incr_vacuum)
+**     56       4     1=UTF-8 2=UTF16le 3=UTF16be
+**     60       4     User version
+**     64       4     Incremental vacuum mode
+**     68       4     unused
+**     72       4     unused
+**     76       4     unused
 **
 ** All of the integer values are big-endian (most significant byte first).
 **
@@ -291,6 +302,24 @@ struct MemPage {
 */
 #define EXTRA_SIZE sizeof(MemPage)
 
+/*
+** A linked list of the following structures is stored at BtShared.pLock.
+** Locks are added (or upgraded from READ_LOCK to WRITE_LOCK) when a cursor 
+** is opened on the table with root page BtShared.iTable. Locks are removed
+** from this list when a transaction is committed or rolled back, or when
+** a btree handle is closed.
+*/
+struct BtLock {
+  Btree *pBtree;        /* Btree handle holding this lock */
+  Pgno iTable;          /* Root page of table */
+  u8 eLock;             /* READ_LOCK or WRITE_LOCK */
+  BtLock *pNext;        /* Next in BtShared.pLock list */
+};
+
+/* Candidate values for BtLock.eLock */
+#define READ_LOCK     1
+#define WRITE_LOCK    2
+
 /* A Btree handle
 **
 ** A database connection contains a pointer to an instance of
@@ -322,6 +351,9 @@ struct Btree {
   int nBackup;       /* Number of backup operations reading this btree */
   Btree *pNext;      /* List of other sharable Btrees from the same db */
   Btree *pPrev;      /* Back pointer of the same list */
+#ifndef SQLITE_OMIT_SHARED_CACHE
+  BtLock lock;       /* Object used to lock page 1 */
+#endif
 };
 
 /*
@@ -460,13 +492,10 @@ struct BtCursor {
   u8 eState;                /* One of the CURSOR_XXX constants (see below) */
   void *pKey;      /* Saved key that was cursor's last known position */
   i64 nKey;        /* Size of pKey, or last integer key */
-  int skip;        /* (skip<0) -> Prev() is a no-op. (skip>0) -> Next() is */
+  int skipNext;    /* Prev() is noop if negative. Next() is noop if positive */
 #ifndef SQLITE_OMIT_INCRBLOB
   u8 isIncrblobHandle;      /* True if this cursor is an incr. io handle */
   Pgno *aOverflow;          /* Cache of overflow page locations */
-#endif
-#ifndef NDEBUG
-  u8 pagesShuffled;         /* True if Btree pages are rearranged by balance()*/
 #endif
   i16 iPage;                            /* Index of current page in apPage */
   MemPage *apPage[BTCURSOR_MAX_DEPTH];  /* Pages from root to current page */
@@ -507,24 +536,6 @@ struct BtCursor {
 ** The database page the PENDING_BYTE occupies. This page is never used.
 */
 # define PENDING_BYTE_PAGE(pBt) PAGER_MJ_PGNO(pBt)
-
-/*
-** A linked list of the following structures is stored at BtShared.pLock.
-** Locks are added (or upgraded from READ_LOCK to WRITE_LOCK) when a cursor 
-** is opened on the table with root page BtShared.iTable. Locks are removed
-** from this list when a transaction is committed or rolled back, or when
-** a btree handle is closed.
-*/
-struct BtLock {
-  Btree *pBtree;        /* Btree handle holding this lock */
-  Pgno iTable;          /* Root page of table */
-  u8 eLock;             /* READ_LOCK or WRITE_LOCK */
-  BtLock *pNext;        /* Next in BtShared.pLock list */
-};
-
-/* Candidate values for BtLock.eLock */
-#define READ_LOCK     1
-#define WRITE_LOCK    2
 
 /*
 ** These macros define the location of the pointer-map entry for a 
@@ -627,15 +638,3 @@ struct IntegrityCk {
 #define put2byte(p,v) ((p)[0] = (u8)((v)>>8), (p)[1] = (u8)(v))
 #define get4byte sqlite3Get4byte
 #define put4byte sqlite3Put4byte
-
-/*
-** Internal routines that should be accessed by the btree layer only.
-*/
-int sqlite3BtreeGetPage(BtShared*, Pgno, MemPage**, int);
-int sqlite3BtreeInitPage(MemPage *pPage);
-void sqlite3BtreeParseCellPtr(MemPage*, u8*, CellInfo*);
-void sqlite3BtreeParseCell(MemPage*, int, CellInfo*);
-int sqlite3BtreeRestoreCursorPosition(BtCursor *pCur);
-void sqlite3BtreeGetTempCursor(BtCursor *pCur, BtCursor *pTempCur);
-void sqlite3BtreeReleaseTempCursor(BtCursor *pCur);
-void sqlite3BtreeMoveToParent(BtCursor *pCur);

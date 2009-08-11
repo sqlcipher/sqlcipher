@@ -13,7 +13,7 @@
 ** is not included in the SQLite library.  It is used for automated
 ** testing of the SQLite library.
 **
-** $Id: test2.c,v 1.70 2009/02/05 16:31:46 drh Exp $
+** $Id: test2.c,v 1.74 2009/07/24 19:01:20 drh Exp $
 */
 #include "sqliteInt.h"
 #include "tcl.h"
@@ -57,6 +57,13 @@ static char *errorName(int rc){
 static int test_pagesize = 1024;
 
 /*
+** Dummy page reinitializer
+*/
+static void pager_test_reiniter(DbPage *pNotUsed){
+  return;
+}
+
+/*
 ** Usage:   pager_open FILENAME N-PAGE
 **
 ** Open a new pager
@@ -79,14 +86,15 @@ static int pager_open(
   }
   if( Tcl_GetInt(interp, argv[2], &nPage) ) return TCL_ERROR;
   rc = sqlite3PagerOpen(sqlite3_vfs_find(0), &pPager, argv[1], 0, 0,
-      SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_MAIN_DB);
+      SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_MAIN_DB,
+      pager_test_reiniter);
   if( rc!=SQLITE_OK ){
     Tcl_AppendResult(interp, errorName(rc), 0);
     return TCL_ERROR;
   }
   sqlite3PagerSetCachesize(pPager, nPage);
   pageSize = test_pagesize;
-  sqlite3PagerSetPagesize(pPager, &pageSize);
+  sqlite3PagerSetPagesize(pPager, &pageSize, -1);
   sqlite3_snprintf(sizeof(zBuf),zBuf,"%p",pPager);
   Tcl_AppendResult(interp, zBuf, 0);
   return TCL_OK;
@@ -342,7 +350,10 @@ static int page_get(
   }
   pPager = sqlite3TestTextToPtr(argv[1]);
   if( Tcl_GetInt(interp, argv[2], &pgno) ) return TCL_ERROR;
-  rc = sqlite3PagerGet(pPager, pgno, &pPage);
+  rc = sqlite3PagerSharedLock(pPager);
+  if( rc==SQLITE_OK ){
+    rc = sqlite3PagerGet(pPager, pgno, &pPage);
+  }
   if( rc!=SQLITE_OK ){
     Tcl_AppendResult(interp, errorName(rc), 0);
     return TCL_ERROR;
@@ -623,7 +634,6 @@ int Sqlitetest2_Init(Tcl_Interp *interp){
   extern int sqlite3_io_error_hardhit;
   extern int sqlite3_diskfull_pending;
   extern int sqlite3_diskfull;
-  extern int sqlite3_pager_n_sort_bucket;
   static struct {
     char *zName;
     Tcl_CmdProc *xProc;
@@ -668,7 +678,5 @@ int Sqlitetest2_Init(Tcl_Interp *interp){
      (char*)&sqlite3_diskfull, TCL_LINK_INT);
   Tcl_LinkVar(interp, "sqlite_pending_byte",
      (char*)&sqlite3PendingByte, TCL_LINK_INT | TCL_LINK_READ_ONLY);
-  Tcl_LinkVar(interp, "sqlite_pager_n_sort_bucket",
-     (char*)&sqlite3_pager_n_sort_bucket, TCL_LINK_INT);
   return TCL_OK;
 }

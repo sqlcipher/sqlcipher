@@ -14,7 +14,7 @@
 ** to version 2.8.7, all this code was combined into the vdbe.c source file.
 ** But that file was getting too big so this subroutines were split out.
 **
-** $Id: vdbeaux.c,v 1.457 2009/05/06 18:57:10 shane Exp $
+** $Id: vdbeaux.c,v 1.480 2009/08/08 18:01:08 drh Exp $
 */
 #include "sqliteInt.h"
 #include "vdbeInt.h"
@@ -145,7 +145,7 @@ int sqlite3VdbeAddOp3(Vdbe *p, int op, int p1, int p2, int p3){
   assert( op>0 && op<0xff );
   if( p->nOpAlloc<=i ){
     if( growOpArray(p) ){
-      return 0;
+      return 1;
     }
   }
   p->nOp++;
@@ -350,7 +350,7 @@ int sqlite3VdbeAddOpList(Vdbe *p, int nOp, VdbeOpList const *aOp){
     return 0;
   }
   addr = p->nOp;
-  if( nOp>0 ){
+  if( ALWAYS(nOp>0) ){
     int i;
     VdbeOpList const *pIn = aOp;
     for(i=0; i<nOp; i++, pIn++){
@@ -386,8 +386,9 @@ int sqlite3VdbeAddOpList(Vdbe *p, int nOp, VdbeOpList const *aOp){
 ** few minor changes to the program.
 */
 void sqlite3VdbeChangeP1(Vdbe *p, int addr, int val){
-  assert( p==0 || p->magic==VDBE_MAGIC_INIT );
-  if( p && addr>=0 && p->nOp>addr && p->aOp ){
+  assert( p!=0 );
+  assert( addr>=0 );
+  if( p->nOp>addr ){
     p->aOp[addr].p1 = val;
   }
 }
@@ -397,8 +398,9 @@ void sqlite3VdbeChangeP1(Vdbe *p, int addr, int val){
 ** This routine is useful for setting a jump destination.
 */
 void sqlite3VdbeChangeP2(Vdbe *p, int addr, int val){
-  assert( p==0 || p->magic==VDBE_MAGIC_INIT );
-  if( p && addr>=0 && p->nOp>addr && p->aOp ){
+  assert( p!=0 );
+  assert( addr>=0 );
+  if( p->nOp>addr ){
     p->aOp[addr].p2 = val;
   }
 }
@@ -407,8 +409,9 @@ void sqlite3VdbeChangeP2(Vdbe *p, int addr, int val){
 ** Change the value of the P3 operand for a specific instruction.
 */
 void sqlite3VdbeChangeP3(Vdbe *p, int addr, int val){
-  assert( p==0 || p->magic==VDBE_MAGIC_INIT );
-  if( p && addr>=0 && p->nOp>addr && p->aOp ){
+  assert( p!=0 );
+  assert( addr>=0 );
+  if( p->nOp>addr ){
     p->aOp[addr].p3 = val;
   }
 }
@@ -418,8 +421,8 @@ void sqlite3VdbeChangeP3(Vdbe *p, int addr, int val){
 ** added operation.
 */
 void sqlite3VdbeChangeP5(Vdbe *p, u8 val){
-  assert( p==0 || p->magic==VDBE_MAGIC_INIT );
-  if( p && p->aOp ){
+  assert( p!=0 );
+  if( p->aOp ){
     assert( p->nOp>0 );
     p->aOp[p->nOp-1].p5 = val;
   }
@@ -439,7 +442,7 @@ void sqlite3VdbeJumpHere(Vdbe *p, int addr){
 ** the FuncDef is not ephermal, then do nothing.
 */
 static void freeEphemeralFunction(sqlite3 *db, FuncDef *pDef){
-  if( pDef && (pDef->flags & SQLITE_FUNC_EPHEM)!=0 ){
+  if( ALWAYS(pDef) && (pDef->flags & SQLITE_FUNC_EPHEM)!=0 ){
     sqlite3DbFree(db, pDef);
   }
 }
@@ -475,6 +478,10 @@ static void freeP4(sqlite3 *db, int p4type, void *p4){
         sqlite3ValueFree((sqlite3_value*)p4);
         break;
       }
+      case P4_VTAB : {
+        sqlite3VtabUnlock((VTable *)p4);
+        break;
+      }
     }
   }
 }
@@ -484,7 +491,7 @@ static void freeP4(sqlite3 *db, int p4type, void *p4){
 ** Change N opcodes starting at addr to No-ops.
 */
 void sqlite3VdbeChangeToNoop(Vdbe *p, int addr, int N){
-  if( p && p->aOp ){
+  if( p->aOp ){
     VdbeOp *pOp = &p->aOp[addr];
     sqlite3 *db = p->db;
     while( N-- ){
@@ -528,15 +535,15 @@ void sqlite3VdbeChangeP4(Vdbe *p, int addr, const char *zP4, int n){
   db = p->db;
   assert( p->magic==VDBE_MAGIC_INIT );
   if( p->aOp==0 || db->mallocFailed ){
-    if (n != P4_KEYINFO) {
+    if ( n!=P4_KEYINFO && n!=P4_VTAB ) {
       freeP4(db, n, (void*)*(char**)&zP4);
     }
     return;
   }
+  assert( p->nOp>0 );
   assert( addr<p->nOp );
   if( addr<0 ){
     addr = p->nOp - 1;
-    if( addr<0 ) return;
   }
   pOp = &p->aOp[addr];
   freeP4(db, pOp->p4type, pOp->p4.p);
@@ -573,6 +580,11 @@ void sqlite3VdbeChangeP4(Vdbe *p, int addr, const char *zP4, int n){
   }else if( n==P4_KEYINFO_HANDOFF ){
     pOp->p4.p = (void*)zP4;
     pOp->p4type = P4_KEYINFO;
+  }else if( n==P4_VTAB ){
+    pOp->p4.p = (void*)zP4;
+    pOp->p4type = P4_VTAB;
+    sqlite3VtabLock((VTable *)zP4);
+    assert( ((VTable *)zP4)->db==p->db );
   }else if( n<0 ){
     pOp->p4.p = (void*)zP4;
     pOp->p4type = (signed char)n;
@@ -618,12 +630,38 @@ void sqlite3VdbeNoopComment(Vdbe *p, const char *zFormat, ...){
 #endif  /* NDEBUG */
 
 /*
-** Return the opcode for a given address.
+** Return the opcode for a given address.  If the address is -1, then
+** return the most recently inserted opcode.
+**
+** If a memory allocation error has occurred prior to the calling of this
+** routine, then a pointer to a dummy VdbeOp will be returned.  That opcode
+** is readable and writable, but it has no effect.  The return of a dummy
+** opcode allows the call to continue functioning after a OOM fault without
+** having to check to see if the return from this routine is a valid pointer.
+**
+** About the #ifdef SQLITE_OMIT_TRACE:  Normally, this routine is never called
+** unless p->nOp>0.  This is because in the absense of SQLITE_OMIT_TRACE,
+** an OP_Trace instruction is always inserted by sqlite3VdbeGet() as soon as
+** a new VDBE is created.  So we are free to set addr to p->nOp-1 without
+** having to double-check to make sure that the result is non-negative. But
+** if SQLITE_OMIT_TRACE is defined, the OP_Trace is omitted and we do need to
+** check the value of p->nOp-1 before continuing.
 */
 VdbeOp *sqlite3VdbeGetOp(Vdbe *p, int addr){
+  static VdbeOp dummy;
   assert( p->magic==VDBE_MAGIC_INIT );
+  if( addr<0 ){
+#ifdef SQLITE_OMIT_TRACE
+    if( p->nOp==0 ) return &dummy;
+#endif
+    addr = p->nOp - 1;
+  }
   assert( (addr>=0 && addr<p->nOp) || p->db->mallocFailed );
-  return ((addr>=0 && addr<p->nOp)?(&p->aOp[addr]):0);
+  if( p->db->mallocFailed ){
+    return &dummy;
+  }else{
+    return &p->aOp[addr];
+  }
 }
 
 #if !defined(SQLITE_OMIT_EXPLAIN) || !defined(NDEBUG) \
@@ -702,7 +740,7 @@ static char *displayP4(Op *pOp, char *zTemp, int nTemp){
     }
 #ifndef SQLITE_OMIT_VIRTUALTABLE
     case P4_VTAB: {
-      sqlite3_vtab *pVtab = pOp->p4.pVtab;
+      sqlite3_vtab *pVtab = pOp->p4.pVtab->pVtab;
       sqlite3_snprintf(nTemp, zTemp, "vtab:%p:%p", pVtab, pVtab->pModule);
       break;
     }
@@ -840,7 +878,7 @@ int sqlite3VdbeList(
   Mem *pMem = p->pResultSet = &p->aMem[1];
 
   assert( p->explain );
-  if( p->magic!=VDBE_MAGIC_RUN ) return SQLITE_MISUSE;
+  assert( p->magic==VDBE_MAGIC_RUN );
   assert( db->magic==SQLITE_MAGIC_BUSY );
   assert( p->rc==SQLITE_OK || p->rc==SQLITE_BUSY || p->rc==SQLITE_NOMEM );
 
@@ -1026,7 +1064,7 @@ static void allocSpace(
   assert( EIGHT_BYTE_ALIGNMENT(*ppFrom) );
   if( (*(void**)pp)==0 ){
     nByte = ROUND8(nByte);
-    if( (pEnd - *ppFrom)>=nByte ){
+    if( &(*ppFrom)[nByte] <= pEnd ){
       *(void**)pp = (void *)*ppFrom;
       *ppFrom += nByte;
     }else{
@@ -1088,7 +1126,7 @@ void sqlite3VdbeMakeReady(
   ** first time this function is called for a given VDBE, not when it is
   ** being called from sqlite3_reset() to reset the virtual machine.
   */
-  if( nVar>=0 && !db->mallocFailed ){
+  if( nVar>=0 && ALWAYS(db->mallocFailed==0) ){
     u8 *zCsr = (u8 *)&p->aOp[p->nOp];
     u8 *zEnd = (u8 *)&p->aOp[p->nOpAlloc];
     int nByte;
@@ -1097,12 +1135,11 @@ void sqlite3VdbeMakeReady(
     if( isExplain && nMem<10 ){
       nMem = 10;
     }
+    memset(zCsr, 0, zEnd-zCsr);
     zCsr += (zCsr - (u8*)0)&7;
     assert( EIGHT_BYTE_ALIGNMENT(zCsr) );
-    if( zEnd<zCsr ) zEnd = zCsr;
 
     do {
-      memset(zCsr, 0, zEnd-zCsr);
       nByte = 0;
       allocSpace((char*)&p->aMem, nMem*sizeof(Mem), &zCsr, zEnd, &nByte);
       allocSpace((char*)&p->aVar, nVar*sizeof(Mem), &zCsr, zEnd, &nByte);
@@ -1112,15 +1149,15 @@ void sqlite3VdbeMakeReady(
                  nCursor*sizeof(VdbeCursor*), &zCsr, zEnd, &nByte
       );
       if( nByte ){
-        p->pFree = sqlite3DbMallocRaw(db, nByte);
+        p->pFree = sqlite3DbMallocZero(db, nByte);
       }
       zCsr = p->pFree;
       zEnd = &zCsr[nByte];
     }while( nByte && !db->mallocFailed );
 
-    p->nCursor = nCursor;
+    p->nCursor = (u16)nCursor;
     if( p->aVar ){
-      p->nVar = nVar;
+      p->nVar = (u16)nVar;
       for(n=0; n<nVar; n++){
         p->aVar[n].flags = MEM_Null;
         p->aVar[n].db = db;
@@ -1193,15 +1230,14 @@ void sqlite3VdbeFreeCursor(Vdbe *p, VdbeCursor *pCx){
 }
 
 /*
-** Close all cursors except for VTab cursors that are currently
-** in use.
+** Close all cursors.
 */
-static void closeAllCursorsExceptActiveVtabs(Vdbe *p){
+static void closeAllCursors(Vdbe *p){
   int i;
   if( p->apCsr==0 ) return;
   for(i=0; i<p->nCursor; i++){
     VdbeCursor *pC = p->apCsr[i];
-    if( pC && (!p->inVtabMethod || !pC->pVtabCursor) ){
+    if( pC ){
       sqlite3VdbeFreeCursor(p, pC);
       p->apCsr[i] = 0;
     }
@@ -1219,7 +1255,7 @@ static void Cleanup(Vdbe *p){
   int i;
   sqlite3 *db = p->db;
   Mem *pMem;
-  closeAllCursorsExceptActiveVtabs(p);
+  closeAllCursors(p);
   for(pMem=&p->aMem[1], i=1; i<=p->nMem; i++, pMem++){
     if( pMem->flags & MEM_RowSet ){
       sqlite3RowSetClear(pMem->u.pRowSet);
@@ -1252,7 +1288,7 @@ void sqlite3VdbeSetNumCols(Vdbe *p, int nResColumn){
   releaseMemArray(p->aColName, p->nResColumn*COLNAME_N);
   sqlite3DbFree(db, p->aColName);
   n = nResColumn*COLNAME_N;
-  p->nResColumn = nResColumn;
+  p->nResColumn = (u16)nResColumn;
   p->aColName = pColName = (Mem*)sqlite3DbMallocZero(db, sizeof(Mem)*n );
   if( p->aColName==0 ) return;
   while( n-- > 0 ){
@@ -1306,6 +1342,13 @@ static int vdbeCommit(sqlite3 *db, Vdbe *p){
   int rc = SQLITE_OK;
   int needXcommit = 0;
 
+#ifdef SQLITE_OMIT_VIRTUALTABLE
+  /* With this option, sqlite3VtabSync() is defined to be simply 
+  ** SQLITE_OK so p is not used. 
+  */
+  UNUSED_PARAMETER(p);
+#endif
+
   /* Before doing anything else, call the xSync() callback for any
   ** virtual module tables written in this transaction. This has to
   ** be done before determining whether a master journal file is 
@@ -1333,12 +1376,9 @@ static int vdbeCommit(sqlite3 *db, Vdbe *p){
 
   /* If there are any write-transactions at all, invoke the commit hook */
   if( needXcommit && db->xCommitCallback ){
-    assert( (db->flags & SQLITE_CommitBusy)==0 );
-    db->flags |= SQLITE_CommitBusy;
     (void)sqlite3SafetyOff(db);
     rc = db->xCommitCallback(db->pCommitArg);
     (void)sqlite3SafetyOn(db);
-    db->flags &= ~SQLITE_CommitBusy;
     if( rc ){
       return SQLITE_CONSTRAINT;
     }
@@ -1581,7 +1621,13 @@ static void invalidateCursorsOnModifiedBtrees(sqlite3 *db){
 int sqlite3VdbeCloseStatement(Vdbe *p, int eOp){
   sqlite3 *const db = p->db;
   int rc = SQLITE_OK;
-  if( p->iStatement && db->nStatement ){
+
+  /* If p->iStatement is greater than zero, then this Vdbe opened a 
+  ** statement transaction that should be closed here. The only exception
+  ** is that an IO error may have occured, causing an emergency rollback.
+  ** In this case (db->nStatement==0), and there is nothing to do.
+  */
+  if( db->nStatement && p->iStatement ){
     int i;
     const int iSavepoint = p->iStatement-1;
 
@@ -1673,7 +1719,7 @@ int sqlite3VdbeHalt(Vdbe *p){
   if( p->db->mallocFailed ){
     p->rc = SQLITE_NOMEM;
   }
-  closeAllCursorsExceptActiveVtabs(p);
+  closeAllCursors(p);
   if( p->magic!=VDBE_MAGIC_RUN ){
     return SQLITE_OK;
   }
@@ -1690,6 +1736,7 @@ int sqlite3VdbeHalt(Vdbe *p){
 
     /* Check for one of the special errors */
     mrc = p->rc & 0xff;
+    assert( p->rc!=SQLITE_IOERR_BLOCKED );  /* This error no longer exists */
     isSpecialError = mrc==SQLITE_NOMEM || mrc==SQLITE_IOERR
                      || mrc==SQLITE_INTERRUPT || mrc==SQLITE_FULL;
     if( isSpecialError ){
@@ -1697,11 +1744,7 @@ int sqlite3VdbeHalt(Vdbe *p){
       ** proceed with the special handling.
       */
       if( !p->readOnly || mrc!=SQLITE_INTERRUPT ){
-        if( p->rc==SQLITE_IOERR_BLOCKED && p->usesStmtJournal ){
-          eStatementOp = SAVEPOINT_ROLLBACK;
-          p->rc = SQLITE_BUSY;
-        }else if( (mrc==SQLITE_NOMEM || mrc==SQLITE_FULL)
-                   && p->usesStmtJournal ){
+        if( (mrc==SQLITE_NOMEM || mrc==SQLITE_FULL) && p->usesStmtJournal ){
           eStatementOp = SAVEPOINT_ROLLBACK;
         }else{
           /* We are forced to roll back the active transaction. Before doing
@@ -1724,7 +1767,6 @@ int sqlite3VdbeHalt(Vdbe *p){
     if( !sqlite3VtabInSync(db) 
      && db->autoCommit 
      && db->writeVdbeCnt==(p->readOnly==0) 
-     && (db->flags & SQLITE_CommitBusy)==0
     ){
       if( p->rc==SQLITE_OK || (p->errorAction==OE_Fail && !isSpecialError) ){
         /* The auto-commit flag is true, and the vdbe program was 
@@ -1776,7 +1818,7 @@ int sqlite3VdbeHalt(Vdbe *p){
     /* If this was an INSERT, UPDATE or DELETE and no statement transaction
     ** has been rolled back, update the database connection change-counter. 
     */
-    if( p->changeCntOn && p->pc>=0 ){
+    if( p->changeCntOn ){
       if( eStatementOp!=SAVEPOINT_ROLLBACK ){
         sqlite3VdbeSetChanges(db, p->nChange);
       }else{
@@ -1923,8 +1965,6 @@ int sqlite3VdbeFinalize(Vdbe *p){
   if( p->magic==VDBE_MAGIC_RUN || p->magic==VDBE_MAGIC_HALT ){
     rc = sqlite3VdbeReset(p);
     assert( (rc & p->db->errMask)==rc );
-  }else if( p->magic!=VDBE_MAGIC_INIT ){
-    return SQLITE_MISUSE;
   }
   sqlite3VdbeDelete(p);
   return rc;
@@ -1956,7 +1996,7 @@ void sqlite3VdbeDelete(Vdbe *p){
   int i;
   sqlite3 *db;
 
-  if( p==0 ) return;
+  if( NEVER(p==0) ) return;
   db = p->db;
   if( p->pPrev ){
     p->pPrev->pNext = p->pNext;
@@ -1988,9 +2028,17 @@ void sqlite3VdbeDelete(Vdbe *p){
 }
 
 /*
+** Make sure the cursor p is ready to read or write the row to which it
+** was last positioned.  Return an error code if an OOM fault or I/O error
+** prevents us from positioning the cursor to its correct position.
+**
 ** If a MoveTo operation is pending on the given cursor, then do that
-** MoveTo now.  Return an error code.  If no MoveTo is pending, this
-** routine does nothing and returns SQLITE_OK.
+** MoveTo now.  If no move is pending, check to see if the row has been
+** deleted out from under the cursor and if it has, mark the row as
+** a NULL row.
+**
+** If the cursor is already pointing to the correct row and that row has
+** not been deleted out from under the cursor, then this routine is a no-op.
 */
 int sqlite3VdbeCursorMoveto(VdbeCursor *p){
   if( p->deferredMoveto ){
@@ -2001,7 +2049,7 @@ int sqlite3VdbeCursorMoveto(VdbeCursor *p){
     assert( p->isTable );
     rc = sqlite3BtreeMovetoUnpacked(p->pCursor, 0, p->movetoTarget, 0, &res);
     if( rc ) return rc;
-    p->lastRowid = keyToInt(p->movetoTarget);
+    p->lastRowid = p->movetoTarget;
     p->rowidIsValid = ALWAYS(res==0) ?1:0;
     if( NEVER(res<0) ){
       rc = sqlite3BtreeNext(p->pCursor, &res);
@@ -2012,7 +2060,7 @@ int sqlite3VdbeCursorMoveto(VdbeCursor *p){
 #endif
     p->deferredMoveto = 0;
     p->cacheStatus = CACHE_STALE;
-  }else if( p->pCursor ){
+  }else if( ALWAYS(p->pCursor) ){
     int hasMoved;
     int rc = sqlite3BtreeCursorHasMoved(p->pCursor, &hasMoved);
     if( rc ) return rc;
@@ -2107,7 +2155,7 @@ u32 sqlite3VdbeSerialType(Mem *pMem, int file_format){
 /*
 ** Return the length of the data corresponding to the supplied serial-type.
 */
-int sqlite3VdbeSerialTypeLen(u32 serial_type){
+u32 sqlite3VdbeSerialTypeLen(u32 serial_type){
   if( serial_type>=12 ){
     return (serial_type-12)/2;
   }else{
@@ -2187,14 +2235,14 @@ static u64 floatSwap(u64 in){
 ** of bytes in the zero-filled tail is included in the return value only
 ** if those bytes were zeroed in buf[].
 */ 
-int sqlite3VdbeSerialPut(u8 *buf, int nBuf, Mem *pMem, int file_format){
+u32 sqlite3VdbeSerialPut(u8 *buf, int nBuf, Mem *pMem, int file_format){
   u32 serial_type = sqlite3VdbeSerialType(pMem, file_format);
-  int len;
+  u32 len;
 
   /* Integer and Real */
   if( serial_type<=7 && serial_type>0 ){
     u64 v;
-    int i;
+    u32 i;
     if( serial_type==7 ){
       assert( sizeof(v)==sizeof(pMem->r) );
       memcpy(&v, &pMem->r, sizeof(v));
@@ -2203,7 +2251,7 @@ int sqlite3VdbeSerialPut(u8 *buf, int nBuf, Mem *pMem, int file_format){
       v = pMem->u.i;
     }
     len = i = sqlite3VdbeSerialTypeLen(serial_type);
-    assert( len<=nBuf );
+    assert( len<=(u32)nBuf );
     while( i-- ){
       buf[i] = (u8)(v&0xFF);
       v >>= 8;
@@ -2214,14 +2262,15 @@ int sqlite3VdbeSerialPut(u8 *buf, int nBuf, Mem *pMem, int file_format){
   /* String or blob */
   if( serial_type>=12 ){
     assert( pMem->n + ((pMem->flags & MEM_Zero)?pMem->u.nZero:0)
-             == sqlite3VdbeSerialTypeLen(serial_type) );
+             == (int)sqlite3VdbeSerialTypeLen(serial_type) );
     assert( pMem->n<=nBuf );
     len = pMem->n;
     memcpy(buf, pMem->z, len);
     if( pMem->flags & MEM_Zero ){
       len += pMem->u.nZero;
-      if( len>nBuf ){
-        len = nBuf;
+      assert( nBuf>=0 );
+      if( len > (u32)nBuf ){
+        len = (u32)nBuf;
       }
       memset(&buf[pMem->n], 0, len-pMem->n);
     }
@@ -2236,7 +2285,7 @@ int sqlite3VdbeSerialPut(u8 *buf, int nBuf, Mem *pMem, int file_format){
 ** Deserialize the data blob pointed to by buf as serial type serial_type
 ** and store the result in pMem.  Return the number of bytes read.
 */ 
-int sqlite3VdbeSerialGet(
+u32 sqlite3VdbeSerialGet(
   const unsigned char *buf,     /* Buffer to deserialize from */
   u32 serial_type,              /* Serial type to deserialize */
   Mem *pMem                     /* Memory cell to write value into */
@@ -2314,7 +2363,7 @@ int sqlite3VdbeSerialGet(
       return 0;
     }
     default: {
-      int len = (serial_type-12)/2;
+      u32 len = (serial_type-12)/2;
       pMem->z = (char *)buf;
       pMem->n = len;
       pMem->xDel = 0;
@@ -2384,11 +2433,10 @@ UnpackedRecord *sqlite3VdbeRecordUnpack(
   idx = getVarint32(aKey, szHdr);
   d = szHdr;
   u = 0;
-  while( idx<szHdr && u<p->nField ){
+  while( idx<szHdr && u<p->nField && d<=nKey ){
     u32 serial_type;
 
     idx += getVarint32(&aKey[idx], serial_type);
-    if( d>=nKey && sqlite3VdbeSerialTypeLen(serial_type)>0 ) break;
     pMem->enc = pKeyInfo->enc;
     pMem->db = pKeyInfo->db;
     pMem->flags = 0;
@@ -2403,22 +2451,24 @@ UnpackedRecord *sqlite3VdbeRecordUnpack(
 }
 
 /*
-** This routine destroys a UnpackedRecord object
+** This routine destroys a UnpackedRecord object.
 */
 void sqlite3VdbeDeleteUnpackedRecord(UnpackedRecord *p){
-  if( p ){
-    if( p->flags & UNPACKED_NEED_DESTROY ){
-      int i;
-      Mem *pMem;
-      for(i=0, pMem=p->aMem; i<p->nField; i++, pMem++){
-        if( pMem->zMalloc ){
-          sqlite3VdbeMemRelease(pMem);
-        }
-      }
-    }
-    if( p->flags & UNPACKED_NEED_FREE ){
-      sqlite3DbFree(p->pKeyInfo->db, p);
-    }
+  int i;
+  Mem *pMem;
+
+  assert( p!=0 );
+  assert( p->flags & UNPACKED_NEED_DESTROY );
+  for(i=0, pMem=p->aMem; i<p->nField; i++, pMem++){
+    /* The unpacked record is always constructed by the
+    ** sqlite3VdbeUnpackRecord() function above, which makes all
+    ** strings and blobs static.  And none of the elements are
+    ** ever transformed, so there is never anything to delete.
+    */
+    if( NEVER(pMem->zMalloc) ) sqlite3VdbeMemRelease(pMem);
+  }
+  if( p->flags & UNPACKED_NEED_FREE ){
+    sqlite3DbFree(p->pKeyInfo->db, p);
   }
 }
 
@@ -2495,7 +2545,9 @@ int sqlite3VdbeRecordCompare(
     }
     i++;
   }
-  if( mem1.zMalloc ) sqlite3VdbeMemRelease(&mem1);
+
+  /* No memory allocation is ever used on mem1. */
+  if( NEVER(mem1.zMalloc) ) sqlite3VdbeMemRelease(&mem1);
 
   /* If the PREFIX_SEARCH flag is set and all fields except the final
   ** rowid field were equal, then clear the PREFIX_SEARCH flag and set 
@@ -2542,7 +2594,7 @@ int sqlite3VdbeRecordCompare(
 ** pCur might be pointing to text obtained from a corrupt database file.
 ** So the content cannot be trusted.  Do appropriate checks on the content.
 */
-int sqlite3VdbeIdxRowid(BtCursor *pCur, i64 *rowid){
+int sqlite3VdbeIdxRowid(sqlite3 *db, BtCursor *pCur, i64 *rowid){
   i64 nCellKey = 0;
   int rc;
   u32 szHdr;        /* Size of the header */
@@ -2551,15 +2603,18 @@ int sqlite3VdbeIdxRowid(BtCursor *pCur, i64 *rowid){
   Mem m, v;
 
   /* Get the size of the index entry.  Only indices entries of less
-  ** than 2GiB are support - anything large must be database corruption */
-  sqlite3BtreeKeySize(pCur, &nCellKey);
-  if( unlikely(nCellKey<=0 || nCellKey>0x7fffffff) ){
-    return SQLITE_CORRUPT_BKPT;
-  }
+  ** than 2GiB are support - anything large must be database corruption.
+  ** Any corruption is detected in sqlite3BtreeParseCellPtr(), though, so
+  ** this code can safely assume that nCellKey is 32-bits  
+  */
+  assert( sqlite3BtreeCursorIsValid(pCur) );
+  rc = sqlite3BtreeKeySize(pCur, &nCellKey);
+  assert( rc==SQLITE_OK );     /* pCur is always valid so KeySize cannot fail */
+  assert( (nCellKey & SQLITE_MAX_U32)==(u64)nCellKey );
 
   /* Read in the complete content of the index entry */
   m.flags = 0;
-  m.db = 0;
+  m.db = db;
   m.zMalloc = 0;
   rc = sqlite3VdbeMemFromBtree(pCur, 0, (int)nCellKey, 1, &m);
   if( rc ){
@@ -2568,9 +2623,9 @@ int sqlite3VdbeIdxRowid(BtCursor *pCur, i64 *rowid){
 
   /* The index entry must begin with a header size */
   (void)getVarint32((u8*)m.z, szHdr);
-  testcase( szHdr==2 );
+  testcase( szHdr==3 );
   testcase( szHdr==m.n );
-  if( unlikely(szHdr<2 || (int)szHdr>m.n) ){
+  if( unlikely(szHdr<3 || (int)szHdr>m.n) ){
     goto idx_rowid_corruption;
   }
 
@@ -2589,8 +2644,8 @@ int sqlite3VdbeIdxRowid(BtCursor *pCur, i64 *rowid){
     goto idx_rowid_corruption;
   }
   lenRowid = sqlite3VdbeSerialTypeLen(typeRowid);
-  testcase( m.n-lenRowid==szHdr );
-  if( unlikely(m.n-lenRowid<szHdr) ){
+  testcase( (u32)m.n==szHdr+lenRowid );
+  if( unlikely((u32)m.n<szHdr+lenRowid) ){
     goto idx_rowid_corruption;
   }
 
@@ -2609,22 +2664,19 @@ idx_rowid_corruption:
 }
 
 /*
-** Compare the key of the index entry that cursor pC is point to against
-** the key string in pKey (of length nKey).  Write into *pRes a number
+** Compare the key of the index entry that cursor pC is pointing to against
+** the key string in pUnpacked.  Write into *pRes a number
 ** that is negative, zero, or positive if pC is less than, equal to,
-** or greater than pKey.  Return SQLITE_OK on success.
+** or greater than pUnpacked.  Return SQLITE_OK on success.
 **
-** pKey is either created without a rowid or is truncated so that it
+** pUnpacked is either created without a rowid or is truncated so that it
 ** omits the rowid at the end.  The rowid at the end of the index entry
 ** is ignored as well.  Hence, this routine only compares the prefixes 
 ** of the keys prior to the final rowid, not the entire key.
-**
-** pUnpacked may be an unpacked version of pKey,nKey.  If pUnpacked is
-** supplied it is used in place of pKey,nKey.
 */
 int sqlite3VdbeIdxKeyCompare(
   VdbeCursor *pC,             /* The cursor to compare against */
-  UnpackedRecord *pUnpacked,  /* Unpacked version of pKey and nKey */
+  UnpackedRecord *pUnpacked,  /* Unpacked version of key to compare against */
   int *res                    /* Write the comparison result here */
 ){
   i64 nCellKey = 0;
@@ -2632,10 +2684,14 @@ int sqlite3VdbeIdxKeyCompare(
   BtCursor *pCur = pC->pCursor;
   Mem m;
 
-  sqlite3BtreeKeySize(pCur, &nCellKey);
+  assert( sqlite3BtreeCursorIsValid(pCur) );
+  rc = sqlite3BtreeKeySize(pCur, &nCellKey);
+  assert( rc==SQLITE_OK );    /* pCur is always valid so KeySize cannot fail */
+  /* nCellKey will always be between 0 and 0xffffffff because of the say
+  ** that btreeParseCellPtr() and sqlite3GetVarint32() are implemented */
   if( nCellKey<=0 || nCellKey>0x7fffffff ){
     *res = 0;
-    return SQLITE_OK;
+    return SQLITE_CORRUPT;
   }
   m.db = 0;
   m.flags = 0;

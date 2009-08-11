@@ -12,7 +12,7 @@
 ** This file contains C code routines that used to generate VDBE code
 ** that implements the ALTER TABLE command.
 **
-** $Id: alter.c,v 1.57 2009/04/16 16:30:18 drh Exp $
+** $Id: alter.c,v 1.62 2009/07/24 17:58:53 danielk1977 Exp $
 */
 #include "sqliteInt.h"
 
@@ -66,7 +66,7 @@ static void renameTableFunc(
       }
 
       /* Store the token that zCsr points to in tname. */
-      tname.z = zCsr;
+      tname.z = (char*)zCsr;
       tname.n = len;
 
       /* Advance zCsr to the next token. Store that token type in 'token',
@@ -79,7 +79,7 @@ static void renameTableFunc(
       assert( len>0 );
     } while( token!=TK_LP && token!=TK_USING );
 
-    zRet = sqlite3MPrintf(db, "%.*s\"%w\"%s", tname.z - zSql, zSql, 
+    zRet = sqlite3MPrintf(db, "%.*s\"%w\"%s", ((u8*)tname.z) - zSql, zSql, 
        zTableName, tname.z+tname.n);
     sqlite3_result_text(context, zRet, -1, SQLITE_DYNAMIC);
   }
@@ -125,7 +125,7 @@ static void renameTriggerFunc(
       }
 
       /* Store the token that zCsr points to in tname. */
-      tname.z = zCsr;
+      tname.z = (char*)zCsr;
       tname.n = len;
 
       /* Advance zCsr to the next token. Store that token type in 'token',
@@ -155,7 +155,7 @@ static void renameTriggerFunc(
     /* Variable tname now contains the token that is the old table-name
     ** in the CREATE TRIGGER statement.
     */
-    zRet = sqlite3MPrintf(db, "%.*s\"%w\"%s", tname.z - zSql, zSql, 
+    zRet = sqlite3MPrintf(db, "%.*s\"%w\"%s", ((u8*)tname.z) - zSql, zSql, 
        zTableName, tname.z+tname.n);
     sqlite3_result_text(context, zRet, -1, SQLITE_DYNAMIC);
   }
@@ -277,7 +277,7 @@ void sqlite3AlterRenameTable(
 #ifndef SQLITE_OMIT_TRIGGER
   char *zWhere = 0;         /* Where clause to locate temp triggers */
 #endif
-  int isVirtualRename = 0;  /* True if this is a v-table with an xRename() */
+  VTable *pVTab = 0;        /* Non-zero if this is a v-tab with an xRename() */
   
   if( NEVER(db->mallocFailed) ) goto exit_rename_table;
   assert( pSrc->nSrc==1 );
@@ -332,8 +332,11 @@ void sqlite3AlterRenameTable(
   if( sqlite3ViewGetColumnNames(pParse, pTab) ){
     goto exit_rename_table;
   }
-  if( IsVirtual(pTab) && pTab->pMod->pModule->xRename ){
-    isVirtualRename = 1;
+  if( IsVirtual(pTab) ){
+    pVTab = sqlite3GetVTable(db, pTab);
+    if( pVTab->pVtab->pModule->xRename==0 ){
+      pVTab = 0;
+    }
   }
 #endif
 
@@ -346,7 +349,7 @@ void sqlite3AlterRenameTable(
   if( v==0 ){
     goto exit_rename_table;
   }
-  sqlite3BeginWriteOperation(pParse, isVirtualRename, iDb);
+  sqlite3BeginWriteOperation(pParse, pVTab!=0, iDb);
   sqlite3ChangeCookie(pParse, iDb);
 
   /* If this is a virtual table, invoke the xRename() function if
@@ -355,10 +358,10 @@ void sqlite3AlterRenameTable(
   ** SQLite tables) that are identified by the name of the virtual table.
   */
 #ifndef SQLITE_OMIT_VIRTUALTABLE
-  if( isVirtualRename ){
+  if( pVTab ){
     int i = ++pParse->nMem;
     sqlite3VdbeAddOp4(v, OP_String8, 0, i, 0, zName, 0);
-    sqlite3VdbeAddOp4(v, OP_VRename, i, 0, 0,(const char*)pTab->pVtab, P4_VTAB);
+    sqlite3VdbeAddOp4(v, OP_VRename, i, 0, 0,(const char*)pVTab, P4_VTAB);
   }
 #endif
 
@@ -425,6 +428,31 @@ exit_rename_table:
   sqlite3DbFree(db, zName);
 }
 
+
+/*
+** Generate code to make sure the file format number is at least minFormat.
+** The generated code will increase the file format number if necessary.
+*/
+void sqlite3MinimumFileFormat(Parse *pParse, int iDb, int minFormat){
+  Vdbe *v;
+  v = sqlite3GetVdbe(pParse);
+  /* The VDBE should have been allocated before this routine is called.
+  ** If that allocation failed, we would have quit before reaching this
+  ** point */
+  if( ALWAYS(v) ){
+    int r1 = sqlite3GetTempReg(pParse);
+    int r2 = sqlite3GetTempReg(pParse);
+    int j1;
+    sqlite3VdbeAddOp3(v, OP_ReadCookie, iDb, r1, BTREE_FILE_FORMAT);
+    sqlite3VdbeUsesBtree(v, iDb);
+    sqlite3VdbeAddOp2(v, OP_Integer, minFormat, r2);
+    j1 = sqlite3VdbeAddOp3(v, OP_Ge, r2, 0, r1);
+    sqlite3VdbeAddOp3(v, OP_SetCookie, iDb, BTREE_FILE_FORMAT, r2);
+    sqlite3VdbeJumpHere(v, j1);
+    sqlite3ReleaseTempReg(pParse, r1);
+    sqlite3ReleaseTempReg(pParse, r2);
+  }
+}
 
 /*
 ** This function is called after an "ALTER TABLE ... ADD" statement
@@ -611,6 +639,7 @@ void sqlite3AlterBeginAddColumn(Parse *pParse, SrcList *pSrc){
     pCol->zColl = 0;
     pCol->zType = 0;
     pCol->pDflt = 0;
+    pCol->zDflt = 0;
   }
   pNew->pSchema = db->aDb[iDb].pSchema;
   pNew->addColOffset = pTab->addColOffset;
