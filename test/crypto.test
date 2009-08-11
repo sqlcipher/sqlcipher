@@ -220,6 +220,10 @@ do_test codec-1.9 {
     BEGIN;
     CREATE TABLE t2(a,b);
   } db
+  
+  for {set i 1} {$i<=3000} {incr i} {
+    execsql "CREATE TABLE longtablename$i (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa TEXT, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb TEXT);" db
+  }
 
   for {set i 1} {$i<=25000} {incr i} {
     set r [expr {int(rand()*500000)}]
@@ -237,9 +241,10 @@ do_test codec-1.9 {
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t2;
+    SELECT count(*) FROM sqlite_master;
   } db
 
-} {25000}
+} {25000 3001}
 db close
 file delete -force test.db
 

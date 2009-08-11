@@ -2645,16 +2645,6 @@ int sqlite3PagerClose(Pager *pPager){
   IOTRACE(("CLOSE %p\n", pPager))
   sqlite3OsClose(pPager->fd);
 
-  /* BEGIN CRYPTO */
-#ifdef SQLITE_HAS_CODEC
-  extern int sqlite3FreeCodecArg(void *);
-  if(pPager->pCodecArg) sqlite3FreeCodecArg(pPager->pCodecArg);
-#endif
-  /* END CRYPTO */
-
-  sqlite3PageFree(pPager->pTmpSpace);
-  sqlite3PcacheClose(pPager->pPCache);
-
 #ifdef SQLITE_HAS_CODEC
   if( pPager->xCodecFree ) pPager->xCodecFree(pPager->pCodec);
 #endif
@@ -5339,7 +5329,7 @@ sqlite3_backup **sqlite3PagerBackupPtr(Pager *pPager){
 /* BEGIN CRYPTO */
 #ifdef SQLITE_HAS_CODEC
 void sqlite3pager_get_codec(Pager *pPager, void **ctx) {
-  *ctx = pPager->pCodecArg;
+  *ctx = pPager->pCodec;
 }
 
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno) {
@@ -5349,6 +5339,17 @@ int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno) {
 sqlite3_file *sqlite3Pager_get_fd(Pager *pPager) {
   return (isOpen(pPager->fd)) ? pPager->fd : NULL;
 }
+
+void sqlite3pager_sqlite3PagerSetCodec(
+  Pager *pPager,
+  void *(*xCodec)(void*,void*,Pgno,int),
+  void (*xCodecSizeChng)(void*,int,int),
+  void (*xCodecFree)(void*),
+  void *pCodec
+){
+  sqlite3PagerSetCodec(pPager, xCodec, xCodecSizeChng, xCodecFree, pCodec); 
+}
+
 
 #endif
 /* END CRYPTO */

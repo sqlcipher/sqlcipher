@@ -51,6 +51,13 @@
 void sqlite3pager_get_codec(Pager *pPager, void **ctx);
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
 sqlite3_file *sqlite3Pager_get_fd(Pager *pPager);
+void sqlite3pager_sqlite3PagerSetCodec(
+  Pager *pPager,
+  void *(*xCodec)(void*,void*,Pgno,int),
+  void (*xCodecSizeChng)(void*,int,int),
+  void (*xCodecFree)(void*),
+  void *pCodec
+);
 
 #endif
 #endif
