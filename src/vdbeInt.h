@@ -56,16 +56,12 @@ struct VdbeCursor {
   Bool atFirst;         /* True if pointing to first entry */
   Bool useRandomRowid;  /* Generate new record numbers semi-randomly */
   Bool nullRow;         /* True if pointing to a row with no data */
-  Bool pseudoTable;     /* This is a NEW or OLD pseudo-tables of a trigger */
-  Bool ephemPseudoTable;
   Bool deferredMoveto;  /* A call to sqlite3BtreeMoveto() is needed */
   Bool isTable;         /* True if a table requiring integer keys */
   Bool isIndex;         /* True if an index containing keys only - no data */
   i64 movetoTarget;     /* Argument to the deferred sqlite3BtreeMoveto() */
   Btree *pBt;           /* Separate file holding temporary table */
-  int nData;            /* Number of bytes in pData */
-  char *pData;          /* Data for a NEW or OLD pseudo-table */
-  i64 iKey;             /* Key for the NEW or OLD pseudo-table row */
+  int pseudoTableReg;   /* Register holding pseudotable content. */
   KeyInfo *pKeyInfo;    /* Info about index keys needed by index cursors */
   int nField;           /* Number of fields in the header */
   i64 seqCount;         /* Sequence counter */
@@ -77,17 +73,54 @@ struct VdbeCursor {
   int seekResult;
 
   /* Cached information about the header for the data record that the
-  ** cursor is currently pointing to.  Only valid if cacheValid is true.
+  ** cursor is currently pointing to.  Only valid if cacheStatus matches
+  ** Vdbe.cacheCtr.  Vdbe.cacheCtr will never take on the value of
+  ** CACHE_STALE and so setting cacheStatus=CACHE_STALE guarantees that
+  ** the cache is out of date.
+  **
   ** aRow might point to (ephemeral) data for the current row, or it might
   ** be NULL.
   */
-  int cacheStatus;      /* Cache is valid if this matches Vdbe.cacheCtr */
+  u32 cacheStatus;      /* Cache is valid if this matches Vdbe.cacheCtr */
   int payloadSize;      /* Total number of bytes in the record */
   u32 *aType;           /* Type values for all entries in the record */
   u32 *aOffset;         /* Cached offsets to the start of each columns data */
   u8 *aRow;             /* Data for the current row, if all on one page */
 };
 typedef struct VdbeCursor VdbeCursor;
+
+/*
+** When a sub-program is executed (OP_Program), a structure of this type
+** is allocated to store the current value of the program counter, as
+** well as the current memory cell array and various other frame specific
+** values stored in the Vdbe struct. When the sub-program is finished, 
+** these values are copied back to the Vdbe from the VdbeFrame structure,
+** restoring the state of the VM to as it was before the sub-program
+** began executing.
+**
+** Frames are stored in a linked list headed at Vdbe.pParent. Vdbe.pParent
+** is the parent of the current frame, or zero if the current frame
+** is the main Vdbe program.
+*/
+typedef struct VdbeFrame VdbeFrame;
+struct VdbeFrame {
+  Vdbe *v;                /* VM this frame belongs to */
+  int pc;                 /* Program Counter */
+  Op *aOp;                /* Program instructions */
+  int nOp;                /* Size of aOp array */
+  Mem *aMem;              /* Array of memory cells */
+  int nMem;               /* Number of entries in aMem */
+  VdbeCursor **apCsr;     /* Element of Vdbe cursors */
+  u16 nCursor;            /* Number of entries in apCsr */
+  void *token;            /* Copy of SubProgram.token */
+  int nChildMem;          /* Number of memory cells for child frame */
+  int nChildCsr;          /* Number of cursors for child frame */
+  i64 lastRowid;          /* Last insert rowid (sqlite3.lastRowid) */
+  int nChange;            /* Statement changes (Vdbe.nChanges)     */
+  VdbeFrame *pParent;     /* Parent of this frame */
+};
+
+#define VdbeFrameMem(p) ((Mem *)&((u8 *)p)[ROUND8(sizeof(VdbeFrame))])
 
 /*
 ** A value for VdbeCursor.cacheValid that means the cache is always invalid.
@@ -111,6 +144,7 @@ struct Mem {
     int nZero;          /* Used when bit MEM_Zero is set in flags */
     FuncDef *pDef;      /* Used only when flags==MEM_Agg */
     RowSet *pRowSet;    /* Used only when flags==MEM_RowSet */
+    VdbeFrame *pFrame;  /* Used when flags==MEM_Frame */
   } u;
   double r;           /* Real value */
   sqlite3 *db;        /* The associated database connection */
@@ -144,6 +178,7 @@ struct Mem {
 #define MEM_Real      0x0008   /* Value is a real number */
 #define MEM_Blob      0x0010   /* Value is a BLOB */
 #define MEM_RowSet    0x0020   /* Value is a RowSet object */
+#define MEM_Frame     0x0040   /* Value is a VdbeFrame object */
 #define MEM_TypeMask  0x00ff   /* Mask of type bits */
 
 /* Whenever Mem contains a valid string or blob representation, one of
@@ -224,21 +259,6 @@ struct Set {
 };
 
 /*
-** A Context stores the last insert rowid, the last statement change count,
-** and the current statement change count (i.e. changes since last statement).
-** The current keylist is also stored in the context.
-** Elements of Context structure type make up the ContextStack, which is
-** updated by the ContextPush and ContextPop opcodes (used by triggers).
-** The context is pushed before executing a trigger a popped when the
-** trigger finishes.
-*/
-typedef struct Context Context;
-struct Context {
-  i64 lastRowid;    /* Last insert rowid (sqlite3.lastRowid) */
-  int nChange;      /* Statement changes (Vdbe.nChanges)     */
-};
-
-/*
 ** An instance of the virtual machine.  This structure contains the complete
 ** state of the virtual machine.
 **
@@ -270,16 +290,13 @@ struct Vdbe {
   VdbeCursor **apCsr;     /* One element of this array for each open cursor */
   u8 errorAction;         /* Recovery action to do in case of an error */
   u8 okVar;               /* True if azVar[] has been initialized */
-  u16 nVar;               /* Number of entries in aVar[] */
+  ynVar nVar;             /* Number of entries in aVar[] */
   Mem *aVar;              /* Values for the OP_Variable opcode. */
   char **azVar;           /* Name of variables */
   u32 magic;              /* Magic number for sanity checking */
   int nMem;               /* Number of memory locations currently allocated */
   Mem *aMem;              /* The memory locations */
-  int cacheCtr;           /* VdbeCursor row cache generation counter */
-  int contextStackTop;    /* Index of top element in the context stack */
-  int contextStackDepth;  /* The size of the "context" stack */
-  Context *contextStack;  /* Stack used by opcodes ContextPush & ContextPop*/
+  u32 cacheCtr;           /* VdbeCursor row cache generation counter */
   int pc;                 /* The program counter */
   int rc;                 /* Value to return */
   char *zErrMsg;          /* Error message written here */
@@ -298,10 +315,15 @@ struct Vdbe {
   int aCounter[2];        /* Counters used by sqlite3_stmt_status() */
   char *zSql;             /* Text of the SQL statement that generated this */
   void *pFree;            /* Free this when deleting the vdbe */
+  i64 nFkConstraint;      /* Number of imm. FK constraints this VM */
+  i64 nStmtDefCons;       /* Number of def. constraints when stmt started */
   int iStatement;         /* Statement number (or 0 if has not opened stmt) */
 #ifdef SQLITE_DEBUG
   FILE *trace;            /* Write an execution trace here, if not NULL */
 #endif
+  VdbeFrame *pFrame;      /* Parent frame */
+  int nFrame;             /* Number of frames in pFrame list */
+  u32 expmask;            /* Binding to these vars invalidates VM */
 };
 
 /*
@@ -362,8 +384,14 @@ const char *sqlite3OpcodeName(int);
 int sqlite3VdbeOpcodeHasProperty(int, int);
 int sqlite3VdbeMemGrow(Mem *pMem, int n, int preserve);
 int sqlite3VdbeCloseStatement(Vdbe *, int);
-#ifdef SQLITE_ENABLE_MEMORY_MANAGEMENT
-int sqlite3VdbeReleaseBuffers(Vdbe *p);
+void sqlite3VdbeFrameDelete(VdbeFrame*);
+int sqlite3VdbeFrameRestore(VdbeFrame *);
+void sqlite3VdbeMemStoreType(Mem *pMem);
+
+#ifndef SQLITE_OMIT_FOREIGN_KEY
+int sqlite3VdbeCheckFk(Vdbe *, int);
+#else
+# define sqlite3VdbeCheckFk(p,i) 0
 #endif
 
 #ifndef SQLITE_OMIT_SHARED_CACHE

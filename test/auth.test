@@ -2248,15 +2248,16 @@ do_test auth-4.3 {
   set authargs
 } [list \
   SQLITE_UPDATE v1     x  main {} \
-  SQLITE_INSERT v1chng {} main r2 \
-  SQLITE_READ   v1     x  main r2 \
-  SQLITE_READ   v1     x  main r2 \
   SQLITE_SELECT {}     {} {}   v1 \
   SQLITE_READ   t2     a  main v1 \
   SQLITE_READ   t2     b  main v1 \
   SQLITE_SELECT {}     {} {}   {} \
   SQLITE_READ   v1     x  main v1 \
+  SQLITE_INSERT v1chng {} main r2 \
+  SQLITE_READ   v1     x  main r2 \
+  SQLITE_READ   v1     x  main r2 \
 ]
+
 do_test auth-4.4 {
   execsql {
     CREATE TRIGGER r3 INSTEAD OF DELETE ON v1 BEGIN
@@ -2273,13 +2274,13 @@ do_test auth-4.5 {
   set authargs
 } [list \
   SQLITE_DELETE v1     {} main {} \
-  SQLITE_INSERT v1chng {} main r3 \
-  SQLITE_READ   v1     x  main r3 \
   SQLITE_SELECT {}     {} {}   v1 \
   SQLITE_READ   t2     a  main v1 \
   SQLITE_READ   t2     b  main v1 \
   SQLITE_SELECT {}     {} {}   {} \
   SQLITE_READ   v1     x  main v1 \
+  SQLITE_INSERT v1chng {} main r3 \
+  SQLITE_READ   v1     x  main r3 \
 ]
 
 } ;# ifcapable view && trigger
@@ -2309,6 +2310,11 @@ ifcapable compound&&subquery {
       }
     }
   }
+  ifcapable stat2 {
+    set stat2 "sqlite_stat2 "
+  } else {
+    set stat2 ""
+  }
   do_test auth-5.2 {
     execsql {
       SELECT name FROM (
@@ -2316,7 +2322,7 @@ ifcapable compound&&subquery {
       WHERE type='table'
       ORDER BY name
     }
-  } {sqlite_stat1 t1 t2 t3 t4}
+  } "sqlite_stat1 ${stat2}t1 t2 t3 t4"
 }
 
 # Ticket #3944

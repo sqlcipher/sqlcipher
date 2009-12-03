@@ -369,6 +369,9 @@ static int actioncmp(
   if( rc==0 && ap1->type==REDUCE ){
     rc = ap1->x.rp->index - ap2->x.rp->index;
   }
+  if( rc==0 ){
+    rc = ap2 - ap1;
+  }
   return rc;
 }
 
@@ -517,21 +520,9 @@ int acttab_insert(acttab *p){
   **
   ** i is the index in p->aAction[] where p->mnLookahead is inserted.
   */
-  for(i=0; i<p->nAction+p->mnLookahead; i++){
-    if( p->aAction[i].lookahead<0 ){
-      for(j=0; j<p->nLookahead; j++){
-        k = p->aLookahead[j].lookahead - p->mnLookahead + i;
-        if( k<0 ) break;
-        if( p->aAction[k].lookahead>=0 ) break;
-      }
-      if( j<p->nLookahead ) continue;
-      for(j=0; j<p->nAction; j++){
-        if( p->aAction[j].lookahead==j+p->mnLookahead-i ) break;
-      }
-      if( j==p->nAction ){
-        break;  /* Fits in empty slots */
-      }
-    }else if( p->aAction[i].lookahead==p->mnLookahead ){
+  for(i=p->nAction-1; i>=0; i--){
+    /* First look for an existing action table entry that can be reused */
+    if( p->aAction[i].lookahead==p->mnLookahead ){
       if( p->aAction[i].action!=p->mnAction ) continue;
       for(j=0; j<p->nLookahead; j++){
         k = p->aLookahead[j].lookahead - p->mnLookahead + i;
@@ -547,6 +538,25 @@ int acttab_insert(acttab *p){
       }
       if( n==p->nLookahead ){
         break;  /* Same as a prior transaction set */
+      }
+    }
+  }
+  if( i<0 ){
+    /* If no reusable entry is found, look for an empty slot */
+    for(i=0; i<p->nAction; i++){
+      if( p->aAction[i].lookahead<0 ){
+        for(j=0; j<p->nLookahead; j++){
+          k = p->aLookahead[j].lookahead - p->mnLookahead + i;
+          if( k<0 ) break;
+          if( p->aAction[k].lookahead>=0 ) break;
+        }
+        if( j<p->nLookahead ) continue;
+        for(j=0; j<p->nAction; j++){
+          if( p->aAction[j].lookahead==j+p->mnLookahead-i ) break;
+        }
+        if( j==p->nAction ){
+          break;  /* Fits in empty slots */
+        }
       }
     }
   }
@@ -1578,7 +1588,7 @@ static char *merge(
   }else if( b==0 ){
     head = a;
   }else{
-    if( (*cmp)(a,b)<0 ){
+    if( (*cmp)(a,b)<=0 ){
       ptr = a;
       a = NEXT(a);
     }else{
@@ -1587,7 +1597,7 @@ static char *merge(
     }
     head = ptr;
     while( a && b ){
-      if( (*cmp)(a,b)<0 ){
+      if( (*cmp)(a,b)<=0 ){
         NEXT(ptr) = a;
         ptr = a;
         a = NEXT(a);
@@ -1639,7 +1649,7 @@ static char *msort(
     set[i] = ep;
   }
   ep = 0;
-  for(i=0; i<LISTSIZE; i++) if( set[i] ) ep = merge(ep,set[i],cmp,offset);
+  for(i=0; i<LISTSIZE; i++) if( set[i] ) ep = merge(set[i],ep,cmp,offset);
   return ep;
 }
 /************************ From the file "option.c" **************************/
@@ -3516,6 +3526,7 @@ struct axset {
   struct state *stp;   /* A pointer to a state */
   int isTkn;           /* True to use tokens.  False for non-terminals */
   int nAction;         /* Number of actions */
+  int iOrder;          /* Original order of action sets */
 };
 
 /*
@@ -3524,7 +3535,13 @@ struct axset {
 static int axset_compare(const void *a, const void *b){
   struct axset *p1 = (struct axset*)a;
   struct axset *p2 = (struct axset*)b;
-  return p2->nAction - p1->nAction;
+  int c;
+  c = p2->nAction - p1->nAction;
+  if( c==0 ){
+    c = p2->iOrder - p1->iOrder;
+  }
+  assert( c!=0 || p1==p2 );
+  return c;
 }
 
 /*
@@ -3558,7 +3575,7 @@ int mhflag;     /* Output in makeheaders format if true */
   struct action *ap;
   struct rule *rp;
   struct acttab *pActtab;
-  int i, j, n;
+  int i, j, k, n;
   char *name;
   int mnTknOfst, mxTknOfst;
   int mnNtOfst, mxNtOfst;
@@ -3684,6 +3701,7 @@ int mhflag;     /* Output in makeheaders format if true */
   ** action table to a minimum, the heuristic of placing the largest action
   ** sets first is used.
   */
+  for(i=0; i<lemp->nstate*2; i++) ax[i].iOrder = i;
   qsort(ax, lemp->nstate*2, sizeof(ax[0]), axset_compare);
   pActtab = acttab_alloc();
   for(i=0; i<lemp->nstate*2 && ax[i].nAction>0; i++){
@@ -3716,8 +3734,9 @@ int mhflag;     /* Output in makeheaders format if true */
   free(ax);
 
   /* Output the yy_action table */
-  fprintf(out,"static const YYACTIONTYPE yy_action[] = {\n"); lineno++;
   n = acttab_size(pActtab);
+  fprintf(out,"#define YY_ACTTAB_COUNT (%d)\n", n); lineno++;
+  fprintf(out,"static const YYACTIONTYPE yy_action[] = {\n"); lineno++;
   for(i=j=0; i<n; i++){
     int action = acttab_yyaction(pActtab, i);
     if( action<0 ) action = lemp->nstate + lemp->nrule + 2;
@@ -3752,7 +3771,9 @@ int mhflag;     /* Output in makeheaders format if true */
   fprintf(out, "#define YY_SHIFT_USE_DFLT (%d)\n", mnTknOfst-1); lineno++;
   n = lemp->nstate;
   while( n>0 && lemp->sorted[n-1]->iTknOfst==NO_OFFSET ) n--;
-  fprintf(out, "#define YY_SHIFT_MAX %d\n", n-1); lineno++;
+  fprintf(out, "#define YY_SHIFT_COUNT (%d)\n", n-1); lineno++;
+  fprintf(out, "#define YY_SHIFT_MIN   (%d)\n", mnTknOfst); lineno++;
+  fprintf(out, "#define YY_SHIFT_MAX   (%d)\n", mxTknOfst); lineno++;
   fprintf(out, "static const %s yy_shift_ofst[] = {\n", 
           minimum_size_type(mnTknOfst-1, mxTknOfst)); lineno++;
   for(i=j=0; i<n; i++){
@@ -3775,7 +3796,9 @@ int mhflag;     /* Output in makeheaders format if true */
   fprintf(out, "#define YY_REDUCE_USE_DFLT (%d)\n", mnNtOfst-1); lineno++;
   n = lemp->nstate;
   while( n>0 && lemp->sorted[n-1]->iNtOfst==NO_OFFSET ) n--;
-  fprintf(out, "#define YY_REDUCE_MAX %d\n", n-1); lineno++;
+  fprintf(out, "#define YY_REDUCE_COUNT (%d)\n", n-1); lineno++;
+  fprintf(out, "#define YY_REDUCE_MIN   (%d)\n", mnNtOfst); lineno++;
+  fprintf(out, "#define YY_REDUCE_MAX   (%d)\n", mxNtOfst); lineno++;
   fprintf(out, "static const %s yy_reduce_ofst[] = {\n", 
           minimum_size_type(mnNtOfst-1, mxNtOfst)); lineno++;
   for(i=j=0; i<n; i++){
@@ -4097,7 +4120,11 @@ static int stateResortCompare(const void *a, const void *b){
   n = pB->nNtAct - pA->nNtAct;
   if( n==0 ){
     n = pB->nTknAct - pA->nTknAct;
+    if( n==0 ){
+      n = pB->statenum - pA->statenum;
+    }
   }
+  assert( n!=0 );
   return n;
 }
 
@@ -4401,6 +4428,7 @@ char *x;
 int Symbolcmpp(struct symbol **a, struct symbol **b){
   int i1 = (**a).index + 10000000*((**a).name[0]>'Z');
   int i2 = (**b).index + 10000000*((**b).name[0]>'Z');
+  assert( i1!=i2 || strcmp((**a).name,(**b).name)==0 );
   return i1-i2;
 }
 

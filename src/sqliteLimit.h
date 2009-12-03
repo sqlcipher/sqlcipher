@@ -188,3 +188,18 @@
 #ifndef SQLITE_MAX_LIKE_PATTERN_LENGTH
 # define SQLITE_MAX_LIKE_PATTERN_LENGTH 50000
 #endif
+
+/*
+** Maximum depth of recursion for triggers.
+**
+** A value of 1 means that a trigger program will not be able to itself
+** fire any triggers. A value of 0 means that no trigger programs at all 
+** may be executed.
+*/
+#ifndef SQLITE_MAX_TRIGGER_DEPTH
+#if defined(SQLITE_SMALL_STACK)
+# define SQLITE_MAX_TRIGGER_DEPTH 10
+#else
+# define SQLITE_MAX_TRIGGER_DEPTH 1000
+#endif
+#endif

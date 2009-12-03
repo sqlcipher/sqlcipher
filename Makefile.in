@@ -175,7 +175,7 @@ NAWK = @AWK@
 #
 OBJS0 = alter.lo analyze.lo attach.lo auth.lo backup.lo bitvec.lo btmutex.lo \
         btree.lo build.lo callback.lo complete.lo date.lo \
-        delete.lo expr.lo fault.lo func.lo global.lo \
+        delete.lo expr.lo fault.lo fkey.lo func.lo global.lo \
         hash.lo journal.lo insert.lo legacy.lo loadext.lo \
         main.lo malloc.lo mem0.lo mem1.lo mem2.lo mem3.lo mem5.lo \
         memjournal.lo \
@@ -219,6 +219,7 @@ SRC = \
   $(TOP)/src/delete.c \
   $(TOP)/src/expr.c \
   $(TOP)/src/fault.c \
+  $(TOP)/src/fkey.c \
   $(TOP)/src/func.c \
   $(TOP)/src/global.c \
   $(TOP)/src/hash.c \
@@ -246,9 +247,9 @@ SRC = \
   $(TOP)/src/os.c \
   $(TOP)/src/os.h \
   $(TOP)/src/os_common.h \
+  $(TOP)/src/os_os2.c \
   $(TOP)/src/os_unix.c \
   $(TOP)/src/os_win.c \
-  $(TOP)/src/os_os2.c \
   $(TOP)/src/pager.c \
   $(TOP)/src/pager.h \
   $(TOP)/src/parse.y \
@@ -349,7 +350,7 @@ TESTSRC2 = \
   $(TOP)/src/expr.c \
   $(TOP)/src/func.c \
   $(TOP)/src/insert.c \
-  $(TOP)/src/malloc.c \
+  $(TOP)/src/mem5.c \
   $(TOP)/src/os.c \
   $(TOP)/src/os_os2.c \
   $(TOP)/src/os_unix.c \
@@ -392,9 +393,9 @@ TESTSRC = \
   $(TOP)/src/test_devsym.c \
   $(TOP)/src/test_func.c \
   $(TOP)/src/test_hexio.c \
+  $(TOP)/src/test_init.c \
   $(TOP)/src/test_journal.c \
   $(TOP)/src/test_malloc.c \
-  $(TOP)/src/test_md5.c \
   $(TOP)/src/test_mutex.c \
   $(TOP)/src/test_onefile.c \
   $(TOP)/src/test_osinst.c \
@@ -402,7 +403,8 @@ TESTSRC = \
   $(TOP)/src/test_schema.c \
   $(TOP)/src/test_server.c \
   $(TOP)/src/test_tclvar.c \
-  $(TOP)/src/test_thread.c
+  $(TOP)/src/test_thread.c \
+  $(TOP)/src/test_wsd.c
 
 # Header files used by all library source files.
 #
@@ -570,6 +572,9 @@ expr.lo:	$(TOP)/src/expr.c $(HDR)
 fault.lo:	$(TOP)/src/fault.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/fault.c
 
+fkey.lo:	$(TOP)/src/fkey.c $(HDR)
+	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/fkey.c
+
 func.lo:	$(TOP)/src/func.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/func.c
 
@@ -698,9 +703,8 @@ select.lo:	$(TOP)/src/select.c $(HDR)
 status.lo:	$(TOP)/src/status.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/status.c
 
-sqlite3.h:	$(TOP)/src/sqlite.h.in 
-	sed -e s/--VERS--/$(RELEASE)/ $(TOP)/src/sqlite.h.in | \
-	sed -e s/--VERSION-NUMBER--/$(VERSION_NUMBER)/ >sqlite3.h
+sqlite3.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest.uuid $(TOP)/VERSION
+	tclsh $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3.h
 
 table.lo:	$(TOP)/src/table.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/table.c
