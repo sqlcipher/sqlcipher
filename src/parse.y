@@ -196,9 +196,9 @@ id(A) ::= INDEXED(X).    {A = X;}
 // This obviates the need for the "id" nonterminal.
 //
 %fallback ID
-  ABORT AFTER ANALYZE ASC ATTACH BEFORE BEGIN BY CASCADE CAST COLUMNKW CONFLICT
-  DATABASE DEFERRED DESC DETACH EACH END EXCLUSIVE EXPLAIN FAIL FOR
-  IGNORE IMMEDIATE INITIALLY INSTEAD LIKE_KW MATCH PLAN
+  ABORT ACTION AFTER ANALYZE ASC ATTACH BEFORE BEGIN BY CASCADE CAST COLUMNKW
+  CONFLICT DATABASE DEFERRED DESC DETACH EACH END EXCLUSIVE EXPLAIN FAIL FOR
+  IGNORE IMMEDIATE INITIALLY INSTEAD LIKE_KW MATCH NO PLAN
   QUERY KEY OF OFFSET PRAGMA RAISE RELEASE REPLACE RESTRICT ROW ROLLBACK
   SAVEPOINT TEMP TRIGGER VACUUM VIEW VIRTUAL
 %ifdef SQLITE_OMIT_COMPOUND_SELECT
@@ -230,7 +230,7 @@ id(A) ::= INDEXED(X).    {A = X;}
 %left STAR SLASH REM.
 %left CONCAT.
 %left COLLATE.
-%right UMINUS UPLUS BITNOT.
+%right BITNOT.
 
 // And "ids" is an identifer-or-string.
 //
@@ -314,20 +314,20 @@ autoinc(X) ::= AUTOINCR.  {X = 1;}
 // check fails.
 //
 %type refargs {int}
-refargs(A) ::= .                     { A = OE_Restrict * 0x010101; }
+refargs(A) ::= .                  { A = OE_None*0x0101; /* EV: R-19803-45884 */}
 refargs(A) ::= refargs(X) refarg(Y). { A = (X & ~Y.mask) | Y.value; }
 %type refarg {struct {int value; int mask;}}
 refarg(A) ::= MATCH nm.              { A.value = 0;     A.mask = 0x000000; }
 refarg(A) ::= ON DELETE refact(X).   { A.value = X;     A.mask = 0x0000ff; }
 refarg(A) ::= ON UPDATE refact(X).   { A.value = X<<8;  A.mask = 0x00ff00; }
-refarg(A) ::= ON INSERT refact(X).   { A.value = X<<16; A.mask = 0xff0000; }
 %type refact {int}
-refact(A) ::= SET NULL.              { A = OE_SetNull; }
-refact(A) ::= SET DEFAULT.           { A = OE_SetDflt; }
-refact(A) ::= CASCADE.               { A = OE_Cascade; }
-refact(A) ::= RESTRICT.              { A = OE_Restrict; }
+refact(A) ::= SET NULL.              { A = OE_SetNull;  /* EV: R-33326-45252 */}
+refact(A) ::= SET DEFAULT.           { A = OE_SetDflt;  /* EV: R-33326-45252 */}
+refact(A) ::= CASCADE.               { A = OE_Cascade;  /* EV: R-33326-45252 */}
+refact(A) ::= RESTRICT.              { A = OE_Restrict; /* EV: R-33326-45252 */}
+refact(A) ::= NO ACTION.             { A = OE_None;     /* EV: R-33326-45252 */}
 %type defer_subclause {int}
-defer_subclause(A) ::= NOT DEFERRABLE init_deferred_pred_opt(X).  {A = X;}
+defer_subclause(A) ::= NOT DEFERRABLE init_deferred_pred_opt.     {A = 0;}
 defer_subclause(A) ::= DEFERRABLE init_deferred_pred_opt(X).      {A = X;}
 %type init_deferred_pred_opt {int}
 init_deferred_pred_opt(A) ::= .                       {A = 0;}
@@ -884,10 +884,26 @@ expr(A) ::= expr(X) likeop(OP) expr(Y) escape(E).  [LIKE_KW]  {
 }
 
 expr(A) ::= expr(X) ISNULL|NOTNULL(E).   {spanUnaryPostfix(&A,pParse,@E,&X,&E);}
-expr(A) ::= expr(X) IS NULL(E).   {spanUnaryPostfix(&A,pParse,TK_ISNULL,&X,&E);}
 expr(A) ::= expr(X) NOT NULL(E). {spanUnaryPostfix(&A,pParse,TK_NOTNULL,&X,&E);}
-expr(A) ::= expr(X) IS NOT NULL(E).
-                                 {spanUnaryPostfix(&A,pParse,TK_NOTNULL,&X,&E);}
+
+//    expr1 IS expr2
+//    expr1 IS NOT expr2
+//
+// If expr2 is NULL then code as TK_ISNULL or TK_NOTNULL.  If expr2
+// is any other expression, code as TK_IS or TK_ISNOT.
+// 
+expr(A) ::= expr(X) IS expr(Y).     {
+  spanBinaryExpr(&A,pParse,TK_IS,&X,&Y);
+  if( pParse->db->mallocFailed==0  && Y.pExpr->op==TK_NULL ){
+    A.pExpr->op = TK_ISNULL;
+  }
+}
+expr(A) ::= expr(X) IS NOT expr(Y). {
+  spanBinaryExpr(&A,pParse,TK_ISNOT,&X,&Y);
+  if( pParse->db->mallocFailed==0  && Y.pExpr->op==TK_NULL ){
+    A.pExpr->op = TK_NOTNULL;
+  }
+}
 
 %include {
   /* Construct an expression node for a unary prefix operator
@@ -909,9 +925,9 @@ expr(A) ::= expr(X) IS NOT NULL(E).
 
 expr(A) ::= NOT(B) expr(X).    {spanUnaryPrefix(&A,pParse,@B,&X,&B);}
 expr(A) ::= BITNOT(B) expr(X). {spanUnaryPrefix(&A,pParse,@B,&X,&B);}
-expr(A) ::= MINUS(B) expr(X). [UMINUS]
+expr(A) ::= MINUS(B) expr(X). [BITNOT]
                                {spanUnaryPrefix(&A,pParse,TK_UMINUS,&X,&B);}
-expr(A) ::= PLUS(B) expr(X). [UPLUS]
+expr(A) ::= PLUS(B) expr(X). [BITNOT]
                                {spanUnaryPrefix(&A,pParse,TK_UPLUS,&X,&B);}
 
 %type between_op {int}

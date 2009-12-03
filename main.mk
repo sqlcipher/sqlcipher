@@ -52,7 +52,7 @@ TCCX += -I$(TOP)/ext/async
 #
 LIBOBJ+= alter.o analyze.o attach.o auth.o \
          backup.o bitvec.o btmutex.o btree.o build.o \
-         callback.o complete.o date.o delete.o expr.o fault.o \
+         callback.o complete.o date.o delete.o expr.o fault.o fkey.o \
          fts3.o fts3_expr.o fts3_hash.o fts3_icu.o fts3_porter.o \
          fts3_tokenizer.o fts3_tokenizer1.o \
          func.o global.o hash.o \
@@ -90,6 +90,7 @@ SRC = \
   $(TOP)/src/delete.c \
   $(TOP)/src/expr.c \
   $(TOP)/src/fault.c \
+  $(TOP)/src/fkey.c \
   $(TOP)/src/func.c \
   $(TOP)/src/global.c \
   $(TOP)/src/hash.c \
@@ -192,7 +193,7 @@ SRC += \
   $(TOP)/ext/fts3/fts3_tokenizer1.c
 SRC += \
   $(TOP)/ext/icu/sqliteicu.h \
-  $(TOP)/ext/icu/icu.c 
+  $(TOP)/ext/icu/icu.c
 SRC += \
   $(TOP)/ext/rtree/rtree.h \
   $(TOP)/ext/rtree/rtree.c
@@ -229,9 +230,9 @@ TESTSRC = \
   $(TOP)/src/test_devsym.c \
   $(TOP)/src/test_func.c \
   $(TOP)/src/test_hexio.c \
+  $(TOP)/src/test_init.c \
   $(TOP)/src/test_journal.c \
   $(TOP)/src/test_malloc.c \
-  $(TOP)/src/test_md5.c \
   $(TOP)/src/test_mutex.c \
   $(TOP)/src/test_onefile.c \
   $(TOP)/src/test_osinst.c \
@@ -240,7 +241,7 @@ TESTSRC = \
   $(TOP)/src/test_server.c \
   $(TOP)/src/test_tclvar.c \
   $(TOP)/src/test_thread.c \
-  $(TOP)/src/test_wsd.c \
+  $(TOP)/src/test_wsd.c
 
 #TESTSRC += $(TOP)/ext/fts2/fts2_tokenizer.c
 #TESTSRC += $(TOP)/ext/fts3/fts3_tokenizer.c
@@ -248,7 +249,8 @@ TESTSRC = \
 TESTSRC2 = \
   $(TOP)/src/attach.c $(TOP)/src/backup.c $(TOP)/src/btree.c                   \
   $(TOP)/src/build.c $(TOP)/src/date.c                                         \
-  $(TOP)/src/expr.c $(TOP)/src/func.c $(TOP)/src/insert.c $(TOP)/src/os.c      \
+  $(TOP)/src/expr.c $(TOP)/src/func.c $(TOP)/src/insert.c $(TOP)/src/mem5.c    \
+  $(TOP)/src/os.c                                                              \
   $(TOP)/src/os_os2.c $(TOP)/src/os_unix.c $(TOP)/src/os_win.c                 \
   $(TOP)/src/pager.c $(TOP)/src/pragma.c $(TOP)/src/prepare.c                  \
   $(TOP)/src/printf.c $(TOP)/src/random.c $(TOP)/src/pcache.c                  \
@@ -388,10 +390,8 @@ parse.c:	$(TOP)/src/parse.y lemon $(TOP)/addopcodes.awk
 	mv parse.h parse.h.temp
 	awk -f $(TOP)/addopcodes.awk parse.h.temp >parse.h
 
-sqlite3.h:	$(TOP)/src/sqlite.h.in 
-	sed -e s/--VERS--/`cat ${TOP}/VERSION`/ \
-	    -e s/--VERSION-NUMBER--/`cat ${TOP}/VERSION | sed 's/[^0-9]/ /g' | $(NAWK) '{printf "%d%03d%03d",$$1,$$2,$$3}'`/ \
-                 $(TOP)/src/sqlite.h.in >sqlite3.h
+sqlite3.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest.uuid $(TOP)/VERSION
+	tclsh $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3.h
 
 keywordhash.h:	$(TOP)/tool/mkkeywordhash.c
 	$(BCC) -o mkkeywordhash $(OPTS) $(TOP)/tool/mkkeywordhash.c

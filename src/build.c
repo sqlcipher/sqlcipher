@@ -64,31 +64,32 @@ void sqlite3TableLock(
   u8 isWriteLock,    /* True for a write lock */
   const char *zName  /* Name of the table to be locked */
 ){
+  Parse *pToplevel = sqlite3ParseToplevel(pParse);
   int i;
   int nBytes;
   TableLock *p;
-
   assert( iDb>=0 );
-  for(i=0; i<pParse->nTableLock; i++){
-    p = &pParse->aTableLock[i];
+
+  for(i=0; i<pToplevel->nTableLock; i++){
+    p = &pToplevel->aTableLock[i];
     if( p->iDb==iDb && p->iTab==iTab ){
       p->isWriteLock = (p->isWriteLock || isWriteLock);
       return;
     }
   }
 
-  nBytes = sizeof(TableLock) * (pParse->nTableLock+1);
-  pParse->aTableLock = 
-      sqlite3DbReallocOrFree(pParse->db, pParse->aTableLock, nBytes);
-  if( pParse->aTableLock ){
-    p = &pParse->aTableLock[pParse->nTableLock++];
+  nBytes = sizeof(TableLock) * (pToplevel->nTableLock+1);
+  pToplevel->aTableLock =
+      sqlite3DbReallocOrFree(pToplevel->db, pToplevel->aTableLock, nBytes);
+  if( pToplevel->aTableLock ){
+    p = &pToplevel->aTableLock[pToplevel->nTableLock++];
     p->iDb = iDb;
     p->iTab = iTab;
     p->isWriteLock = isWriteLock;
     p->zName = zName;
   }else{
-    pParse->nTableLock = 0;
-    pParse->db->mallocFailed = 1;
+    pToplevel->nTableLock = 0;
+    pToplevel->db->mallocFailed = 1;
   }
 }
 
@@ -137,6 +138,8 @@ void sqlite3FinishCoding(Parse *pParse){
   ** vdbe program
   */
   v = sqlite3GetVdbe(pParse);
+  assert( !pParse->isMultiWrite 
+       || sqlite3VdbeAssertMayAbort(v, pParse->mayAbort));
   if( v ){
     sqlite3VdbeAddOp0(v, OP_Halt);
 
@@ -193,8 +196,12 @@ void sqlite3FinishCoding(Parse *pParse){
     sqlite3VdbeTrace(v, trace);
 #endif
     assert( pParse->iCacheLevel==0 );  /* Disables and re-enables match */
+    /* A minimum of one cursor is required if autoincrement is used
+    *  See ticket [a696379c1f08866] */
+    if( pParse->pAinc!=0 && pParse->nTab==0 ) pParse->nTab = 1;
     sqlite3VdbeMakeReady(v, pParse->nVar, pParse->nMem,
-                         pParse->nTab, pParse->explain);
+                         pParse->nTab, pParse->nMaxArg, pParse->explain,
+                         pParse->isMultiWrite && pParse->mayAbort);
     pParse->rc = SQLITE_DONE;
     pParse->colNamesSet = 0;
   }else if( pParse->rc==SQLITE_OK ){
@@ -342,7 +349,9 @@ Index *sqlite3FindIndex(sqlite3 *db, const char *zName, const char *zDb){
 */
 static void freeIndex(Index *p){
   sqlite3 *db = p->pTable->dbMem;
-  /* testcase( db==0 ); */
+#ifndef SQLITE_OMIT_ANALYZE
+  sqlite3DeleteIndexSamples(p);
+#endif
   sqlite3DbFree(db, p->zColAff);
   sqlite3DbFree(db, p);
 }
@@ -495,7 +504,6 @@ static void sqliteResetColumnNames(Table *pTable){
 */
 void sqlite3DeleteTable(Table *pTable){
   Index *pIndex, *pNext;
-  FKey *pFKey, *pNextFKey;
   sqlite3 *db;
 
   if( pTable==0 ) return;
@@ -517,13 +525,8 @@ void sqlite3DeleteTable(Table *pTable){
     sqlite3DeleteIndex(pIndex);
   }
 
-#ifndef SQLITE_OMIT_FOREIGN_KEY
-  /* Delete all foreign keys associated with this table. */
-  for(pFKey=pTable->pFKey; pFKey; pFKey=pNextFKey){
-    pNextFKey = pFKey->pNextFrom;
-    sqlite3DbFree(db, pFKey);
-  }
-#endif
+  /* Delete any foreign keys attached to this table. */
+  sqlite3FkDelete(pTable);
 
   /* Delete the Table structure itself.
   */
@@ -1165,7 +1168,11 @@ void sqlite3AddPrimaryKey(
        "INTEGER PRIMARY KEY");
 #endif
   }else{
-    sqlite3CreateIndex(pParse, 0, 0, 0, pList, onError, 0, 0, sortOrder, 0);
+    Index *p;
+    p = sqlite3CreateIndex(pParse, 0, 0, 0, pList, onError, 0, 0, sortOrder, 0);
+    if( p ){
+      p->autoIndex = 2;
+    }
     pList = 0;
   }
 
@@ -1256,7 +1263,7 @@ CollSeq *sqlite3LocateCollSeq(Parse *pParse, const char *zName){
 
   pColl = sqlite3FindCollSeq(db, enc, zName, initbusy);
   if( !initbusy && (!pColl || !pColl->xCmp) ){
-    pColl = sqlite3GetCollSeq(db, pColl, zName);
+    pColl = sqlite3GetCollSeq(db, enc, pColl, zName);
     if( !pColl ){
       sqlite3ErrorMsg(pParse, "no such collation sequence: %s", zName);
     }
@@ -1876,6 +1883,7 @@ static void destroyRootPage(Parse *pParse, int iTable, int iDb){
   Vdbe *v = sqlite3GetVdbe(pParse);
   int r1 = sqlite3GetTempReg(pParse);
   sqlite3VdbeAddOp3(v, OP_Destroy, iTable, r1, iDb);
+  sqlite3MayAbort(pParse);
 #ifndef SQLITE_OMIT_AUTOVACUUM
   /* OP_Destroy stores an in integer r1. If this integer
   ** is non-zero, then it is the root page number of a table moved to
@@ -2053,6 +2061,7 @@ void sqlite3DropTable(Parse *pParse, SrcList *pName, int isView, int noErr){
       sqlite3VdbeAddOp0(v, OP_VBegin);
     }
 #endif
+    sqlite3FkDropTable(pParse, pName, pTab);
 
     /* Drop all triggers associated with the table being dropped. Code
     ** is generated to remove entries from sqlite_master and/or
@@ -2143,6 +2152,7 @@ void sqlite3CreateForeignKey(
   sqlite3 *db = pParse->db;
 #ifndef SQLITE_OMIT_FOREIGN_KEY
   FKey *pFKey = 0;
+  FKey *pNextTo;
   Table *p = pParse->pNewTable;
   int nByte;
   int i;
@@ -2217,9 +2227,21 @@ void sqlite3CreateForeignKey(
     }
   }
   pFKey->isDeferred = 0;
-  pFKey->deleteConf = (u8)(flags & 0xff);
-  pFKey->updateConf = (u8)((flags >> 8 ) & 0xff);
-  pFKey->insertConf = (u8)((flags >> 16 ) & 0xff);
+  pFKey->aAction[0] = (u8)(flags & 0xff);            /* ON DELETE action */
+  pFKey->aAction[1] = (u8)((flags >> 8 ) & 0xff);    /* ON UPDATE action */
+
+  pNextTo = (FKey *)sqlite3HashInsert(&p->pSchema->fkeyHash, 
+      pFKey->zTo, sqlite3Strlen30(pFKey->zTo), (void *)pFKey
+  );
+  if( pNextTo==pFKey ){
+    db->mallocFailed = 1;
+    goto fk_end;
+  }
+  if( pNextTo ){
+    assert( pNextTo->pPrevTo==0 );
+    pFKey->pNextTo = pNextTo;
+    pNextTo->pPrevTo = pFKey;
+  }
 
   /* Link the foreign key to the table as the last step.
   */
@@ -2245,7 +2267,7 @@ void sqlite3DeferForeignKey(Parse *pParse, int isDeferred){
   Table *pTab;
   FKey *pFKey;
   if( (pTab = pParse->pNewTable)==0 || (pFKey = pTab->pFKey)==0 ) return;
-  assert( isDeferred==0 || isDeferred==1 );
+  assert( isDeferred==0 || isDeferred==1 ); /* EV: R-30323-21917 */
   pFKey->isDeferred = (u8)isDeferred;
 #endif
 }
@@ -2317,8 +2339,8 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
     ** since sqlite3ReleaseTempRange() was called, it is safe to do so.
     */
     sqlite3VdbeAddOp4(v, OP_IsUnique, iIdx, j2, regRowid, pRegKey, P4_INT32);
-    sqlite3VdbeAddOp4(v, OP_Halt, SQLITE_CONSTRAINT, OE_Abort, 0,
-                    "indexed columns are not unique", P4_STATIC);
+    sqlite3HaltConstraint(
+        pParse, OE_Abort, "indexed columns are not unique", P4_STATIC);
   }
   sqlite3VdbeAddOp2(v, OP_IdxInsert, iIdx, regRecord);
   sqlite3VdbeChangeP5(v, OPFLAG_USESEEKRESULT);
@@ -2340,8 +2362,12 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
 ** pList is a list of columns to be indexed.  pList will be NULL if this
 ** is a primary key or unique-constraint on the most recent column added
 ** to the table currently under construction.  
+**
+** If the index is created successfully, return a pointer to the new Index
+** structure. This is used by sqlite3AddPrimaryKey() to mark the index
+** as the tables primary key (Index.autoIndex==2).
 */
-void sqlite3CreateIndex(
+Index *sqlite3CreateIndex(
   Parse *pParse,     /* All information about this parse */
   Token *pName1,     /* First part of index name. May be NULL */
   Token *pName2,     /* Second part of index name. May be NULL */
@@ -2353,6 +2379,7 @@ void sqlite3CreateIndex(
   int sortOrder,     /* Sort order of primary key when pList==NULL */
   int ifNotExist     /* Omit error if index already exists */
 ){
+  Index *pRet = 0;     /* Pointer to return */
   Table *pTab = 0;     /* Table to be indexed */
   Index *pIndex = 0;   /* The index to be created */
   char *zName = 0;     /* Name of the index */
@@ -2788,6 +2815,7 @@ void sqlite3CreateIndex(
       pIndex->pNext = pOther->pNext;
       pOther->pNext = pIndex;
     }
+    pRet = pIndex;
     pIndex = 0;
   }
 
@@ -2800,7 +2828,7 @@ exit_create_index:
   sqlite3ExprListDelete(db, pList);
   sqlite3SrcListDelete(db, pTblName);
   sqlite3DbFree(db, zName);
-  return;
+  return pRet;
 }
 
 /*
@@ -3421,26 +3449,26 @@ int sqlite3OpenTempDatabase(Parse *pParse){
 ** early in the code, before we know if any database tables will be used.
 */
 void sqlite3CodeVerifySchema(Parse *pParse, int iDb){
-  sqlite3 *db;
-  Vdbe *v;
-  int mask;
+  Parse *pToplevel = sqlite3ParseToplevel(pParse);
 
-  v = sqlite3GetVdbe(pParse);
-  if( v==0 ) return;  /* This only happens if there was a prior error */
-  db = pParse->db;
-  if( pParse->cookieGoto==0 ){
-    pParse->cookieGoto = sqlite3VdbeAddOp2(v, OP_Goto, 0, 0)+1;
+  if( pToplevel->cookieGoto==0 ){
+    Vdbe *v = sqlite3GetVdbe(pToplevel);
+    if( v==0 ) return;  /* This only happens if there was a prior error */
+    pToplevel->cookieGoto = sqlite3VdbeAddOp2(v, OP_Goto, 0, 0)+1;
   }
   if( iDb>=0 ){
+    sqlite3 *db = pToplevel->db;
+    int mask;
+
     assert( iDb<db->nDb );
     assert( db->aDb[iDb].pBt!=0 || iDb==1 );
     assert( iDb<SQLITE_MAX_ATTACHED+2 );
     mask = 1<<iDb;
-    if( (pParse->cookieMask & mask)==0 ){
-      pParse->cookieMask |= mask;
-      pParse->cookieValue[iDb] = db->aDb[iDb].pSchema->schema_cookie;
+    if( (pToplevel->cookieMask & mask)==0 ){
+      pToplevel->cookieMask |= mask;
+      pToplevel->cookieValue[iDb] = db->aDb[iDb].pSchema->schema_cookie;
       if( !OMIT_TEMPDB && iDb==1 ){
-        sqlite3OpenTempDatabase(pParse);
+        sqlite3OpenTempDatabase(pToplevel);
       }
     }
   }
@@ -3460,14 +3488,56 @@ void sqlite3CodeVerifySchema(Parse *pParse, int iDb){
 ** necessary to undo a write and the checkpoint should not be set.
 */
 void sqlite3BeginWriteOperation(Parse *pParse, int setStatement, int iDb){
+  Parse *pToplevel = sqlite3ParseToplevel(pParse);
   sqlite3CodeVerifySchema(pParse, iDb);
-  pParse->writeMask |= 1<<iDb;
-  if( setStatement && pParse->nested==0 ){
-    /* Every place where this routine is called with setStatement!=0 has
-    ** already successfully created a VDBE. */
-    assert( pParse->pVdbe );
-    sqlite3VdbeAddOp1(pParse->pVdbe, OP_Statement, iDb);
+  pToplevel->writeMask |= 1<<iDb;
+  pToplevel->isMultiWrite |= setStatement;
+}
+
+/*
+** Indicate that the statement currently under construction might write
+** more than one entry (example: deleting one row then inserting another,
+** inserting multiple rows in a table, or inserting a row and index entries.)
+** If an abort occurs after some of these writes have completed, then it will
+** be necessary to undo the completed writes.
+*/
+void sqlite3MultiWrite(Parse *pParse){
+  Parse *pToplevel = sqlite3ParseToplevel(pParse);
+  pToplevel->isMultiWrite = 1;
+}
+
+/* 
+** The code generator calls this routine if is discovers that it is
+** possible to abort a statement prior to completion.  In order to 
+** perform this abort without corrupting the database, we need to make
+** sure that the statement is protected by a statement transaction.
+**
+** Technically, we only need to set the mayAbort flag if the
+** isMultiWrite flag was previously set.  There is a time dependency
+** such that the abort must occur after the multiwrite.  This makes
+** some statements involving the REPLACE conflict resolution algorithm
+** go a little faster.  But taking advantage of this time dependency
+** makes it more difficult to prove that the code is correct (in 
+** particular, it prevents us from writing an effective
+** implementation of sqlite3AssertMayAbort()) and so we have chosen
+** to take the safe route and skip the optimization.
+*/
+void sqlite3MayAbort(Parse *pParse){
+  Parse *pToplevel = sqlite3ParseToplevel(pParse);
+  pToplevel->mayAbort = 1;
+}
+
+/*
+** Code an OP_Halt that causes the vdbe to return an SQLITE_CONSTRAINT
+** error. The onError parameter determines which (if any) of the statement
+** and/or current transaction is rolled back.
+*/
+void sqlite3HaltConstraint(Parse *pParse, int onError, char *p4, int p4type){
+  Vdbe *v = sqlite3GetVdbe(pParse);
+  if( onError==OE_Abort ){
+    sqlite3MayAbort(pParse);
   }
+  sqlite3VdbeAddOp4(v, OP_Halt, SQLITE_CONSTRAINT, onError, 0, p4, p4type);
 }
 
 /*

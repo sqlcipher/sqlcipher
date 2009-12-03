@@ -18,7 +18,7 @@
 ** file simultaneously, or one process from reading the database while
 ** another is writing.
 **
-** @(#) $Id: pager.c,v 1.628 2009/07/27 14:15:44 danielk1977 Exp $
+** @(#) $Id: pager.c,v 1.629 2009/08/10 17:48:57 drh Exp $
 */
 #ifndef SQLITE_OMIT_DISKIO
 #include "sqliteInt.h"
@@ -114,12 +114,12 @@ int sqlite3PagerTrace=1;  /* True to enable tracing */
 #endif
 
 /*
-** The maximum allowed sector size. 16MB. If the xSectorsize() method 
+** The maximum allowed sector size. 64KiB. If the xSectorsize() method 
 ** returns a value larger than this, then MAX_SECTOR_SIZE is used instead.
 ** This could conceivably cause corruption following a power failure on
 ** such a system. This is currently an undocumented limit.
 */
-#define MAX_SECTOR_SIZE 0x0100000
+#define MAX_SECTOR_SIZE 0x10000
 
 /*
 ** An instance of the following structure is allocated for each active
@@ -785,8 +785,7 @@ static int writeJournalHdr(Pager *pPager){
     memcpy(zHeader, aJournalMagic, sizeof(aJournalMagic));
     put32bits(&zHeader[sizeof(aJournalMagic)], 0xffffffff);
   }else{
-    zHeader[0] = '\0';
-    put32bits(&zHeader[sizeof(aJournalMagic)], 0);
+    memset(zHeader, 0, sizeof(aJournalMagic)+4);
   }
 
   /* The random check-hash initialiser */ 
@@ -1821,21 +1820,15 @@ static void setSectorSize(Pager *pPager){
 **       database to during a rollback.
 **  (5)  4 byte big-endian integer which is the sector size.  The header
 **       is this many bytes in size.
-**  (6)  4 byte big-endian integer which is the page case.
-**  (7)  4 byte integer which is the number of bytes in the master journal
-**       name.  The value may be zero (indicate that there is no master
-**       journal.)
-**  (8)  N bytes of the master journal name.  The name will be nul-terminated
-**       and might be shorter than the value read from (5).  If the first byte
-**       of the name is \000 then there is no master journal.  The master
-**       journal name is stored in UTF-8.
-**  (9)  Zero or more pages instances, each as follows:
+**  (6)  4 byte big-endian integer which is the page size.
+**  (7)  zero padding out to the next sector size.
+**  (8)  Zero or more pages instances, each as follows:
 **        +  4 byte page number.
 **        +  pPager->pageSize bytes of data.
 **        +  4 byte checksum
 **
-** When we speak of the journal header, we mean the first 8 items above.
-** Each entry in the journal is an instance of the 9th item.
+** When we speak of the journal header, we mean the first 7 items above.
+** Each entry in the journal is an instance of the 8th item.
 **
 ** Call the value from the second bullet "nRec".  nRec is the number of
 ** valid page entries in the journal.  In most cases, you can compute the

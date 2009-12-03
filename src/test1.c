@@ -2309,16 +2309,20 @@ static int test_collate_func(
       assert(0);
   }
 
+  sqlite3BeginBenignMalloc();
   pVal = sqlite3ValueNew(0);
-  sqlite3ValueSetStr(pVal, nA, zA, encin, SQLITE_STATIC);
-  n = sqlite3_value_bytes(pVal);
-  Tcl_ListObjAppendElement(i,pX,
-      Tcl_NewStringObj((char*)sqlite3_value_text(pVal),n));
-  sqlite3ValueSetStr(pVal, nB, zB, encin, SQLITE_STATIC);
-  n = sqlite3_value_bytes(pVal);
-  Tcl_ListObjAppendElement(i,pX,
-      Tcl_NewStringObj((char*)sqlite3_value_text(pVal),n));
-  sqlite3ValueFree(pVal);
+  if( pVal ){
+    sqlite3ValueSetStr(pVal, nA, zA, encin, SQLITE_STATIC);
+    n = sqlite3_value_bytes(pVal);
+    Tcl_ListObjAppendElement(i,pX,
+        Tcl_NewStringObj((char*)sqlite3_value_text(pVal),n));
+    sqlite3ValueSetStr(pVal, nB, zB, encin, SQLITE_STATIC);
+    n = sqlite3_value_bytes(pVal);
+    Tcl_ListObjAppendElement(i,pX,
+        Tcl_NewStringObj((char*)sqlite3_value_text(pVal),n));
+    sqlite3ValueFree(pVal);
+  }
+  sqlite3EndBenignMalloc();
 
   Tcl_EvalObjEx(i, pX, 0);
   Tcl_DecrRefCount(pX);
@@ -3299,6 +3303,7 @@ static int test_prepare(
   if( Tcl_GetIntFromObj(interp, objv[3], &bytes) ) return TCL_ERROR;
 
   rc = sqlite3_prepare(db, zSql, bytes, &pStmt, objc>=5 ? &zTail : 0);
+  Tcl_ResetResult(interp);
   if( sqlite3TestErrCode(interp, db, rc) ) return TCL_ERROR;
   if( zTail && objc>=5 ){
     if( bytes>=0 ){
@@ -3356,6 +3361,7 @@ static int test_prepare_v2(
 
   rc = sqlite3_prepare_v2(db, zSql, bytes, &pStmt, objc>=5 ? &zTail : 0);
   assert(rc==SQLITE_OK || pStmt==0);
+  Tcl_ResetResult(interp);
   if( sqlite3TestErrCode(interp, db, rc) ) return TCL_ERROR;
   if( zTail && objc>=5 ){
     if( bytes>=0 ){
@@ -4717,10 +4723,11 @@ static int test_limit(
     { "SQLITE_LIMIT_ATTACHED",            SQLITE_LIMIT_ATTACHED             },
     { "SQLITE_LIMIT_LIKE_PATTERN_LENGTH", SQLITE_LIMIT_LIKE_PATTERN_LENGTH  },
     { "SQLITE_LIMIT_VARIABLE_NUMBER",     SQLITE_LIMIT_VARIABLE_NUMBER      },
+    { "SQLITE_LIMIT_TRIGGER_DEPTH",       SQLITE_LIMIT_TRIGGER_DEPTH        },
     
     /* Out of range test cases */
     { "SQLITE_LIMIT_TOOSMALL",            -1,                               },
-    { "SQLITE_LIMIT_TOOBIG",              SQLITE_LIMIT_VARIABLE_NUMBER+1    },
+    { "SQLITE_LIMIT_TOOBIG",              SQLITE_LIMIT_TRIGGER_DEPTH+1      },
   };
   int i, id;
   int val;
@@ -4864,10 +4871,42 @@ static int test_unlock_notify(
 
 
 /*
+**     tcl_objproc COMMANDNAME ARGS...
+**
+** Run a TCL command using its objProc interface.  Throw an error if
+** the command has no objProc interface.
+*/
+static int runAsObjProc(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  Tcl_CmdInfo cmdInfo;
+  if( objc<2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "COMMAND ...");
+    return TCL_ERROR;
+  }
+  if( !Tcl_GetCommandInfo(interp, Tcl_GetString(objv[1]), &cmdInfo) ){
+    Tcl_AppendResult(interp, "command not found: ",
+           Tcl_GetString(objv[1]), (char*)0);
+    return TCL_ERROR;
+  }
+  if( cmdInfo.objProc==0 ){
+    Tcl_AppendResult(interp, "command has no objProc: ",
+           Tcl_GetString(objv[1]), (char*)0);
+    return TCL_ERROR;
+  }
+  return cmdInfo.objProc(cmdInfo.objClientData, interp, objc-1, objv+1);
+}
+
+
+/*
 ** Register commands with the TCL interpreter.
 */
 int Sqlitetest1_Init(Tcl_Interp *interp){
   extern int sqlite3_search_count;
+  extern int sqlite3_found_count;
   extern int sqlite3_interrupt_count;
   extern int sqlite3_open_file_count;
   extern int sqlite3_sort_count;
@@ -4978,6 +5017,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "save_prng_state",               save_prng_state,    0 },
      { "restore_prng_state",            restore_prng_state, 0 },
      { "reset_prng_state",              reset_prng_state,   0 },
+     { "tcl_objproc",                   runAsObjProc,       0 },
 
      /* sqlite3_column_*() API */
      { "sqlite3_column_count",          test_column_count  ,0 },
@@ -5088,6 +5128,8 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
   }
   Tcl_LinkVar(interp, "sqlite_search_count", 
       (char*)&sqlite3_search_count, TCL_LINK_INT);
+  Tcl_LinkVar(interp, "sqlite_found_count", 
+      (char*)&sqlite3_found_count, TCL_LINK_INT);
   Tcl_LinkVar(interp, "sqlite_sort_count", 
       (char*)&sqlite3_sort_count, TCL_LINK_INT);
   Tcl_LinkVar(interp, "sqlite3_max_blobsize", 

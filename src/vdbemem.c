@@ -270,7 +270,11 @@ int sqlite3VdbeMemFinalize(Mem *pMem, FuncDef *pFunc){
 */
 void sqlite3VdbeMemReleaseExternal(Mem *p){
   assert( p->db==0 || sqlite3_mutex_held(p->db->mutex) );
-  if( p->flags&(MEM_Agg|MEM_Dyn|MEM_RowSet) ){
+  testcase( p->flags & MEM_Agg );
+  testcase( p->flags & MEM_Dyn );
+  testcase( p->flags & MEM_RowSet );
+  testcase( p->flags & MEM_Frame );
+  if( p->flags&(MEM_Agg|MEM_Dyn|MEM_RowSet|MEM_Frame) ){
     if( p->flags&MEM_Agg ){
       sqlite3VdbeMemFinalize(p, p->u.pDef);
       assert( (p->flags & MEM_Agg)==0 );
@@ -281,6 +285,8 @@ void sqlite3VdbeMemReleaseExternal(Mem *p){
       p->xDel = 0;
     }else if( p->flags&MEM_RowSet ){
       sqlite3RowSetClear(p->u.pRowSet);
+    }else if( p->flags&MEM_Frame ){
+      sqlite3VdbeMemSetNull(p);
     }
   }
 }
@@ -418,11 +424,14 @@ void sqlite3VdbeIntegerAffinity(Mem *pMem){
   **    (2) The integer is neither the largest nor the smallest
   **        possible integer (ticket #3922)
   **
-  ** The second term in the following conditional enforces the second
-  ** condition under the assumption that additional overflow causes
-  ** values to wrap around.
+  ** The second and third terms in the following conditional enforces
+  ** the second condition under the assumption that addition overflow causes
+  ** values to wrap around.  On x86 hardware, the third term is always
+  ** true and could be omitted.  But we leave it in because other
+  ** architectures might behave differently.
   */
-  if( pMem->r==(double)pMem->u.i && (pMem->u.i-1) < (pMem->u.i+1) ){
+  if( pMem->r==(double)pMem->u.i && pMem->u.i>SMALLEST_INT64
+      && ALWAYS(pMem->u.i<LARGEST_INT64) ){
     pMem->flags |= MEM_Int;
   }
 }
@@ -479,6 +488,9 @@ int sqlite3VdbeMemNumerify(Mem *pMem){
 ** Delete any previous value and set the value stored in *pMem to NULL.
 */
 void sqlite3VdbeMemSetNull(Mem *pMem){
+  if( pMem->flags & MEM_Frame ){
+    sqlite3VdbeFrameDelete(pMem->u.pFrame);
+  }
   if( pMem->flags & MEM_RowSet ){
     sqlite3RowSetClear(pMem->u.pRowSet);
   }
@@ -996,6 +1008,9 @@ int sqlite3ValueFromExpr(
     return SQLITE_OK;
   }
   op = pExpr->op;
+  if( op==TK_REGISTER ){
+    op = pExpr->op2;
+  }
 
   if( op==TK_STRING || op==TK_FLOAT || op==TK_INTEGER ){
     pVal = sqlite3ValueNew(db);
@@ -1006,6 +1021,7 @@ int sqlite3ValueFromExpr(
       zVal = sqlite3DbStrDup(db, pExpr->u.zToken);
       if( zVal==0 ) goto no_mem;
       sqlite3ValueSetStr(pVal, -1, zVal, SQLITE_UTF8, SQLITE_DYNAMIC);
+      if( op==TK_FLOAT ) pVal->type = SQLITE_FLOAT;
     }
     if( (op==TK_INTEGER || op==TK_FLOAT ) && affinity==SQLITE_AFF_NONE ){
       sqlite3ValueApplyAffinity(pVal, SQLITE_AFF_NUMERIC, SQLITE_UTF8);
@@ -1037,6 +1053,9 @@ int sqlite3ValueFromExpr(
   }
 #endif
 
+  if( pVal ){
+    sqlite3VdbeMemStoreType(pVal);
+  }
   *ppVal = pVal;
   return SQLITE_OK;
 

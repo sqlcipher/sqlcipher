@@ -66,8 +66,6 @@ puts $out [subst \
 ** if you want a wrapper to interface SQLite with your choice of programming
 ** language. The code for the "sqlite3" command-line shell is also in a
 ** separate file. This file contains only code for the core SQLite library.
-**
-** This amalgamation was generated on $today.
 */
 #define SQLITE_CORE 1
 #define SQLITE_AMALGAMATION 1}]
@@ -166,6 +164,7 @@ proc copy_file {filename} {
     } elseif {[regexp {^#line} $line]} {
       # Skip #line directives.
     } elseif {$addstatic && ![regexp {^(static|typedef)} $line]} {
+      regsub {^SQLITE_API } $line {} line
       if {[regexp $declpattern $line all funcname]} {
         # Add the SQLITE_PRIVATE or SQLITE_API keyword before functions.
         # so that linkage can be modified at compile-time.
@@ -268,6 +267,7 @@ foreach file {
    callback.c
    delete.c
    func.c
+   fkey.c
    insert.c
    legacy.c
    loadext.c
@@ -304,37 +304,3 @@ foreach file {
 }
 
 close $out
-
-# This block overwrites the copy of sqlite3.h in the current directory.
-#
-# It copies tsrc/sqlite3.h to ./sqlite3.h, adding SQLITE_API in front of the
-# API functions and global variables as it goes. 
-#
-set fd_in [open tsrc/sqlite3.h r]
-set fd_out [open sqlite3.h w]
-while {![eof $fd_in]} {
-  set varpattern {^[a-zA-Z][a-zA-Z_0-9 *]+sqlite3_[_a-zA-Z0-9]+(\[|;| =)}
-  set declpattern {^ *[a-zA-Z][a-zA-Z_0-9 ]+ \**sqlite3_[_a-zA-Z0-9]+\(}
-
-  set line [gets $fd_in]
-  if {[regexp {define SQLITE_EXTERN extern} $line]} {
-    puts $fd_out $line
-    puts $fd_out [gets $fd_in]
-    puts $fd_out ""
-    puts $fd_out "#ifndef SQLITE_API"
-    puts $fd_out "# define SQLITE_API"
-    puts $fd_out "#endif"
-    set line ""
-  }
-
-  if {([regexp $varpattern $line] && ![regexp {^ *typedef} $line])
-   || ([regexp $declpattern $line])
-  } {
-    set line "SQLITE_API $line"
-  }
-  puts $fd_out $line
-}
-close $fd_out
-close $fd_in
-
-
