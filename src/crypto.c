@@ -57,7 +57,7 @@ typedef struct {
   int iv_sz;
   int pass_sz;
   unsigned char *key;
-  unsigned char *pass;
+  char *pass;
 } cipher_ctx;
 
 typedef struct {
