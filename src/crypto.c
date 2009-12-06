@@ -56,15 +56,15 @@ typedef struct {
   int key_sz;
   int iv_sz;
   int pass_sz;
-  void *key;
-  void *pass;
+  unsigned char *key;
+  unsigned char *pass;
 } cipher_ctx;
 
 typedef struct {
   int kdf_salt_sz;
   int mode_rekey;
-  void *kdf_salt;
-  void *buffer;
+  unsigned char *kdf_salt;
+  unsigned char *buffer;
   Btree *pBt;
   cipher_ctx *read_ctx;
   cipher_ctx *write_ctx;
@@ -74,7 +74,7 @@ typedef struct {
 /*
 **  Simple routines for converting hex char strings to binary data
  */
-static inline int cipher_hex2int(char c) {
+static int cipher_hex2int(char c) {
   return (c>='0' && c<='9') ? (c)-'0' :
          (c>='A' && c<='F') ? (c)-'A'+10 :
          (c>='a' && c<='f') ? (c)-'a'+10 : 0;
@@ -127,8 +127,9 @@ static int cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
 static int cipher_ctx_init(cipher_ctx **iCtx) {
+  cipher_ctx *ctx;
   *iCtx = sqlite3Malloc(sizeof(cipher_ctx));
-  cipher_ctx *ctx = *iCtx;
+  ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
   memset(ctx, 0, sizeof(cipher_ctx)); 
   ctx->key = sqlite3Malloc(EVP_MAX_KEY_LENGTH);
@@ -223,9 +224,9 @@ static int codec_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
     if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
-      CODEC_TRACE(("codec_key_derive: deriving key from hex\n")); 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */ 
+      CODEC_TRACE(("codec_key_derive: deriving key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using PBKDF2\n")); 
@@ -244,9 +245,9 @@ static int codec_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
  * in - pointer to input bytes
  * out - pouter to output bytes
  */
-static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, void *in, void *out) {
+static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, unsigned char *in, unsigned char *out) {
   EVP_CIPHER_CTX ectx;
-  void *iv;
+  unsigned char *iv;
   int tmp_csz, csz;
 
   CODEC_TRACE(("codec_cipher:entered pgno=%d, mode=%d, size=%d\n", pgno, mode, size));
@@ -352,10 +353,11 @@ int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for
  * decrypt mode - expected to return a pointer to pData, with
  *   the data decrypted in the input buffer
  */
-void* sqlite3Codec(void *iCtx, void *pData, Pgno pgno, int mode) {
+void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   codec_ctx *ctx = (codec_ctx *) iCtx;
   int pg_sz = sqlite3BtreeGetPageSize(ctx->pBt);
   int offset = 0;
+  unsigned char *pData = (unsigned char *) data;
  
   CODEC_TRACE(("sqlite3Codec: entered pgno=%d, mode=%d, ctx->mode_rekey=%d, pg_sz=%d\n", pgno, mode, ctx->mode_rekey, pg_sz));
 
@@ -413,6 +415,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     codec_ctx *ctx;
     int rc;
     Pager *pPager = pDb->pBt->pBt->pPager;
+    sqlite3_file *fd;
 
     ctx = sqlite3Malloc(sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
@@ -437,7 +440,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     ctx->kdf_salt = sqlite3Malloc(ctx->kdf_salt_sz);
     if(ctx->kdf_salt == NULL) return SQLITE_NOMEM;
 
-    sqlite3_file *fd = sqlite3Pager_get_fd(pPager);
+    fd = sqlite3Pager_get_fd(pPager);
     if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
       /* if unable to read the bytes, generate random salt */
       RAND_pseudo_bytes(ctx->kdf_salt, FILE_HEADER_SZ);
