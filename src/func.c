@@ -1315,6 +1315,7 @@ static void groupConcatFinalize(sqlite3_context *context){
 ** functions.  This should be the only routine in this file with
 ** external linkage.
 */
+#include "ditto_funcs.c"
 void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
 #ifndef SQLITE_OMIT_ALTERTABLE
   sqlite3AlterFunctions(db);
@@ -1326,6 +1327,7 @@ void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
       db->mallocFailed = 1;
     }
   }
+#include "ditto_globals.c"
 }
 
 /*
