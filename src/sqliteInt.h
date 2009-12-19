@@ -484,9 +484,19 @@ extern const int sqlite3one;
 #define ROUNDDOWN8(x) ((x)&~7)
 
 /*
-** Assert that the pointer X is aligned to an 8-byte boundary.
+** Assert that the pointer X is aligned to an 8-byte boundary.  This
+** macro is used only within assert() to verify that the code gets
+** all alignment restrictions correct.
+**
+** Except, if SQLITE_4_BYTE_ALIGNED_MALLOC is defined, then the
+** underlying malloc() implemention might return us 4-byte aligned
+** pointers.  In that case, only verify 4-byte alignment.
 */
-#define EIGHT_BYTE_ALIGNMENT(X)   ((((char*)(X) - (char*)0)&7)==0)
+#ifdef SQLITE_4_BYTE_ALIGNED_MALLOC
+# define EIGHT_BYTE_ALIGNMENT(X)   ((((char*)(X) - (char*)0)&3)==0)
+#else
+# define EIGHT_BYTE_ALIGNMENT(X)   ((((char*)(X) - (char*)0)&7)==0)
+#endif
 
 
 /*
@@ -959,6 +969,7 @@ struct FuncDef {
 #define SQLITE_FUNC_NEEDCOLL 0x08 /* sqlite3GetFuncCollSeq() might be called */
 #define SQLITE_FUNC_PRIVATE  0x10 /* Allowed for internal use only */
 #define SQLITE_FUNC_COUNT    0x20 /* Built-in count(*) aggregate */
+#define SQLITE_FUNC_COALESCE 0x40 /* Built-in coalesce() or ifnull() function */
 
 /*
 ** The following three macros, FUNCTION(), LIKEFUNC() and AGGREGATE() are
@@ -1508,7 +1519,7 @@ struct AggInfo {
 ** the option is available (at compile-time).
 */
 #if SQLITE_MAX_VARIABLE_NUMBER<=32767
-typedef i64 ynVar;
+typedef i16 ynVar;
 #else
 typedef int ynVar;
 #endif
@@ -2058,15 +2069,16 @@ struct AutoincInfo {
 ** The Parse.pTriggerPrg list never contains two entries with the same
 ** values for both pTrigger and orconf.
 **
-** The TriggerPrg.oldmask variable is set to a mask of old.* columns
+** The TriggerPrg.aColmask[0] variable is set to a mask of old.* columns
 ** accessed (or set to 0 for triggers fired as a result of INSERT 
-** statements).
+** statements). Similarly, the TriggerPrg.aColmask[1] variable is set to
+** a mask of new.* columns used by the program.
 */
 struct TriggerPrg {
   Trigger *pTrigger;      /* Trigger this program was coded from */
   int orconf;             /* Default ON CONFLICT policy */
   SubProgram *pProgram;   /* Program implementing pTrigger/orconf */
-  u32 oldmask;            /* Mask of old.* columns accessed */
+  u32 aColmask[2];        /* Masks of old.*, new.* columns accessed */
   TriggerPrg *pNext;      /* Next entry in Parse.pTriggerPrg list */
 };
 
@@ -2138,6 +2150,7 @@ struct Parse {
   Parse *pToplevel;    /* Parse structure for main program (or NULL) */
   Table *pTriggerTab;  /* Table triggers are being coded for */
   u32 oldmask;         /* Mask of old.* columns referenced */
+  u32 newmask;         /* Mask of new.* columns referenced */
   u8 eTriggerOp;       /* TK_UPDATE, TK_INSERT or TK_DELETE */
   u8 eOrconf;          /* Default ON CONFLICT policy for trigger steps */
   u8 disableTriggers;  /* True to disable triggers */
@@ -2516,6 +2529,9 @@ void sqlite3StatusSet(int, int);
 int sqlite3IsNaN(double);
 
 void sqlite3VXPrintf(StrAccum*, int, const char*, va_list);
+#ifndef SQLITE_OMIT_TRACE
+void sqlite3XPrintf(StrAccum*, const char*, ...);
+#endif
 char *sqlite3MPrintf(sqlite3*,const char*, ...);
 char *sqlite3VMPrintf(sqlite3*,const char*, va_list);
 char *sqlite3MAppendf(sqlite3*,char*,const char*,...);
@@ -2543,7 +2559,6 @@ Expr *sqlite3PExpr(Parse*, int, Expr*, Expr*, const Token*);
 Expr *sqlite3ExprAnd(sqlite3*,Expr*, Expr*);
 Expr *sqlite3ExprFunction(Parse*,ExprList*, Token*);
 void sqlite3ExprAssignVarNumber(Parse*, Expr*);
-void sqlite3ExprClear(sqlite3*, Expr*);
 void sqlite3ExprDelete(sqlite3*, Expr*);
 ExprList *sqlite3ExprListAppend(Parse*,ExprList*,Expr*);
 void sqlite3ExprListSetName(Parse*,ExprList*,Token*,int);
@@ -2673,6 +2688,9 @@ int sqlite3ExprIsConstant(Expr*);
 int sqlite3ExprIsConstantNotJoin(Expr*);
 int sqlite3ExprIsConstantOrFunction(Expr*);
 int sqlite3ExprIsInteger(Expr*, int*);
+int sqlite3ExprCanBeNull(const Expr*);
+void sqlite3ExprCodeIsNullJump(Vdbe*, const Expr*, int, int);
+int sqlite3ExprNeedsNoAffinityChange(const Expr*, char);
 int sqlite3IsRowid(const char*);
 void sqlite3GenerateRowDelete(Parse*, Table*, int, int, int, Trigger *, int);
 void sqlite3GenerateRowIndexDelete(Parse*, Table*, int, int*);
@@ -2730,7 +2748,7 @@ void sqlite3MaterializeView(Parse*, Table*, Expr*, int);
   TriggerStep *sqlite3TriggerDeleteStep(sqlite3*,Token*, Expr*);
   void sqlite3DeleteTrigger(sqlite3*, Trigger*);
   void sqlite3UnlinkAndDeleteTrigger(sqlite3*,int,const char*);
-  u32 sqlite3TriggerOldmask(Parse*,Trigger*,ExprList*,Table*,int);
+  u32 sqlite3TriggerColmask(Parse*,Trigger*,ExprList*,int,int,Table*,int);
 # define sqlite3ParseToplevel(p) ((p)->pToplevel ? (p)->pToplevel : (p))
 #else
 # define sqlite3TriggersExist(B,C,D,E,F) 0
@@ -2741,7 +2759,7 @@ void sqlite3MaterializeView(Parse*, Table*, Expr*, int);
 # define sqlite3CodeRowTriggerDirect(A,B,C,D,E,F)
 # define sqlite3TriggerList(X, Y) 0
 # define sqlite3ParseToplevel(p) p
-# define sqlite3TriggerOldmask(A,B,C,D,E) 0
+# define sqlite3TriggerColmask(A,B,C,D,E,F,G) 0
 #endif
 
 int sqlite3JoinType(Parse*, Token*, Token*, Token*);
@@ -2844,6 +2862,7 @@ char *sqlite3Utf8to16(sqlite3 *, u8, char *, int, int *);
 int sqlite3ValueFromExpr(sqlite3 *, Expr *, u8, u8, sqlite3_value **);
 void sqlite3ValueApplyAffinity(sqlite3_value *, u8, u8);
 #ifndef SQLITE_AMALGAMATION
+extern const unsigned char sqlite3OpcodeProperty[];
 extern const unsigned char sqlite3UpperToLower[];
 extern const unsigned char sqlite3CtypeMap[];
 extern SQLITE_WSD struct Sqlite3Config sqlite3Config;
@@ -2954,6 +2973,7 @@ int sqlite3VtabCallDestroy(sqlite3*, int, const char *);
 int sqlite3VtabBegin(sqlite3 *, VTable *);
 FuncDef *sqlite3VtabOverloadFunction(sqlite3 *,FuncDef*, int nArg, Expr*);
 void sqlite3InvalidFunction(sqlite3_context*,int,sqlite3_value**);
+int sqlite3VdbeParameterIndex(Vdbe*, const char*, int);
 int sqlite3TransferBindings(sqlite3_stmt *, sqlite3_stmt *);
 int sqlite3Reprepare(Vdbe*);
 void sqlite3ExprListCheckLength(Parse*, ExprList*, const char*);
