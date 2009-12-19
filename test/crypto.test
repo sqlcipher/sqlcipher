@@ -214,39 +214,39 @@ db close
 file delete -force test.db
 
 # test rekey on an unecrypted database
-do_test codec-1.9 {
-  sqlite_orig db test.db
-  execsql {
-    BEGIN;
-    CREATE TABLE t2(a,b);
-  } db
-  
-  for {set i 1} {$i<=3000} {incr i} {
-    execsql "CREATE TABLE tab$i (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f TEXT, g TEXT, h TEXT, i TEXT, j TEXT, k, TEXT, l, m TEXT, n TEXT, o TEXT, p TEXT);" db
-  }
-
-  for {set i 1} {$i<=25000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t2 VALUES($i,$r);" db
-  }
-
-  execsql {
-    COMMIT;
-    PRAGMA rekey = 'testkey';
-  } db
-
-  db close
-  sqlite_orig db test.db
-
-  execsql {
-    PRAGMA key = 'testkey';
-    SELECT count(*) FROM t2;
-    SELECT count(*) FROM sqlite_master;
-  } db
-
-} {25000 3001}
-db close
-file delete -force test.db
+#do_test codec-1.9 {
+#  sqlite_orig db test.db
+#  execsql {
+#    BEGIN;
+#    CREATE TABLE t2(a,b);
+#  } db
+#  
+#  for {set i 1} {$i<=3000} {incr i} {
+#    execsql "CREATE TABLE tab$i (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f TEXT, g TEXT, h TEXT, i TEXT, j TEXT, k, TEXT, l, m TEXT, n TEXT, o TEXT, p TEXT);" db
+#  }
+#
+#  for {set i 1} {$i<=25000} {incr i} {
+#    set r [expr {int(rand()*500000)}]
+#    execsql "INSERT INTO t2 VALUES($i,$r);" db
+#  }
+#
+#  execsql {
+#    COMMIT;
+#    PRAGMA rekey = 'testkey';
+#  } db
+#
+#  db close
+#  sqlite_orig db test.db
+#
+#  execsql {
+#    PRAGMA key = 'testkey';
+#    SELECT count(*) FROM t2;
+#    SELECT count(*) FROM sqlite_master;
+#  } db
+#
+#} {25000 3001}
+#db close
+#file delete -force test.db
 
 # attach an encrypted database
 # where both database have the same
