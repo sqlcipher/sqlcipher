@@ -2639,6 +2639,8 @@ int sqlite3PagerClose(Pager *pPager){
   PAGERTRACE(("CLOSE %d\n", PAGERID(pPager)));
   IOTRACE(("CLOSE %p\n", pPager))
   sqlite3OsClose(pPager->fd);
+  sqlite3PageFree(pPager->pTmpSpace);
+  sqlite3PcacheClose(pPager->pPCache);
 
 #ifdef SQLITE_HAS_CODEC
   if( pPager->xCodecFree ) pPager->xCodecFree(pPager->pCodec);
