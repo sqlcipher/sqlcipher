@@ -14,8 +14,6 @@
 ** source code file "vdbe.c".  When that file became too big (over
 ** 6000 lines long) it was split up into several smaller files and
 ** this header information was factored out.
-**
-** $Id: vdbeInt.h,v 1.174 2009/06/23 14:15:04 drh Exp $
 */
 #ifndef _VDBEINT_H_
 #define _VDBEINT_H_
@@ -381,7 +379,6 @@ void sqlite3VdbeMemRelease(Mem *p);
 void sqlite3VdbeMemReleaseExternal(Mem *p);
 int sqlite3VdbeMemFinalize(Mem*, FuncDef*);
 const char *sqlite3OpcodeName(int);
-int sqlite3VdbeOpcodeHasProperty(int, int);
 int sqlite3VdbeMemGrow(Mem *pMem, int n, int preserve);
 int sqlite3VdbeCloseStatement(Vdbe *, int);
 void sqlite3VdbeFrameDelete(VdbeFrame*);
