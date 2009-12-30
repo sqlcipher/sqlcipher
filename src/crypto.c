@@ -459,7 +459,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     codec_set_pass_key(db, nDb, zKey, nKey, 0);
     cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
     
-    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->read_ctx->iv_sz, 0);
+    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), EVP_MAX_IV_LENGTH, 0);
     return SQLITE_OK;
   }
   return SQLITE_ERROR;
@@ -530,7 +530,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         CODEC_TRACE(("sqlite3_rekey: updating page size for iv_sz change from %d to %d\n", ctx->read_ctx->iv_sz, ctx->write_ctx->iv_sz));
         db->nextPagesize = sqlite3BtreeGetPageSize(pDb->pBt);
         pDb->pBt->pBt->pageSizeFixed = 0; /* required for sqlite3BtreeSetPageSize to modify pagesize setting */
-        sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, ctx->write_ctx->iv_sz, 0);
+        sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, EVP_MAX_IV_LENGTH, 0);
         sqlite3RunVacuum(&error, db);
       }
 
