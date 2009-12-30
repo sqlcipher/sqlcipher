@@ -70,6 +70,11 @@ typedef struct {
   cipher_ctx *write_ctx;
 } codec_ctx;
 
+static void activate_openssl() {
+  if(EVP_get_cipherbyname(CIPHER) == NULL) {
+    OpenSSL_add_all_algorithms();
+  } 
+}
 
 /*
 **  Simple routines for converting hex char strings to binary data
@@ -80,7 +85,7 @@ static int cipher_hex2int(char c) {
          (c>='a' && c<='f') ? (c)-'a'+10 : 0;
 }
 
-void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
+static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
   int i;
   for(i = 0; i < sz; i += 2){
     out[i/2] = (cipher_hex2int(hex[i])<<4) | cipher_hex2int(hex[i+1]);
@@ -410,6 +415,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   struct Db *pDb = &db->aDb[nDb];
 
   CODEC_TRACE(("sqlite3CodecAttach: entered nDb=%d zKey=%s, nKey=%d\n", nDb, zKey, nKey));
+  activate_openssl();
   
   if(nKey && zKey && pDb->pBt) {
     codec_ctx *ctx;
@@ -453,7 +459,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     codec_set_pass_key(db, nDb, zKey, nKey, 0);
     cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
     
-    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), ctx->read_ctx->iv_sz, 0);
+    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), EVP_MAX_IV_LENGTH, 0);
     return SQLITE_OK;
   }
   return SQLITE_ERROR;
@@ -471,7 +477,6 @@ void sqlite3_activate_see(const char* in) {
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_key: entered db=%d pKey=%s nKey=%d\n", db, pKey, nKey));
-  OpenSSL_add_all_algorithms();
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     sqlite3CodecAttach(db, 0, pKey, nKey); // operate only on the main db 
@@ -496,7 +501,7 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 */
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_rekey: entered db=%d pKey=%s, nKey=%d\n", db, pKey, nKey));
-  OpenSSL_add_all_algorithms();
+  activate_openssl();
   if(db && pKey && nKey) {
     struct Db *pDb = &db->aDb[0];
     CODEC_TRACE(("sqlite3_rekey: database pDb=%d\n", pDb));
@@ -525,7 +530,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         CODEC_TRACE(("sqlite3_rekey: updating page size for iv_sz change from %d to %d\n", ctx->read_ctx->iv_sz, ctx->write_ctx->iv_sz));
         db->nextPagesize = sqlite3BtreeGetPageSize(pDb->pBt);
         pDb->pBt->pBt->pageSizeFixed = 0; /* required for sqlite3BtreeSetPageSize to modify pagesize setting */
-        sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, ctx->write_ctx->iv_sz, 0);
+        sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, EVP_MAX_IV_LENGTH, 0);
         sqlite3RunVacuum(&error, db);
       }
 
