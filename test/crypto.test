@@ -477,4 +477,73 @@ db2 close
 file delete -force test.db
 file delete -force test2.db
 
+# create an encrypted database, attach an unencrypted volume
+# copy data between, verify the unencypted database is good afterwards
+do_test encryped-attach-unencrypted {
+  sqlite_orig db test.db
+
+  execsql {
+    CREATE TABLE t1(a,b);
+  } 
+
+  sqlite_orig db2 test2.db
+  execsql {
+    PRAGMA  key='testkey';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }  db2
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,$r);" db2 
+  }
+  
+  execsql {
+    COMMIT;
+    ATTACH DATABASE 'test.db' AS test KEY '';
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  } db2
+
+  execsql {
+    SELECT count(*) FROM t1;
+  } 
+} {1000}
+db close
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# create an unencrypted database, attach an unencrypted volume
+# copy data between, verify the unencypted database is good afterwards
+do_test unencryped-attach-unencrypted {
+  sqlite_orig db test.db
+
+  execsql {
+    CREATE TABLE t1(a,b);
+  } 
+
+  sqlite_orig db2 test2.db
+  execsql {
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }  db2
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,$r);" db2 
+  }
+  
+  execsql {
+    COMMIT;
+    ATTACH DATABASE 'test.db' AS test;
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  } db2
+
+  execsql {
+    SELECT count(*) FROM t1;
+  } 
+} {1000}
+
 finish_test

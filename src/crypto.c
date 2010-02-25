@@ -460,9 +460,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
     
     sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), EVP_MAX_IV_LENGTH, 0);
-    return SQLITE_OK;
   }
-  return SQLITE_ERROR;
+  return SQLITE_OK;
 }
 
 void sqlite3FreeCodecArg(void *pCodecArg) {

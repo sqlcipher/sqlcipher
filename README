@@ -33,7 +33,7 @@ Example Static linking (replace /opt/local/lib with the path to libcrypto.a)
 
 Example Dynamic linking
 
-  ./configure CFLAGS="-DSQLITE_HAS_CODEC -lcrypto"
+  ./configure CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="-lcrypto"
   make
 
 [Encrypting a database]
