@@ -76,40 +76,42 @@
 #include <inttypes.h>
 #endif
 
+/*
+** The number of samples of an index that SQLite takes in order to 
+** construct a histogram of the table content when running ANALYZE
+** and with SQLITE_ENABLE_STAT2
+*/
 #define SQLITE_INDEX_SAMPLES 10
 
 /*
-** This macro is used to "hide" some ugliness in casting an int
-** value to a ptr value under the MSVC 64-bit compiler.   Casting
-** non 64-bit values to ptr types results in a "hard" error with 
-** the MSVC 64-bit compiler which this attempts to avoid.  
+** The following macros are used to cast pointers to integers and
+** integers to pointers.  The way you do this varies from one compiler
+** to the next, so we have developed the following set of #if statements
+** to generate appropriate macros for a wide range of compilers.
 **
-** A simple compiler pragma or casting sequence could not be found
-** to correct this in all situations, so this macro was introduced.
-**
-** It could be argued that the intptr_t type could be used in this
-** case, but that type is not available on all compilers, or 
-** requires the #include of specific headers which differs between
-** platforms.
+** The correct "ANSI" way to do this is to use the intptr_t type. 
+** Unfortunately, that typedef is not available on all compilers, or
+** if it is available, it requires an #include of specific headers
+** that very from one machine to the next.
 **
 ** Ticket #3860:  The llvm-gcc-4.2 compiler from Apple chokes on
 ** the ((void*)&((char*)0)[X]) construct.  But MSVC chokes on ((void*)(X)).
 ** So we have to define the macros in different ways depending on the
 ** compiler.
 */
-#if defined(__GNUC__)
-# if defined(HAVE_STDINT_H)
-#   define SQLITE_INT_TO_PTR(X)  ((void*)(intptr_t)(X))
-#   define SQLITE_PTR_TO_INT(X)  ((int)(intptr_t)(X))
-# else
-#   define SQLITE_INT_TO_PTR(X)  ((void*)(X))
-#   define SQLITE_PTR_TO_INT(X)  ((int)(X))
-# endif
-#else
-# define SQLITE_INT_TO_PTR(X)   ((void*)&((char*)0)[X])
-# define SQLITE_PTR_TO_INT(X)   ((int)(((char*)X)-(char*)0))
+#if defined(__PTRDIFF_TYPE__)  /* This case should work for GCC */
+# define SQLITE_INT_TO_PTR(X)  ((void*)(__PTRDIFF_TYPE__)(X))
+# define SQLITE_PTR_TO_INT(X)  ((int)(__PTRDIFF_TYPE__)(X))
+#elif !defined(__GNUC__)       /* Works for compilers other than LLVM */
+# define SQLITE_INT_TO_PTR(X)  ((void*)&((char*)0)[X])
+# define SQLITE_PTR_TO_INT(X)  ((int)(((char*)X)-(char*)0))
+#elif defined(HAVE_STDINT_H)   /* Use this case if we have ANSI headers */
+# define SQLITE_INT_TO_PTR(X)  ((void*)(intptr_t)(X))
+# define SQLITE_PTR_TO_INT(X)  ((int)(intptr_t)(X))
+#else                          /* Generates a warning - but it always works */
+# define SQLITE_INT_TO_PTR(X)  ((void*)(X))
+# define SQLITE_PTR_TO_INT(X)  ((int)(X))
 #endif
-
 
 /*
 ** The SQLITE_THREADSAFE macro must be defined as either 0 or 1.
@@ -140,23 +142,18 @@
 **
 **     SQLITE_SYSTEM_MALLOC          // Use normal system malloc()
 **     SQLITE_MEMDEBUG               // Debugging version of system malloc()
-**     SQLITE_MEMORY_SIZE            // internal allocator #1
-**     SQLITE_MMAP_HEAP_SIZE         // internal mmap() allocator
-**     SQLITE_POW2_MEMORY_SIZE       // internal power-of-two allocator
+**
+** (Historical note:  There used to be several other options, but we've
+** pared it down to just these two.)
 **
 ** If none of the above are defined, then set SQLITE_SYSTEM_MALLOC as
 ** the default.
 */
-#if defined(SQLITE_SYSTEM_MALLOC)+defined(SQLITE_MEMDEBUG)+\
-    defined(SQLITE_MEMORY_SIZE)+defined(SQLITE_MMAP_HEAP_SIZE)+\
-    defined(SQLITE_POW2_MEMORY_SIZE)>1
+#if defined(SQLITE_SYSTEM_MALLOC)+defined(SQLITE_MEMDEBUG)>1
 # error "At most one of the following compile-time configuration options\
- is allows: SQLITE_SYSTEM_MALLOC, SQLITE_MEMDEBUG, SQLITE_MEMORY_SIZE,\
- SQLITE_MMAP_HEAP_SIZE, SQLITE_POW2_MEMORY_SIZE"
+ is allows: SQLITE_SYSTEM_MALLOC, SQLITE_MEMDEBUG"
 #endif
-#if defined(SQLITE_SYSTEM_MALLOC)+defined(SQLITE_MEMDEBUG)+\
-    defined(SQLITE_MEMORY_SIZE)+defined(SQLITE_MMAP_HEAP_SIZE)+\
-    defined(SQLITE_POW2_MEMORY_SIZE)==0
+#if defined(SQLITE_SYSTEM_MALLOC)+defined(SQLITE_MEMDEBUG)==0
 # define SQLITE_SYSTEM_MALLOC 1
 #endif
 
@@ -329,20 +326,6 @@
 #endif
 
 /*
-** If the following macro is set to 1, then NULL values are considered
-** distinct when determining whether or not two entries are the same
-** in a UNIQUE index.  This is the way PostgreSQL, Oracle, DB2, MySQL,
-** OCELOT, and Firebird all work.  The SQL92 spec explicitly says this
-** is the way things are suppose to work.
-**
-** If the following macro is set to 0, the NULLs are indistinct for
-** a UNIQUE index.  In this mode, you can only have a single NULL entry
-** for a column declared UNIQUE.  This is the way Informix and SQL Server
-** work.
-*/
-#define NULL_DISTINCT_FOR_UNIQUE 1
-
-/*
 ** The "file format" number is an integer that is incremented whenever
 ** the VDBE-level file format changes.  The following macros define the
 ** the default file format for new databases and the maximum file format
@@ -353,6 +336,10 @@
 # define SQLITE_DEFAULT_FILE_FORMAT 1
 #endif
 
+/*
+** Determine whether triggers are recursive by default.  This can be
+** changed at run-time using a pragma.
+*/
 #ifndef SQLITE_DEFAULT_RECURSIVE_TRIGGERS
 # define SQLITE_DEFAULT_RECURSIVE_TRIGGERS 0
 #endif
@@ -597,7 +584,6 @@ typedef struct AggInfo AggInfo;
 typedef struct AuthContext AuthContext;
 typedef struct AutoincInfo AutoincInfo;
 typedef struct Bitvec Bitvec;
-typedef struct RowSet RowSet;
 typedef struct CollSeq CollSeq;
 typedef struct Column Column;
 typedef struct Db Db;
@@ -618,6 +604,7 @@ typedef struct LookasideSlot LookasideSlot;
 typedef struct Module Module;
 typedef struct NameContext NameContext;
 typedef struct Parse Parse;
+typedef struct RowSet RowSet;
 typedef struct Savepoint Savepoint;
 typedef struct Select Select;
 typedef struct SrcList SrcList;
@@ -625,9 +612,9 @@ typedef struct StrAccum StrAccum;
 typedef struct Table Table;
 typedef struct TableLock TableLock;
 typedef struct Token Token;
+typedef struct Trigger Trigger;
 typedef struct TriggerPrg TriggerPrg;
 typedef struct TriggerStep TriggerStep;
-typedef struct Trigger Trigger;
 typedef struct UnpackedRecord UnpackedRecord;
 typedef struct VTable VTable;
 typedef struct Walker Walker;
@@ -693,7 +680,7 @@ struct Schema {
 
 /*
 ** These macros can be used to test, set, or clear bits in the 
-** Db.flags field.
+** Db.pSchema->flags field.
 */
 #define DbHasProperty(D,I,P)     (((D)->aDb[I].pSchema->flags&(P))==(P))
 #define DbHasAnyProperty(D,I,P)  (((D)->aDb[I].pSchema->flags&(P))!=0)
@@ -701,7 +688,7 @@ struct Schema {
 #define DbClearProperty(D,I,P)   (D)->aDb[I].pSchema->flags&=~(P)
 
 /*
-** Allowed values for the DB.flags field.
+** Allowed values for the DB.pSchema->flags field.
 **
 ** The DB_SchemaLoaded flag is set after the database schema has been
 ** read into internal hash tables.
@@ -765,7 +752,7 @@ struct FuncDefHash {
 };
 
 /*
-** Each database is an instance of the following structure.
+** Each database connection is an instance of the following structure.
 **
 ** The sqlite.lastRowid records the last insert rowid generated by an
 ** insert statement.  Inserts on views do not affect its value.  Each
@@ -804,6 +791,7 @@ struct sqlite3 {
   u8 dfltLockMode;              /* Default locking-mode for attached dbs */
   u8 dfltJournalMode;           /* Default journal mode for attached dbs */
   signed char nextAutovac;      /* Autovac setting after VACUUM if >=0 */
+  u8 suppressErr;               /* Do not issue error messages if true */
   int nextPagesize;             /* Pagesize after VACUUM if >0 */
   int nTable;                   /* Number of tables in the database */
   CollSeq *pDfltColl;           /* The default collating sequence (BINARY) */
@@ -898,37 +886,43 @@ struct sqlite3 {
 #define ENC(db) ((db)->aDb[0].pSchema->enc)
 
 /*
-** Possible values for the sqlite.flags and or Db.flags fields.
-**
-** On sqlite.flags, the SQLITE_InTrans value means that we have
-** executed a BEGIN.  On Db.flags, SQLITE_InTrans means a statement
-** transaction is active on that particular database file.
+** Possible values for the sqlite3.flags.
 */
-#define SQLITE_VdbeTrace      0x00000001  /* True to trace VDBE execution */
-#define SQLITE_InTrans        0x00000008  /* True if in a transaction */
-#define SQLITE_InternChanges  0x00000010  /* Uncommitted Hash table changes */
-#define SQLITE_FullColNames   0x00000020  /* Show full column names on SELECT */
-#define SQLITE_ShortColNames  0x00000040  /* Show short columns names */
-#define SQLITE_CountRows      0x00000080  /* Count rows changed by INSERT, */
+#define SQLITE_VdbeTrace      0x00000100  /* True to trace VDBE execution */
+#define SQLITE_InternChanges  0x00000200  /* Uncommitted Hash table changes */
+#define SQLITE_FullColNames   0x00000400  /* Show full column names on SELECT */
+#define SQLITE_ShortColNames  0x00000800  /* Show short columns names */
+#define SQLITE_CountRows      0x00001000  /* Count rows changed by INSERT, */
                                           /*   DELETE, or UPDATE and return */
                                           /*   the count using a callback. */
-#define SQLITE_NullCallback   0x00000100  /* Invoke the callback once if the */
+#define SQLITE_NullCallback   0x00002000  /* Invoke the callback once if the */
                                           /*   result set is empty */
-#define SQLITE_SqlTrace       0x00000200  /* Debug print SQL as it executes */
-#define SQLITE_VdbeListing    0x00000400  /* Debug listings of VDBE programs */
-#define SQLITE_WriteSchema    0x00000800  /* OK to update SQLITE_MASTER */
-#define SQLITE_NoReadlock     0x00001000  /* Readlocks are omitted when 
+#define SQLITE_SqlTrace       0x00004000  /* Debug print SQL as it executes */
+#define SQLITE_VdbeListing    0x00008000  /* Debug listings of VDBE programs */
+#define SQLITE_WriteSchema    0x00010000  /* OK to update SQLITE_MASTER */
+#define SQLITE_NoReadlock     0x00020000  /* Readlocks are omitted when 
                                           ** accessing read-only databases */
-#define SQLITE_IgnoreChecks   0x00002000  /* Do not enforce check constraints */
-#define SQLITE_ReadUncommitted 0x00004000 /* For shared-cache mode */
-#define SQLITE_LegacyFileFmt  0x00008000  /* Create new databases in format 1 */
-#define SQLITE_FullFSync      0x00010000  /* Use full fsync on the backend */
-#define SQLITE_LoadExtension  0x00020000  /* Enable load_extension */
+#define SQLITE_IgnoreChecks   0x00040000  /* Do not enforce check constraints */
+#define SQLITE_ReadUncommitted 0x0080000  /* For shared-cache mode */
+#define SQLITE_LegacyFileFmt  0x00100000  /* Create new databases in format 1 */
+#define SQLITE_FullFSync      0x00200000  /* Use full fsync on the backend */
+#define SQLITE_LoadExtension  0x00400000  /* Enable load_extension */
+#define SQLITE_RecoveryMode   0x00800000  /* Ignore schema errors */
+#define SQLITE_ReverseOrder   0x01000000  /* Reverse unordered SELECTs */
+#define SQLITE_RecTriggers    0x02000000  /* Enable recursive triggers */
+#define SQLITE_ForeignKeys    0x04000000  /* Enforce foreign key constraints  */
 
-#define SQLITE_RecoveryMode   0x00040000  /* Ignore schema errors */
-#define SQLITE_ReverseOrder   0x00100000  /* Reverse unordered SELECTs */
-#define SQLITE_RecTriggers    0x00200000  /* Enable recursive triggers */
-#define SQLITE_ForeignKeys    0x00400000  /* Enforce foreign key constraints  */
+/*
+** Bits of the sqlite3.flags field that are used by the
+** sqlite3_test_control(SQLITE_TESTCTRL_OPTIMIZATIONS,...) interface.
+** These must be the low-order bits of the flags field.
+*/
+#define SQLITE_QueryFlattener 0x01        /* Disable query flattening */
+#define SQLITE_ColumnCache    0x02        /* Disable the column cache */
+#define SQLITE_IndexSort      0x04        /* Disable indexes for sorting */
+#define SQLITE_IndexSearch    0x08        /* Disable indexes for searching */
+#define SQLITE_IndexCover     0x10        /* Disable index covering table */
+#define SQLITE_OptMask        0x1f        /* Mask of all disablable opts */
 
 /*
 ** Possible values for the sqlite.magic field.
@@ -1642,14 +1636,13 @@ struct Expr {
 #define EP_DblQuoted  0x0040  /* token.z was originally in "..." */
 #define EP_InfixFunc  0x0080  /* True for an infix function: LIKE, GLOB, etc */
 #define EP_ExpCollate 0x0100  /* Collating sequence specified explicitly */
-#define EP_AnyAff     0x0200  /* Can take a cached column of any affinity */
-#define EP_FixedDest  0x0400  /* Result needed in a specific register */
-#define EP_IntValue   0x0800  /* Integer value contained in u.iValue */
-#define EP_xIsSelect  0x1000  /* x.pSelect is valid (otherwise x.pList is) */
+#define EP_FixedDest  0x0200  /* Result needed in a specific register */
+#define EP_IntValue   0x0400  /* Integer value contained in u.iValue */
+#define EP_xIsSelect  0x0800  /* x.pSelect is valid (otherwise x.pList is) */
 
-#define EP_Reduced    0x2000  /* Expr struct is EXPR_REDUCEDSIZE bytes only */
-#define EP_TokenOnly  0x4000  /* Expr struct is EXPR_TOKENONLYSIZE bytes only */
-#define EP_Static     0x8000  /* Held in memory not obtained from malloc() */
+#define EP_Reduced    0x1000  /* Expr struct is EXPR_REDUCEDSIZE bytes only */
+#define EP_TokenOnly  0x2000  /* Expr struct is EXPR_TOKENONLYSIZE bytes only */
+#define EP_Static     0x4000  /* Held in memory not obtained from malloc() */
 
 /*
 ** The following are the meanings of bits in the Expr.flags2 field.
@@ -1894,6 +1887,7 @@ struct WhereLevel {
 #define WHERE_OMIT_OPEN        0x0010 /* Table cursor are already open */
 #define WHERE_OMIT_CLOSE       0x0020 /* Omit close of table & index cursors */
 #define WHERE_FORCE_TABLE      0x0040 /* Do not use an index-only search */
+#define WHERE_ONETABLE_ONLY    0x0080 /* Only code the 1st table in pTabList */
 
 /*
 ** The WHERE clause processing routine has two halves.  The
@@ -1906,6 +1900,7 @@ struct WhereInfo {
   Parse *pParse;       /* Parsing and code generating context */
   u16 wctrlFlags;      /* Flags originally passed to sqlite3WhereBegin() */
   u8 okOnePass;        /* Ok to use one-pass algorithm for UPDATE or DELETE */
+  u8 untestedTerms;    /* Not all WHERE terms resolved by outer loop */
   SrcList *pTabList;             /* List of tables in the join */
   int iTop;                      /* The very beginning of the WHERE loop */
   int iContinue;                 /* Jump here to continue with next record */
@@ -2125,7 +2120,6 @@ struct Parse {
   struct yColCache {
     int iTable;           /* Table cursor number */
     int iColumn;          /* Table column number */
-    u8 affChange;         /* True if this register has had an affinity change */
     u8 tempReg;           /* iReg is a temp register that needs to be freed */
     int iLevel;           /* Nesting level */
     int iReg;             /* Reg with value of this column. 0 means none. */
@@ -2374,6 +2368,8 @@ struct Sqlite3Config {
   int isPCacheInit;                 /* True after malloc is initialized */
   sqlite3_mutex *pInitMutex;        /* Mutex used by sqlite3_initialize() */
   int nRefInitMutex;                /* Number of users of pInitMutex */
+  void (*xLog)(void*,int,const char*); /* Function for logging */
+  void *pLogArg;                       /* First argument to xLog() */
 };
 
 /*
@@ -2415,16 +2411,27 @@ int sqlite3WalkSelectFrom(Walker*, Select*);
 }
 
 /*
-** The SQLITE_CORRUPT_BKPT macro can be either a constant (for production
-** builds) or a function call (for debugging).  If it is a function call,
-** it allows the operator to set a breakpoint at the spot where database
-** corruption is first detected.
+** The SQLITE_*_BKPT macros are substitutes for the error codes with
+** the same name but without the _BKPT suffix.  These macros invoke
+** routines that report the line-number on which the error originated
+** using sqlite3_log().  The routines also provide a convenient place
+** to set a debugger breakpoint.
 */
-#ifdef SQLITE_DEBUG
-  int sqlite3Corrupt(void);
-# define SQLITE_CORRUPT_BKPT sqlite3Corrupt()
-#else
-# define SQLITE_CORRUPT_BKPT SQLITE_CORRUPT
+int sqlite3CorruptError(int);
+int sqlite3MisuseError(int);
+int sqlite3CantopenError(int);
+#define SQLITE_CORRUPT_BKPT sqlite3CorruptError(__LINE__)
+#define SQLITE_MISUSE_BKPT sqlite3MisuseError(__LINE__)
+#define SQLITE_CANTOPEN_BKPT sqlite3CantopenError(__LINE__)
+
+
+/*
+** FTS4 is really an extension for FTS3.  It is enabled using the
+** SQLITE_ENABLE_FTS3 macro.  But to avoid confusion we also all
+** the SQLITE_ENABLE_FTS4 macro to serve as an alisse for SQLITE_ENABLE_FTS3.
+*/
+#if defined(SQLITE_ENABLE_FTS4) && !defined(SQLITE_ENABLE_FTS3)
+# define SQLITE_ENABLE_FTS3
 #endif
 
 /*
@@ -2526,7 +2533,11 @@ int sqlite3StatusValue(int);
 void sqlite3StatusAdd(int, int);
 void sqlite3StatusSet(int, int);
 
-int sqlite3IsNaN(double);
+#ifndef SQLITE_OMIT_FLOATING_POINT
+  int sqlite3IsNaN(double);
+#else
+# define sqlite3IsNaN(X)  0
+#endif
 
 void sqlite3VXPrintf(StrAccum*, int, const char*, va_list);
 #ifndef SQLITE_OMIT_TRACE
@@ -2543,7 +2554,6 @@ char *sqlite3MAppendf(sqlite3*,char*,const char*,...);
 #endif
 void sqlite3SetString(char **, sqlite3*, const char*, ...);
 void sqlite3ErrorMsg(Parse*, const char*, ...);
-void sqlite3ErrorClear(Parse*);
 int sqlite3Dequote(char*);
 int sqlite3KeywordCode(const unsigned char*, int);
 int sqlite3RunParser(Parse*, const char*, char **);
@@ -2644,13 +2654,13 @@ void sqlite3DeleteFrom(Parse*, SrcList*, Expr*);
 void sqlite3Update(Parse*, SrcList*, ExprList*, Expr*, int);
 WhereInfo *sqlite3WhereBegin(Parse*, SrcList*, Expr*, ExprList**, u16);
 void sqlite3WhereEnd(WhereInfo*);
-int sqlite3ExprCodeGetColumn(Parse*, Table*, int, int, int, int);
+int sqlite3ExprCodeGetColumn(Parse*, Table*, int, int, int);
 void sqlite3ExprCodeMove(Parse*, int, int, int);
 void sqlite3ExprCodeCopy(Parse*, int, int, int);
 void sqlite3ExprCacheStore(Parse*, int, int, int);
 void sqlite3ExprCachePush(Parse*);
 void sqlite3ExprCachePop(Parse*, int);
-void sqlite3ExprCacheRemove(Parse*, int);
+void sqlite3ExprCacheRemove(Parse*, int, int);
 void sqlite3ExprCacheClear(Parse*);
 void sqlite3ExprCacheAffinityChange(Parse*, int, int);
 void sqlite3ExprHardCopy(Parse*,int,int);
@@ -2713,13 +2723,6 @@ FuncDef *sqlite3FindFunction(sqlite3*,const char*,int,int,u8,int);
 void sqlite3RegisterBuiltinFunctions(sqlite3*);
 void sqlite3RegisterDateTimeFunctions(void);
 void sqlite3RegisterGlobalFunctions(void);
-#ifdef SQLITE_DEBUG
-  int sqlite3SafetyOn(sqlite3*);
-  int sqlite3SafetyOff(sqlite3*);
-#else
-# define sqlite3SafetyOn(A) 0
-# define sqlite3SafetyOff(A) 0
-#endif
 int sqlite3SafetyCheckOk(sqlite3*);
 int sqlite3SafetyCheckSickOrOk(sqlite3*);
 void sqlite3ChangeCookie(Parse*, int);
@@ -2855,7 +2858,7 @@ void sqlite3ValueSetStr(sqlite3_value*, int, const void *,u8,
                         void(*)(void*));
 void sqlite3ValueFree(sqlite3_value*);
 sqlite3_value *sqlite3ValueNew(sqlite3 *);
-char *sqlite3Utf16to8(sqlite3 *, const void*, int);
+char *sqlite3Utf16to8(sqlite3 *, const void*, int, u8);
 #ifdef SQLITE_ENABLE_STAT2
 char *sqlite3Utf8to16(sqlite3 *, u8, char *, int, int *);
 #endif

@@ -228,30 +228,6 @@ CollSeq *sqlite3BinaryCompareCollSeq(
 }
 
 /*
-** Generate the operands for a comparison operation.  Before
-** generating the code for each operand, set the EP_AnyAff
-** flag on the expression so that it will be able to used a
-** cached column value that has previously undergone an
-** affinity change.
-*/
-static void codeCompareOperands(
-  Parse *pParse,    /* Parsing and code generating context */
-  Expr *pLeft,      /* The left operand */
-  int *pRegLeft,    /* Register where left operand is stored */
-  int *pFreeLeft,   /* Free this register when done */
-  Expr *pRight,     /* The right operand */
-  int *pRegRight,   /* Register where right operand is stored */
-  int *pFreeRight   /* Write temp register for right operand there */
-){
-  while( pLeft->op==TK_UPLUS ) pLeft = pLeft->pLeft;
-  pLeft->flags |= EP_AnyAff;
-  *pRegLeft = sqlite3ExprCodeTemp(pParse, pLeft, pFreeLeft);
-  while( pRight->op==TK_UPLUS ) pRight = pRight->pLeft;
-  pRight->flags |= EP_AnyAff;
-  *pRegRight = sqlite3ExprCodeTemp(pParse, pRight, pFreeRight);
-}
-
-/*
 ** Generate code for a comparison operator.
 */
 static int codeCompare(
@@ -272,10 +248,6 @@ static int codeCompare(
   addr = sqlite3VdbeAddOp4(pParse->pVdbe, opcode, in2, dest, in1,
                            (void*)p4, P4_COLLSEQ);
   sqlite3VdbeChangeP5(pParse->pVdbe, (u8)p5);
-  if( (p5 & SQLITE_AFF_MASK)!=SQLITE_AFF_NONE ){
-    sqlite3ExprCacheAffinityChange(pParse, in1, 1);
-    sqlite3ExprCacheAffinityChange(pParse, in2, 1);
-  }
   return addr;
 }
 
@@ -1906,6 +1878,7 @@ static char *dup8bytes(Vdbe *v, const char *in){
   return out;
 }
 
+#ifndef SQLITE_OMIT_FLOATING_POINT
 /*
 ** Generate an instruction that will put the floating point
 ** value described by z[0..n-1] into register iMem.
@@ -1925,6 +1898,7 @@ static void codeReal(Vdbe *v, const char *z, int negateFlag, int iMem){
     sqlite3VdbeAddOp4(v, OP_Real, 0, iMem, 0, zV, P4_REAL);
   }
 }
+#endif
 
 
 /*
@@ -1935,7 +1909,8 @@ static void codeReal(Vdbe *v, const char *z, int negateFlag, int iMem){
 ** z[n] character is guaranteed to be something that does not look
 ** like the continuation of the number.
 */
-static void codeInteger(Vdbe *v, Expr *pExpr, int negFlag, int iMem){
+static void codeInteger(Parse *pParse, Expr *pExpr, int negFlag, int iMem){
+  Vdbe *v = pParse->pVdbe;
   if( pExpr->flags & EP_IntValue ){
     int i = pExpr->u.iValue;
     if( negFlag ) i = -i;
@@ -1951,7 +1926,11 @@ static void codeInteger(Vdbe *v, Expr *pExpr, int negFlag, int iMem){
       zV = dup8bytes(v, (char*)&value);
       sqlite3VdbeAddOp4(v, OP_Int64, 0, iMem, 0, zV, P4_INT64);
     }else{
+#ifdef SQLITE_OMIT_FLOATING_POINT
+      sqlite3ErrorMsg(pParse, "oversized integer: %s%s", negFlag ? "-" : "", z);
+#else
       codeReal(v, z, negFlag, iMem);
+#endif
     }
   }
 }
@@ -1982,17 +1961,31 @@ void sqlite3ExprCacheStore(Parse *pParse, int iTab, int iCol, int iReg){
   assert( iReg>0 );  /* Register numbers are always positive */
   assert( iCol>=-1 && iCol<32768 );  /* Finite column numbers */
 
-  /* First replace any existing entry */
+  /* The SQLITE_ColumnCache flag disables the column cache.  This is used
+  ** for testing only - to verify that SQLite always gets the same answer
+  ** with and without the column cache.
+  */
+  if( pParse->db->flags & SQLITE_ColumnCache ) return;
+
+  /* First replace any existing entry.
+  **
+  ** Actually, the way the column cache is currently used, we are guaranteed
+  ** that the object will never already be in cache.  Verify this guarantee.
+  */
+#ifndef NDEBUG
   for(i=0, p=pParse->aColCache; i<SQLITE_N_COLCACHE; i++, p++){
+#if 0 /* This code wold remove the entry from the cache if it existed */
     if( p->iReg && p->iTable==iTab && p->iColumn==iCol ){
       cacheEntryClear(pParse, p);
       p->iLevel = pParse->iCacheLevel;
       p->iReg = iReg;
-      p->affChange = 0;
       p->lru = pParse->iCacheCnt++;
       return;
     }
+#endif
+    assert( p->iReg==0 || p->iTable!=iTab || p->iColumn!=iCol );
   }
+#endif
 
   /* Find an empty slot and replace it */
   for(i=0, p=pParse->aColCache; i<SQLITE_N_COLCACHE; i++, p++){
@@ -2001,7 +1994,6 @@ void sqlite3ExprCacheStore(Parse *pParse, int iTab, int iCol, int iReg){
       p->iTable = iTab;
       p->iColumn = iCol;
       p->iReg = iReg;
-      p->affChange = 0;
       p->tempReg = 0;
       p->lru = pParse->iCacheCnt++;
       return;
@@ -2023,7 +2015,6 @@ void sqlite3ExprCacheStore(Parse *pParse, int iTab, int iCol, int iReg){
     p->iTable = iTab;
     p->iColumn = iCol;
     p->iReg = iReg;
-    p->affChange = 0;
     p->tempReg = 0;
     p->lru = pParse->iCacheCnt++;
     return;
@@ -2031,14 +2022,16 @@ void sqlite3ExprCacheStore(Parse *pParse, int iTab, int iCol, int iReg){
 }
 
 /*
-** Indicate that a register is being overwritten.  Purge the register
-** from the column cache.
+** Indicate that registers between iReg..iReg+nReg-1 are being overwritten.
+** Purge the range of registers from the column cache.
 */
-void sqlite3ExprCacheRemove(Parse *pParse, int iReg){
+void sqlite3ExprCacheRemove(Parse *pParse, int iReg, int nReg){
   int i;
+  int iLast = iReg + nReg - 1;
   struct yColCache *p;
   for(i=0, p=pParse->aColCache; i<SQLITE_N_COLCACHE; i++, p++){
-    if( p->iReg==iReg ){
+    int r = p->iReg;
+    if( r>=iReg && r<=iLast ){
       cacheEntryClear(pParse, p);
       p->iReg = 0;
     }
@@ -2097,28 +2090,20 @@ static void sqlite3ExprCachePinRegister(Parse *pParse, int iReg){
 **
 ** There must be an open cursor to pTab in iTable when this routine
 ** is called.  If iColumn<0 then code is generated that extracts the rowid.
-**
-** This routine might attempt to reuse the value of the column that
-** has already been loaded into a register.  The value will always
-** be used if it has not undergone any affinity changes.  But if
-** an affinity change has occurred, then the cached value will only be
-** used if allowAffChng is true.
 */
 int sqlite3ExprCodeGetColumn(
   Parse *pParse,   /* Parsing and code generating context */
   Table *pTab,     /* Description of the table we are reading from */
   int iColumn,     /* Index of the table column */
   int iTable,      /* The cursor pointing to the table */
-  int iReg,        /* Store results here */
-  int allowAffChng /* True if prior affinity changes are OK */
+  int iReg         /* Store results here */
 ){
   Vdbe *v = pParse->pVdbe;
   int i;
   struct yColCache *p;
 
   for(i=0, p=pParse->aColCache; i<SQLITE_N_COLCACHE; i++, p++){
-    if( p->iReg>0 && p->iTable==iTable && p->iColumn==iColumn
-           && (!p->affChange || allowAffChng) ){
+    if( p->iReg>0 && p->iTable==iTable && p->iColumn==iColumn ){
       p->lru = pParse->iCacheCnt++;
       sqlite3ExprCachePinRegister(pParse, p->iReg);
       return p->iReg;
@@ -2156,15 +2141,7 @@ void sqlite3ExprCacheClear(Parse *pParse){
 ** registers starting with iStart.
 */
 void sqlite3ExprCacheAffinityChange(Parse *pParse, int iStart, int iCount){
-  int iEnd = iStart + iCount - 1;
-  int i;
-  struct yColCache *p;
-  for(i=0, p=pParse->aColCache; i<SQLITE_N_COLCACHE; i++, p++){
-    int r = p->iReg;
-    if( r>=iStart && r<=iEnd ){
-      p->affChange = 1;
-    }
-  }
+  sqlite3ExprCacheRemove(pParse, iStart, iCount);
 }
 
 /*
@@ -2196,19 +2173,24 @@ void sqlite3ExprCodeCopy(Parse *pParse, int iFrom, int iTo, int nReg){
   }
 }
 
+#if defined(SQLITE_DEBUG) || defined(SQLITE_COVERAGE_TEST)
 /*
 ** Return true if any register in the range iFrom..iTo (inclusive)
 ** is used as part of the column cache.
+**
+** This routine is used within assert() and testcase() macros only
+** and does not appear in a normal build.
 */
 static int usedAsColumnCache(Parse *pParse, int iFrom, int iTo){
   int i;
   struct yColCache *p;
   for(i=0, p=pParse->aColCache; i<SQLITE_N_COLCACHE; i++, p++){
     int r = p->iReg;
-    if( r>=iFrom && r<=iTo ) return 1;
+    if( r>=iFrom && r<=iTo ) return 1;    /*NO_TEST*/
   }
   return 0;
 }
+#endif /* SQLITE_DEBUG || SQLITE_COVERAGE_TEST */
 
 /*
 ** If the last instruction coded is an ephemeral copy of any of
@@ -2329,22 +2311,22 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
         assert( pParse->ckBase>0 );
         inReg = pExpr->iColumn + pParse->ckBase;
       }else{
-        testcase( (pExpr->flags & EP_AnyAff)!=0 );
         inReg = sqlite3ExprCodeGetColumn(pParse, pExpr->pTab,
-                                 pExpr->iColumn, pExpr->iTable, target,
-                                 pExpr->flags & EP_AnyAff);
+                                 pExpr->iColumn, pExpr->iTable, target);
       }
       break;
     }
     case TK_INTEGER: {
-      codeInteger(v, pExpr, 0, target);
+      codeInteger(pParse, pExpr, 0, target);
       break;
     }
+#ifndef SQLITE_OMIT_FLOATING_POINT
     case TK_FLOAT: {
       assert( !ExprHasProperty(pExpr, EP_IntValue) );
       codeReal(v, pExpr->u.zToken, 0, target);
       break;
     }
+#endif
     case TK_STRING: {
       assert( !ExprHasProperty(pExpr, EP_IntValue) );
       sqlite3VdbeAddOp4(v, OP_String8, 0, target, 0, pExpr->u.zToken, 0);
@@ -2449,8 +2431,8 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
       testcase( op==TK_GE );
       testcase( op==TK_EQ );
       testcase( op==TK_NE );
-      codeCompareOperands(pParse, pExpr->pLeft, &r1, &regFree1,
-                                  pExpr->pRight, &r2, &regFree2);
+      r1 = sqlite3ExprCodeTemp(pParse, pExpr->pLeft, &regFree1);
+      r2 = sqlite3ExprCodeTemp(pParse, pExpr->pRight, &regFree2);
       codeCompare(pParse, pExpr->pLeft, pExpr->pRight, op,
                   r1, r2, inReg, SQLITE_STOREP2);
       testcase( regFree1==0 );
@@ -2461,8 +2443,8 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
     case TK_ISNOT: {
       testcase( op==TK_IS );
       testcase( op==TK_ISNOT );
-      codeCompareOperands(pParse, pExpr->pLeft, &r1, &regFree1,
-                                  pExpr->pRight, &r2, &regFree2);
+      r1 = sqlite3ExprCodeTemp(pParse, pExpr->pLeft, &regFree1);
+      r2 = sqlite3ExprCodeTemp(pParse, pExpr->pRight, &regFree2);
       op = (op==TK_IS) ? TK_EQ : TK_NE;
       codeCompare(pParse, pExpr->pLeft, pExpr->pRight, op,
                   r1, r2, inReg, SQLITE_STOREP2 | SQLITE_NULLEQ);
@@ -2514,11 +2496,13 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
     case TK_UMINUS: {
       Expr *pLeft = pExpr->pLeft;
       assert( pLeft );
-      if( pLeft->op==TK_FLOAT ){
+      if( pLeft->op==TK_INTEGER ){
+        codeInteger(pParse, pLeft, 1, target);
+#ifndef SQLITE_OMIT_FLOATING_POINT
+      }else if( pLeft->op==TK_FLOAT ){
         assert( !ExprHasProperty(pExpr, EP_IntValue) );
         codeReal(v, pLeft->u.zToken, 1, target);
-      }else if( pLeft->op==TK_INTEGER ){
-        codeInteger(v, pLeft, 1, target);
+#endif
       }else{
         regFree1 = r1 = sqlite3GetTempReg(pParse);
         sqlite3VdbeAddOp2(v, OP_Integer, 0, r1);
@@ -2606,7 +2590,7 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
         sqlite3ExprCode(pParse, pFarg->a[0].pExpr, target);
         for(i=1; i<nFarg; i++){
           sqlite3VdbeAddOp2(v, OP_NotNull, target, endCoalesce);
-          sqlite3ExprCacheRemove(pParse, target);
+          sqlite3ExprCacheRemove(pParse, target, 1);
           sqlite3ExprCachePush(pParse);
           sqlite3ExprCode(pParse, pFarg->a[i].pExpr, target);
           sqlite3ExprCachePop(pParse, 1);
@@ -2661,7 +2645,6 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
       if( nFarg ){
         sqlite3ReleaseTempRange(pParse, r1, nFarg);
       }
-      sqlite3ExprCacheAffinityChange(pParse, r1, nFarg);
       break;
     }
 #ifndef SQLITE_OMIT_SUBQUERY
@@ -2702,8 +2685,8 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
       struct ExprList_item *pLItem = pExpr->x.pList->a;
       Expr *pRight = pLItem->pExpr;
 
-      codeCompareOperands(pParse, pLeft, &r1, &regFree1,
-                                  pRight, &r2, &regFree2);
+      r1 = sqlite3ExprCodeTemp(pParse, pLeft, &regFree1);
+      r2 = sqlite3ExprCodeTemp(pParse, pRight, &regFree2);
       testcase( regFree1==0 );
       testcase( regFree2==0 );
       r3 = sqlite3GetTempReg(pParse);
@@ -2767,6 +2750,7 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
         target
       ));
 
+#ifndef SQLITE_OMIT_FLOATING_POINT
       /* If the column has REAL affinity, it may currently be stored as an
       ** integer. Use OP_RealAffinity to make sure it is really real.  */
       if( pExpr->iColumn>=0 
@@ -2774,6 +2758,7 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
       ){
         sqlite3VdbeAddOp1(v, OP_RealAffinity, target);
       }
+#endif
       break;
     }
 
@@ -3238,8 +3223,8 @@ void sqlite3ExprIfTrue(Parse *pParse, Expr *pExpr, int dest, int jumpIfNull){
       testcase( op==TK_EQ );
       testcase( op==TK_NE );
       testcase( jumpIfNull==0 );
-      codeCompareOperands(pParse, pExpr->pLeft, &r1, &regFree1,
-                                  pExpr->pRight, &r2, &regFree2);
+      r1 = sqlite3ExprCodeTemp(pParse, pExpr->pLeft, &regFree1);
+      r2 = sqlite3ExprCodeTemp(pParse, pExpr->pRight, &regFree2);
       codeCompare(pParse, pExpr->pLeft, pExpr->pRight, op,
                   r1, r2, dest, jumpIfNull);
       testcase( regFree1==0 );
@@ -3250,8 +3235,8 @@ void sqlite3ExprIfTrue(Parse *pParse, Expr *pExpr, int dest, int jumpIfNull){
     case TK_ISNOT: {
       testcase( op==TK_IS );
       testcase( op==TK_ISNOT );
-      codeCompareOperands(pParse, pExpr->pLeft, &r1, &regFree1,
-                                  pExpr->pRight, &r2, &regFree2);
+      r1 = sqlite3ExprCodeTemp(pParse, pExpr->pLeft, &regFree1);
+      r2 = sqlite3ExprCodeTemp(pParse, pExpr->pRight, &regFree2);
       op = (op==TK_IS) ? TK_EQ : TK_NE;
       codeCompare(pParse, pExpr->pLeft, pExpr->pRight, op,
                   r1, r2, dest, SQLITE_NULLEQ);
@@ -3381,8 +3366,8 @@ void sqlite3ExprIfFalse(Parse *pParse, Expr *pExpr, int dest, int jumpIfNull){
       testcase( op==TK_EQ );
       testcase( op==TK_NE );
       testcase( jumpIfNull==0 );
-      codeCompareOperands(pParse, pExpr->pLeft, &r1, &regFree1,
-                                  pExpr->pRight, &r2, &regFree2);
+      r1 = sqlite3ExprCodeTemp(pParse, pExpr->pLeft, &regFree1);
+      r2 = sqlite3ExprCodeTemp(pParse, pExpr->pRight, &regFree2);
       codeCompare(pParse, pExpr->pLeft, pExpr->pRight, op,
                   r1, r2, dest, jumpIfNull);
       testcase( regFree1==0 );
@@ -3393,8 +3378,8 @@ void sqlite3ExprIfFalse(Parse *pParse, Expr *pExpr, int dest, int jumpIfNull){
     case TK_ISNOT: {
       testcase( pExpr->op==TK_IS );
       testcase( pExpr->op==TK_ISNOT );
-      codeCompareOperands(pParse, pExpr->pLeft, &r1, &regFree1,
-                                  pExpr->pRight, &r2, &regFree2);
+      r1 = sqlite3ExprCodeTemp(pParse, pExpr->pLeft, &regFree1);
+      r2 = sqlite3ExprCodeTemp(pParse, pExpr->pRight, &regFree2);
       op = (pExpr->op==TK_IS) ? TK_NE : TK_EQ;
       codeCompare(pParse, pExpr->pLeft, pExpr->pRight, op,
                   r1, r2, dest, SQLITE_NULLEQ);
@@ -3439,57 +3424,61 @@ void sqlite3ExprIfFalse(Parse *pParse, Expr *pExpr, int dest, int jumpIfNull){
 }
 
 /*
-** Do a deep comparison of two expression trees.  Return TRUE (non-zero)
-** if they are identical and return FALSE if they differ in any way.
+** Do a deep comparison of two expression trees.  Return 0 if the two
+** expressions are completely identical.  Return 1 if they differ only
+** by a COLLATE operator at the top level.  Return 2 if there are differences
+** other than the top-level COLLATE operator.
 **
-** Sometimes this routine will return FALSE even if the two expressions
+** Sometimes this routine will return 2 even if the two expressions
 ** really are equivalent.  If we cannot prove that the expressions are
-** identical, we return FALSE just to be safe.  So if this routine
-** returns false, then you do not really know for certain if the two
-** expressions are the same.  But if you get a TRUE return, then you
+** identical, we return 2 just to be safe.  So if this routine
+** returns 2, then you do not really know for certain if the two
+** expressions are the same.  But if you get a 0 or 1 return, then you
 ** can be sure the expressions are the same.  In the places where
-** this routine is used, it does not hurt to get an extra FALSE - that
+** this routine is used, it does not hurt to get an extra 2 - that
 ** just might result in some slightly slower code.  But returning
-** an incorrect TRUE could lead to a malfunction.
+** an incorrect 0 or 1 could lead to a malfunction.
 */
 int sqlite3ExprCompare(Expr *pA, Expr *pB){
   int i;
   if( pA==0||pB==0 ){
-    return pB==pA;
+    return pB==pA ? 0 : 2;
   }
   assert( !ExprHasAnyProperty(pA, EP_TokenOnly|EP_Reduced) );
   assert( !ExprHasAnyProperty(pB, EP_TokenOnly|EP_Reduced) );
   if( ExprHasProperty(pA, EP_xIsSelect) || ExprHasProperty(pB, EP_xIsSelect) ){
-    return 0;
+    return 2;
   }
-  if( (pA->flags & EP_Distinct)!=(pB->flags & EP_Distinct) ) return 0;
-  if( pA->op!=pB->op ) return 0;
-  if( !sqlite3ExprCompare(pA->pLeft, pB->pLeft) ) return 0;
-  if( !sqlite3ExprCompare(pA->pRight, pB->pRight) ) return 0;
+  if( (pA->flags & EP_Distinct)!=(pB->flags & EP_Distinct) ) return 2;
+  if( pA->op!=pB->op ) return 2;
+  if( sqlite3ExprCompare(pA->pLeft, pB->pLeft) ) return 2;
+  if( sqlite3ExprCompare(pA->pRight, pB->pRight) ) return 2;
 
   if( pA->x.pList && pB->x.pList ){
-    if( pA->x.pList->nExpr!=pB->x.pList->nExpr ) return 0;
+    if( pA->x.pList->nExpr!=pB->x.pList->nExpr ) return 2;
     for(i=0; i<pA->x.pList->nExpr; i++){
       Expr *pExprA = pA->x.pList->a[i].pExpr;
       Expr *pExprB = pB->x.pList->a[i].pExpr;
-      if( !sqlite3ExprCompare(pExprA, pExprB) ) return 0;
+      if( sqlite3ExprCompare(pExprA, pExprB) ) return 2;
     }
   }else if( pA->x.pList || pB->x.pList ){
-    return 0;
+    return 2;
   }
 
-  if( pA->iTable!=pB->iTable || pA->iColumn!=pB->iColumn ) return 0;
+  if( pA->iTable!=pB->iTable || pA->iColumn!=pB->iColumn ) return 2;
   if( ExprHasProperty(pA, EP_IntValue) ){
     if( !ExprHasProperty(pB, EP_IntValue) || pA->u.iValue!=pB->u.iValue ){
-      return 0;
+      return 2;
     }
   }else if( pA->op!=TK_COLUMN && pA->u.zToken ){
-    if( ExprHasProperty(pB, EP_IntValue) || NEVER(pB->u.zToken==0) ) return 0;
+    if( ExprHasProperty(pB, EP_IntValue) || NEVER(pB->u.zToken==0) ) return 2;
     if( sqlite3StrICmp(pA->u.zToken,pB->u.zToken)!=0 ){
-      return 0;
+      return 2;
     }
   }
-  return 1;
+  if( (pA->flags & EP_ExpCollate)!=(pB->flags & EP_ExpCollate) ) return 1;
+  if( (pA->flags & EP_ExpCollate)!=0 && pA->pColl!=pB->pColl ) return 2;
+  return 0;
 }
 
 
@@ -3620,7 +3609,7 @@ static int analyzeAggregate(Walker *pWalker, Expr *pExpr){
         */
         struct AggInfo_func *pItem = pAggInfo->aFunc;
         for(i=0; i<pAggInfo->nFunc; i++, pItem++){
-          if( sqlite3ExprCompare(pItem->pExpr, pExpr) ){
+          if( sqlite3ExprCompare(pItem->pExpr, pExpr)==0 ){
             break;
           }
         }
@@ -3741,7 +3730,8 @@ int sqlite3GetTempRange(Parse *pParse, int nReg){
   int i, n;
   i = pParse->iRangeReg;
   n = pParse->nRangeReg;
-  if( nReg<=n && !usedAsColumnCache(pParse, i, i+n-1) ){
+  if( nReg<=n ){
+    assert( !usedAsColumnCache(pParse, i, i+n-1) );
     pParse->iRangeReg += nReg;
     pParse->nRangeReg -= nReg;
   }else{
@@ -3751,6 +3741,7 @@ int sqlite3GetTempRange(Parse *pParse, int nReg){
   return i;
 }
 void sqlite3ReleaseTempRange(Parse *pParse, int iReg, int nReg){
+  sqlite3ExprCacheRemove(pParse, iReg, nReg);
   if( nReg>pParse->nRangeReg ){
     pParse->nRangeReg = nReg;
     pParse->iRangeReg = iReg;

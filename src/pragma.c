@@ -285,6 +285,7 @@ void sqlite3Pragma(
   Db *pDb;
   Vdbe *v = pParse->pVdbe = sqlite3VdbeCreate(db);
   if( v==0 ) return;
+  sqlite3VdbeRunOnlyOnce(v);
   pParse->nMem = 2;
 
   /* Interpret the [database.] part of the pragma statement. iDb is the
@@ -414,6 +415,31 @@ void sqlite3Pragma(
       newMax = sqlite3BtreeMaxPageCount(pBt, newMax);
     }
     returnSingleInt(pParse, "max_page_count", newMax);
+  }else
+
+  /*
+  **  PRAGMA [database.]secure_delete
+  **  PRAGMA [database.]secure_delete=ON/OFF
+  **
+  ** The first form reports the current setting for the
+  ** secure_delete flag.  The second form changes the secure_delete
+  ** flag setting and reports thenew value.
+  */
+  if( sqlite3StrICmp(zLeft,"secure_delete")==0 ){
+    Btree *pBt = pDb->pBt;
+    int b = -1;
+    assert( pBt!=0 );
+    if( zRight ){
+      b = getBoolean(zRight);
+    }
+    if( pId2->n==0 && b>=0 ){
+      int ii;
+      for(ii=0; ii<db->nDb; ii++){
+        sqlite3BtreeSecureDelete(db->aDb[ii].pBt, b);
+      }
+    }
+    b = sqlite3BtreeSecureDelete(pBt, b);
+    returnSingleInt(pParse, "secure_delete", b);
   }else
 
   /*
@@ -1334,6 +1360,26 @@ void sqlite3Pragma(
   }else
 #endif /* SQLITE_OMIT_SCHEMA_VERSION_PRAGMAS */
 
+#ifndef SQLITE_OMIT_COMPILEOPTION_DIAGS
+  /*
+  **   PRAGMA compile_options
+  **
+  ** Return the names of all compile-time options used in this build,
+  ** one option per row.
+  */
+  if( sqlite3StrICmp(zLeft, "compile_options")==0 ){
+    int i = 0;
+    const char *zOpt;
+    sqlite3VdbeSetNumCols(v, 1);
+    pParse->nMem = 1;
+    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "compile_option", SQLITE_STATIC);
+    while( (zOpt = sqlite3_compileoption_get(i++))!=0 ){
+      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, zOpt, 0);
+      sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    }
+  }else
+#endif /* SQLITE_OMIT_COMPILEOPTION_DIAGS */
+
 #if defined(SQLITE_DEBUG) || defined(SQLITE_TEST)
   /*
   ** Report the current state of file logs for all databases
@@ -1368,7 +1414,7 @@ void sqlite3Pragma(
   }else
 #endif
 
-#if SQLITE_HAS_CODEC
+#ifdef SQLITE_HAS_CODEC
   if( sqlite3StrICmp(zLeft, "key")==0 && zRight ){
     sqlite3_key(db, zRight, sqlite3Strlen30(zRight));
   }else
@@ -1409,17 +1455,15 @@ void sqlite3Pragma(
   }else
 /** END CRYPTO **/
 #endif
-#if SQLITE_HAS_CODEC || defined(SQLITE_ENABLE_CEROD)
+#if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
   if( sqlite3StrICmp(zLeft, "activate_extensions")==0 ){
-#if SQLITE_HAS_CODEC
+#ifdef SQLITE_HAS_CODEC
     if( sqlite3StrNICmp(zRight, "see-", 4)==0 ){
-      extern void sqlite3_activate_see(const char*);
       sqlite3_activate_see(&zRight[4]);
     }
 #endif
 #ifdef SQLITE_ENABLE_CEROD
     if( sqlite3StrNICmp(zRight, "cerod-", 6)==0 ){
-      extern void sqlite3_activate_cerod(const char*);
       sqlite3_activate_cerod(&zRight[6]);
     }
 #endif
@@ -1428,12 +1472,6 @@ void sqlite3Pragma(
 
  
   {/* Empty ELSE clause */}
-
-  /* Code an OP_Expire at the end of each PRAGMA program to cause
-  ** the VDBE implementing the pragma to expire. Most (all?) pragmas
-  ** are only valid for a single execution.
-  */
-  sqlite3VdbeAddOp2(v, OP_Expire, 1, 0);
 
   /*
   ** Reset the safety level, in case the fullfsync flag or synchronous
