@@ -315,6 +315,10 @@ void sqlite3VdbeMemRelease(Mem *p){
 ** before attempting the conversion.
 */
 static i64 doubleToInt64(double r){
+#ifdef SQLITE_OMIT_FLOATING_POINT
+  /* When floating-point is omitted, double and int64 are the same thing */
+  return r;
+#else
   /*
   ** Many compilers we encounter do not define constants for the
   ** minimum and maximum 64-bit integers, or they define them
@@ -336,6 +340,7 @@ static i64 doubleToInt64(double r){
   }else{
     return (i64)r;
   }
+#endif
 }
 
 /*
@@ -463,21 +468,26 @@ int sqlite3VdbeMemRealify(Mem *pMem){
 /*
 ** Convert pMem so that it has types MEM_Real or MEM_Int or both.
 ** Invalidate any prior representations.
+**
+** Every effort is made to force the conversion, even if the input
+** is a string that does not look completely like a number.  Convert
+** as much of the string as we can and ignore the rest.
 */
 int sqlite3VdbeMemNumerify(Mem *pMem){
-  double r1, r2;
-  i64 i;
+  int rc;
   assert( (pMem->flags & (MEM_Int|MEM_Real|MEM_Null))==0 );
   assert( (pMem->flags & (MEM_Blob|MEM_Str))!=0 );
   assert( pMem->db==0 || sqlite3_mutex_held(pMem->db->mutex) );
-  r1 = sqlite3VdbeRealValue(pMem);
-  i = doubleToInt64(r1);
-  r2 = (double)i;
-  if( r1==r2 ){
-    sqlite3VdbeMemIntegerify(pMem);
+  rc = sqlite3VdbeChangeEncoding(pMem, SQLITE_UTF8);
+  if( rc ) return rc;
+  rc = sqlite3VdbeMemNulTerminate(pMem);
+  if( rc ) return rc;
+  if( sqlite3Atoi64(pMem->z, &pMem->u.i) ){
+    MemSetTypeFlag(pMem, MEM_Int);
   }else{
-    pMem->r = r1;
+    pMem->r = sqlite3VdbeRealValue(pMem);
     MemSetTypeFlag(pMem, MEM_Real);
+    sqlite3VdbeIntegerAffinity(pMem);
   }
   return SQLITE_OK;
 }
@@ -529,6 +539,7 @@ void sqlite3VdbeMemSetInt64(Mem *pMem, i64 val){
   pMem->type = SQLITE_INTEGER;
 }
 
+#ifndef SQLITE_OMIT_FLOATING_POINT
 /*
 ** Delete any previous value and set the value stored in *pMem to val,
 ** manifest type REAL.
@@ -543,6 +554,7 @@ void sqlite3VdbeMemSetDouble(Mem *pMem, double val){
     pMem->type = SQLITE_FLOAT;
   }
 }
+#endif
 
 /*
 ** Delete any previous value and set the value of pMem to be an
@@ -597,7 +609,7 @@ void sqlite3VdbeMemShallowCopy(Mem *pTo, const Mem *pFrom, int srcType){
   sqlite3VdbeMemReleaseExternal(pTo);
   memcpy(pTo, pFrom, MEMCELLSIZE);
   pTo->xDel = 0;
-  if( (pFrom->flags&MEM_Dyn)!=0 || pFrom->z==pFrom->zMalloc ){
+  if( (pFrom->flags&MEM_Static)==0 ){
     pTo->flags &= ~(MEM_Dyn|MEM_Static|MEM_Ephem);
     assert( srcType==MEM_Ephem || srcType==MEM_Static );
     pTo->flags |= srcType;

@@ -301,6 +301,7 @@ struct Vdbe {
   u8 explain;             /* True if EXPLAIN present on SQL command */
   u8 changeCntOn;         /* True to update the change-counter */
   u8 expired;             /* True if the VM needs to be recompiled */
+  u8 runOnlyOnce;         /* Automatically expire on reset */
   u8 minWriteFileFormat;  /* Minimum file format for writable database files */
   u8 inVtabMethod;        /* See comments above */
   u8 usesStmtJournal;     /* True if uses a statement journal */
@@ -362,7 +363,11 @@ void sqlite3VdbeMemMove(Mem*, Mem*);
 int sqlite3VdbeMemNulTerminate(Mem*);
 int sqlite3VdbeMemSetStr(Mem*, const char*, int, u8, void(*)(void*));
 void sqlite3VdbeMemSetInt64(Mem*, i64);
-void sqlite3VdbeMemSetDouble(Mem*, double);
+#ifdef SQLITE_OMIT_FLOATING_POINT
+# define sqlite3VdbeMemSetDouble sqlite3VdbeMemSetInt64
+#else
+  void sqlite3VdbeMemSetDouble(Mem*, double);
+#endif
 void sqlite3VdbeMemSetNull(Mem*);
 void sqlite3VdbeMemSetZeroBlob(Mem*,int);
 void sqlite3VdbeMemSetRowSet(Mem*);

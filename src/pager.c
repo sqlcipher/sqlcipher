@@ -2019,6 +2019,9 @@ end_playback:
     rc = readMasterJournal(pPager->jfd, zMaster, pPager->pVfs->mxPathname+1);
     testcase( rc!=SQLITE_OK );
   }
+  if( rc==SQLITE_OK && pPager->noSync==0 && pPager->state>=PAGER_EXCLUSIVE ){
+    rc = sqlite3OsSync(pPager->fd, pPager->sync_flags);
+  }
   if( rc==SQLITE_OK ){
     rc = pager_end_transaction(pPager, zMaster[0]!='\0');
     testcase( rc!=SQLITE_OK );
@@ -2875,9 +2878,7 @@ static int pager_write_pagelist(PgHdr *pList){
     ** any such pages to the file.
     **
     ** Also, do not write out any page that has the PGHDR_DONT_WRITE flag
-    ** set (set by sqlite3PagerDontWrite()).  Note that if compiled with
-    ** SQLITE_SECURE_DELETE the PGHDR_DONT_WRITE bit is never set and so
-    ** the second test is always true.
+    ** set (set by sqlite3PagerDontWrite()).
     */
     if( pgno<=pPager->dbSize && 0==(pList->flags&PGHDR_DONT_WRITE) ){
       i64 offset = (pgno-1)*(i64)pPager->pageSize;   /* Offset to write */
@@ -3164,7 +3165,7 @@ int sqlite3PagerOpen(
       ** as it will not be possible to open the journal file or even
       ** check for a hot-journal before reading.
       */
-      rc = SQLITE_CANTOPEN;
+      rc = SQLITE_CANTOPEN_BKPT;
     }
     if( rc!=SQLITE_OK ){
       sqlite3_free(zPathname);
@@ -3341,6 +3342,7 @@ int sqlite3PagerOpen(
   /* pPager->pBusyHandlerArg = 0; */
   pPager->xReiniter = xReinit;
   /* memset(pPager->aHash, 0, sizeof(pPager->aHash)); */
+
   *ppPager = pPager;
   return SQLITE_OK;
 }
@@ -3490,8 +3492,24 @@ static int readDbPage(PgHdr *pPg){
     rc = SQLITE_OK;
   }
   if( pgno==1 ){
-    u8 *dbFileVers = &((u8*)pPg->pData)[24];
-    memcpy(&pPager->dbFileVers, dbFileVers, sizeof(pPager->dbFileVers));
+    if( rc ){
+      /* If the read is unsuccessful, set the dbFileVers[] to something
+      ** that will never be a valid file version.  dbFileVers[] is a copy
+      ** of bytes 24..39 of the database.  Bytes 28..31 should always be
+      ** zero.  Bytes 32..35 and 35..39 should be page numbers which are
+      ** never 0xffffffff.  So filling pPager->dbFileVers[] with all 0xff
+      ** bytes should suffice.
+      **
+      ** For an encrypted database, the situation is more complex:  bytes
+      ** 24..39 of the database are white noise.  But the probability of
+      ** white noising equaling 16 bytes of 0xff is vanishingly small so
+      ** we should still be ok.
+      */
+      memset(pPager->dbFileVers, 0xff, sizeof(pPager->dbFileVers));
+    }else{
+      u8 *dbFileVers = &((u8*)pPg->pData)[24];
+      memcpy(&pPager->dbFileVers, dbFileVers, sizeof(pPager->dbFileVers));
+    }
   }
   CODEC1(pPager, pPg->pData, pgno, 3, rc = SQLITE_NOMEM);
 
@@ -3623,7 +3641,7 @@ int sqlite3PagerSharedLock(Pager *pPager){
             rc = sqlite3OsOpen(pVfs, pPager->zJournal, pPager->jfd, f, &fout);
             assert( rc!=SQLITE_OK || isOpen(pPager->jfd) );
             if( rc==SQLITE_OK && fout&SQLITE_OPEN_READONLY ){
-              rc = SQLITE_CANTOPEN;
+              rc = SQLITE_CANTOPEN_BKPT;
               sqlite3OsClose(pPager->jfd);
             }
           }else{
@@ -3842,7 +3860,7 @@ int sqlite3PagerAcquire(
       goto pager_acquire_err;
     }
 
-    if( MEMDB || nMax<(int)pgno || noContent ){
+    if( MEMDB || nMax<(int)pgno || noContent || !isOpen(pPager->fd) ){
       if( pgno>pPager->mxPgno ){
 	rc = SQLITE_FULL;
 	goto pager_acquire_err;
@@ -3862,9 +3880,8 @@ int sqlite3PagerAcquire(
         TESTONLY( rc = ) addToSavepointBitvecs(pPager, pgno);
         testcase( rc==SQLITE_NOMEM );
         sqlite3EndBenignMalloc();
-      }else{
-        memset(pPg->pData, 0, pPager->pageSize);
       }
+      memset(pPg->pData, 0, pPager->pageSize);
       IOTRACE(("ZERO %p %d\n", pPager, pgno));
     }else{
       assert( pPg->pPager==pPager );
@@ -4386,7 +4403,6 @@ int sqlite3PagerIswriteable(DbPage *pPg){
 }
 #endif
 
-#ifndef SQLITE_SECURE_DELETE
 /*
 ** A call to this routine tells the pager that it is not necessary to
 ** write the information on page pPg back to the disk, even though
@@ -4412,7 +4428,6 @@ void sqlite3PagerDontWrite(PgHdr *pPg){
 #endif
   }
 }
-#endif /* !defined(SQLITE_SECURE_DELETE) */
 
 /*
 ** This routine is called to increment the value of the database file 
@@ -4982,30 +4997,35 @@ int sqlite3PagerSavepoint(Pager *pPager, int op, int iSavepoint){
     ** operation. Store this value in nNew. Then free resources associated 
     ** with any savepoints that are destroyed by this operation.
     */
-    nNew = iSavepoint + (op==SAVEPOINT_ROLLBACK);
+    nNew = iSavepoint + (( op==SAVEPOINT_RELEASE ) ? 0 : 1);
     for(ii=nNew; ii<pPager->nSavepoint; ii++){
       sqlite3BitvecDestroy(pPager->aSavepoint[ii].pInSavepoint);
     }
     pPager->nSavepoint = nNew;
 
-    /* If this is a rollback operation, playback the specified savepoint.
+    /* If this is a release of the outermost savepoint, truncate 
+    ** the sub-journal to zero bytes in size. */
+    if( op==SAVEPOINT_RELEASE ){
+      if( nNew==0 && isOpen(pPager->sjfd) ){
+        /* Only truncate if it is an in-memory sub-journal. */
+        if( sqlite3IsMemJournal(pPager->sjfd) ){
+          rc = sqlite3OsTruncate(pPager->sjfd, 0);
+          assert( rc==SQLITE_OK );
+        }
+        pPager->nSubRec = 0;
+      }
+    }
+    /* Else this is a rollback operation, playback the specified savepoint.
     ** If this is a temp-file, it is possible that the journal file has
     ** not yet been opened. In this case there have been no changes to
     ** the database file, so the playback operation can be skipped.
     */
-    if( op==SAVEPOINT_ROLLBACK && isOpen(pPager->jfd) ){
+    else if( isOpen(pPager->jfd) ){
       PagerSavepoint *pSavepoint = (nNew==0)?0:&pPager->aSavepoint[nNew-1];
       rc = pagerPlaybackSavepoint(pPager, pSavepoint);
       assert(rc!=SQLITE_DONE);
     }
   
-    /* If this is a release of the outermost savepoint, truncate 
-    ** the sub-journal to zero bytes in size. */
-    if( nNew==0 && op==SAVEPOINT_RELEASE && isOpen(pPager->sjfd) ){
-      assert( rc==SQLITE_OK );
-      rc = sqlite3OsTruncate(pPager->sjfd, 0);
-      pPager->nSubRec = 0;
-    }
   }
   return rc;
 }
