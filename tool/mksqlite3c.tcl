@@ -214,6 +214,7 @@ foreach file {
    crypto.c
 
    global.c
+   ctime.c
    status.c
    date.c
    os.c

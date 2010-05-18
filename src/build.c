@@ -202,7 +202,7 @@ void sqlite3FinishCoding(Parse *pParse){
                          pParse->isMultiWrite && pParse->mayAbort);
     pParse->rc = SQLITE_DONE;
     pParse->colNamesSet = 0;
-  }else if( pParse->rc==SQLITE_OK ){
+  }else{
     pParse->rc = SQLITE_ERROR;
   }
   pParse->nTab = 0;
@@ -549,7 +549,8 @@ void sqlite3UnlinkAndDeleteTable(sqlite3 *db, int iDb, const char *zTabName){
 
   assert( db!=0 );
   assert( iDb>=0 && iDb<db->nDb );
-  assert( zTabName && zTabName[0] );
+  assert( zTabName );
+  testcase( zTabName[0]==0 );  /* Zero-length table names are allowed */
   pDb = &db->aDb[iDb];
   p = sqlite3HashInsert(&pDb->pSchema->tblHash, zTabName,
                         sqlite3Strlen30(zTabName),0);
@@ -1973,13 +1974,12 @@ void sqlite3DropTable(Parse *pParse, SrcList *pName, int isView, int noErr){
   }
   assert( pParse->nErr==0 );
   assert( pName->nSrc==1 );
+  if( noErr ) db->suppressErr++;
   pTab = sqlite3LocateTable(pParse, isView, 
                             pName->a[0].zName, pName->a[0].zDatabase);
+  if( noErr ) db->suppressErr--;
 
   if( pTab==0 ){
-    if( noErr ){
-      sqlite3ErrorClear(pParse);
-    }
     goto exit_drop_table;
   }
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
@@ -3401,6 +3401,7 @@ int sqlite3OpenTempDatabase(Parse *pParse){
   sqlite3 *db = pParse->db;
   if( db->aDb[1].pBt==0 && !pParse->explain ){
     int rc;
+    Btree *pBt;
     static const int flags = 
           SQLITE_OPEN_READWRITE |
           SQLITE_OPEN_CREATE |
@@ -3408,18 +3409,20 @@ int sqlite3OpenTempDatabase(Parse *pParse){
           SQLITE_OPEN_DELETEONCLOSE |
           SQLITE_OPEN_TEMP_DB;
 
-    rc = sqlite3BtreeFactory(db, 0, 0, SQLITE_DEFAULT_CACHE_SIZE, flags,
-                                 &db->aDb[1].pBt);
+    rc = sqlite3BtreeFactory(db, 0, 0, SQLITE_DEFAULT_CACHE_SIZE, flags, &pBt);
     if( rc!=SQLITE_OK ){
       sqlite3ErrorMsg(pParse, "unable to open a temporary database "
         "file for storing temporary tables");
       pParse->rc = rc;
       return 1;
     }
-    assert( (db->flags & SQLITE_InTrans)==0 || db->autoCommit );
+    db->aDb[1].pBt = pBt;
     assert( db->aDb[1].pSchema );
-    sqlite3PagerJournalMode(sqlite3BtreePager(db->aDb[1].pBt),
-                            db->dfltJournalMode);
+    if( SQLITE_NOMEM==sqlite3BtreeSetPageSize(pBt, db->nextPagesize, -1, 0) ){
+      db->mallocFailed = 1;
+      return 1;
+    }
+    sqlite3PagerJournalMode(sqlite3BtreePager(pBt), db->dfltJournalMode);
   }
   return 0;
 }
