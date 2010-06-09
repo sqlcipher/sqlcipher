@@ -71,9 +71,11 @@ typedef struct {
 } codec_ctx;
 
 static void activate_openssl() {
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   if(EVP_get_cipherbyname(CIPHER) == NULL) {
     OpenSSL_add_all_algorithms();
   } 
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
 /*
