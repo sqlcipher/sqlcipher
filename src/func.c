@@ -1411,21 +1411,16 @@ static void groupConcatFinalize(sqlite3_context *context){
 }
 
 /*
-** This function registered all of the above C functions as SQL
-** functions.  This should be the only routine in this file with
-** external linkage.
+** This routine does per-connection function registration.  Most
+** of the built-in functions above are part of the global function set.
+** This routine only deals with those that are not global.
 */
 #include "ditto_funcs.c"
 void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
-#ifndef SQLITE_OMIT_ALTERTABLE
-  sqlite3AlterFunctions(db);
-#endif
-  if( !db->mallocFailed ){
-    int rc = sqlite3_overload_function(db, "MATCH", 2);
-    assert( rc==SQLITE_NOMEM || rc==SQLITE_OK );
-    if( rc==SQLITE_NOMEM ){
-      db->mallocFailed = 1;
-    }
+  int rc = sqlite3_overload_function(db, "MATCH", 2);
+  assert( rc==SQLITE_NOMEM || rc==SQLITE_OK );
+  if( rc==SQLITE_NOMEM ){
+    db->mallocFailed = 1;
   }
 #include "ditto_globals.c"
 }
@@ -1594,4 +1589,7 @@ void sqlite3RegisterGlobalFunctions(void){
     sqlite3FuncDefInsert(pHash, &aFunc[i]);
   }
   sqlite3RegisterDateTimeFunctions();
+#ifndef SQLITE_OMIT_ALTERTABLE
+  sqlite3AlterFunctions();
+#endif
 }
