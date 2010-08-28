@@ -378,7 +378,7 @@ void sqlite3MemSetDefault(void){
 ** Set the "type" of an allocation.
 */
 void sqlite3MemdebugSetType(void *p, u8 eType){
-  if( p ){
+  if( p && sqlite3GlobalConfig.m.xMalloc==sqlite3MemMalloc ){
     struct MemBlockHdr *pHdr;
     pHdr = sqlite3MemsysGetHeader(p);
     assert( pHdr->iForeGuard==FOREGUARD );
@@ -397,23 +397,38 @@ void sqlite3MemdebugSetType(void *p, u8 eType){
 */
 int sqlite3MemdebugHasType(void *p, u8 eType){
   int rc = 1;
-  if( p ){
+  if( p && sqlite3GlobalConfig.m.xMalloc==sqlite3MemMalloc ){
     struct MemBlockHdr *pHdr;
     pHdr = sqlite3MemsysGetHeader(p);
     assert( pHdr->iForeGuard==FOREGUARD );         /* Allocation is valid */
-    assert( (pHdr->eType & (pHdr->eType-1))==0 );  /* Only one type bit set */
     if( (pHdr->eType&eType)==0 ){
-      void **pBt;
-      pBt = (void**)pHdr;
-      pBt -= pHdr->nBacktraceSlots;
-      backtrace_symbols_fd(pBt, pHdr->nBacktrace, fileno(stderr));
-      fprintf(stderr, "\n");
       rc = 0;
     }
   }
   return rc;
 }
- 
+
+/*
+** Return TRUE if the mask of type in eType matches no bits of the type of the
+** allocation p.  Also return true if p==NULL.
+**
+** This routine is designed for use within an assert() statement, to
+** verify the type of an allocation.  For example:
+**
+**     assert( sqlite3MemdebugNoType(p, MEMTYPE_DB) );
+*/
+int sqlite3MemdebugNoType(void *p, u8 eType){
+  int rc = 1;
+  if( p && sqlite3GlobalConfig.m.xMalloc==sqlite3MemMalloc ){
+    struct MemBlockHdr *pHdr;
+    pHdr = sqlite3MemsysGetHeader(p);
+    assert( pHdr->iForeGuard==FOREGUARD );         /* Allocation is valid */
+    if( (pHdr->eType&eType)!=0 ){
+      rc = 0;
+    }
+  }
+  return rc;
+}
 
 /*
 ** Set the number of backtrace levels kept for each allocation.
