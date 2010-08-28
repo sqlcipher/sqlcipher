@@ -31,7 +31,7 @@
 **  
 */
 /* BEGIN CRYPTO */
-#if SQLITE_HAS_CODEC
+#ifdef SQLITE_HAS_CODEC
 #ifndef CRYPTO_H
 #define CRYPTO_H
 
