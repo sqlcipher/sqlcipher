@@ -191,7 +191,7 @@ LIBOBJS0 = alter.lo analyze.lo attach.lo auth.lo \
          table.lo tokenize.lo trigger.lo \
          update.lo util.lo vacuum.lo \
          vdbe.lo vdbeapi.lo vdbeaux.lo vdbeblob.lo vdbemem.lo vdbetrace.lo \
-         wal.lo walker.lo where.lo utf.o vtab.lo $(CRYPTOLIBOBJ)
+         wal.lo walker.lo where.lo utf.lo vtab.lo $(CRYPTOLIBOBJ)
 
 # Object files for the amalgamation.
 #
