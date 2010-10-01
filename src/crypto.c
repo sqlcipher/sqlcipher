@@ -461,7 +461,22 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     codec_set_pass_key(db, nDb, zKey, nKey, 0);
     cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
     
-    sqlite3BtreeSetPageSize(ctx->pBt, sqlite3BtreeGetPageSize(ctx->pBt), EVP_MAX_IV_LENGTH, 0);
+    /* Always overwrite page size and set to the default because the first page of the database
+       in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
+       cases where bytes 16 & 17 of the page header are a power of 2 as reported by John Lehman
+
+       Note: before forcing the page size we need to force pageSizeFixed to 0, else  
+             sqliteBtreeSetPageSize will block the change 
+    */
+    pDb->pBt->pBt->pageSizeFixed = 0; 
+    sqlite3BtreeSetPageSize(ctx->pBt, SQLITE_DEFAULT_PAGE_SIZE, EVP_MAX_IV_LENGTH, 0);
+
+    /* if fd is null, then this is an in-memory database and
+       we dont' want to overwrite the AutoVacuum settings
+       if not null, then set to the default */
+    if(fd != NULL) { 
+      sqlite3BtreeSetAutoVacuum(ctx->pBt, SQLITE_DEFAULT_AUTOVACUUM);
+    }
   }
   return SQLITE_OK;
 }
