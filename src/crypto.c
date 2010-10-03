@@ -546,6 +546,8 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         ctx->read_ctx->key_sz = ctx->read_ctx->iv_sz =  ctx->read_ctx->pass_sz = 0;
       }
 
+      sqlite3_mutex_enter(db->mutex);
+
       if(ctx->read_ctx->iv_sz != ctx->write_ctx->iv_sz) {
         char *error;
         CODEC_TRACE(("sqlite3_rekey: updating page size for iv_sz change from %d to %d\n", ctx->read_ctx->iv_sz, ctx->write_ctx->iv_sz));
@@ -591,6 +593,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       }
 
       ctx->mode_rekey = 0;
+      sqlite3_mutex_leave(db->mutex);
     }
     return SQLITE_OK;
   }
