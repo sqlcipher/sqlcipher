@@ -362,7 +362,7 @@ int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for
  */
 void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   codec_ctx *ctx = (codec_ctx *) iCtx;
-  int pg_sz = sqlite3BtreeGetPageSize(ctx->pBt);
+  int pg_sz = SQLITE_DEFAULT_PAGE_SIZE;
   int offset = 0;
   unsigned char *pData = (unsigned char *) data;
  
@@ -437,7 +437,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* pre-allocate a page buffer of PageSize bytes. This will
        be used as a persistent buffer for encryption and decryption 
        operations to avoid overhead of multiple memory allocations*/
-    ctx->buffer = sqlite3Malloc(sqlite3BtreeGetPageSize(ctx->pBt));
+    ctx->buffer = sqlite3Malloc(SQLITE_DEFAULT_PAGE_SIZE);
     if(ctx->buffer == NULL) return SQLITE_NOMEM;
      
     /* allocate space for salt data. Then read the first 16 bytes 
@@ -447,6 +447,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     ctx->kdf_salt_sz = FILE_HEADER_SZ;
     ctx->kdf_salt = sqlite3Malloc(ctx->kdf_salt_sz);
     if(ctx->kdf_salt == NULL) return SQLITE_NOMEM;
+
 
     fd = sqlite3Pager_get_fd(pPager);
     if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
@@ -460,6 +461,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     codec_set_kdf_iter(db, nDb, PBKDF2_ITER, 0);
     codec_set_pass_key(db, nDb, zKey, nKey, 0);
     cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
+
+    sqlite3_mutex_enter(db->mutex);
     
     /* Always overwrite page size and set to the default because the first page of the database
        in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
@@ -477,6 +480,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     if(fd != NULL) { 
       sqlite3BtreeSetAutoVacuum(ctx->pBt, SQLITE_DEFAULT_AUTOVACUUM);
     }
+
+    sqlite3_mutex_leave(db->mutex);
   }
   return SQLITE_OK;
 }
@@ -544,7 +549,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       if(ctx->read_ctx->iv_sz != ctx->write_ctx->iv_sz) {
         char *error;
         CODEC_TRACE(("sqlite3_rekey: updating page size for iv_sz change from %d to %d\n", ctx->read_ctx->iv_sz, ctx->write_ctx->iv_sz));
-        db->nextPagesize = sqlite3BtreeGetPageSize(pDb->pBt);
+        db->nextPagesize = SQLITE_DEFAULT_PAGE_SIZE;
         pDb->pBt->pBt->pageSizeFixed = 0; /* required for sqlite3BtreeSetPageSize to modify pagesize setting */
         sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, EVP_MAX_IV_LENGTH, 0);
         sqlite3RunVacuum(&error, db);
@@ -577,7 +582,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       /* if commit was successful commit and copy the rekey data to current key, else rollback to release locks */
       if(rc == SQLITE_OK) { 
         CODEC_TRACE(("sqlite3_rekey: committing\n"));
-        db->nextPagesize = sqlite3BtreeGetPageSize(pDb->pBt);
+        db->nextPagesize = SQLITE_DEFAULT_PAGE_SIZE;
         rc = sqlite3BtreeCommit(pDb->pBt); 
         cipher_ctx_copy(ctx->read_ctx, ctx->write_ctx);
       } else {
