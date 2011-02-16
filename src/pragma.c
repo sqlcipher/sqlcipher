@@ -35,7 +35,7 @@ static u8 getSafetyLevel(const char *z){
   static const u8 iValue[] =  {1, 0, 0, 0, 1, 1, 2};
   int i, n;
   if( sqlite3Isdigit(*z) ){
-    return (u8)atoi(z);
+    return (u8)sqlite3Atoi(z);
   }
   n = sqlite3Strlen30(z);
   for(i=0; i<ArraySize(iLength); i++){
@@ -76,7 +76,7 @@ static int getAutoVacuum(const char *z){
   if( 0==sqlite3StrICmp(z, "none") ) return BTREE_AUTOVACUUM_NONE;
   if( 0==sqlite3StrICmp(z, "full") ) return BTREE_AUTOVACUUM_FULL;
   if( 0==sqlite3StrICmp(z, "incremental") ) return BTREE_AUTOVACUUM_INCR;
-  i = atoi(z);
+  i = sqlite3Atoi(z);
   return (u8)((i>=0&&i<=2)?i:0);
 }
 #endif /* ifndef SQLITE_OMIT_AUTOVACUUM */
@@ -172,6 +172,7 @@ static int flagPragma(Parse *pParse, const char *zLeft, const char *zRight){
     { "empty_result_callbacks",   SQLITE_NullCallback  },
     { "legacy_file_format",       SQLITE_LegacyFileFmt },
     { "fullfsync",                SQLITE_FullFSync     },
+    { "checkpoint_fullfsync",     SQLITE_CkptFullFSync },
     { "reverse_unordered_selects", SQLITE_ReverseOrder  },
 #ifndef SQLITE_OMIT_AUTOMATIC_INDEX
     { "automatic_index",          SQLITE_AutoIndex     },
@@ -383,7 +384,7 @@ void sqlite3Pragma(
       sqlite3VdbeChangeP1(v, addr+1, iDb);
       sqlite3VdbeChangeP1(v, addr+6, SQLITE_DEFAULT_CACHE_SIZE);
     }else{
-      int size = atoi(zRight);
+      int size = sqlite3Atoi(zRight);
       if( size<0 ) size = -size;
       sqlite3BeginWriteOperation(pParse, 0, iDb);
       sqlite3VdbeAddOp2(v, OP_Integer, size, 1);
@@ -412,33 +413,11 @@ void sqlite3Pragma(
       /* Malloc may fail when setting the page-size, as there is an internal
       ** buffer that the pager module resizes using sqlite3_realloc().
       */
-      db->nextPagesize = atoi(zRight);
+      db->nextPagesize = sqlite3Atoi(zRight);
       if( SQLITE_NOMEM==sqlite3BtreeSetPageSize(pBt, db->nextPagesize, -1, 0) ){
         db->mallocFailed = 1;
       }
     }
-  }else
-
-  /*
-  **  PRAGMA [database.]max_page_count
-  **  PRAGMA [database.]max_page_count=N
-  **
-  ** The first form reports the current setting for the
-  ** maximum number of pages in the database file.  The 
-  ** second form attempts to change this setting.  Both
-  ** forms return the current setting.
-  */
-  if( sqlite3StrICmp(zLeft,"max_page_count")==0 ){
-    Btree *pBt = pDb->pBt;
-    int newMax = 0;
-    assert( pBt!=0 );
-    if( zRight ){
-      newMax = atoi(zRight);
-    }
-    if( ALWAYS(pBt) ){
-      newMax = sqlite3BtreeMaxPageCount(pBt, newMax);
-    }
-    returnSingleInt(pParse, "max_page_count", newMax);
   }else
 
   /*
@@ -467,19 +446,33 @@ void sqlite3Pragma(
   }else
 
   /*
+  **  PRAGMA [database.]max_page_count
+  **  PRAGMA [database.]max_page_count=N
+  **
+  ** The first form reports the current setting for the
+  ** maximum number of pages in the database file.  The 
+  ** second form attempts to change this setting.  Both
+  ** forms return the current setting.
+  **
   **  PRAGMA [database.]page_count
   **
   ** Return the number of pages in the specified database.
   */
-  if( sqlite3StrICmp(zLeft,"page_count")==0 ){
+  if( sqlite3StrICmp(zLeft,"page_count")==0
+   || sqlite3StrICmp(zLeft,"max_page_count")==0
+  ){
     int iReg;
     if( sqlite3ReadSchema(pParse) ) goto pragma_out;
     sqlite3CodeVerifySchema(pParse, iDb);
     iReg = ++pParse->nMem;
-    sqlite3VdbeAddOp2(v, OP_Pagecount, iDb, iReg);
+    if( zLeft[0]=='p' ){
+      sqlite3VdbeAddOp2(v, OP_Pagecount, iDb, iReg);
+    }else{
+      sqlite3VdbeAddOp3(v, OP_MaxPgcnt, iDb, iReg, sqlite3Atoi(zRight));
+    }
     sqlite3VdbeAddOp2(v, OP_ResultRow, iReg, 1);
     sqlite3VdbeSetNumCols(v, 1);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "page_count", SQLITE_STATIC);
+    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLeft, SQLITE_TRANSIENT);
   }else
 
   /*
@@ -587,7 +580,7 @@ void sqlite3Pragma(
     Pager *pPager = sqlite3BtreePager(pDb->pBt);
     i64 iLimit = -2;
     if( zRight ){
-      sqlite3Atoi64(zRight, &iLimit);
+      sqlite3Atoi64(zRight, &iLimit, 1000000, SQLITE_UTF8);
       if( iLimit<-1 ) iLimit = -1;
     }
     iLimit = sqlite3PagerJournalSizeLimit(pPager, iLimit);
@@ -701,7 +694,7 @@ void sqlite3Pragma(
     if( !zRight ){
       returnSingleInt(pParse, "cache_size", pDb->pSchema->cache_size);
     }else{
-      int size = atoi(zRight);
+      int size = sqlite3Atoi(zRight);
       if( size<0 ) size = -size;
       pDb->pSchema->cache_size = size;
       sqlite3BtreeSetCacheSize(pDb->pBt, pDb->pSchema->cache_size);
@@ -1094,7 +1087,7 @@ void sqlite3Pragma(
     /* Set the maximum error count */
     mxErr = SQLITE_INTEGRITY_CHECK_ERROR_MAX;
     if( zRight ){
-      mxErr = atoi(zRight);
+      sqlite3GetInt32(zRight, &mxErr);
       if( mxErr<=0 ){
         mxErr = SQLITE_INTEGRITY_CHECK_ERROR_MAX;
       }
@@ -1351,7 +1344,7 @@ void sqlite3Pragma(
       };
       int addr = sqlite3VdbeAddOpList(v, ArraySize(setCookie), setCookie);
       sqlite3VdbeChangeP1(v, addr, iDb);
-      sqlite3VdbeChangeP1(v, addr+1, atoi(zRight));
+      sqlite3VdbeChangeP1(v, addr+1, sqlite3Atoi(zRight));
       sqlite3VdbeChangeP1(v, addr+2, iDb);
       sqlite3VdbeChangeP2(v, addr+2, iCookie);
     }else{
@@ -1412,8 +1405,7 @@ void sqlite3Pragma(
   */
   if( sqlite3StrICmp(zLeft, "wal_autocheckpoint")==0 ){
     if( zRight ){
-      int nAuto = atoi(zRight);
-      sqlite3_wal_autocheckpoint(db, nAuto);
+      sqlite3_wal_autocheckpoint(db, sqlite3Atoi(zRight));
     }
     returnSingleInt(pParse, "wal_autocheckpoint", 
        db->xWalCallback==sqlite3WalDefaultHook ? 
@@ -1503,7 +1495,8 @@ void sqlite3Pragma(
 #ifndef SQLITE_OMIT_PAGER_PRAGMAS
   if( db->autoCommit ){
     sqlite3BtreeSetSafetyLevel(pDb->pBt, pDb->safety_level,
-               (db->flags&SQLITE_FullFSync)!=0);
+               (db->flags&SQLITE_FullFSync)!=0,
+               (db->flags&SQLITE_CkptFullFSync)!=0);
   }
 #endif
 pragma_out:

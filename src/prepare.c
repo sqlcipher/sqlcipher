@@ -79,7 +79,7 @@ int sqlite3InitCallback(void *pInit, int argc, char **argv, char **NotUsed){
 
     assert( db->init.busy );
     db->init.iDb = iDb;
-    db->init.newTnum = atoi(argv[1]);
+    db->init.newTnum = sqlite3Atoi(argv[1]);
     db->init.orphanTrigger = 0;
     TESTONLY(rcp = ) sqlite3_prepare(db, argv[2], -1, &pStmt, 0);
     rc = db->errCode;
@@ -628,13 +628,13 @@ static int sqlite3Prepare(
   if( rc==SQLITE_OK && pParse->pVdbe && pParse->explain ){
     static const char * const azColName[] = {
        "addr", "opcode", "p1", "p2", "p3", "p4", "p5", "comment",
-       "order", "from", "detail"
+       "selectid", "order", "from", "detail"
     };
     int iFirst, mx;
     if( pParse->explain==2 ){
-      sqlite3VdbeSetNumCols(pParse->pVdbe, 3);
+      sqlite3VdbeSetNumCols(pParse->pVdbe, 4);
       iFirst = 8;
-      mx = 11;
+      mx = 12;
     }else{
       sqlite3VdbeSetNumCols(pParse->pVdbe, 8);
       iFirst = 0;
@@ -784,7 +784,7 @@ int sqlite3_prepare_v2(
 */
 static int sqlite3Prepare16(
   sqlite3 *db,              /* Database handle. */ 
-  const void *zSql,         /* UTF-8 encoded SQL statement. */
+  const void *zSql,         /* UTF-16 encoded SQL statement. */
   int nBytes,               /* Length of zSql in bytes. */
   int saveSqlFlag,          /* True to save SQL text into the sqlite3_stmt */
   sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
@@ -834,7 +834,7 @@ static int sqlite3Prepare16(
 */
 int sqlite3_prepare16(
   sqlite3 *db,              /* Database handle. */ 
-  const void *zSql,         /* UTF-8 encoded SQL statement. */
+  const void *zSql,         /* UTF-16 encoded SQL statement. */
   int nBytes,               /* Length of zSql in bytes. */
   sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
   const void **pzTail       /* OUT: End of parsed string */
@@ -846,7 +846,7 @@ int sqlite3_prepare16(
 }
 int sqlite3_prepare16_v2(
   sqlite3 *db,              /* Database handle. */ 
-  const void *zSql,         /* UTF-8 encoded SQL statement. */
+  const void *zSql,         /* UTF-16 encoded SQL statement. */
   int nBytes,               /* Length of zSql in bytes. */
   sqlite3_stmt **ppStmt,    /* OUT: A pointer to the prepared statement */
   const void **pzTail       /* OUT: End of parsed string */

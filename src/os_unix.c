@@ -119,7 +119,9 @@
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
+#ifndef SQLITE_OMIT_WAL
 #include <sys/mman.h>
+#endif
 
 #if SQLITE_ENABLE_LOCKING_STYLE
 # include <sys/ioctl.h>
@@ -3133,8 +3135,11 @@ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
       return proxyFileControl(id,op,pArg);
     }
 #endif /* SQLITE_ENABLE_LOCKING_STYLE && defined(__APPLE__) */
+    case SQLITE_FCNTL_SYNC_OMITTED: {
+      return SQLITE_OK;  /* A no-op */
+    }
   }
-  return SQLITE_ERROR;
+  return SQLITE_NOTFOUND;
 }
 
 /*
@@ -3559,7 +3564,7 @@ static int unixShmMap(
     pShmNode->apRegion = apNew;
     while(pShmNode->nRegion<=iRegion){
       void *pMem = mmap(0, szRegion, PROT_READ|PROT_WRITE, 
-          MAP_SHARED, pShmNode->h, iRegion*szRegion
+          MAP_SHARED, pShmNode->h, pShmNode->nRegion*szRegion
       );
       if( pMem==MAP_FAILED ){
         rc = SQLITE_IOERR;
@@ -4077,11 +4082,21 @@ static int fillInUnixFile(
   */
   UNUSED_PARAMETER(isDelete);
 
+  /* Usually the path zFilename should not be a relative pathname. The
+  ** exception is when opening the proxy "conch" file in builds that
+  ** include the special Apple locking styles.
+  */
+#if defined(__APPLE__) && SQLITE_ENABLE_LOCKING_STYLE
+  assert( zFilename==0 || zFilename[0]=='/' 
+    || pVfs->pAppData==(void*)&autolockIoFinder );
+#else
+  assert( zFilename==0 || zFilename[0]=='/' );
+#endif
+
   OSTRACE(("OPEN    %-3d %s\n", h, zFilename));
   pNew->h = h;
   pNew->dirfd = dirfd;
   pNew->fileFlags = 0;
-  assert( zFilename==0 || zFilename[0]=='/' );  /* Never a relative pathname */
   pNew->zPath = zFilename;
 
 #if OS_VXWORKS
@@ -4421,9 +4436,24 @@ static int findCreateFileMode(
     int nDb;                      /* Number of valid bytes in zDb */
     struct stat sStat;            /* Output of stat() on database file */
 
-    nDb = sqlite3Strlen30(zPath) - ((flags & SQLITE_OPEN_WAL) ? 4 : 8);
+    /* zPath is a path to a WAL or journal file. The following block derives
+    ** the path to the associated database file from zPath. This block handles
+    ** the following naming conventions:
+    **
+    **   "<path to db>-journal"
+    **   "<path to db>-wal"
+    **   "<path to db>-journal-NNNN"
+    **   "<path to db>-wal-NNNN"
+    **
+    ** where NNNN is a 4 digit decimal number. The NNNN naming schemes are 
+    ** used by the test_multiplex.c module.
+    */
+    nDb = sqlite3Strlen30(zPath) - 1; 
+    while( nDb>0 && zPath[nDb]!='l' ) nDb--;
+    nDb -= ((flags & SQLITE_OPEN_WAL) ? 3 : 7);
     memcpy(zDb, zPath, nDb);
     zDb[nDb] = '\0';
+
     if( 0==stat(zDb, &sStat) ){
       *pMode = sStat.st_mode & 0777;
     }else{
@@ -4838,7 +4868,7 @@ static void *unixDlOpen(sqlite3_vfs *NotUsed, const char *zFilename){
 ** error message.
 */
 static void unixDlError(sqlite3_vfs *NotUsed, int nBuf, char *zBufOut){
-  char *zErr;
+  const char *zErr;
   UNUSED_PARAMETER(NotUsed);
   unixEnterMutex();
   zErr = dlerror();
@@ -4975,7 +5005,7 @@ static int unixCurrentTimeInt64(sqlite3_vfs *NotUsed, sqlite3_int64 *piNow){
 #if defined(NO_GETTOD)
   time_t t;
   time(&t);
-  *piNow = ((sqlite3_int64)i)*1000 + unixEpoch;
+  *piNow = ((sqlite3_int64)t)*1000 + unixEpoch;
 #elif OS_VXWORKS
   struct timespec sNow;
   clock_gettime(CLOCK_REALTIME, &sNow);
@@ -5378,17 +5408,21 @@ extern int gethostuuid(uuid_t id, const struct timespec *wait);
 ** bytes of writable memory.
 */
 static int proxyGetHostID(unsigned char *pHostID, int *pError){
-  struct timespec timeout = {1, 0}; /* 1 sec timeout */
-  
   assert(PROXY_HOSTIDLEN == sizeof(uuid_t));
   memset(pHostID, 0, PROXY_HOSTIDLEN);
-  if( gethostuuid(pHostID, &timeout) ){
-    int err = errno;
-    if( pError ){
-      *pError = err;
+#if defined(__MAX_OS_X_VERSION_MIN_REQUIRED)\
+               && __MAC_OS_X_VERSION_MIN_REQUIRED<1050
+  {
+    static const struct timespec timeout = {1, 0}; /* 1 sec timeout */
+    if( gethostuuid(pHostID, &timeout) ){
+      int err = errno;
+      if( pError ){
+        *pError = err;
+      }
+      return SQLITE_IOERR;
     }
-    return SQLITE_IOERR;
   }
+#endif
 #ifdef SQLITE_TEST
   /* simulate multiple hosts by creating unique hostid file paths */
   if( sqlite3_hostid_num != 0){
@@ -5429,27 +5463,27 @@ static int proxyBreakConchLock(unixFile *pFile, uuid_t myHostID){
   pathLen = strlcpy(tPath, cPath, MAXPATHLEN);
   if( pathLen>MAXPATHLEN || pathLen<6 || 
      (strlcpy(&tPath[pathLen-5], "break", 6) != 5) ){
-    sprintf(errmsg, "path error (len %d)", (int)pathLen);
+    sqlite3_snprintf(sizeof(errmsg),errmsg,"path error (len %d)",(int)pathLen);
     goto end_breaklock;
   }
   /* read the conch content */
   readLen = pread(conchFile->h, buf, PROXY_MAXCONCHLEN, 0);
   if( readLen<PROXY_PATHINDEX ){
-    sprintf(errmsg, "read error (len %d)", (int)readLen);
+    sqlite3_snprintf(sizeof(errmsg),errmsg,"read error (len %d)",(int)readLen);
     goto end_breaklock;
   }
   /* write it out to the temporary break file */
   fd = open(tPath, (O_RDWR|O_CREAT|O_EXCL), SQLITE_DEFAULT_FILE_PERMISSIONS);
   if( fd<0 ){
-    sprintf(errmsg, "create failed (%d)", errno);
+    sqlite3_snprintf(sizeof(errmsg), errmsg, "create failed (%d)", errno);
     goto end_breaklock;
   }
   if( pwrite(fd, buf, readLen, 0) != (ssize_t)readLen ){
-    sprintf(errmsg, "write failed (%d)", errno);
+    sqlite3_snprintf(sizeof(errmsg), errmsg, "write failed (%d)", errno);
     goto end_breaklock;
   }
   if( rename(tPath, cPath) ){
-    sprintf(errmsg, "rename failed (%d)", errno);
+    sqlite3_snprintf(sizeof(errmsg), errmsg, "rename failed (%d)", errno);
     goto end_breaklock;
   }
   rc = 0;
