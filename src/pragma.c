@@ -1480,20 +1480,32 @@ void sqlite3Pragma(
 /** BEGIN CRYPTO **/
   if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
     extern int codec_set_cipher_name(sqlite3*, int, const char *, int);
-    codec_set_cipher_name(db,0,zRight,2); // change cipher for both
+    codec_set_cipher_name(db, iDb, zRight, 2); // change cipher for both
   }else
   if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
     extern int codec_set_cipher_name(sqlite3*, int, const char *, int); 
-    codec_set_cipher_name(db,0,zRight,1); // change write cipher only
+    codec_set_cipher_name(db, iDb, zRight, 1); // change write cipher only
   }else
   if( sqlite3StrICmp(zLeft, "kdf_iter")==0 && zRight ){
     extern int codec_set_kdf_iter(sqlite3*, int, int, int);
-    codec_set_kdf_iter(db,0,atoi(zRight),2); // change cipher for both
+    codec_set_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
   }else
   if( sqlite3StrICmp(zLeft, "rekey_kdf_iter")==0 && zRight ){
     extern int codec_set_kdf_iter(sqlite3*, int, int, int); 
-    codec_set_kdf_iter(db,0,atoi(zRight),1); // change write cipher only
+    codec_set_kdf_iter(db, iDb, atoi(zRight), 1); // change # if W iterations
   }else
+  if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
+    extern int codec_set_page_size(sqlite3*, int, int); 
+    codec_set_page_size(db, iDb, atoi(zRight)); // change page size
+  }
+  if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
+    extern int codec_set_use_hmac(sqlite3*, int, int);
+    if(getBoolean(zRight)) {
+      codec_set_use_hmac(db, iDb, 1);
+    } else {
+      codec_set_use_hmac(db, iDb, 0);
+    }
+  }
 /** END CRYPTO **/
 #endif
 #if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)

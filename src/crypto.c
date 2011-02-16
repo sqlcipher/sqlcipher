@@ -56,13 +56,18 @@ typedef struct {
   int key_sz;
   int iv_sz;
   int pass_sz;
+  int reserve_sz;
+  int hmac_sz;
+  int use_hmac;
   unsigned char *key;
+  unsigned char *hmac_key;
   char *pass;
 } cipher_ctx;
 
 typedef struct {
   int kdf_salt_sz;
   int mode_rekey;
+  int page_sz;
   unsigned char *kdf_salt;
   unsigned char *buffer;
   Btree *pBt;
@@ -94,6 +99,15 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
   }
 }
 
+static int fixed_time_memcmp(const unsigned char *a0, const unsigned char *a1, int len) {
+  int i = 0, noMatch = 0;
+
+  for(i = 0; i < len; i++) {
+    noMatch = (noMatch || (a0[i] != a1[i]));
+  }
+  
+  return noMatch;
+}
 
 /**
   * Free and wipe memory
@@ -140,7 +154,9 @@ static int cipher_ctx_init(cipher_ctx **iCtx) {
   if(ctx == NULL) return SQLITE_NOMEM;
   memset(ctx, 0, sizeof(cipher_ctx)); 
   ctx->key = sqlite3Malloc(EVP_MAX_KEY_LENGTH);
+  ctx->hmac_key = sqlite3Malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
+  if(ctx->hmac_key == NULL) return SQLITE_NOMEM;
   return SQLITE_OK;
 }
 
@@ -151,6 +167,7 @@ static void cipher_ctx_free(cipher_ctx **iCtx) {
   cipher_ctx *ctx = *iCtx;
   CODEC_TRACE(("cipher_ctx_free: entered iCtx=%d\n", iCtx));
   codec_free(ctx->key, ctx->key_sz);
+  codec_free(ctx->hmac_key, ctx->key_sz);
   codec_free(ctx->pass, ctx->pass_sz);
   codec_free(ctx, sizeof(cipher_ctx)); 
 }
@@ -165,15 +182,22 @@ static void cipher_ctx_free(cipher_ctx **iCtx) {
   */
 static int cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   void *key = target->key; 
+  void *hmac_key = target->hmac_key; 
+
   CODEC_TRACE(("cipher_ctx_copy: entered target=%d, source=%d\n", target, source));
   codec_free(target->pass, target->pass_sz); 
   memcpy(target, source, sizeof(cipher_ctx));
   
   target->key = key; //restore pointer to previously allocated key data
   memcpy(target->key, source->key, EVP_MAX_KEY_LENGTH);
+
+  target->hmac_key = hmac_key; //restore pointer to previously allocated hmac key data
+  memcpy(target->hmac_key, source->hmac_key, EVP_MAX_KEY_LENGTH);
+
   target->pass = sqlite3Malloc(source->pass_sz);
   if(target->pass == NULL) return SQLITE_NOMEM;
   memcpy(target->pass, source->pass, source->pass_sz);
+
   return SQLITE_OK;
 }
 
@@ -194,7 +218,7 @@ static int cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
     && c1->pass_sz == c2->pass_sz
     && (
       c1->pass == c2->pass
-      || !memcmp(c1->pass, c2->pass, c1->pass_sz)
+      || !fixed_time_memcmp(c1->pass, c2->pass, c1->pass_sz)
     ) 
   ) return 0;
   return 1;
@@ -223,11 +247,13 @@ static void codec_ctx_free(codec_ctx **iCtx) {
   * Otherwise, a key data will be derived using PBKDF2
   * 
   * returns SQLITE_OK if initialization was successful
-  * returns SQLITE_NOMEM if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
+  * returns SQLITE_ERROR if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
   */
 static int codec_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) { 
-  CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d ctx->kdf_salt=%d ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d c_ctx->key_sz=%d\n", 
-    c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, c_ctx->key_sz));
+  CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
+                ctx->kdf_salt=%d ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d c_ctx->key_sz=%d\n", 
+                c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, 
+                c_ctx->kdf_iter, c_ctx->key_sz));
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
     if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
@@ -237,11 +263,40 @@ static int codec_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       cipher_hex2bin(z, n, c_ctx->key);
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using PBKDF2\n")); 
-      PKCS5_PBKDF2_HMAC_SHA1(c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, c_ctx->key_sz, c_ctx->key);
+      PKCS5_PBKDF2_HMAC_SHA1( c_ctx->pass, c_ctx->pass_sz, 
+                              ctx->kdf_salt, ctx->kdf_salt_sz, 
+                              c_ctx->kdf_iter, c_ctx->key_sz, c_ctx->key);
+                              
     }
+
+    /* if this context is setup to use hmac checks, generate a seperate and different 
+       key for HMAC. In this case, we use the output of the previous KDF as the input to 
+       this KDF run. This ensures a distinct but predictable HMAC key. */
+    if(c_ctx->use_hmac) {
+      CODEC_TRACE(("codec_key_derive: deriving hmac key using PBKDF2\n")); 
+      PKCS5_PBKDF2_HMAC_SHA1( c_ctx->key, c_ctx->key_sz, 
+                              ctx->kdf_salt, ctx->kdf_salt_sz, 
+                              c_ctx->kdf_iter, c_ctx->key_sz, c_ctx->hmac_key); 
+    }
+
     return SQLITE_OK;
   };
   return SQLITE_ERROR;
+}
+
+
+static int codec_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
+  HMAC_CTX hctx;
+  HMAC_CTX_init(&hctx);
+  HMAC_Init_ex(&hctx, ctx->key, ctx->key_sz, EVP_sha1(), NULL); 
+
+  /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
+     prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
+     valid pages out of order in a database */ 
+  HMAC_Update(&hctx, in, in_sz); 
+  HMAC_Update(&hctx, (const unsigned char*) &pgno, sizeof(Pgno));
+  HMAC_Final(&hctx, out, NULL);
+  HMAC_CTX_cleanup(&hctx);
 }
 
 /*
@@ -252,10 +307,21 @@ static int codec_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
  * in - pointer to input bytes
  * out - pouter to output bytes
  */
-static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, unsigned char *in, unsigned char *out) {
+static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int page_sz, unsigned char *in, unsigned char *out) {
   EVP_CIPHER_CTX ectx;
-  unsigned char *iv;
-  int tmp_csz, csz;
+  unsigned char *iv_in, *iv_out, *hmac_in, *hmac_out, *out_start;
+  int tmp_csz, csz, size;
+
+  /* calculate some required positions into various buffers */
+  size = page_sz - ctx->reserve_sz; /* adjust size to useable size and memset reserve at end of page */
+  iv_out = out + size;
+  iv_in = in + size;
+
+  /* hmac will be written immediately after the initialization vector. the remainder of the page reserve will contain
+     random bytes. note, these pointers are only valid when use_hmac is true */
+  hmac_in = in + size + ctx->iv_sz; 
+  hmac_out = out + size + ctx->iv_sz;
+  out_start = out; /* note the original position of the output buffer pointer, as out will be rewritten during encryption */
 
   CODEC_TRACE(("codec_cipher:entered pgno=%d, mode=%d, size=%d\n", pgno, mode, size));
 
@@ -266,18 +332,29 @@ static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, unsigned
     return SQLITE_OK;
   } 
 
-  // FIXME - only run if using an IV
-  size = size - ctx->iv_sz; /* adjust size to useable size and memset reserve at end of page */
-  iv = out + size;
   if(mode == CIPHER_ENCRYPT) {
-    RAND_pseudo_bytes(iv, ctx->iv_sz);
-  } else {
-    memcpy(iv, in+size, ctx->iv_sz);
+    RAND_pseudo_bytes(iv_out, ctx->reserve_sz); /* start at front of the reserve block, write random data to the end */
+  } else { /* CIPHER_DECRYPT */
+    memcpy(iv_out, iv_in, ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
-  
+
+  if(ctx->use_hmac && (mode == CIPHER_DECRYPT)) {
+    codec_hmac(ctx, pgno, in, size + ctx->iv_sz, hmac_out); 
+
+    CODEC_TRACE(("codec_cipher: comparing hmac on in=%d out=%d hmac_sz=%d\n", hmac_in, hmac_out, ctx->hmac_sz));
+    if(fixed_time_memcmp(hmac_in, hmac_out, ctx->hmac_sz) != 0) {
+      /* the hmac check failed, which means the data was tampered with or
+         corrupted in some way. we will return an error, and zero out the page data
+         to force an error */
+      memset(out, 0, page_sz); 
+      CODEC_TRACE(("codec_cipher: hmac check failed for pgno=%d\n", pgno));
+      return SQLITE_ERROR;
+    }
+  } 
+
   EVP_CipherInit(&ectx, ctx->evp_cipher, NULL, NULL, mode);
   EVP_CIPHER_CTX_set_padding(&ectx, 0);
-  EVP_CipherInit(&ectx, NULL, ctx->key, iv, mode);
+  EVP_CipherInit(&ectx, NULL, ctx->key, iv_out, mode);
   EVP_CipherUpdate(&ectx, out, &tmp_csz, in, size);
   csz = tmp_csz;  
   out += tmp_csz;
@@ -285,6 +362,10 @@ static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, unsigned
   csz += tmp_csz;
   EVP_CIPHER_CTX_cleanup(&ectx);
   assert(size == csz);
+
+  if(ctx->use_hmac && (mode == CIPHER_ENCRYPT)) {
+    codec_hmac(ctx, pgno, out_start, size + ctx->iv_sz, hmac_out); 
+  }
 
   return SQLITE_OK;
 }
@@ -308,6 +389,71 @@ int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   return SQLITE_ERROR;
 }
 
+int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
+  int reserve;
+  struct Db *pDb = &db->aDb[nDb];
+
+  CODEC_TRACE(("codec_set_use_hmac: entered db=%d nDb=%d use=%d\n", db, nDb, use));
+
+  if(pDb->pBt) {
+    codec_ctx *ctx;
+    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+
+    reserve = EVP_MAX_IV_LENGTH; /* base reserve size will be IV only */
+    /* calculate the amount of reserve needed to include an hmac and pad so that it is evenly
+       divisible by the max IV size */
+    if(use) {
+      int md_size = ctx->read_ctx->hmac_sz;
+
+      reserve += ((md_size % EVP_MAX_IV_LENGTH) == 0) 
+                    ? md_size
+                    : ((md_size / EVP_MAX_IV_LENGTH) + 1) * EVP_MAX_IV_LENGTH; 
+
+      CODEC_TRACE(("codec_set_use_hmac: EVP_MAX_IV_LENGTH=%d md_size=%d reserve=%d\n", 
+                    EVP_MAX_IV_LENGTH, md_size, reserve)); 
+    }
+
+    ctx->write_ctx->use_hmac = ctx->read_ctx->use_hmac = use;
+    ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
+
+    /* since the use of hmac has changed, the page size has also changed */
+    return codec_set_page_size(db, nDb, ctx->page_sz);
+  }
+  return SQLITE_ERROR;
+}
+
+int codec_set_page_size(sqlite3* db, int nDb, int size) {
+  int rc;
+  struct Db *pDb = &db->aDb[nDb];
+  CODEC_TRACE(("codec_set_page_size: entered db=%d nDb=%d size=%d\n", db, nDb, size));
+
+  if(pDb->pBt) {
+    codec_ctx *ctx;
+    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+    
+    /* attempt to free the existing page bugger */
+    codec_free(ctx->buffer,ctx->page_sz);
+    ctx->page_sz = size;
+
+    /* pre-allocate a page buffer of PageSize bytes. This will
+       be used as a persistent buffer for encryption and decryption 
+       operations to avoid overhead of multiple memory allocations*/
+    ctx->buffer = sqlite3Malloc(size);
+    if(ctx->buffer == NULL) return SQLITE_NOMEM;
+
+    /* Note: before forcing the page size we need to force pageSizeFixed to 0, else  
+             sqliteBtreeSetPageSize will block the change  */
+    sqlite3_mutex_enter(db->mutex);
+    db->nextPagesize = size; 
+    pDb->pBt->pBt->pageSizeFixed = 0; 
+    CODEC_TRACE(("codec_set_page_size: sqlite3BtreeSetPageSize() size=%d reserve=%d\n", size, ctx->read_ctx->reserve_sz));
+    rc = sqlite3BtreeSetPageSize(pDb->pBt, size, ctx->read_ctx->reserve_sz, 0);
+    sqlite3_mutex_leave(db->mutex);
+    return rc;
+  }
+  return SQLITE_ERROR;
+}
+
 /**
   * 
   * when for_ctx == 0 then it will change for read
@@ -327,6 +473,8 @@ int codec_set_cipher_name(sqlite3* db, int nDb, const char *cipher_name, int for
     c_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
     c_ctx->key_sz = EVP_CIPHER_key_length(c_ctx->evp_cipher);
     c_ctx->iv_sz = EVP_CIPHER_iv_length(c_ctx->evp_cipher);
+    c_ctx->hmac_sz = EVP_MD_size(EVP_sha1());
+
     c_ctx->derive_key = 1;
 
     if(for_ctx == 2) cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx); 
@@ -362,11 +510,10 @@ int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for
  */
 void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   codec_ctx *ctx = (codec_ctx *) iCtx;
-  int pg_sz = SQLITE_DEFAULT_PAGE_SIZE;
-  int offset = 0;
+  int offset = 0, rc = 0;
   unsigned char *pData = (unsigned char *) data;
  
-  CODEC_TRACE(("sqlite3Codec: entered pgno=%d, mode=%d, ctx->mode_rekey=%d, pg_sz=%d\n", pgno, mode, ctx->mode_rekey, pg_sz));
+  CODEC_TRACE(("sqlite3Codec: entered pgno=%d, mode=%d, ctx->mode_rekey=%d, page_sz=%d\n", pgno, mode, ctx->mode_rekey, ctx->page_sz));
 
   /* derive key on first use if necessary */
   if(ctx->read_ctx->derive_key) {
@@ -392,18 +539,21 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
     case 2:
     case 3:
       if(pgno == 1) memcpy(ctx->buffer, SQLITE_FILE_HEADER, FILE_HEADER_SZ); /* copy file header to the first 16 bytes of the page */ 
-      codec_cipher(ctx->read_ctx, pgno, CIPHER_DECRYPT, pg_sz - offset, pData + offset, ctx->buffer + offset);
-      memcpy(pData, ctx->buffer, pg_sz); /* copy buffer data back to pData and return */
+      rc = codec_cipher(ctx->read_ctx, pgno, CIPHER_DECRYPT, ctx->page_sz - offset, pData + offset, ctx->buffer + offset);
+      if(rc != SQLITE_OK) ctx->pBt->db->errCode = rc;
+      memcpy(pData, ctx->buffer, ctx->page_sz); /* copy buffer data back to pData and return */
       return pData;
       break;
     case 6: /* encrypt */
       if(pgno == 1) memcpy(ctx->buffer, ctx->kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
-      codec_cipher(ctx->write_ctx, pgno, CIPHER_ENCRYPT, pg_sz - offset, pData + offset, ctx->buffer + offset);
+      rc = codec_cipher(ctx->write_ctx, pgno, CIPHER_ENCRYPT, ctx->page_sz - offset, pData + offset, ctx->buffer + offset);
+      if(rc != SQLITE_OK) ctx->pBt->db->errCode = rc;
       return ctx->buffer; /* return persistent buffer data, pData remains intact */
       break;
     case 7:
       if(pgno == 1) memcpy(ctx->buffer, ctx->kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
-      codec_cipher(ctx->read_ctx, pgno, CIPHER_ENCRYPT, pg_sz - offset, pData + offset, ctx->buffer + offset);
+      rc = codec_cipher(ctx->read_ctx, pgno, CIPHER_ENCRYPT, ctx->page_sz - offset, pData + offset, ctx->buffer + offset);
+      if(rc != SQLITE_OK) ctx->pBt->db->errCode = rc;
       return ctx->buffer; /* return persistent buffer data, pData remains intact */
       break;
     default:
@@ -428,18 +578,18 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     ctx = sqlite3Malloc(sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
     memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
-
     ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
+
+    /*
+       Always overwrite page size and set to the default because the first page of the database
+       in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
+       cases where bytes 16 & 17 of the page header are a power of 2 as reported by John Lehman
+    */
+    ctx->page_sz = SQLITE_DEFAULT_PAGE_SIZE;
 
     if((rc = cipher_ctx_init(&ctx->read_ctx)) != SQLITE_OK) return rc; 
     if((rc = cipher_ctx_init(&ctx->write_ctx)) != SQLITE_OK) return rc; 
     
-    /* pre-allocate a page buffer of PageSize bytes. This will
-       be used as a persistent buffer for encryption and decryption 
-       operations to avoid overhead of multiple memory allocations*/
-    ctx->buffer = sqlite3Malloc(SQLITE_DEFAULT_PAGE_SIZE);
-    if(ctx->buffer == NULL) return SQLITE_NOMEM;
-     
     /* allocate space for salt data. Then read the first 16 bytes 
        directly off the database file. This is the salt for the
        key derivation function. If we get a short read allocate
@@ -460,19 +610,15 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     codec_set_cipher_name(db, nDb, CIPHER, 0);
     codec_set_kdf_iter(db, nDb, PBKDF2_ITER, 0);
     codec_set_pass_key(db, nDb, zKey, nKey, 0);
+
+
+    /* Use HMAC signatures by default. Note that codec_set_use_hmac will implicity call
+       codec_set_page_size to set the default */
+    if((rc = codec_set_use_hmac(db, nDb, 1)) != SQLITE_OK) return rc;
+
     cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
 
     sqlite3_mutex_enter(db->mutex);
-    
-    /* Always overwrite page size and set to the default because the first page of the database
-       in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
-       cases where bytes 16 & 17 of the page header are a power of 2 as reported by John Lehman
-
-       Note: before forcing the page size we need to force pageSizeFixed to 0, else  
-             sqliteBtreeSetPageSize will block the change 
-    */
-    pDb->pBt->pBt->pageSizeFixed = 0; 
-    sqlite3BtreeSetPageSize(ctx->pBt, SQLITE_DEFAULT_PAGE_SIZE, EVP_MAX_IV_LENGTH, 0);
 
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
@@ -548,15 +694,6 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 
       sqlite3_mutex_enter(db->mutex);
 
-      if(ctx->read_ctx->iv_sz != ctx->write_ctx->iv_sz) {
-        char *error;
-        CODEC_TRACE(("sqlite3_rekey: updating page size for iv_sz change from %d to %d\n", ctx->read_ctx->iv_sz, ctx->write_ctx->iv_sz));
-        db->nextPagesize = SQLITE_DEFAULT_PAGE_SIZE;
-        pDb->pBt->pBt->pageSizeFixed = 0; /* required for sqlite3BtreeSetPageSize to modify pagesize setting */
-        sqlite3BtreeSetPageSize(pDb->pBt, db->nextPagesize, EVP_MAX_IV_LENGTH, 0);
-        sqlite3RunVacuum(&error, db);
-      }
-
       codec_set_pass_key(db, 0, pKey, nKey, 1);
       ctx->mode_rekey = 1; 
     
@@ -584,7 +721,6 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       /* if commit was successful commit and copy the rekey data to current key, else rollback to release locks */
       if(rc == SQLITE_OK) { 
         CODEC_TRACE(("sqlite3_rekey: committing\n"));
-        db->nextPagesize = SQLITE_DEFAULT_PAGE_SIZE;
         rc = sqlite3BtreeCommit(pDb->pBt); 
         cipher_ctx_copy(ctx->read_ctx, ctx->write_ctx);
       } else {

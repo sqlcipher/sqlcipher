@@ -545,5 +545,137 @@ do_test unencryped-attach-unencrypted {
     SELECT count(*) FROM t1;
   } 
 } {1000}
+db close
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# 1. create a database with a custom page size, 
+# 2. create table and insert operations should work
+# 3. close database, open it again with the same
+#    key and page size
+# 4. verify that the table is readable
+#    and the data just inserted is visible
+do_test custom-pagesize {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 4096;
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 4096;
+    SELECT count(*) FROM t1;
+  }
+
+} {1000}
+db close
+
+# open the database with the default page size
+## and verfiy that it is not readable 
+do_test custom-pagesize-must-match {
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {1 {file is encrypted or is not a database}}
+db close
+file delete -force test.db
+
+# 1. create a database and insert a bunch of data, close the database
+# 2. seek to the middle of a database page and write some junk
+# 3. Open the database and verify that the database is no longer readable
+do_test hmac-tamper-resistence {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+
+  # write some junk into the middle of the page
+  hexio_write test.db 2560 00
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {1 {database disk image is malformed}}
+db close
+file delete -force test.db
+
+# 1. create a database and insert a bunch of data, close the database
+# 2. seek to the middle of a database page and write some junk
+# 3. Open the database and verify that the database is still readable
+do_test nohmac-not-tamper-resistent {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_use_hmac = OFF;
+    PRAGMA cipher_page_size = 1024;
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+
+  # write some junk into the middle of the page
+  hexio_write test.db 2560 00
+
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_use_hmac = OFF;
+    PRAGMA cipher_page_size = 1024;
+    SELECT count(*) FROM t1;
+  }
+
+} {1000}
+db close
+file delete -force test.db
+
 
 finish_test
