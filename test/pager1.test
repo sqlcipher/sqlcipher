@@ -1062,7 +1062,7 @@ do_execsql_test pager1-6.8 {
 } {11}
 do_execsql_test pager1-6.9 { COMMIT } {}
 
-do_execsql_test pager1-6.10 { PRAGMA max_page_count = 10 } {10}
+do_execsql_test pager1-6.10 { PRAGMA max_page_count = 10 } {11}
 do_execsql_test pager1-6.11 { SELECT * FROM t11 }          {1 2 3 4}
 do_execsql_test pager1-6.12 { PRAGMA max_page_count }      {11}
 
@@ -1107,10 +1107,10 @@ ifcapable wal {
       COMMIT;
     } {1 2} 0 -1
   
-    4  { PRAGMA journal_mode = WAL }    wal    -1 -1
-    5  { INSERT INTO t1 VALUES(3, 4) }  {}     -1 [wal_file_size 1 1024]
-    6  { PRAGMA locking_mode = NORMAL } normal -1 [wal_file_size 1 1024]
-    7  { INSERT INTO t1 VALUES(5, 6); } {}     -1 [wal_file_size 2 1024]
+    4  { PRAGMA journal_mode = WAL }    wal       -1 -1
+    5  { INSERT INTO t1 VALUES(3, 4) }  {}        -1 [wal_file_size 1 1024]
+    6  { PRAGMA locking_mode = NORMAL } exclusive -1 [wal_file_size 1 1024]
+    7  { INSERT INTO t1 VALUES(5, 6); } {}        -1 [wal_file_size 2 1024]
   
     8  { PRAGMA journal_mode = TRUNCATE } truncate          0 -1
     9  { INSERT INTO t1 VALUES(7, 8) }    {}                0 -1
@@ -1614,7 +1614,7 @@ do_catchsql_test pager1-14.1.2 {
 } {0 {}}
 do_execsql_test pager1-14.1.3 {
   SELECT * FROM t1;
-} {1 2 3 4}
+} {1 2}
 do_catchsql_test pager1-14.1.4 {
   BEGIN;
     INSERT INTO t1(rowid, a, b) SELECT a+3, b, b FROM t1;
@@ -1623,7 +1623,7 @@ do_catchsql_test pager1-14.1.4 {
 do_execsql_test pager1-14.1.5 {
   COMMIT;
   SELECT * FROM t1;
-} {1 2 3 4 2 2 4 4}
+} {1 2 2 2}
 
 #-------------------------------------------------------------------------
 # Test opening and closing the pager sub-system with different values
@@ -1919,32 +1919,34 @@ do_test pager1-20.2.2 {
   }
 } {}
 
-do_test pager1-20.3.1 {
-  faultsim_delete_and_reopen
-  db func a_string a_string
-  execsql {
-    PRAGMA cache_size = 10;
-    PRAGMA journal_mode = wal;
-    BEGIN;
-      CREATE TABLE t1(x);
-      CREATE TABLE t2(y);
-      INSERT INTO t1 VALUES(a_string(800));
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   2 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   4 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   8 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  16 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  32 */
-    COMMIT;
-  }
-} {wal}
-do_test pager1-20.3.2 {
-  execsql {
-    BEGIN;
-    INSERT INTO t2 VALUES('xxxx');
-  }
-  recursive_select 32 t1
-  execsql COMMIT
-} {}
+ifcapable wal {
+  do_test pager1-20.3.1 {
+    faultsim_delete_and_reopen
+    db func a_string a_string
+    execsql {
+      PRAGMA cache_size = 10;
+      PRAGMA journal_mode = wal;
+      BEGIN;
+        CREATE TABLE t1(x);
+        CREATE TABLE t2(y);
+        INSERT INTO t1 VALUES(a_string(800));
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   2 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   4 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   8 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  16 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  32 */
+      COMMIT;
+    }
+  } {wal}
+  do_test pager1-20.3.2 {
+    execsql {
+      BEGIN;
+      INSERT INTO t2 VALUES('xxxx');
+    }
+    recursive_select 32 t1
+    execsql COMMIT
+  } {}
+}
 
 #-------------------------------------------------------------------------
 # Test that a WAL database may not be opened if:
@@ -1952,28 +1954,30 @@ do_test pager1-20.3.2 {
 #   pager1-21.1.*: The VFS has an iVersion less than 2, or
 #   pager1-21.2.*: The VFS does not provide xShmXXX() methods.
 #
-do_test pager1-21.0 {
-  faultsim_delete_and_reopen
-  execsql {
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
-    INSERT INTO ko DEFAULT VALUES;
-  }
-} {wal}
-do_test pager1-21.1 {
-  testvfs tv -noshm 1
-  sqlite3 db2 test.db -vfs tv
-  catchsql { SELECT * FROM ko } db2
-} {1 {unable to open database file}}
-db2 close
-tv delete
-do_test pager1-21.2 {
-  testvfs tv -iversion 1
-  sqlite3 db2 test.db -vfs tv
-  catchsql { SELECT * FROM ko } db2
-} {1 {unable to open database file}}
-db2 close
-tv delete
+ifcapable wal {
+  do_test pager1-21.0 {
+    faultsim_delete_and_reopen
+    execsql {
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
+      INSERT INTO ko DEFAULT VALUES;
+    }
+  } {wal}
+  do_test pager1-21.1 {
+    testvfs tv -noshm 1
+    sqlite3 db2 test.db -vfs tv
+    catchsql { SELECT * FROM ko } db2
+  } {1 {unable to open database file}}
+  db2 close
+  tv delete
+  do_test pager1-21.2 {
+    testvfs tv -iversion 1
+    sqlite3 db2 test.db -vfs tv
+    catchsql { SELECT * FROM ko } db2
+  } {1 {unable to open database file}}
+  db2 close
+  tv delete
+}
 
 #-------------------------------------------------------------------------
 # Test that a "PRAGMA wal_checkpoint":
@@ -2254,24 +2258,26 @@ do_test pager1.27.1 {
 # the same database.
 #
 catch { db close }
-do_multiclient_test tn {
-  do_test pager1-28.$tn.1 {
-    sql1 { 
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE t1(a, b);
-      INSERT INTO t1 VALUES('a', 'b');
-    }
-  } {wal}
-  do_test pager1-28.$tn.2 { sql2 { SELECT * FROM t1 } } {a b}
+ifcapable wal {
+  do_multiclient_test tn {
+    do_test pager1-28.$tn.1 {
+      sql1 { 
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE t1(a, b);
+        INSERT INTO t1 VALUES('a', 'b');
+      }
+    } {wal}
+    do_test pager1-28.$tn.2 { sql2 { SELECT * FROM t1 } } {a b}
 
-  do_test pager1-28.$tn.3 { sql1 { PRAGMA locking_mode=exclusive } } {exclusive}
-  do_test pager1-28.$tn.4 { 
-    csql1 { BEGIN; INSERT INTO t1 VALUES('c', 'd'); }
-  } {1 {database is locked}}
-  code2 { db2 close ; sqlite3 db2 test.db }
-  do_test pager1-28.$tn.4 { 
-    sql1 { INSERT INTO t1 VALUES('c', 'd'); COMMIT }
-  } {}
+    do_test pager1-28.$tn.3 { sql1 { PRAGMA locking_mode=exclusive } } {exclusive}
+    do_test pager1-28.$tn.4 { 
+      csql1 { BEGIN; INSERT INTO t1 VALUES('c', 'd'); }
+    } {1 {database is locked}}
+    code2 { db2 close ; sqlite3 db2 test.db }
+    do_test pager1-28.$tn.4 { 
+      sql1 { INSERT INTO t1 VALUES('c', 'd'); COMMIT }
+    } {}
+  }
 }
 
 #-------------------------------------------------------------------------
@@ -2346,6 +2352,63 @@ do_test pager1-29.2 {
   }
   file size test.db
 } [expr 4096*3]
+
+#-------------------------------------------------------------------------
+# Test that if an empty database file (size 0 bytes) is opened in 
+# exclusive-locking mode, any journal file is deleted from the file-system
+# without being rolled back. And that the RESERVED lock obtained while
+# doing this is not released.
+#
+do_test pager1-30.1 {
+  db close
+  file delete test.db
+  file delete test.db-journal
+  set fd [open test.db-journal w]
+  seek $fd [expr 512+1032*2]
+  puts -nonewline $fd x
+  close $fd
+
+  sqlite3 db test.db
+  execsql {
+    PRAGMA locking_mode=EXCLUSIVE;
+    SELECT count(*) FROM sqlite_master;
+    PRAGMA lock_status;
+  }
+} {exclusive 0 main reserved temp closed}
+
+#-------------------------------------------------------------------------
+# Test that if the "page-size" field in a journal-header is 0, the journal
+# file can still be rolled back. This is required for backward compatibility -
+# versions of SQLite prior to 3.5.8 always set this field to zero.
+#
+do_test pager1-31.1 {
+  faultsim_delete_and_reopen
+  execsql {
+    PRAGMA cache_size = 10;
+    PRAGMA page_size = 1024;
+    CREATE TABLE t1(x, y, UNIQUE(x, y));
+    INSERT INTO t1 VALUES(randomblob(1500), randomblob(1500));
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    BEGIN;
+      UPDATE t1 SET y = randomblob(1499);
+  }
+  file copy test.db test.db2
+  file copy test.db-journal test.db2-journal
+  
+  hexio_write test.db2-journal 24 00000000
+  sqlite3 db2 test.db2
+  execsql { PRAGMA integrity_check } db2
+} {ok}
+
 
 
 finish_test

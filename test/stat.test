@@ -27,14 +27,18 @@ db func a_string a_string
 
 register_dbstat_vtab db
 do_execsql_test stat-0.0 {
+  PRAGMA auto_vacuum = OFF;
   CREATE VIRTUAL TABLE temp.stat USING dbstat;
   SELECT * FROM stat;
 } {}
-do_execsql_test stat-0.1 {
-  PRAGMA journal_mode = WAL;
-  PRAGMA journal_mode = delete;
-  SELECT * FROM stat;
-} {wal delete sqlite_master / 1 leaf 0 0 916 0}
+
+ifcapable wal {
+  do_execsql_test stat-0.1 {
+    PRAGMA journal_mode = WAL;
+    PRAGMA journal_mode = delete;
+    SELECT * FROM stat;
+  } {wal delete sqlite_master / 1 leaf 0 0 916 0}
+}
 
 do_test stat-1.0 {
   execsql {
@@ -140,6 +144,7 @@ sqlite3 db test.db
 register_dbstat_vtab db
 breakpoint
 do_execsql_test stat-5.1 {
+  PRAGMA auto_vacuum = OFF;
   CREATE VIRTUAL TABLE temp.stat USING dbstat;
   CREATE TABLE t1(x);
   INSERT INTO t1 VALUES(zeroblob(1513));
