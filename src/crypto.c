@@ -288,7 +288,7 @@ static int codec_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 static int codec_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
   HMAC_CTX hctx;
   HMAC_CTX_init(&hctx);
-  HMAC_Init_ex(&hctx, ctx->key, ctx->key_sz, EVP_sha1(), NULL); 
+  HMAC_Init_ex(&hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL); 
 
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
