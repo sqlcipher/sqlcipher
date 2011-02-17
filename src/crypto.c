@@ -55,6 +55,7 @@ typedef struct {
   int kdf_iter;
   int key_sz;
   int iv_sz;
+  int block_sz;
   int pass_sz;
   int reserve_sz;
   int hmac_sz;
@@ -400,18 +401,15 @@ int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
 
     reserve = EVP_MAX_IV_LENGTH; /* base reserve size will be IV only */
-    /* calculate the amount of reserve needed to include an hmac and pad so that it is evenly
-       divisible by the max IV size */
-    if(use) {
-      int md_size = ctx->read_ctx->hmac_sz;
+    if(use) reserve += ctx->read_ctx->hmac_sz; /* if reserve will include hmac, update that size */
 
-      reserve += ((md_size % EVP_MAX_IV_LENGTH) == 0) 
-                    ? md_size
-                    : ((md_size / EVP_MAX_IV_LENGTH) + 1) * EVP_MAX_IV_LENGTH; 
+    /* calculate the amount of reserve needed in even increments of the cipher block size */
 
-      CODEC_TRACE(("codec_set_use_hmac: EVP_MAX_IV_LENGTH=%d md_size=%d reserve=%d\n", 
-                    EVP_MAX_IV_LENGTH, md_size, reserve)); 
-    }
+    reserve = ((reserve % ctx->read_ctx->block_sz) == 0) ? reserve :
+                 ((reserve / ctx->read_ctx->block_sz) + 1) * ctx->read_ctx->block_sz;  
+
+    CODEC_TRACE(("codec_set_use_hmac: use=%d block_sz=%d md_size=%d reserve=%d\n", 
+                  use, ctx->read_ctx->block_sz, ctx->read_ctx->hmac_sz, reserve)); 
 
     ctx->write_ctx->use_hmac = ctx->read_ctx->use_hmac = use;
     ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
@@ -473,6 +471,7 @@ int codec_set_cipher_name(sqlite3* db, int nDb, const char *cipher_name, int for
     c_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
     c_ctx->key_sz = EVP_CIPHER_key_length(c_ctx->evp_cipher);
     c_ctx->iv_sz = EVP_CIPHER_iv_length(c_ctx->evp_cipher);
+    c_ctx->block_sz = EVP_CIPHER_block_size(c_ctx->evp_cipher);
     c_ctx->hmac_sz = EVP_MD_size(EVP_sha1());
 
     c_ctx->derive_key = 1;
