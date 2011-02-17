@@ -677,5 +677,18 @@ do_test nohmac-not-tamper-resistent {
 db close
 file delete -force test.db
 
+# test a large number of inserts in a transaction for multiple pages
+do_test open-1.1.8-database {
+  sqlite_orig db sqlcipher-1.1.8-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_use_hmac = OFF;
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  } 
+} {4 1 1 one one 1 2 one two}
+db close
+
+# test a rekey operation as the first op on a database
 
 finish_test
