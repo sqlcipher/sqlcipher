@@ -66,17 +66,16 @@ proc runtest {title} {
   set delay 10
 
   exec sync; after $delay;
-  set t [time "exec ./sqlite3 s2k.db <$sqlfile" 1]
+  set t [time "exec cat perftest0.sql $sqlfile | ./sqlite3 perftest0.db 2>&1" 1]
   set t [expr {[lindex $t 0]/1000000.0}]
-  puts [format $format {SQLite:} $t]
+  puts [format $format {Config0:} $t]
   exec sync; after $delay;
 
   set t0 $t;
 
-  #set t [time "exec cat enc.sql $sqlfile | ./sqlite3 s2k-codec.db 2>&1 > $logfile" 1]
-  set t [time "exec cat enc.sql $sqlfile | ./sqlite3 s2k-codec.db 2>&1" 1]
+  set t [time "exec cat perftest1.sql $sqlfile | ./sqlite3 perftest1.db 2>&1" 1]
   set t [expr {[lindex $t 0]/1000000.0}]
-  puts [format $format {SQLite Secure:} $t]
+  puts [format $format {Config1:} $t]
   exec sync; after $delay;
 
   set slowdown [expr {(($t - $t0)/$t0)*100.0}]
@@ -88,28 +87,27 @@ proc runtest {title} {
 # Initialize the environment
 #
 
-file delete s2k-codec.db
-file delete s2k.db
+file delete perftest0.db
+file delete perftest1.db
 
 expr srand(1)
-catch {exec /bin/sh -c {rm -f s*.db}}
-set fd [open enc.sql w]
+catch {exec /bin/sh -c {rm -f perftest*.db}}
+
+set fd [open perftest0.sql w]
+puts $fd {
+PRAGMA key='xyzzy';
+PRAGMA cipher_use_hmac=OFF;
+}
+close $fd
+
+set fd [open perftest1.sql w]
 puts $fd {
 PRAGMA key='xyzzy';
 }
 close $fd
 
-set fd [open clear.sql w]
-#puts $fd {
-#  PRAGMA synchronous = OFF;
-#  PRAGMA cache_size = 200000;
-#  drop table if exists t1;
-#  drop table if exists t2;
-#}
-close $fd
-
-exec ./sqlite3 s2k.db < clear.sql
-exec cat enc.sql clear.sql | ./sqlite3 codec-s2k.db
+exec cat perftest0.sql | ./sqlite3 perftest0.db
+exec cat perftest1.sql | ./sqlite3 perftest1.db
 
 set ones {zero one two three four five six seven eight nine
           ten eleven twelve thirteen fourteen fifteen sixteen seventeen
