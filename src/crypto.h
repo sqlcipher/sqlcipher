@@ -48,6 +48,10 @@
 #define PBKDF2_ITER 4000
 #endif
 
+#ifndef DEFAULT_USE_HMAC
+#define DEFAULT_USE_HMAC 1
+#endif
+
 void sqlite3pager_get_codec(Pager *pPager, void **ctx);
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
 sqlite3_file *sqlite3Pager_get_fd(Pager *pPager);

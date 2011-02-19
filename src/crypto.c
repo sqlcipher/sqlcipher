@@ -613,7 +613,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     /* Use HMAC signatures by default. Note that codec_set_use_hmac will implicity call
        codec_set_page_size to set the default */
-    if((rc = codec_set_use_hmac(db, nDb, 1)) != SQLITE_OK) return rc;
+    if((rc = codec_set_use_hmac(db, nDb, DEFAULT_USE_HMAC)) != SQLITE_OK) return rc;
 
     cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
 
