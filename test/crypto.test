@@ -677,7 +677,7 @@ do_test nohmac-not-tamper-resistent {
 db close
 file delete -force test.db
 
-# test a large number of inserts in a transaction for multiple pages
+# open a 1.1.8 database using the new code, HMAC disabled
 do_test open-1.1.8-database {
   sqlite_orig db sqlcipher-1.1.8-testkey.db
   execsql {
@@ -689,9 +689,8 @@ do_test open-1.1.8-database {
 } {4 1 1 one one 1 2 one two}
 db close
 
-# open a 1.1.8 database without hmac, then copy the data
 
-# copy data between, verify the encypted database is good afterwards
+# open a 1.1.8 database without hmac, then copy the data
 do_test attach-and-copy-1.1.8 {
   sqlite_orig db sqlcipher-1.1.8-testkey.db
 
