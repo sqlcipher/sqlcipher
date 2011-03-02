@@ -213,6 +213,7 @@ foreach file {
    sqliteInt.h
 
    crypto.c
+   crypto_impl.c
 
    global.c
    ctime.c

@@ -44,6 +44,10 @@
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
 
+#define CIPHER_READ_CTX 0
+#define CIPHER_WRITE_CTX 1
+#define CIPHER_READWRITE_CTX 2
+
 #ifndef PBKDF2_ITER
 #define PBKDF2_ITER 4000
 #endif
@@ -52,6 +56,15 @@
 #define DEFAULT_USE_HMAC 1
 #endif
 
+#ifdef CODEC_DEBUG
+#define CODEC_TRACE(X)  {printf X;fflush(stdout);}
+#else
+#define CODEC_TRACE(X)
+#endif
+
+
+/* extensions defined in pragma.c */ 
+   
 void sqlite3pager_get_codec(Pager *pPager, void **ctx);
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
 sqlite3_file *sqlite3Pager_get_fd(Pager *pPager);
@@ -62,6 +75,61 @@ void sqlite3pager_sqlite3PagerSetCodec(
   void (*xCodecFree)(void*),
   void *pCodec
 );
+/* end extensions defined in pragma.c */
+ 
+/*
+**  Simple shared routines for converting hex char strings to binary data
+ */
+static int cipher_hex2int(char c) {
+  return (c>='0' && c<='9') ? (c)-'0' :
+         (c>='A' && c<='F') ? (c)-'A'+10 :
+         (c>='a' && c<='f') ? (c)-'a'+10 : 0;
+}
+
+static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
+  int i;
+  for(i = 0; i < sz; i += 2){
+    out[i/2] = (cipher_hex2int(hex[i])<<4) | cipher_hex2int(hex[i+1]);
+  }
+}
+
+/* extensions defined in crypto_impl.c */
+
+typedef struct codec_ctx codec_ctx;
+
+/* utility functions */
+int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len);
+int sqlcipher_pseudorandom(void *, int);
+void sqlcipher_free(void *, int);
+
+/* activation and initialization */
+void sqlcipher_activate();
+int sqlcipher_codec_ctx_init(codec_ctx **, Db *, Pager *, sqlite3_file *, const void *, int);
+void sqlcipher_codec_ctx_free(codec_ctx **);
+int sqlcipher_codec_key_derive(codec_ctx *);
+int sqlcipher_codec_key_copy(codec_ctx *, int);
+
+/* page cipher implementation */
+int sqlcipher_page_cipher(codec_ctx *, int, Pgno, int, int, unsigned char *, unsigned char *);
+
+/* context setters & getters */
+void sqlcipher_codec_ctx_set_error(codec_ctx *, int);
+
+int sqlcipher_codec_ctx_set_pass(codec_ctx *, const void *, int, int);
+void sqlcipher_codec_get_pass(codec_ctx *, void **zKey, int *nKey);
+
+int sqlcipher_codec_ctx_set_pagesize(codec_ctx *, int);
+int sqlcipher_codec_ctx_get_pagesize(codec_ctx *);
+int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);
+
+int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int, int);
+void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
+
+int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *, int);
+
+void* sqlcipher_codec_ctx_get_data(codec_ctx *);
+
+/* end extensions defined in crypto_impl.c */
 
 #endif
 #endif

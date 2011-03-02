@@ -134,11 +134,13 @@ LTLINK_EXTRAS += $(GCOV_LDFLAGS$(USE_GCOV))
 
 # BEGIN CRYPTO
 CRYPTOLIBOBJ = \
-  crypto.lo
+  crypto.lo \
+  crypto_impl.lo
   
 CRYPTOSRC = \
   $(TOP)/src/crypto.h \
-  $(TOP)/src/crypto.c
+  $(TOP)/src/crypto.c \
+  $(TOP)/src/crypto_impl.c
 
 # END CRYPTO
 
@@ -546,6 +548,8 @@ opcodes.lo:	opcodes.c
 # BEGIN CRYPTO
 crypto.lo:	$(TOP)/src/crypto.c $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/crypto.c
+crypto_impl.lo:	$(TOP)/src/crypto_impl.c $(HDR)
+	$(LTCOMPILE) -c $(TOP)/src/crypto_impl.c
 # END CRYPTO
 
 # Rules to build individual *.o files from files in the src directory.

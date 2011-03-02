@@ -354,6 +354,7 @@ db close
 file delete -force test.db
 
 # test alterations of KDF iterations and ciphers
+# rekey then add
 setup test.db "'testkey'"
 do_test codec-1.14 {
   sqlite_orig db test.db
@@ -362,6 +363,7 @@ do_test codec-1.14 {
     PRAGMA rekey_kdf_iter = 1000;
     PRAGMA rekey_cipher = 'aes-256-cfb';
     PRAGMA rekey = 'testkey2';
+    INSERT INTO t1 VALUES (1,2);
   } 
   db close
 
@@ -373,7 +375,7 @@ do_test codec-1.14 {
     SELECT count(*) FROM t1;
   } 
 
-} {1}
+} {2}
 db close
 file delete -force test.db
 
