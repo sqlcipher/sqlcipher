@@ -23,17 +23,17 @@ If you are using SQLCipher in your own software please let us know at support@ze
 Building SQLite Cipher is almost the same as compiling a regular version of SQLite with three small exceptions: 
 
  1. building via 'amalgamation' isn't supported (where all sqlite source is merged into one file)
- 2. you must define SQLITE_HAS_CODEC
+ 2. you must define SQLITE_HAS_CODEC and SQLITE_TEMP_STORE=2 in your application when including SQLCipher
  3. You need to link against a OpenSSL's libcrypto with sha256 support compiled in
  
 Example Static linking (replace /opt/local/lib with the path to libcrypto.a)
 
-  ./configure CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="/opt/local/lib/libcrypto.a"
+  ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="/opt/local/lib/libcrypto.a"
   make
 
 Example Dynamic linking
 
-  ./configure CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="-lcrypto"
+  ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" LDFLAGS="-lcrypto"
   make
 
 [Encrypting a database]
