@@ -1,2 +1,6 @@
 *.mode1v3
 *.pbxuser
+xcuserdata
+xcuserdata/*
+*.xcworkspace/*
+*.xcworkspace
