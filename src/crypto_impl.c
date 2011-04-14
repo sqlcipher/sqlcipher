@@ -499,3 +499,202 @@ int sqlcipher_codec_key_copy(codec_ctx *ctx, int source) {
 }
 
 
+#ifndef OMIT_EXPORT
+
+/*
+ * Implementation of an "export" function that allows a caller
+ * to duplicate the main database to an attached database. This is intended
+ * as a conveneince for users who need to:
+ * 
+ *   1. migrate from an non-encrypted database to an encrypted database
+ *   2. move from an encrypted database to a non-encrypted database
+ *   3. convert beween the various flavors of encrypted databases.  
+ *
+ * This implementation is based heavily on the procedure and code used
+ * in vacuum.c, but is exposed as a function that allows export to any
+ * named attached database.
+ */
+
+/*
+** Finalize a prepared statement.  If there was an error, store the
+** text of the error message in *pzErrMsg.  Return the result code.
+** 
+** Based on vacuumFinalize from vacuum.c
+*/
+static int sqlcipher_finalize(sqlite3 *db, sqlite3_stmt *pStmt, char **pzErrMsg){
+  int rc;
+  rc = sqlite3VdbeFinalize((Vdbe*)pStmt);
+  if( rc ){
+    sqlite3SetString(pzErrMsg, db, sqlite3_errmsg(db));
+  }
+  return rc;
+}
+
+/*
+** Execute zSql on database db. Return an error code.
+** 
+** Based on execSql from vacuum.c
+*/
+static int sqlcipher_execSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
+  sqlite3_stmt *pStmt;
+  VVA_ONLY( int rc; )
+  if( !zSql ){
+    return SQLITE_NOMEM;
+  }
+  if( SQLITE_OK!=sqlite3_prepare(db, zSql, -1, &pStmt, 0) ){
+    sqlite3SetString(pzErrMsg, db, sqlite3_errmsg(db));
+    return sqlite3_errcode(db);
+  }
+  VVA_ONLY( rc = ) sqlite3_step(pStmt);
+  assert( rc!=SQLITE_ROW );
+  return sqlcipher_finalize(db, pStmt, pzErrMsg);
+}
+
+/*
+** Execute zSql on database db. The statement returns exactly
+** one column. Execute this as SQL on the same database.
+** 
+** Based on execExecSql from vacuum.c
+*/
+static int sqlcipher_execExecSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
+  sqlite3_stmt *pStmt;
+  int rc;
+
+  rc = sqlite3_prepare(db, zSql, -1, &pStmt, 0);
+  if( rc!=SQLITE_OK ) return rc;
+
+  while( SQLITE_ROW==sqlite3_step(pStmt) ){
+    rc = sqlcipher_execSql(db, pzErrMsg, (char*)sqlite3_column_text(pStmt, 0));
+    if( rc!=SQLITE_OK ){
+      sqlcipher_finalize(db, pStmt, pzErrMsg);
+      return rc;
+    }
+  }
+
+  return sqlcipher_finalize(db, pStmt, pzErrMsg);
+}
+
+/*
+ * copy database and schema from the main database to an attached database
+ * 
+ * Based on sqlite3RunVacuum from vacuum.c
+*/
+void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  sqlite3 *db = sqlite3_context_db_handle(context);
+  const char* attachedDb = (const char*) sqlite3_value_text(argv[0]);
+  int saved_flags;        /* Saved value of the db->flags */
+  int saved_nChange;      /* Saved value of db->nChange */
+  int saved_nTotalChange; /* Saved value of db->nTotalChange */
+  void (*saved_xTrace)(void*,const char*);  /* Saved db->xTrace */
+  int rc = SQLITE_OK;     /* Return code from service routines */
+  char *zSql = NULL;         /* SQL statements */
+  char *pzErrMsg = NULL;
+  
+  saved_flags = db->flags;
+  saved_nChange = db->nChange;
+  saved_nTotalChange = db->nTotalChange;
+  saved_xTrace = db->xTrace;
+  db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_PreferBuiltin;
+  db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
+  db->xTrace = 0;
+
+  /* Query the schema of the main database. Create a mirror schema
+  ** in the temporary database.
+  */
+  zSql = sqlite3_mprintf(
+    "SELECT 'CREATE TABLE %s.' || substr(sql,14) "
+    "  FROM sqlite_master WHERE type='table' AND name!='sqlite_sequence'"
+    "   AND rootpage>0"
+  , attachedDb);
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  if( rc!=SQLITE_OK ) goto end_of_export;
+  sqlite3_free(zSql);
+
+  zSql = sqlite3_mprintf(
+    "SELECT 'CREATE INDEX %s.' || substr(sql,14)"
+    "  FROM sqlite_master WHERE sql LIKE 'CREATE INDEX %%' "
+  , attachedDb);
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  if( rc!=SQLITE_OK ) goto end_of_export;
+  sqlite3_free(zSql);
+
+  zSql = sqlite3_mprintf(
+    "SELECT 'CREATE UNIQUE INDEX %s.' || substr(sql,21) "
+    "  FROM sqlite_master WHERE sql LIKE 'CREATE UNIQUE INDEX %%'"
+  , attachedDb);
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  if( rc!=SQLITE_OK ) goto end_of_export;
+  sqlite3_free(zSql);
+
+  /* Loop through the tables in the main database. For each, do
+  ** an "INSERT INTO rekey_db.xxx SELECT * FROM main.xxx;" to copy
+  ** the contents to the temporary database.
+  */
+  zSql = sqlite3_mprintf(
+    "SELECT 'INSERT INTO %s.' || quote(name) "
+    "|| ' SELECT * FROM main.' || quote(name) || ';'"
+    "FROM main.sqlite_master "
+    "WHERE type = 'table' AND name!='sqlite_sequence' "
+    "  AND rootpage>0"
+  , attachedDb);
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  if( rc!=SQLITE_OK ) goto end_of_export;
+  sqlite3_free(zSql);
+
+  /* Copy over the sequence table
+  */
+  zSql = sqlite3_mprintf(
+    "SELECT 'DELETE FROM %s.' || quote(name) || ';' "
+    "FROM %s.sqlite_master WHERE name='sqlite_sequence' "
+  , attachedDb, attachedDb);
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  if( rc!=SQLITE_OK ) goto end_of_export;
+  sqlite3_free(zSql);
+
+  zSql = sqlite3_mprintf(
+    "SELECT 'INSERT INTO %s.' || quote(name) "
+    "|| ' SELECT * FROM main.' || quote(name) || ';' "
+    "FROM %s.sqlite_master WHERE name=='sqlite_sequence';"
+  , attachedDb, attachedDb);
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
+  if( rc!=SQLITE_OK ) goto end_of_export;
+  sqlite3_free(zSql);
+
+  /* Copy the triggers, views, and virtual tables from the main database
+  ** over to the temporary database.  None of these objects has any
+  ** associated storage, so all we have to do is copy their entries
+  ** from the SQLITE_MASTER table.
+  */
+  zSql = sqlite3_mprintf(
+    "INSERT INTO %s.sqlite_master "
+    "  SELECT type, name, tbl_name, rootpage, sql"
+    "    FROM main.sqlite_master"
+    "   WHERE type='view' OR type='trigger'"
+    "      OR (type='table' AND rootpage=0)"
+  , attachedDb);
+  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execSql(db, &pzErrMsg, zSql); 
+  if( rc!=SQLITE_OK ) goto end_of_export;
+  sqlite3_free(zSql);
+
+  zSql = NULL;
+end_of_export:
+  db->flags = saved_flags;
+  db->nChange = saved_nChange;
+  db->nTotalChange = saved_nTotalChange;
+  db->xTrace = saved_xTrace;
+
+  sqlite3_free(zSql);
+
+  if(rc) {
+    if(pzErrMsg != NULL) {
+      sqlite3_result_error(context, pzErrMsg, -1);
+      sqlite3DbFree(db, pzErrMsg);
+    } else {
+      sqlite3_result_error(context, sqlite3ErrStr(rc), -1);
+    }
+  }
+
+  return rc;
+}
+
+#endif

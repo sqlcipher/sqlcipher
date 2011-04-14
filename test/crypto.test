@@ -213,41 +213,6 @@ do_test codec-1.8 {
 db close
 file delete -force test.db
 
-# test rekey on an unecrypted database
-#do_test codec-1.9 {
-#  sqlite_orig db test.db
-#  execsql {
-#    BEGIN;
-#    CREATE TABLE t2(a,b);
-#  } db
-#  
-#  for {set i 1} {$i<=3000} {incr i} {
-#    execsql "CREATE TABLE tab$i (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f TEXT, g TEXT, h TEXT, i TEXT, j TEXT, k, TEXT, l, m TEXT, n TEXT, o TEXT, p TEXT);" db
-#  }
-#
-#  for {set i 1} {$i<=25000} {incr i} {
-#    set r [expr {int(rand()*500000)}]
-#    execsql "INSERT INTO t2 VALUES($i,$r);" db
-#  }
-#
-#  execsql {
-#    COMMIT;
-#    PRAGMA rekey = 'testkey';
-#  } db
-#
-#  db close
-#  sqlite_orig db test.db
-#
-#  execsql {
-#    PRAGMA key = 'testkey';
-#    SELECT count(*) FROM t2;
-#    SELECT count(*) FROM sqlite_master;
-#  } db
-#
-#} {25000 3001}
-#db close
-#file delete -force test.db
-
 # attach an encrypted database
 # where both database have the same
 # key
@@ -713,5 +678,125 @@ do_test attach-and-copy-1.1.8 {
     SELECT * FROM t1;
   }
 } {4 1 1 one one 1 2 one two}
+db close
+file delete -force test.db
+
+# open a standard database, then attach a new 
+# database with completely different options. 
+# copy data between them, and verify that the
+# new database can be opened with the proper data
+do_test attached-database-pragmas {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  } 
+
+  execsql {
+    COMMIT;
+    ATTACH DATABASE 'test2.db' AS db2 KEY 'testkey2'; 
+    PRAGMA db2.cipher_page_size = 4096;
+    PRAGMA db2.cipher = 'aes-128-cbc';
+    PRAGMA db2.kdf_iter = 1000;
+    PRAGMA db2.cipher_use_hmac = OFF;
+    CREATE TABLE db2.t1(a,b);
+    INSERT INTO db2.t1 SELECT * FROM main.t1;
+    DETACH DATABASE db2;
+  }
+  db close
+
+  sqlite_orig db test2.db
+  execsql {
+    PRAGMA key = 'testkey2';
+    PRAGMA cipher_page_size = 4096;
+    PRAGMA cipher = 'aes-128-cbc';
+    PRAGMA kdf_iter = 1000;
+    PRAGMA cipher_use_hmac = OFF;
+    SELECT count(*) FROM t1;
+  }
+} {1000}
+db close
+file delete -force test.db
+file delete -force test2.db
+
+# use the sqlcipher_export function
+# on a non-existent database. Verify 
+# the error gets through.
+do_test export-error {
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    CREATE TABLE t1(a,b);
+    SELECT sqlcipher_export('nodb');
+  } 
+} {1 {unknown database nodb}}
+db close
+file delete -force test.db
+
+# use the sqlcipher_export function
+# to copy a complicated database. 
+# tests autoincrement fields,
+# indexes, views, and triggers
+do_test export-database {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE TABLE t1(a INTEGER PRIMARY KEY AUTOINCREMENT, b, c);
+    CREATE UNIQUE INDEX b_idx ON t1(b);
+    CREATE INDEX c_idx ON t1(c);
+
+    CREATE TABLE t2(a,b);
+    CREATE TRIGGER t2_after_insert AFTER INSERT ON t2
+    BEGIN 
+      INSERT INTO t1(b,c) VALUES (new.a, new.b);
+    END;
+
+    CREATE VIEW v1 AS
+      SELECT c FROM t1;
+
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t2 VALUES($i,'value $r');" 
+  } 
+
+  execsql {
+    COMMIT;
+    ATTACH DATABASE 'test2.db' AS db2 KEY 'testkey2'; 
+    PRAGMA db2.cipher_page_size = 4096;
+
+    SELECT sqlcipher_export('db2');
+
+    DETACH DATABASE db2;
+  }
+  db close
+
+  sqlite_orig db test2.db
+  execsql {
+    PRAGMA key = 'testkey2';
+    PRAGMA cipher_page_size = 4096;
+    SELECT count(*) FROM t1;
+    SELECT count(*) FROM v1;
+    SELECT count(*) FROM sqlite_sequence;
+    SELECT seq FROM sqlite_sequence WHERE name = 't1';
+    INSERT INTO t2 VALUES(1001, 'value 938383');
+    SELECT count(*) FROM t1; -- verify the trigger worked
+    SELECT seq FROM sqlite_sequence WHERE name = 't1'; -- verify that autoincrement worked
+  }
+} {1000 1000 1 1000 1001 1001}
+db close
+file delete -force test.db
+file delete -force test2.db
 
 finish_test

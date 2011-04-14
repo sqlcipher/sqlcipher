@@ -1489,7 +1489,7 @@ void sqlite3Pragma(
   if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
     extern int codec_set_page_size(sqlite3*, int, int); 
     codec_set_page_size(db, iDb, atoi(zRight)); // change page size
-  }
+  }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
     extern int codec_set_use_hmac(sqlite3*, int, int);
     if(getBoolean(zRight)) {
@@ -1497,7 +1497,7 @@ void sqlite3Pragma(
     } else {
       codec_set_use_hmac(db, iDb, 0);
     }
-  }
+  }else
 /** END CRYPTO **/
 #endif
 #if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)

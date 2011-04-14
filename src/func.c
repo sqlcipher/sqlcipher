@@ -1424,6 +1424,11 @@ void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
   if( rc==SQLITE_NOMEM ){
     db->mallocFailed = 1;
   }
+
+#ifndef OMIT_EXPORT
+  extern void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
+  sqlite3CreateFunc(db, "sqlcipher_export", 1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0);
+#endif
 }
 
 /*

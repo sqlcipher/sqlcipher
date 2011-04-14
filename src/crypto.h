@@ -129,6 +129,8 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *, int);
 
 void* sqlcipher_codec_ctx_get_data(codec_ctx *);
 
+void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
+
 /* end extensions defined in crypto_impl.c */
 
 #endif
