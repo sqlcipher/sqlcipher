@@ -693,8 +693,6 @@ end_of_export:
       sqlite3_result_error(context, sqlite3ErrStr(rc), -1);
     }
   }
-
-  return rc;
 }
 
 #endif
