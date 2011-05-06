@@ -34,7 +34,7 @@ static void corruptSchema(
                                  "%s - %s", *pData->pzErrMsg, zExtra);
     }
   }
-  pData->rc = db->mallocFailed ? SQLITE_NOMEM : SQLITE_CORRUPT;
+  pData->rc = db->mallocFailed ? SQLITE_NOMEM : SQLITE_CORRUPT_BKPT;
 }
 
 /*
@@ -141,7 +141,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   int meta[5];
   InitData initData;
   char const *zMasterSchema;
-  char const *zMasterName = SCHEMA_TABLE(iDb);
+  char const *zMasterName;
   int openedTransaction = 0;
 
   /*
@@ -278,9 +278,8 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   pDb->pSchema->enc = ENC(db);
 
   if( pDb->pSchema->cache_size==0 ){
-    size = meta[BTREE_DEFAULT_CACHE_SIZE-1];
+    size = sqlite3AbsInt32(meta[BTREE_DEFAULT_CACHE_SIZE-1]);
     if( size==0 ){ size = SQLITE_DEFAULT_CACHE_SIZE; }
-    if( size<0 ) size = -size;
     pDb->pSchema->cache_size = size;
     sqlite3BtreeSetCacheSize(pDb->pBt, pDb->pSchema->cache_size);
   }
@@ -339,7 +338,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   }
   if( db->mallocFailed ){
     rc = SQLITE_NOMEM;
-    sqlite3ResetInternalSchema(db, 0);
+    sqlite3ResetInternalSchema(db, -1);
   }
   if( rc==SQLITE_OK || (db->flags&SQLITE_RecoveryMode)){
     /* Black magic: If the SQLITE_RecoveryMode flag is set, then consider
@@ -471,7 +470,9 @@ static void schemaIsValid(Parse *pParse){
     ** value stored as part of the in-memory schema representation,
     ** set Parse.rc to SQLITE_SCHEMA. */
     sqlite3BtreeGetMeta(pBt, BTREE_SCHEMA_VERSION, (u32 *)&cookie);
+    assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
     if( cookie!=db->aDb[iDb].pSchema->schema_cookie ){
+      sqlite3ResetInternalSchema(db, iDb);
       pParse->rc = SQLITE_SCHEMA;
     }
 
@@ -612,9 +613,6 @@ static int sqlite3Prepare(
   if( pParse->rc==SQLITE_DONE ) pParse->rc = SQLITE_OK;
   if( pParse->checkSchema ){
     schemaIsValid(pParse);
-  }
-  if( pParse->rc==SQLITE_SCHEMA ){
-    sqlite3ResetInternalSchema(db, 0);
   }
   if( db->mallocFailed ){
     pParse->rc = SQLITE_NOMEM;

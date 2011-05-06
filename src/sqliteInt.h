@@ -668,9 +668,24 @@ struct Db {
 
 /*
 ** An instance of the following structure stores a database schema.
+**
+** Most Schema objects are associated with a Btree.  The exception is
+** the Schema for the TEMP databaes (sqlite3.aDb[1]) which is free-standing.
+** In shared cache mode, a single Schema object can be shared by multiple
+** Btrees that refer to the same underlying BtShared object.
+** 
+** Schema objects are automatically deallocated when the last Btree that
+** references them is destroyed.   The TEMP Schema is manually freed by
+** sqlite3_close().
+*
+** A thread must be holding a mutex on the corresponding Btree in order
+** to access Schema content.  This implies that the thread must also be
+** holding a mutex on the sqlite3 connection pointer that owns the Btree.
+** For a TEMP Schema, on the connection mutex is required.
 */
 struct Schema {
   int schema_cookie;   /* Database schema version number for this file */
+  int iGeneration;     /* Generation counter.  Incremented with each change */
   Hash tblHash;        /* All tables indexed by name */
   Hash idxHash;        /* All (named) indices indexed by name */
   Hash trigHash;       /* All triggers indexed by name */
@@ -924,6 +939,7 @@ struct sqlite3 {
 #define SQLITE_AutoIndex      0x08000000  /* Enable automatic indexes */
 #define SQLITE_PreferBuiltin  0x10000000  /* Preference to built-in funcs */
 #define SQLITE_LoadExtension  0x20000000  /* Enable load_extension */
+#define SQLITE_EnableTrigger  0x40000000  /* True to enable triggers */
 
 /*
 ** Bits of the sqlite3.flags field that are used by the
@@ -1182,7 +1198,7 @@ struct CollSeq {
 ** schema is shared, as the implementation often stores the database
 ** connection handle passed to it via the xConnect() or xCreate() method
 ** during initialization internally. This database connection handle may
-** then used by the virtual table implementation to access real tables 
+** then be used by the virtual table implementation to access real tables 
 ** within the database. So that they appear as part of the callers 
 ** transaction, these accesses need to be made via the same database 
 ** connection as that used to execute SQL operations on the virtual table.
@@ -1460,6 +1476,7 @@ struct Index {
   int tnum;        /* Page containing root of this index in database file */
   u8 onError;      /* OE_Abort, OE_Ignore, OE_Replace, or OE_None */
   u8 autoIndex;    /* True if is automatically created (ex: by UNIQUE) */
+  u8 bUnordered;   /* Use this index for == or IN queries only */
   char *zColAff;   /* String defining the affinity of each column */
   Index *pNext;    /* The next index associated with the same table */
   Schema *pSchema; /* Schema containing this index */
@@ -1623,7 +1640,7 @@ struct Expr {
   u16 flags;             /* Various flags.  EP_* See below */
   union {
     char *zToken;          /* Token value. Zero terminated and dequoted */
-    int iValue;            /* Integer value if EP_IntValue */
+    int iValue;            /* Non-negative integer value if EP_IntValue */
   } u;
 
   /* If the EP_TokenOnly flag is set in the Expr.flags mask, then no
@@ -2124,6 +2141,15 @@ struct TriggerPrg {
 };
 
 /*
+** The yDbMask datatype for the bitmask of all attached databases.
+*/
+#if SQLITE_MAX_ATTACHED>30
+  typedef sqlite3_uint64 yDbMask;
+#else
+  typedef unsigned int yDbMask;
+#endif
+
+/*
 ** An SQL parser context.  A copy of this structure is passed through
 ** the parser and down into all the parser action routine in order to
 ** carry around information that is global to the entire parse.
@@ -2171,8 +2197,8 @@ struct Parse {
     int iReg;             /* Reg with value of this column. 0 means none. */
     int lru;              /* Least recently used entry has the smallest value */
   } aColCache[SQLITE_N_COLCACHE];  /* One for each column cache entry */
-  u32 writeMask;       /* Start a write transaction on these databases */
-  u32 cookieMask;      /* Bitmask of schema verified databases */
+  yDbMask writeMask;   /* Start a write transaction on these databases */
+  yDbMask cookieMask;  /* Bitmask of schema verified databases */
   u8 isMultiWrite;     /* True if statement may affect/insert multiple rows */
   u8 mayAbort;         /* True if statement may throw an ABORT exception */
   int cookieGoto;      /* Address of OP_Goto to cookie verifier subroutine */
@@ -2742,6 +2768,7 @@ void sqlite3PrngRestoreState(void);
 void sqlite3PrngResetState(void);
 void sqlite3RollbackAll(sqlite3*);
 void sqlite3CodeVerifySchema(Parse*, int);
+void sqlite3CodeVerifyNamedSchema(Parse*, const char *zDb);
 void sqlite3BeginTransaction(Parse*, int);
 void sqlite3CommitTransaction(Parse*);
 void sqlite3RollbackTransaction(Parse*);
@@ -2903,6 +2930,10 @@ Expr *sqlite3ExprSetCollByToken(Parse *pParse, Expr*, Token*);
 int sqlite3CheckCollSeq(Parse *, CollSeq *);
 int sqlite3CheckObjectName(Parse *, const char *);
 void sqlite3VdbeSetChanges(sqlite3 *, int);
+int sqlite3AddInt64(i64*,i64);
+int sqlite3SubInt64(i64*,i64);
+int sqlite3MulInt64(i64*,i64);
+int sqlite3AbsInt32(int);
 
 const void *sqlite3ValueText(sqlite3_value*, u8);
 int sqlite3ValueBytes(sqlite3_value*, u8);
@@ -2927,7 +2958,7 @@ extern SQLITE_WSD FuncDefHash sqlite3GlobalFunctions;
 extern int sqlite3PendingByte;
 #endif
 #endif
-void sqlite3RootPageMoved(Db*, int, int);
+void sqlite3RootPageMoved(sqlite3*, int, int, int);
 void sqlite3Reindex(Parse*, Token*, Token*);
 void sqlite3AlterFunctions(void);
 void sqlite3AlterRenameTable(Parse*, SrcList*, Token*);
@@ -2954,7 +2985,7 @@ void sqlite3DefaultRowEst(Index*);
 void sqlite3RegisterLikeFunctions(sqlite3*, int);
 int sqlite3IsLikeFunction(sqlite3*,Expr*,int*,char*);
 void sqlite3MinimumFileFormat(Parse*, int, int);
-void sqlite3SchemaFree(void *);
+void sqlite3SchemaClear(void *);
 Schema *sqlite3SchemaGet(sqlite3 *, Btree *);
 int sqlite3SchemaToIndex(sqlite3 *db, Schema *);
 KeyInfo *sqlite3IndexKeyinfo(Parse *, Index *);
@@ -3041,7 +3072,7 @@ CollSeq *sqlite3BinaryCompareCollSeq(Parse *, Expr *, Expr *);
 int sqlite3TempInMemory(const sqlite3*);
 VTable *sqlite3GetVTable(sqlite3*, Table*);
 const char *sqlite3JournalModename(int);
-int sqlite3Checkpoint(sqlite3*, int);
+int sqlite3Checkpoint(sqlite3*, int, int, int*, int*);
 int sqlite3WalDefaultHook(void*,sqlite3*,const char*,int);
 
 /* Declarations for functions in fkey.c. All of these are replaced by

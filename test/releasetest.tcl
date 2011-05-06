@@ -60,11 +60,15 @@ array set ::Configs {
   "Default" {
     -O2
   }
+  "Ftrapv" {
+    -O2 -ftrapv
+    -DSQLITE_MAX_ATTACHED=55
+    -DSQLITE_TCL_DEFAULT_FULLMUTEX=1
+  }
   "Unlock-Notify" {
     -O2
     -DSQLITE_ENABLE_UNLOCK_NOTIFY
     -DSQLITE_THREADSAFE
-    -DOS_UNIX
     -DSQLITE_TCL_DEFAULT_FULLMUTEX=1
   }
   "Secure-Delete" {
@@ -145,6 +149,7 @@ array set ::Configs {
   }
   "Extra-Robustness" {
     -DSQLITE_ENABLE_OVERSIZE_CELL_CHECK=1
+    -DSQLITE_MAX_ATTACHED=62
   }
 }
 
@@ -156,6 +161,7 @@ array set ::Platforms {
     "Debug-One"               test
     "Extra-Robustness"        test
     "Device-Two"              test
+    "Ftrapv"                  test
     "Default"                 "threadtest test"
     "Device-One"              fulltest
   }

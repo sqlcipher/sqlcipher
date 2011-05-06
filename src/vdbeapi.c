@@ -682,13 +682,11 @@ int sqlite3_data_count(sqlite3_stmt *pStmt){
 */
 static Mem *columnMem(sqlite3_stmt *pStmt, int i){
   Vdbe *pVm;
-  int vals;
   Mem *pOut;
 
   pVm = (Vdbe *)pStmt;
   if( pVm && pVm->pResultSet!=0 && i<pVm->nResColumn && i>=0 ){
     sqlite3_mutex_enter(pVm->db->mutex);
-    vals = sqlite3_data_count(pStmt);
     pOut = &pVm->pResultSet[i];
   }else{
     /* If the value passed as the second argument is out of range, return
@@ -706,7 +704,11 @@ static Mem *columnMem(sqlite3_stmt *pStmt, int i){
 #if defined(SQLITE_DEBUG) && defined(__GNUC__)
       __attribute__((aligned(8))) 
 #endif
-      = {0, "", (double)0, {0}, 0, MEM_Null, SQLITE_NULL, 0, 0, 0 };
+      = {0, "", (double)0, {0}, 0, MEM_Null, SQLITE_NULL, 0,
+#ifdef SQLITE_DEBUG
+         0, 0,  /* pScopyFrom, pFiller */
+#endif
+         0, 0 };
 
     if( pVm && ALWAYS(pVm->db) ){
       sqlite3_mutex_enter(pVm->db->mutex);
