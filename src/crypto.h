@@ -131,6 +131,7 @@ void* sqlcipher_codec_ctx_get_data(codec_ctx *);
 
 void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 
+int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use);
 /* end extensions defined in crypto_impl.c */
 
 #endif

@@ -130,7 +130,9 @@ int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
     && c1->pass_sz == c2->pass_sz
     && (
       c1->pass == c2->pass
-      || !sqlcipher_memcmp(c1->pass, c2->pass, c1->pass_sz)
+      || !sqlcipher_memcmp((const unsigned char*)c1->pass,
+                           (const unsigned char*)c2->pass,
+                           c1->pass_sz)
     ) 
   ) return 0;
   return 1;
@@ -463,7 +465,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
        this KDF run. This ensures a distinct but predictable HMAC key. */
     if(c_ctx->use_hmac) {
       CODEC_TRACE(("codec_key_derive: deriving hmac key using PBKDF2\n")); 
-      PKCS5_PBKDF2_HMAC_SHA1( c_ctx->key, c_ctx->key_sz, 
+      PKCS5_PBKDF2_HMAC_SHA1( (const char*)c_ctx->key, c_ctx->key_sz, 
                               ctx->kdf_salt, ctx->kdf_salt_sz, 
                               c_ctx->kdf_iter, c_ctx->key_sz, c_ctx->hmac_key); 
     }
