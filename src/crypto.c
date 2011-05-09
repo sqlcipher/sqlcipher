@@ -87,12 +87,11 @@ int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
 }
 
 int codec_set_page_size(sqlite3* db, int nDb, int size) {
-  int rc;
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE(("codec_set_page_size: entered db=%d nDb=%d size=%d\n", db, nDb, size));
 
   if(pDb->pBt) {
-    int rc, reserve_sz;
+    int rc;
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
 
