@@ -799,4 +799,40 @@ db close
 file delete -force test.db
 file delete -force test2.db
 
+# 1. create a database with WAL journal mode
+# 2. create table and insert operations should work
+# 3. close database, open it again
+# 4. verify that the table is present, readable, and that
+#    the journal mode is WAL
+do_test journal-mode-wal {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA journal_mode = WAL;
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+    PRAGMA journal_mode;
+  }
+
+} {1000 wal}
+db close
+
 finish_test
