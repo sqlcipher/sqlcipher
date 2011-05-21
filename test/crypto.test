@@ -754,10 +754,10 @@ do_test export-database {
     CREATE UNIQUE INDEX b_idx ON t1(b);
     CREATE INDEX c_idx ON t1(c);
 
-    CREATE TABLE t2(a,b);
+    CREATE TABLE t2(b,c);
     CREATE TRIGGER t2_after_insert AFTER INSERT ON t2
     BEGIN 
-      INSERT INTO t1(b,c) VALUES (new.a, new.b);
+      INSERT INTO t1(b,c) VALUES (new.b, new.c);
     END;
 
     CREATE VIEW v1 AS
@@ -766,12 +766,14 @@ do_test export-database {
     BEGIN;
   }
 
-  for {set i 1} {$i<=1000} {incr i} {
+  for {set i 1} {$i<=10000} {incr i} {
     set r [expr {int(rand()*500000)}]
     execsql "INSERT INTO t2 VALUES($i,'value $r');" 
   } 
 
   execsql {
+    CREATE VIRTUAL TABLE t1_fts USING fts3(a integer, c text);
+    INSERT INTO t1_fts SELECT a, c FROM t1;
     COMMIT;
     ATTACH DATABASE 'test2.db' AS db2 KEY 'testkey2'; 
     PRAGMA db2.cipher_page_size = 4096;
@@ -790,12 +792,15 @@ do_test export-database {
     SELECT count(*) FROM v1;
     SELECT count(*) FROM sqlite_sequence;
     SELECT seq FROM sqlite_sequence WHERE name = 't1';
-    INSERT INTO t2 VALUES(1001, 'value 938383');
+    INSERT INTO t2 VALUES(10001, 'value 938383');
     SELECT count(*) FROM t1; -- verify the trigger worked
     SELECT seq FROM sqlite_sequence WHERE name = 't1'; -- verify that autoincrement worked
+    SELECT count(*) FROM t1 INNER JOIN t1_fts ON t1.a = t1_fts.a WHERE t1_fts.c match "value" AND t1.b = 1000;
   }
-} {1000 1000 1 1000 1001 1001}
+} {10000 10000 1 10000 10001 10001 1}
 db close
+file copy -force test.db test-debug.db
+file copy -force test2.db test2-debug.db
 file delete -force test.db
 file delete -force test2.db
 
