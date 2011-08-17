@@ -1511,7 +1511,7 @@ void sqlite3Pragma(
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
     extern int codec_set_use_hmac(sqlite3*, int, int);
-    if(getBoolean(zRight)) {
+    if(sqlite3GetBoolean(zRight)) {
       codec_set_use_hmac(db, iDb, 1);
     } else {
       codec_set_use_hmac(db, iDb, 0);
