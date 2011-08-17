@@ -138,6 +138,10 @@
 # include <sys/mount.h>
 #endif
 
+#ifdef HAVE_UTIME
+# include <utime.h>
+#endif
+
 /*
 ** Allowed values of unixFile.fsFlags
 */
@@ -282,6 +286,18 @@ struct unixFile {
 #endif
 
 /*
+** Different Unix systems declare open() in different ways.  Same use
+** open(const char*,int,mode_t).  Others use open(const char*,int,...).
+** The difference is important when using a pointer to the function.
+**
+** The safest way to deal with the problem is to always use this wrapper
+** which always has the same well-defined interface.
+*/
+static int posixOpen(const char *zFile, int flags, int mode){
+  return open(zFile, flags, mode);
+}
+
+/*
 ** Many system calls are accessed through pointer-to-functions so that
 ** they may be overridden at runtime to facilitate fault injection during
 ** testing and sandboxing.  The following array holds the names and pointers
@@ -292,8 +308,8 @@ static struct unix_syscall {
   sqlite3_syscall_ptr pCurrent; /* Current value of the system call */
   sqlite3_syscall_ptr pDefault; /* Default value */
 } aSyscall[] = {
-  { "open",         (sqlite3_syscall_ptr)open,       0  },
-#define osOpen      ((int(*)(const char*,int,...))aSyscall[0].pCurrent)
+  { "open",         (sqlite3_syscall_ptr)posixOpen,  0  },
+#define osOpen      ((int(*)(const char*,int,int))aSyscall[0].pCurrent)
 
   { "close",        (sqlite3_syscall_ptr)close,      0  },
 #define osClose     ((int(*)(int))aSyscall[1].pCurrent)
@@ -330,7 +346,7 @@ static struct unix_syscall {
   { "read",         (sqlite3_syscall_ptr)read,       0  },
 #define osRead      ((ssize_t(*)(int,void*,size_t))aSyscall[8].pCurrent)
 
-#if defined(USE_PREAD) || defined(SQLITE_ENABLE_LOCKING_STYLE)
+#if defined(USE_PREAD) || SQLITE_ENABLE_LOCKING_STYLE
   { "pread",        (sqlite3_syscall_ptr)pread,      0  },
 #else
   { "pread",        (sqlite3_syscall_ptr)0,          0  },
@@ -347,7 +363,7 @@ static struct unix_syscall {
   { "write",        (sqlite3_syscall_ptr)write,      0  },
 #define osWrite     ((ssize_t(*)(int,const void*,size_t))aSyscall[11].pCurrent)
 
-#if defined(USE_PREAD) || defined(SQLITE_ENABLE_LOCKING_STYLE)
+#if defined(USE_PREAD) || SQLITE_ENABLE_LOCKING_STYLE
   { "pwrite",       (sqlite3_syscall_ptr)pwrite,     0  },
 #else
   { "pwrite",       (sqlite3_syscall_ptr)0,          0  },
@@ -933,7 +949,7 @@ struct unixInodeInfo {
   UnixUnusedFd *pUnused;          /* Unused file descriptors to close */
   unixInodeInfo *pNext;           /* List of all unixInodeInfo objects */
   unixInodeInfo *pPrev;           /*    .... doubly linked */
-#if defined(SQLITE_ENABLE_LOCKING_STYLE)
+#if SQLITE_ENABLE_LOCKING_STYLE
   unsigned long long sharedByte;  /* for AFP simulated shared lock */
 #endif
 #if OS_VXWORKS
@@ -1927,8 +1943,10 @@ static int dotlockLock(sqlite3_file *id, int eFileLock) {
   */
   if( pFile->eFileLock > NO_LOCK ){
     pFile->eFileLock = eFileLock;
-#if !OS_VXWORKS
     /* Always update the timestamp on the old file */
+#ifdef HAVE_UTIME
+    utime(zLockFile, NULL);
+#else
     utimes(zLockFile, NULL);
 #endif
     return SQLITE_OK;
@@ -3090,7 +3108,7 @@ static int unixWrite(
   SimulateDiskfullError(( wrote=0, amt=1 ));
 
   if( amt>0 ){
-    if( wrote<0 ){
+    if( wrote<0 && pFile->lastErrno!=ENOSPC ){
       /* lastErrno set by seekAndWrite */
       return SQLITE_IOERR_WRITE;
     }else{
@@ -3525,7 +3543,8 @@ struct unixShmNode {
   char *zFilename;           /* Name of the mmapped file */
   int h;                     /* Open file descriptor */
   int szRegion;              /* Size of shared-memory regions */
-  int nRegion;               /* Size of array apRegion */
+  u16 nRegion;               /* Size of array apRegion */
+  u8 isReadonly;             /* True if read-only */
   char **apRegion;           /* Array of mapped shared-memory regions */
   int nRef;                  /* Number of unixShm objects pointing to this */
   unixShm *pFirst;           /* All unixShm objects pointing to this */
@@ -3757,6 +3776,7 @@ static int unixOpenSharedMemory(unixFile *pDbFd){
                      (u32)sStat.st_ino, (u32)sStat.st_dev);
 #else
     sqlite3_snprintf(nShmFilename, zShmFilename, "%s-shm", pDbFd->zPath);
+    sqlite3FileSuffix3(pDbFd->zPath, zShmFilename);
 #endif
     pShmNode->h = -1;
     pDbFd->pInode->pShmNode = pShmNode;
@@ -3771,8 +3791,17 @@ static int unixOpenSharedMemory(unixFile *pDbFd){
       pShmNode->h = robust_open(zShmFilename, O_RDWR|O_CREAT,
                                (sStat.st_mode & 0777));
       if( pShmNode->h<0 ){
-        rc = unixLogError(SQLITE_CANTOPEN_BKPT, "open", zShmFilename);
-        goto shm_open_err;
+        const char *zRO;
+        zRO = sqlite3_uri_parameter(pDbFd->zPath, "readonly_shm");
+        if( zRO && sqlite3GetBoolean(zRO) ){
+          pShmNode->h = robust_open(zShmFilename, O_RDONLY,
+                                    (sStat.st_mode & 0777));
+          pShmNode->isReadonly = 1;
+        }
+        if( pShmNode->h<0 ){
+          rc = unixLogError(SQLITE_CANTOPEN_BKPT, "open", zShmFilename);
+          goto shm_open_err;
+        }
       }
   
       /* Check to see if another process is holding the dead-man switch.
@@ -3911,11 +3940,12 @@ static int unixShmMap(
     while(pShmNode->nRegion<=iRegion){
       void *pMem;
       if( pShmNode->h>=0 ){
-        pMem = mmap(0, szRegion, PROT_READ|PROT_WRITE, 
+        pMem = mmap(0, szRegion,
+            pShmNode->isReadonly ? PROT_READ : PROT_READ|PROT_WRITE, 
             MAP_SHARED, pShmNode->h, pShmNode->nRegion*szRegion
         );
         if( pMem==MAP_FAILED ){
-          rc = SQLITE_IOERR;
+          rc = unixLogError(SQLITE_IOERR_SHMMAP, "mmap", pShmNode->zFilename);
           goto shmpage_out;
         }
       }else{
@@ -3937,6 +3967,7 @@ shmpage_out:
   }else{
     *pp = 0;
   }
+  if( pShmNode->isReadonly && rc==SQLITE_OK ) rc = SQLITE_READONLY;
   sqlite3_mutex_leave(pShmNode->mutex);
   return rc;
 }
@@ -4790,6 +4821,11 @@ static UnixUnusedFd *findReusableFd(const char *zPath, int flags){
 ** corresponding database file and sets *pMode to this value. Whenever 
 ** possible, WAL and journal files are created using the same permissions 
 ** as the associated database file.
+**
+** If the SQLITE_ENABLE_8_3_NAMES option is enabled, then the
+** original filename is unavailable.  But 8_3_NAMES is only used for
+** FAT filesystems and permissions do not matter there, so just use
+** the default permissions.
 */
 static int findCreateFileMode(
   const char *zPath,              /* Path of file (possibly) being created */
@@ -4797,6 +4833,7 @@ static int findCreateFileMode(
   mode_t *pMode                   /* OUT: Permissions to open file with */
 ){
   int rc = SQLITE_OK;             /* Return Code */
+  *pMode = SQLITE_DEFAULT_FILE_PERMISSIONS;
   if( flags & (SQLITE_OPEN_WAL|SQLITE_OPEN_MAIN_JOURNAL) ){
     char zDb[MAX_PATHNAME+1];     /* Database file path */
     int nDb;                      /* Number of valid bytes in zDb */
@@ -4808,15 +4845,15 @@ static int findCreateFileMode(
     **
     **   "<path to db>-journal"
     **   "<path to db>-wal"
-    **   "<path to db>-journal-NNNN"
-    **   "<path to db>-wal-NNNN"
+    **   "<path to db>-journalNN"
+    **   "<path to db>-walNN"
     **
-    ** where NNNN is a 4 digit decimal number. The NNNN naming schemes are 
+    ** where NN is a 4 digit decimal number. The NN naming schemes are 
     ** used by the test_multiplex.c module.
     */
     nDb = sqlite3Strlen30(zPath) - 1; 
-    while( nDb>0 && zPath[nDb]!='l' ) nDb--;
-    nDb -= ((flags & SQLITE_OPEN_WAL) ? 3 : 7);
+    while( nDb>0 && zPath[nDb]!='-' ) nDb--;
+    if( nDb==0 ) return SQLITE_OK;
     memcpy(zDb, zPath, nDb);
     zDb[nDb] = '\0';
 
@@ -4827,8 +4864,6 @@ static int findCreateFileMode(
     }
   }else if( flags & SQLITE_OPEN_DELETEONCLOSE ){
     *pMode = 0600;
-  }else{
-    *pMode = SQLITE_DEFAULT_FILE_PERMISSIONS;
   }
   return rc;
 }
