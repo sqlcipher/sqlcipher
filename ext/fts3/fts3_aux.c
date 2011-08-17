@@ -11,10 +11,9 @@
 ******************************************************************************
 **
 */
-
+#include "fts3Int.h"
 #if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_FTS3)
 
-#include "fts3Int.h"
 #include <string.h>
 #include <assert.h>
 
@@ -28,7 +27,7 @@ struct Fts3auxTable {
 
 struct Fts3auxCursor {
   sqlite3_vtab_cursor base;       /* Base class used by SQLite core */
-  Fts3SegReaderCursor csr;        /* Must be right after "base" */
+  Fts3MultiSegReader csr;        /* Must be right after "base" */
   Fts3SegFilter filter;
   char *zStop;
   int nStop;                      /* Byte-length of string zStop */
@@ -96,6 +95,7 @@ static int fts3auxConnectMethod(
   p->pFts3Tab->zDb = (char *)&p->pFts3Tab[1];
   p->pFts3Tab->zName = &p->pFts3Tab->zDb[nDb+1];
   p->pFts3Tab->db = db;
+  p->pFts3Tab->nIndex = 1;
 
   memcpy((char *)p->pFts3Tab->zDb, zDb, nDb);
   memcpy((char *)p->pFts3Tab->zName, zFts3, nFts3);
@@ -342,6 +342,7 @@ static int fts3auxFilterMethod(
   int isScan;
 
   UNUSED_PARAMETER(nVal);
+  UNUSED_PARAMETER(idxStr);
 
   assert( idxStr==0 );
   assert( idxNum==FTS4AUX_EQ_CONSTRAINT || idxNum==0
@@ -375,7 +376,7 @@ static int fts3auxFilterMethod(
     if( pCsr->zStop==0 ) return SQLITE_NOMEM;
   }
 
-  rc = sqlite3Fts3SegReaderCursor(pFts3, FTS3_SEGCURSOR_ALL,
+  rc = sqlite3Fts3SegReaderCursor(pFts3, 0, FTS3_SEGCURSOR_ALL,
       pCsr->filter.zTerm, pCsr->filter.nTerm, 0, isScan, &pCsr->csr
   );
   if( rc==SQLITE_OK ){
@@ -459,7 +460,10 @@ int sqlite3Fts3InitAux(sqlite3 *db){
      0,                           /* xCommit       */
      0,                           /* xRollback     */
      0,                           /* xFindFunction */
-     0                            /* xRename       */
+     0,                           /* xRename       */
+     0,                           /* xSavepoint    */
+     0,                           /* xRelease      */
+     0                            /* xRollbackTo   */
   };
   int rc;                         /* Return code */
 

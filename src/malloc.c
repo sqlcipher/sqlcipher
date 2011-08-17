@@ -266,7 +266,7 @@ static int mallocWithAlarm(int n, void **pp){
   sqlite3StatusSet(SQLITE_STATUS_MALLOC_SIZE, n);
   if( mem0.alarmCallback!=0 ){
     int nUsed = sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED);
-    if( nUsed+nFull >= mem0.alarmThreshold ){
+    if( nUsed >= mem0.alarmThreshold - nFull ){
       mem0.nearlyFull = 1;
       sqlite3MallocAlarm(nFull);
     }else{
@@ -507,7 +507,7 @@ void sqlite3DbFree(sqlite3 *db, void *p){
 ** Change the size of an existing memory allocation
 */
 void *sqlite3Realloc(void *pOld, int nBytes){
-  int nOld, nNew;
+  int nOld, nNew, nDiff;
   void *pNew;
   if( pOld==0 ){
     return sqlite3Malloc(nBytes); /* IMP: R-28354-25769 */
@@ -530,9 +530,10 @@ void *sqlite3Realloc(void *pOld, int nBytes){
   }else if( sqlite3GlobalConfig.bMemstat ){
     sqlite3_mutex_enter(mem0.mutex);
     sqlite3StatusSet(SQLITE_STATUS_MALLOC_SIZE, nBytes);
-    if( sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED)+nNew-nOld >= 
-          mem0.alarmThreshold ){
-      sqlite3MallocAlarm(nNew-nOld);
+    nDiff = nNew - nOld;
+    if( sqlite3StatusValue(SQLITE_STATUS_MEMORY_USED) >= 
+          mem0.alarmThreshold-nDiff ){
+      sqlite3MallocAlarm(nDiff);
     }
     assert( sqlite3MemdebugHasType(pOld, MEMTYPE_HEAP) );
     assert( sqlite3MemdebugNoType(pOld, ~MEMTYPE_HEAP) );

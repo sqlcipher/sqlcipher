@@ -506,10 +506,10 @@ struct compareInfo {
 ** whereas only characters less than 0x80 do in ASCII.
 */
 #if defined(SQLITE_EBCDIC)
-# define sqlite3Utf8Read(A,C)    (*(A++))
-# define GlogUpperToLower(A)     A = sqlite3UpperToLower[A]
+# define sqlite3Utf8Read(A,C)  (*(A++))
+# define GlogUpperToLower(A)   A = sqlite3UpperToLower[A]
 #else
-# define GlogUpperToLower(A)     if( A<0x80 ){ A = sqlite3UpperToLower[A]; }
+# define GlogUpperToLower(A)   if( !((A)&~0x7f) ){ A = sqlite3UpperToLower[A]; }
 #endif
 
 static const struct compareInfo globInfo = { '*', '?', '[', 0 };
@@ -552,9 +552,9 @@ static int patternCompare(
   const u8 *zPattern,              /* The glob pattern */
   const u8 *zString,               /* The string to compare against the glob */
   const struct compareInfo *pInfo, /* Information about how to do the compare */
-  const int esc                    /* The escape character */
+  u32 esc                          /* The escape character */
 ){
-  int c, c2;
+  u32 c, c2;
   int invert;
   int seen;
   u8 matchOne = pInfo->matchOne;
@@ -608,7 +608,7 @@ static int patternCompare(
         return 0;
       }
     }else if( c==matchSet ){
-      int prior_c = 0;
+      u32 prior_c = 0;
       assert( esc==0 );    /* This only occurs for GLOB, not LIKE */
       seen = 0;
       invert = 0;
@@ -684,7 +684,7 @@ static void likeFunc(
   sqlite3_value **argv
 ){
   const unsigned char *zA, *zB;
-  int escape = 0;
+  u32 escape = 0;
   int nPat;
   sqlite3 *db = sqlite3_context_db_handle(context);
 
@@ -772,6 +772,21 @@ static void sourceidFunc(
   /* IMP: R-24470-31136 This function is an SQL wrapper around the
   ** sqlite3_sourceid() C interface. */
   sqlite3_result_text(context, sqlite3_sourceid(), -1, SQLITE_STATIC);
+}
+
+/*
+** Implementation of the sqlite_log() function.  This is a wrapper around
+** sqlite3_log().  The return value is NULL.  The function exists purely for
+** its side-effects.
+*/
+static void errlogFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  UNUSED_PARAMETER(argc);
+  UNUSED_PARAMETER(context);
+  sqlite3_log(sqlite3_value_int(argv[0]), "%s", sqlite3_value_text(argv[1]));
 }
 
 /*
@@ -1546,6 +1561,7 @@ void sqlite3RegisterGlobalFunctions(void){
     FUNCTION(nullif,             2, 0, 1, nullifFunc       ),
     FUNCTION(sqlite_version,     0, 0, 0, versionFunc      ),
     FUNCTION(sqlite_source_id,   0, 0, 0, sourceidFunc     ),
+    FUNCTION(sqlite_log,         2, 0, 0, errlogFunc       ),
 #ifndef SQLITE_OMIT_COMPILEOPTION_DIAGS
     FUNCTION(sqlite_compileoption_used,1, 0, 0, compileoptionusedFunc  ),
     FUNCTION(sqlite_compileoption_get, 1, 0, 0, compileoptiongetFunc  ),
