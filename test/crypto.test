@@ -834,5 +834,69 @@ do_test journal-mode-wal {
 
 } {1000 wal}
 db close
+file delete -force test.db
+
+# Test rekey as first operation on an empty database. should be a no-op
+do_test rekey-as-first-op {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=100} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {100}
+db close
+file delete -force test.db
+
+# Test rekey as first operation follwed by key
+do_test rekey-then-key-as-first-ops {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = '1234';
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=100} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = '4321';
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {100}
+db close
 
 finish_test

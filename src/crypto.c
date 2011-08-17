@@ -235,16 +235,13 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 
 /* sqlite3_rekey 
 ** Given a database, this will reencrypt the database using a new key.
-** There are two possible modes of operation. The first is rekeying
-** an existing database that was not previously encrypted. The second
-** is to change the key on an existing database.
-** 
+** There is only one possible modes of operation - to encrypt a database
+** that is already encrpyted. If the database is not already encrypted
+** this should do nothing
 ** The proposed logic for this function follows:
-** 1. Determine if there is already a key present
-** 2. If there is NOT already a key present, create one and attach a codec (key would be null)
-** 
-** Note: this will require modifications to the sqlite3Codec to support rekey
-**
+** 1. Determine if the database is already encryptped
+** 2. If there is NOT already a key present do nothing
+** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_rekey: entered db=%d pKey=%s, nKey=%d\n", db, pKey, nKey));
@@ -262,10 +259,9 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
      
       if(ctx == NULL) { 
-        CODEC_TRACE(("sqlite3_rekey: no codec attached to db, attaching now\n"));
-        /* there was no codec attached to this database,so attach one now with a null password */
-        sqlite3CodecAttach(db, 0, pKey, nKey);
-        sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+        /* there was no codec attached to this database, so this should do nothing! */ 
+        CODEC_TRACE(("sqlite3_rekey: no codec attached to db, exiting\n"));
+        return SQLITE_OK;
       }
 
       sqlite3_mutex_enter(db->mutex);
