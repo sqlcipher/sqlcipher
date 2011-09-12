@@ -231,12 +231,14 @@
 		1DEB91F008733DB70010E9CD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
 				"ARCHS[sdk=iphoneos*]" = (
 					armv6,
 					armv7,
 				);
-				"ARCHS[sdk=macosx*]" = "$(ARCHS_STANDARD_32_64_BIT)";
+				"ARCHS[sdk=macosx*]" = (
+					x86_64,
+					i386,
+				);
 				GCC_C_LANGUAGE_STANDARD = c99;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
@@ -252,12 +254,15 @@
 		1DEB91F108733DB70010E9CD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
 				"ARCHS[sdk=iphoneos*]" = (
 					armv6,
 					armv7,
 				);
-				"ARCHS[sdk=macosx*]" = "$(ARCHS_STANDARD_32_64_BIT)";
+				"ARCHS[sdk=macosx*]" = (
+					x86_64,
+					i386,
+				);
 				GCC_C_LANGUAGE_STANDARD = c99;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
