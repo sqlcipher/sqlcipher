@@ -231,13 +231,14 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PREBINDING = NO;
-				VALID_ARCHS = "armv7 i386 ppc ppc64 ppc7400 ppc970 x86_64 armv6";
+				SDKROOT = "$(PLATFORM_NAME)";
 			};
 			name = Debug;
 		};
 		1DEB91F108733DB70010E9CD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
 				"ARCHS[sdk=iphoneos*]" = (
 					armv7,
 					armv6,
@@ -251,7 +252,8 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				ONLY_ACTIVE_ARCH = NO;
 				PREBINDING = NO;
-				VALID_ARCHS = "armv7 i386 ppc ppc64 ppc7400 ppc970 x86_64 armv6";
+				SDKROOT = "$(PLATFORM_NAME)";
+				SKIP_INSTALL = YES;
 			};
 			name = Release;
 		};
