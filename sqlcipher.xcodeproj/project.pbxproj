@@ -119,12 +119,18 @@
 /* Begin PBXProject section */
 		08FB7793FE84155DC02AAC07 /* Project object */ = {
 			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 0410;
+			};
 			buildConfigurationList = 1DEB91EF08733DB70010E9CD /* Build configuration list for PBXProject "sqlcipher" */;
 			compatibilityVersion = "Xcode 3.1";
 			developmentRegion = English;
 			hasScannedForEncodings = 1;
 			knownRegions = (
-				en,
+				English,
+				Japanese,
+				French,
+				German,
 			);
 			mainGroup = 08FB7794FE84155DC02AAC07 /* sqlcipher */;
 			projectDirPath = "";
@@ -183,12 +189,16 @@
 				GCC_ENABLE_FIX_AND_CONTINUE = YES;
 				GCC_MODEL_TUNING = G5;
 				GCC_OPTIMIZATION_LEVEL = 0;
-				HEADER_SEARCH_PATHS = "$(OPENSSL_SRC)/include";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)",
+					"$(OPENSSL_SRC)/include",
+				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
 					"-DSQLITE_HAS_CODEC",
 					"-DNDEBUG",
 					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
@@ -201,13 +211,17 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				GCC_MODEL_TUNING = G5;
-				HEADER_SEARCH_PATHS = "$(OPENSSL_SRC)/include";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)",
+					"$(OPENSSL_SRC)/include",
+				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
 					"-DSQLITE_HAS_CODEC",
 					"-DNDEBUG",
 					"-DSQLITE_OS_UNIX=1",
 					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
@@ -218,8 +232,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				"ARCHS[sdk=iphoneos*]" = (
-					armv7,
 					armv6,
+					armv7,
 				);
 				"ARCHS[sdk=macosx*]" = (
 					x86_64,
@@ -232,6 +246,8 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PREBINDING = NO;
 				SDKROOT = "$(PLATFORM_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphonesimulator macosx iphoneos";
 			};
 			name = Debug;
 		};
@@ -240,8 +256,8 @@
 			buildSettings = {
 				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
 				"ARCHS[sdk=iphoneos*]" = (
-					armv7,
 					armv6,
+					armv7,
 				);
 				"ARCHS[sdk=macosx*]" = (
 					x86_64,
@@ -250,10 +266,10 @@
 				GCC_C_LANGUAGE_STANDARD = c99;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				ONLY_ACTIVE_ARCH = NO;
 				PREBINDING = NO;
 				SDKROOT = "$(PLATFORM_NAME)";
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphonesimulator macosx iphoneos";
 			};
 			name = Release;
 		};
