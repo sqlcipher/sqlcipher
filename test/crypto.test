@@ -744,7 +744,8 @@ file delete -force test.db
 # use the sqlcipher_export function
 # to copy a complicated database. 
 # tests autoincrement fields,
-# indexes, views, and triggers
+# indexes, views, and triggers,
+# tables and virtual tables
 do_test export-database {
   sqlite_orig db test.db
 
@@ -763,18 +764,22 @@ do_test export-database {
     CREATE VIEW v1 AS
       SELECT c FROM t1;
 
+    CREATE VIRTUAL TABLE fts USING fts3(a,b); 
+
     BEGIN;
+    -- start with one known value
+    INSERT INTO t2 VALUES(1000000,'value 1000000');
   }
 
-  for {set i 1} {$i<=10000} {incr i} {
+  for {set i 1} {$i<=999} {incr i} {
     set r [expr {int(rand()*500000)}]
     execsql "INSERT INTO t2 VALUES($i,'value $r');" 
   } 
 
   execsql {
-    CREATE VIRTUAL TABLE t1_fts USING fts3(a integer, c text);
-    INSERT INTO t1_fts SELECT a, c FROM t1;
+    INSERT INTO fts SELECT b,c FROM t1;
     COMMIT;
+
     ATTACH DATABASE 'test2.db' AS db2 KEY 'testkey2'; 
     PRAGMA db2.cipher_page_size = 4096;
 
@@ -795,9 +800,9 @@ do_test export-database {
     INSERT INTO t2 VALUES(10001, 'value 938383');
     SELECT count(*) FROM t1; -- verify the trigger worked
     SELECT seq FROM sqlite_sequence WHERE name = 't1'; -- verify that autoincrement worked
-    SELECT count(*) FROM t1 INNER JOIN t1_fts ON t1.a = t1_fts.a WHERE t1_fts.c match "value" AND t1.b = 1000;
+    SELECT a FROM fts WHERE b MATCH '1000000';  
   }
-} {10000 10000 1 10000 10001 10001 1}
+} {1000 1000 1 1000 1001 1001 1000000}
 db close
 file copy -force test.db test-debug.db
 file copy -force test2.db test2-debug.db
@@ -838,6 +843,70 @@ do_test journal-mode-wal {
   }
 
 } {1000 wal}
+db close
+file delete -force test.db
+
+# Test rekey as first operation on an empty database. should be a no-op
+do_test rekey-as-first-op {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=100} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {100}
+db close
+file delete -force test.db
+
+# Test rekey as first operation follwed by key
+do_test rekey-then-key-as-first-ops {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = '1234';
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=100} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = '4321';
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {100}
 db close
 
 finish_test

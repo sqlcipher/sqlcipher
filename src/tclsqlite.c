@@ -761,7 +761,7 @@ static void tclSqlFunc(sqlite3_context *context, int argc, sqlite3_value**argv){
         case SQLITE_INTEGER: {
           sqlite_int64 v = sqlite3_value_int64(pIn);
           if( v>=-2147483647 && v<=2147483647 ){
-            pVal = Tcl_NewIntObj(v);
+            pVal = Tcl_NewIntObj((int)v);
           }else{
             pVal = Tcl_NewWideIntObj(v);
           }
@@ -1441,7 +1441,7 @@ static Tcl_Obj *dbEvalColumnValue(DbEvalContext *p, int iCol){
     case SQLITE_INTEGER: {
       sqlite_int64 v = sqlite3_column_int64(pStmt, iCol);
       if( v>=-2147483647 && v<=2147483647 ){
-        return Tcl_NewIntObj(v);
+        return Tcl_NewIntObj((int)v);
       }else{
         return Tcl_NewWideIntObj(v);
       }
@@ -2367,7 +2367,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       }
       if( zNull && len>0 ){
         pDb->zNull = Tcl_Alloc( len + 1 );
-        strncpy(pDb->zNull, zNull, len);
+        memcpy(pDb->zNull, zNull, len);
         pDb->zNull[len] = '\0';
       }else{
         pDb->zNull = 0;
@@ -3585,6 +3585,10 @@ static void init_all(Tcl_Interp *interp){
     extern int Sqlitetestfuzzer_Init(Tcl_Interp*);
     extern int Sqlitetestwholenumber_Init(Tcl_Interp*);
 
+#if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
+    extern int Sqlitetestfts3_Init(Tcl_Interp *interp);
+#endif
+
 #ifdef SQLITE_ENABLE_ZIPVFS
     extern int Zipvfs_Init(Tcl_Interp*);
     Zipvfs_Init(interp);
@@ -3624,6 +3628,10 @@ static void init_all(Tcl_Interp *interp){
     SqlitetestSyscall_Init(interp);
     Sqlitetestfuzzer_Init(interp);
     Sqlitetestwholenumber_Init(interp);
+
+#if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
+    Sqlitetestfts3_Init(interp);
+#endif
 
     Tcl_CreateObjCommand(interp,"load_testfixture_extensions",init_all_cmd,0,0);
 

@@ -354,6 +354,31 @@ proc do_test {name cmd expected} {
   flush stdout
 }
 
+proc filepath_normalize {p} {
+  # test cases should be written to assume "unix"-like file paths
+  if {$::tcl_platform(platform)!="unix"} {
+    # lreverse*2 as a hack to remove any unneeded {} after the string map
+    lreverse [lreverse [string map {\\ /} [regsub -nocase -all {[a-z]:[/\\]+} $p {/}]]]
+  } {
+    set p
+  }
+}
+proc do_filepath_test {name cmd expected} {
+  uplevel [list do_test $name [
+    subst -nocommands { filepath_normalize [ $cmd ] }
+  ] [filepath_normalize $expected]]
+}
+
+proc realnum_normalize {r} {
+  # different TCL versions display floating point values differently.
+  string map {1.#INF inf Inf inf .0e e} [regsub -all {(e[+-])0+} $r {\1}]
+}
+proc do_realnum_test {name cmd expected} {
+  uplevel [list do_test $name [
+    subst -nocommands { realnum_normalize [ $cmd ] }
+  ] [realnum_normalize $expected]]
+}
+
 proc fix_testname {varname} {
   upvar $varname testname
   if {[info exists ::testprefix] 
@@ -365,11 +390,11 @@ proc fix_testname {varname} {
     
 proc do_execsql_test {testname sql {result {}}} {
   fix_testname testname
-  uplevel do_test $testname [list "execsql {$sql}"] [list [list {*}$result]]
+  uplevel do_test [list $testname] [list "execsql {$sql}"] [list [list {*}$result]]
 }
 proc do_catchsql_test {testname sql result} {
   fix_testname testname
-  uplevel do_test $testname [list "catchsql {$sql}"] [list $result]
+  uplevel do_test [list $testname] [list "catchsql {$sql}"] [list $result]
 }
 proc do_eqp_test {name sql res} {
   uplevel do_execsql_test $name [list "EXPLAIN QUERY PLAN $sql"] [list $res]
@@ -745,6 +770,17 @@ proc integrity_check {name {db db}} {
   ifcapable integrityck {
     do_test $name [list execsql {PRAGMA integrity_check} $db] {ok}
   }
+}
+
+
+# Return true if the SQL statement passed as the second argument uses a
+# statement transaction.
+#
+proc sql_uses_stmt {db sql} {
+  set stmt [sqlite3_prepare $db $sql -1 dummy]
+  set uses [uses_stmt_journal $stmt]
+  sqlite3_finalize $stmt
+  return $uses
 }
 
 proc fix_ifcapable_expr {expr} {

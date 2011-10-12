@@ -10,14 +10,12 @@
 **
 *************************************************************************
 **
-** An example of a simple VFS implementation that omits complex features
-** often not required or not possible on embedded platforms. Also includes
-** code to buffer writes to the journal file, which can be a significant
-** performance improvement on some embedded platforms.
+** This file implements an example of a simple VFS implementation that 
+** omits complex features often not required or not possible on embedded
+** platforms.  Code is included to buffer writes to the journal file, 
+** which can be a significant performance improvement on some embedded
+** platforms.
 **
-*/
-
-/*
 ** OVERVIEW
 **
 **   The code in this file implements a minimal SQLite VFS that can be 
@@ -128,6 +126,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
 
 /*
 ** Size of the write buffer used by journal files in bytes.
