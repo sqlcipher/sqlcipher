@@ -1418,12 +1418,14 @@ static void groupConcatFinalize(sqlite3_context *context){
 ** of the built-in functions above are part of the global function set.
 ** This routine only deals with those that are not global.
 */
+#include "ditto_funcs.c"
 void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
   int rc = sqlite3_overload_function(db, "MATCH", 2);
   assert( rc==SQLITE_NOMEM || rc==SQLITE_OK );
   if( rc==SQLITE_NOMEM ){
     db->mallocFailed = 1;
   }
+#include "ditto_globals.c"
 }
 
 /*
