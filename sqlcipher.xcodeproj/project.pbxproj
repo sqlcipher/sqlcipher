@@ -192,7 +192,6 @@
 				HEADER_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(OPENSSL_SRC)/include",
-					"$(DITTO_SRC)",
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
@@ -215,7 +214,6 @@
 				HEADER_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(OPENSSL_SRC)/include",
-					"$(DITTO_SRC)",
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
