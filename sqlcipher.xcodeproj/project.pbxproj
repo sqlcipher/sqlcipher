@@ -191,13 +191,13 @@
 				HEADER_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(OPENSSL_SRC)/include",
-					"$(DITTO_SRC)",
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
 					"-DSQLITE_HAS_CODEC",
 					"-DNDEBUG",
 					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
@@ -213,7 +213,6 @@
 				HEADER_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(OPENSSL_SRC)/include",
-					"$(DITTO_SRC)",
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
@@ -221,6 +220,7 @@
 					"-DNDEBUG",
 					"-DSQLITE_OS_UNIX=1",
 					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
