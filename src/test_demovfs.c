@@ -10,14 +10,12 @@
 **
 *************************************************************************
 **
-** An example of a simple VFS implementation that omits complex features
-** often not required or not possible on embedded platforms. Also includes
-** code to buffer writes to the journal file, which can be a significant
-** performance improvement on some embedded platforms.
+** This file implements an example of a simple VFS implementation that 
+** omits complex features often not required or not possible on embedded
+** platforms.  Code is included to buffer writes to the journal file, 
+** which can be a significant performance improvement on some embedded
+** platforms.
 **
-*/
-
-/*
 ** OVERVIEW
 **
 **   The code in this file implements a minimal SQLite VFS that can be 
@@ -115,7 +113,7 @@
 **   operations.
 */
 
-#if !defined(SQLITE_TEST) || defined(SQLITE_OS_UNIX)
+#if !defined(SQLITE_TEST) || SQLITE_OS_UNIX
 
 #include <sqlite3.h>
 
@@ -128,6 +126,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
 
 /*
 ** Size of the write buffer used by journal files in bytes.
@@ -637,14 +636,14 @@ sqlite3_vfs *sqlite3_demovfs(void){
   return &demovfs;
 }
 
-#endif /* !defined(SQLITE_TEST) || defined(SQLITE_OS_UNIX) */
+#endif /* !defined(SQLITE_TEST) || SQLITE_OS_UNIX */
 
 
 #ifdef SQLITE_TEST
 
 #include <tcl.h>
 
-#ifdef SQLITE_OS_UNIX
+#if SQLITE_OS_UNIX
 static int register_demovfs(
   ClientData clientData, /* Pointer to sqlite3_enable_XXX function */
   Tcl_Interp *interp,    /* The TCL interpreter that invoked this command */

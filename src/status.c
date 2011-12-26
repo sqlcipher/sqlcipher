@@ -116,6 +116,22 @@ int sqlite3_db_status(
       break;
     }
 
+    case SQLITE_DBSTATUS_LOOKASIDE_HIT:
+    case SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE:
+    case SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL: {
+      testcase( op==SQLITE_DBSTATUS_LOOKASIDE_HIT );
+      testcase( op==SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE );
+      testcase( op==SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL );
+      assert( (op-SQLITE_DBSTATUS_LOOKASIDE_HIT)>=0 );
+      assert( (op-SQLITE_DBSTATUS_LOOKASIDE_HIT)<3 );
+      *pCurrent = 0;
+      *pHighwater = db->lookaside.anStat[op - SQLITE_DBSTATUS_LOOKASIDE_HIT];
+      if( resetFlag ){
+        db->lookaside.anStat[op - SQLITE_DBSTATUS_LOOKASIDE_HIT] = 0;
+      }
+      break;
+    }
+
     /* 
     ** Return an approximation for the amount of memory currently used
     ** by all pagers associated with the given database connection.  The
@@ -147,6 +163,7 @@ int sqlite3_db_status(
       int i;                      /* Used to iterate through schemas */
       int nByte = 0;              /* Used to accumulate return value */
 
+      sqlite3BtreeEnterAll(db);
       db->pnBytesFreed = &nByte;
       for(i=0; i<db->nDb; i++){
         Schema *pSchema = db->aDb[i].pSchema;
@@ -173,6 +190,7 @@ int sqlite3_db_status(
         }
       }
       db->pnBytesFreed = 0;
+      sqlite3BtreeLeaveAll(db);
 
       *pHighwater = 0;
       *pCurrent = nByte;
@@ -197,6 +215,28 @@ int sqlite3_db_status(
       *pHighwater = 0;
       *pCurrent = nByte;
 
+      break;
+    }
+
+    /*
+    ** Set *pCurrent to the total cache hits or misses encountered by all
+    ** pagers the database handle is connected to. *pHighwater is always set 
+    ** to zero.
+    */
+    case SQLITE_DBSTATUS_CACHE_HIT:
+    case SQLITE_DBSTATUS_CACHE_MISS: {
+      int i;
+      int nRet = 0;
+      assert( SQLITE_DBSTATUS_CACHE_MISS==SQLITE_DBSTATUS_CACHE_HIT+1 );
+
+      for(i=0; i<db->nDb; i++){
+        if( db->aDb[i].pBt ){
+          Pager *pPager = sqlite3BtreePager(db->aDb[i].pBt);
+          sqlite3PagerCacheStat(pPager, op, resetFlag, &nRet);
+        }
+      }
+      *pHighwater = 0;
+      *pCurrent = nRet;
       break;
     }
 

@@ -71,6 +71,11 @@
 # define sqlite3_complete16 0
 #endif
 
+#ifdef SQLITE_OMIT_DECLTYPE
+# define sqlite3_column_decltype16      0
+# define sqlite3_column_decltype        0
+#endif
+
 #ifdef SQLITE_OMIT_PROGRESS_CALLBACK
 # define sqlite3_progress_handler 0
 #endif
@@ -79,6 +84,8 @@
 # define sqlite3_create_module 0
 # define sqlite3_create_module_v2 0
 # define sqlite3_declare_vtab 0
+# define sqlite3_vtab_config 0
+# define sqlite3_vtab_on_conflict 0
 #endif
 
 #ifdef SQLITE_OMIT_SHARED_CACHE
@@ -102,6 +109,7 @@
 #define sqlite3_blob_open      0
 #define sqlite3_blob_read      0
 #define sqlite3_blob_write     0
+#define sqlite3_blob_reopen    0
 #endif
 
 /*
@@ -327,6 +335,49 @@ static const sqlite3_api_routines sqlite3Apis = {
   sqlite3_next_stmt,
   sqlite3_sql,
   sqlite3_status,
+
+  /*
+  ** Added for 3.7.4
+  */
+  sqlite3_backup_finish,
+  sqlite3_backup_init,
+  sqlite3_backup_pagecount,
+  sqlite3_backup_remaining,
+  sqlite3_backup_step,
+#ifndef SQLITE_OMIT_COMPILEOPTION_DIAGS
+  sqlite3_compileoption_get,
+  sqlite3_compileoption_used,
+#else
+  0,
+  0,
+#endif
+  sqlite3_create_function_v2,
+  sqlite3_db_config,
+  sqlite3_db_mutex,
+  sqlite3_db_status,
+  sqlite3_extended_errcode,
+  sqlite3_log,
+  sqlite3_soft_heap_limit64,
+  sqlite3_sourceid,
+  sqlite3_stmt_status,
+  sqlite3_strnicmp,
+#ifdef SQLITE_ENABLE_UNLOCK_NOTIFY
+  sqlite3_unlock_notify,
+#else
+  0,
+#endif
+#ifndef SQLITE_OMIT_WAL
+  sqlite3_wal_autocheckpoint,
+  sqlite3_wal_checkpoint,
+  sqlite3_wal_hook,
+#else
+  0,
+  0,
+  0,
+#endif
+  sqlite3_blob_reopen,
+  sqlite3_vtab_config,
+  sqlite3_vtab_on_conflict,
 };
 
 /*
@@ -352,7 +403,7 @@ static int sqlite3LoadExtension(
   int (*xInit)(sqlite3*,char**,const sqlite3_api_routines*);
   char *zErrmsg = 0;
   void **aHandle;
-  const int nMsg = 300;
+  int nMsg = 300 + sqlite3Strlen30(zFile);
 
   if( pzErrMsg ) *pzErrMsg = 0;
 
@@ -389,6 +440,7 @@ static int sqlite3LoadExtension(
                    sqlite3OsDlSym(pVfs, handle, zProc);
   if( xInit==0 ){
     if( pzErrMsg ){
+      nMsg += sqlite3Strlen30(zProc);
       *pzErrMsg = zErrmsg = sqlite3_malloc(nMsg);
       if( zErrmsg ){
         sqlite3_snprintf(nMsg, zErrmsg,

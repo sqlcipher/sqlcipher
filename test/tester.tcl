@@ -20,7 +20,9 @@
 # Commands to manipulate the db and the file-system at a high level:
 #
 #      copy_file              FROM TO
-#      drop_all_table         ?DB?
+#      delete_file            FILENAME
+#      drop_all_tables        ?DB?
+#      forcecopy              FROM TO
 #      forcedelete            FILENAME
 #
 # Test the capability of the SQLite version built into the interpreter to
@@ -109,12 +111,131 @@ if {[info command sqlite_orig]==""} {
       if {[info exists ::G(perm:presql)]} {
         [lindex $args 0] eval $::G(perm:presql)
       }
+      if {[info exists ::G(perm:dbconfig)]} {
+        set ::dbhandle [lindex $args 0]
+        uplevel #0 $::G(perm:dbconfig)
+      }
       set res
     } else {
       # This command is not opening a new database connection. Pass the 
       # arguments through to the C implemenation as the are.
       #
       uplevel 1 sqlite_orig $args
+    }
+  }
+}
+
+proc getFileRetries {} {
+  if {![info exists ::G(file-retries)]} {
+    #
+    # NOTE: Return the default number of retries for [file] operations.  A
+    #       value of zero or less here means "disabled".
+    #
+    return [expr {$::tcl_platform(platform) eq "windows" ? 10 : 0}]
+  }
+  return $::G(file-retries)
+}
+
+proc getFileRetryDelay {} {
+  if {![info exists ::G(file-retry-delay)]} {
+    #
+    # NOTE: Return the default number of milliseconds to wait when retrying
+    #       failed [file] operations.  A value of zero or less means "do not
+    #       wait".
+    #
+    return 100; # TODO: Good default?
+  }
+  return $::G(file-retry-delay)
+}
+
+# Copy file $from into $to. This is used because some versions of
+# TCL for windows (notably the 8.4.1 binary package shipped with the
+# current mingw release) have a broken "file copy" command.
+#
+proc copy_file {from to} {
+  do_copy_file false $from $to
+}
+
+proc forcecopy {from to} {
+  do_copy_file true $from $to
+}
+
+proc do_copy_file {force from to} {
+  set nRetry [getFileRetries]     ;# Maximum number of retries.
+  set nDelay [getFileRetryDelay]  ;# Delay in ms before retrying.
+
+  # On windows, sometimes even a [file copy -force] can fail. The cause is
+  # usually "tag-alongs" - programs like anti-virus software, automatic backup
+  # tools and various explorer extensions that keep a file open a little longer
+  # than we expect, causing the delete to fail.
+  #
+  # The solution is to wait a short amount of time before retrying the copy.
+  #
+  if {$nRetry > 0} {
+    for {set i 0} {$i<$nRetry} {incr i} {
+      set rc [catch {
+        if {$force} {
+          file copy -force $from $to
+        } else {
+          file copy $from $to
+        }
+      } msg]
+      if {$rc==0} break
+      if {$nDelay > 0} { after $nDelay }
+    }
+    if {$rc} { error $msg }
+  } else {
+    if {$force} {
+      file copy -force $from $to
+    } else {
+      file copy $from $to
+    }
+  }
+}
+
+# Delete a file or directory
+#
+proc delete_file {args} {
+  do_delete_file false {*}$args
+}
+
+proc forcedelete {args} {
+  do_delete_file true {*}$args
+}
+
+proc do_delete_file {force args} {
+  set nRetry [getFileRetries]     ;# Maximum number of retries.
+  set nDelay [getFileRetryDelay]  ;# Delay in ms before retrying.
+
+  foreach filename $args {
+    # On windows, sometimes even a [file delete -force] can fail just after
+    # a file is closed. The cause is usually "tag-alongs" - programs like
+    # anti-virus software, automatic backup tools and various explorer
+    # extensions that keep a file open a little longer than we expect, causing
+    # the delete to fail.
+    #
+    # The solution is to wait a short amount of time before retrying the
+    # delete.
+    #
+    if {$nRetry > 0} {
+      for {set i 0} {$i<$nRetry} {incr i} {
+        set rc [catch {
+          if {$force} {
+            file delete -force $filename
+          } else {
+            file delete $filename
+          }
+        } msg]
+        if {$rc==0} break
+        if {$nDelay > 0} { after $nDelay }
+      }
+      if {$rc} { error $msg }
+    } else {
+      if {$force} {
+        file delete -force $filename
+      } else {
+        file delete $filename
+      }
     }
   }
 }
@@ -150,6 +271,9 @@ if {[info exists cmdlinearg]==0} {
   #   --backtrace=N
   #   --binarylog=N
   #   --soak=N
+  #   --file-retries=N
+  #   --file-retry-delay=N
+  #   --start=[$permutation:]$testfile
   #
   set cmdlinearg(soft-heap-limit)    0
   set cmdlinearg(maxerror)        1000
@@ -157,6 +281,9 @@ if {[info exists cmdlinearg]==0} {
   set cmdlinearg(backtrace)         10
   set cmdlinearg(binarylog)          0
   set cmdlinearg(soak)               0
+  set cmdlinearg(file-retries)       0
+  set cmdlinearg(file-retry-delay)   0
+  set cmdlinearg(start)             "" 
 
   set leftover [list]
   foreach a $argv {
@@ -190,6 +317,24 @@ if {[info exists cmdlinearg]==0} {
       {^-+soak=.+$} {
         foreach {dummy cmdlinearg(soak)} [split $a =] break
         set ::G(issoak) $cmdlinearg(soak)
+      }
+      {^-+file-retries=.+$} {
+        foreach {dummy cmdlinearg(file-retries)} [split $a =] break
+        set ::G(file-retries) $cmdlinearg(file-retries)
+      }
+      {^-+file-retry-delay=.+$} {
+        foreach {dummy cmdlinearg(file-retry-delay)} [split $a =] break
+        set ::G(file-retry-delay) $cmdlinearg(file-retry-delay)
+      }
+      {^-+start=.+$} {
+        foreach {dummy cmdlinearg(start)} [split $a =] break
+
+        set ::G(start:file) $cmdlinearg(start)
+        if {[regexp {(.*):(.*)} $cmdlinearg(start) -> s.perm s.file]} {
+          set ::G(start:permutation) ${s.perm}
+          set ::G(start:file)        ${s.file}
+        }
+        if {$::G(start:file) == ""} {unset ::G(start:file)}
       }
       default {
         lappend leftover $a
@@ -230,9 +375,9 @@ sqlite3_soft_heap_limit $cmdlinearg(soft-heap-limit)
 #
 proc reset_db {} {
   catch {db close}
-  file delete -force test.db
-  file delete -force test.db-journal
-  file delete -force test.db-wal
+  forcedelete test.db
+  forcedelete test.db-journal
+  forcedelete test.db-wal
   sqlite3 db ./test.db
   set ::DB [sqlite3_connection_pointer db]
   if {[info exists ::SETUP_SQL]} {
@@ -244,6 +389,10 @@ reset_db
 # Abort early if this script has been run before.
 #
 if {[info exists TC(count)]} return
+
+# Make sure memory statistics are enabled.
+#
+sqlite3_config_memstatus 1
 
 # Initialize the test counters and set up commands to access them.
 # Or, if this is a slave interpreter, set up aliases to write the
@@ -299,6 +448,8 @@ proc do_test {name cmd expected} {
 
   global argv cmdlinearg
 
+  fix_testname name
+
   sqlite3_memdebug_settitle $name
 
 #  if {[llength $argv]==0} { 
@@ -331,14 +482,125 @@ proc do_test {name cmd expected} {
   }
   flush stdout
 }
-    
-proc do_execsql_test {testname sql result} {
-  uplevel do_test $testname [list "execsql {$sql}"] [list $result]
+
+proc filepath_normalize {p} {
+  # test cases should be written to assume "unix"-like file paths
+  if {$::tcl_platform(platform)!="unix"} {
+    # lreverse*2 as a hack to remove any unneeded {} after the string map
+    lreverse [lreverse [string map {\\ /} [regsub -nocase -all {[a-z]:[/\\]+} $p {/}]]]
+  } {
+    set p
+  }
 }
-proc do_catchsql_test {testname sql result} {
-  uplevel do_test $testname [list "catchsql {$sql}"] [list $result]
+proc do_filepath_test {name cmd expected} {
+  uplevel [list do_test $name [
+    subst -nocommands { filepath_normalize [ $cmd ] }
+  ] [filepath_normalize $expected]]
 }
 
+proc realnum_normalize {r} {
+  # different TCL versions display floating point values differently.
+  string map {1.#INF inf Inf inf .0e e} [regsub -all {(e[+-])0+} $r {\1}]
+}
+proc do_realnum_test {name cmd expected} {
+  uplevel [list do_test $name [
+    subst -nocommands { realnum_normalize [ $cmd ] }
+  ] [realnum_normalize $expected]]
+}
+
+proc fix_testname {varname} {
+  upvar $varname testname
+  if {[info exists ::testprefix] 
+   && [string is digit [string range $testname 0 0]]
+  } {
+    set testname "${::testprefix}-$testname"
+  }
+}
+    
+proc do_execsql_test {testname sql {result {}}} {
+  fix_testname testname
+  uplevel do_test [list $testname] [list "execsql {$sql}"] [list [list {*}$result]]
+}
+proc do_catchsql_test {testname sql result} {
+  fix_testname testname
+  uplevel do_test [list $testname] [list "catchsql {$sql}"] [list $result]
+}
+proc do_eqp_test {name sql res} {
+  uplevel do_execsql_test $name [list "EXPLAIN QUERY PLAN $sql"] [list $res]
+}
+
+#-------------------------------------------------------------------------
+#   Usage: do_select_tests PREFIX ?SWITCHES? TESTLIST
+#
+# Where switches are:
+#
+#   -errorformat FMTSTRING
+#   -count
+#   -query SQL
+#   -tclquery TCL
+#   -repair TCL
+#
+proc do_select_tests {prefix args} {
+
+  set testlist [lindex $args end]
+  set switches [lrange $args 0 end-1]
+
+  set errfmt ""
+  set countonly 0
+  set tclquery ""
+  set repair ""
+
+  for {set i 0} {$i < [llength $switches]} {incr i} {
+    set s [lindex $switches $i]
+    set n [string length $s]
+    if {$n>=2 && [string equal -length $n $s "-query"]} {
+      set tclquery [list execsql [lindex $switches [incr i]]]
+    } elseif {$n>=2 && [string equal -length $n $s "-tclquery"]} {
+      set tclquery [lindex $switches [incr i]]
+    } elseif {$n>=2 && [string equal -length $n $s "-errorformat"]} {
+      set errfmt [lindex $switches [incr i]]
+    } elseif {$n>=2 && [string equal -length $n $s "-repair"]} {
+      set repair [lindex $switches [incr i]]
+    } elseif {$n>=2 && [string equal -length $n $s "-count"]} {
+      set countonly 1
+    } else {
+      error "unknown switch: $s"
+    }
+  }
+
+  if {$countonly && $errfmt!=""} {
+    error "Cannot use -count and -errorformat together"
+  }
+  set nTestlist [llength $testlist]
+  if {$nTestlist%3 || $nTestlist==0 } {
+    error "SELECT test list contains [llength $testlist] elements"
+  }
+
+  eval $repair
+  foreach {tn sql res} $testlist {
+    if {$tclquery != ""} {
+      execsql $sql
+      uplevel do_test ${prefix}.$tn [list $tclquery] [list [list {*}$res]]
+    } elseif {$countonly} {
+      set nRow 0
+      db eval $sql {incr nRow}
+      uplevel do_test ${prefix}.$tn [list [list set {} $nRow]] [list $res]
+    } elseif {$errfmt==""} {
+      uplevel do_execsql_test ${prefix}.${tn} [list $sql] [list [list {*}$res]]
+    } else {
+      set res [list 1 [string trim [format $errfmt {*}$res]]]
+      uplevel do_catchsql_test ${prefix}.${tn} [list $sql] [list $res]
+    }
+    eval $repair
+  }
+
+}
+
+proc delete_all_data {} {
+  db eval {SELECT tbl_name AS t FROM sqlite_master WHERE type = 'table'} {
+    db eval "DELETE FROM '[string map {' ''} $t]'"
+  }
+}
 
 # Run an SQL script.  
 # Return the number of microseconds per statement.
@@ -357,6 +619,7 @@ proc speed_trial {name numstmt units sql} {
   puts [format {%12d uS %s %s} $tm $rate $u2]
   global total_time
   set total_time [expr {$total_time+$tm}]
+  lappend ::speed_trial_times $name $tm
 }
 proc speed_trial_tcl {name numstmt units script} {
   puts -nonewline [format {%-21.21s } $name...]
@@ -372,10 +635,12 @@ proc speed_trial_tcl {name numstmt units script} {
   puts [format {%12d uS %s %s} $tm $rate $u2]
   global total_time
   set total_time [expr {$total_time+$tm}]
+  lappend ::speed_trial_times $name $tm
 }
 proc speed_trial_init {name} {
   global total_time
   set total_time 0
+  set ::speed_trial_times [list]
   sqlite3 versdb :memory:
   set vers [versdb one {SELECT sqlite_source_id()}]
   versdb close
@@ -384,6 +649,16 @@ proc speed_trial_init {name} {
 proc speed_trial_summary {name} {
   global total_time
   puts [format {%-21.21s %12d uS TOTAL} $name $total_time]
+
+  if { 0 } {
+    sqlite3 versdb :memory:
+    set vers [lindex [versdb one {SELECT sqlite_source_id()}] 0]
+    versdb close
+    puts "CREATE TABLE IF NOT EXISTS time(version, script, test, us);"
+    foreach {test us} $::speed_trial_times {
+      puts "INSERT INTO time VALUES('$vers', '$name', '$test', $us);"
+    }
+  }
 }
 
 # Run this routine last
@@ -476,10 +751,10 @@ proc finalize_testing {} {
     }
   }
   foreach f [glob -nocomplain test.db-*-journal] {
-    file delete -force $f
+    forcedelete $f
   }
   foreach f [glob -nocomplain test.db-mj*] {
-    file delete -force $f
+    forcedelete $f
   }
   exit [expr {$nErr>0}]
 }
@@ -594,20 +869,23 @@ proc stepsql {dbptr sql} {
   return $r
 }
 
-# Delete a file or directory
-#
-proc forcedelete {filename} {
-  if {[catch {file delete -force $filename}]} {
-    exec rm -rf $filename
-  }
-}
-
 # Do an integrity check of the entire database
 #
 proc integrity_check {name {db db}} {
   ifcapable integrityck {
     do_test $name [list execsql {PRAGMA integrity_check} $db] {ok}
   }
+}
+
+
+# Return true if the SQL statement passed as the second argument uses a
+# statement transaction.
+#
+proc sql_uses_stmt {db sql} {
+  set stmt [sqlite3_prepare $db $sql -1 dummy]
+  set uses [uses_stmt_journal $stmt]
+  sqlite3_finalize $stmt
+  return $uses
 }
 
 proc fix_ifcapable_expr {expr} {
@@ -791,10 +1069,10 @@ proc do_ioerr_test {testname args} {
       set ::sqlite_io_error_pending 0
       catch {db close}
       catch {db2 close}
-      catch {file delete -force test.db}
-      catch {file delete -force test.db-journal}
-      catch {file delete -force test2.db}
-      catch {file delete -force test2.db-journal}
+      catch {forcedelete test.db}
+      catch {forcedelete test.db-journal}
+      catch {forcedelete test2.db}
+      catch {forcedelete test2.db-journal}
       set ::DB [sqlite3 db test.db; sqlite3_connection_pointer db]
       sqlite3_extended_result_codes $::DB $::ioerropts(-erc)
       if {[info exists ::ioerropts(-tclprep)]} {
@@ -1068,24 +1346,6 @@ proc memdebug_log_sql {{filename mallocs.sql}} {
   close $fd
 }
 
-# Copy file $from into $to. This is used because some versions of
-# TCL for windows (notably the 8.4.1 binary package shipped with the
-# current mingw release) have a broken "file copy" command.
-#
-proc copy_file {from to} {
-  if {$::tcl_platform(platform)=="unix"} {
-    file copy -force $from $to
-  } else {
-    set f [open $from]
-    fconfigure $f -translation binary
-    set t [open $to w]
-    fconfigure $t -translation binary
-    puts -nonewline $t [read $f [file size $from]]
-    close $t
-    close $f
-  }
-}
-
 # Drop all tables in database [db]
 proc drop_all_tables {{db db}} {
   ifcapable trigger&&foreignkey {
@@ -1100,9 +1360,9 @@ proc drop_all_tables {{db db}} {
     }
     foreach {t type} [$db eval "
       SELECT name, type FROM $master
-      WHERE type IN('table', 'view') AND name NOT like 'sqlite_%'
+      WHERE type IN('table', 'view') AND name NOT LIKE 'sqliteX_%' ESCAPE 'X'
     "] {
-      $db eval "DROP $type $t"
+      $db eval "DROP $type \"$t\""
     }
   }
   ifcapable trigger&&foreignkey {
@@ -1200,6 +1460,15 @@ proc slave_test_script {script} {
 proc slave_test_file {zFile} {
   set tail [file tail $zFile]
 
+  if {[info exists ::G(start:permutation)]} {
+    if {[permutation] != $::G(start:permutation)} return
+    unset ::G(start:permutation)
+  }
+  if {[info exists ::G(start:file)]} {
+    if {$tail != $::G(start:file) && $tail!="$::G(start:file).test"} return
+    unset ::G(start:file)
+  }
+
   # Remember the value of the shared-cache setting. So that it is possible
   # to check afterwards that it was not modified by the test script.
   #
@@ -1254,8 +1523,39 @@ proc sql36231 {sql} {
   return ""
 }
 
+proc db_save {} {
+  foreach f [glob -nocomplain sv_test.db*] { forcedelete $f }
+  foreach f [glob -nocomplain test.db*] {
+    set f2 "sv_$f"
+    forcecopy $f $f2
+  }
+}
+proc db_save_and_close {} {
+  db_save
+  catch { db close }
+  return ""
+}
+proc db_restore {} {
+  foreach f [glob -nocomplain test.db*] { forcedelete $f }
+  foreach f2 [glob -nocomplain sv_test.db*] {
+    set f [string range $f2 3 end]
+    forcecopy $f2 $f
+  }
+}
+proc db_restore_and_reopen {{dbfile test.db}} {
+  catch { db close }
+  db_restore
+  sqlite3 db $dbfile
+}
+proc db_delete_and_reopen {{file test.db}} {
+  catch { db close }
+  foreach f [glob -nocomplain test.db*] { forcedelete $f }
+  sqlite3 db $file
+}
+
 # If the library is compiled with the SQLITE_DEFAULT_AUTOVACUUM macro set
 # to non-zero, then set the global variable $AUTOVACUUM to 1.
 set AUTOVACUUM $sqlite_options(default_autovacuum)
 
 source $testdir/thread_common.tcl
+source $testdir/malloc_common.tcl

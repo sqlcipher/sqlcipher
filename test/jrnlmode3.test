@@ -45,10 +45,10 @@ do_test jrnlmode3-1.2 {
     ROLLBACK;
     SELECT * FROM t1;
   }
-} {1 2}
+} {1}
 
 db close
-file delete -force test.db test.db-journal
+forcedelete test.db test.db-journal
 sqlite3 db test.db
 
 do_test jrnlmode3-2.1 {
@@ -67,7 +67,7 @@ do_test jrnlmode3-2.2 {
     ROLLBACK;
     SELECT * FROM t1;
   }
-} {1 2}
+} {1}
 
 # Test cases to verify that we can move from any journal_mode
 # to any other, as long as we are not in a transaction.  Verify
@@ -85,7 +85,7 @@ foreach fromjmode $all_journal_modes {
     # Start with a fresh database connection an empty database file.
     #
     db close
-    file delete -force test.db test.db-journal
+    forcedelete test.db test.db-journal
     sqlite3 db test.db
 
     # Initialize the journal mode.
@@ -112,15 +112,14 @@ foreach fromjmode $all_journal_modes {
       db eval "PRAGMA journal_mode=$tojmode"
     } $fromjmode
 
-    # Rollback the transaction.  Verify that the rollback occurred
-    # if journal_mode!=OFF.
+    # Rollback the transaction.  
     #
     do_test jrnlmode3-3.$cnt.4 {
       db eval {
         ROLLBACK;
         SELECT * FROM t1;
       }
-    } [expr {$fromjmode=="off"?$cnt:""}]
+    } {}
 
     # Now change the journal mode again.  This time the new mode
     # should take.
@@ -143,7 +142,7 @@ foreach fromjmode $all_journal_modes {
       db eval {
         SELECT * FROM t1;
       }
-    } [expr {$tojmode=="off"?"1":""}]
+    } {}
   }
 }
 

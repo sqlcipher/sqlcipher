@@ -127,7 +127,7 @@ static SQLITE_WSD struct Mem5Global {
   */
   u8 *aCtrl;
 
-} mem5 = { 0 };
+} mem5;
 
 /*
 ** Access the static variable through a macro for SQLITE_OMIT_WSD
@@ -395,7 +395,7 @@ static void *memsys5Realloc(void *pPrior, int nBytes){
   int nOld;
   void *p;
   assert( pPrior!=0 );
-  assert( (nBytes&(nBytes-1))==0 );
+  assert( (nBytes&(nBytes-1))==0 );  /* EV: R-46199-30249 */
   assert( nBytes>=0 );
   if( nBytes==0 ){
     return 0;
@@ -442,7 +442,7 @@ static int memsys5Roundup(int n){
 */
 static int memsys5Log(int iValue){
   int iLog;
-  for(iLog=0; (1<<iLog)<iValue; iLog++);
+  for(iLog=0; (iLog<(int)((sizeof(int)*8)-1)) && (1<<iLog)<iValue; iLog++);
   return iLog;
 }
 
@@ -473,6 +473,7 @@ static int memsys5Init(void *NotUsed){
   zByte = (u8*)sqlite3GlobalConfig.pHeap;
   assert( zByte!=0 );  /* sqlite3_config() does not allow otherwise */
 
+  /* boundaries on sqlite3GlobalConfig.mnReq are enforced in sqlite3_config() */
   nMinLog = memsys5Log(sqlite3GlobalConfig.mnReq);
   mem5.szAtom = (1<<nMinLog);
   while( (int)sizeof(Mem5Link)>mem5.szAtom ){

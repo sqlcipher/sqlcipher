@@ -70,12 +70,15 @@ do_test like-1.4 {
   }
 } {ABC abc}
 do_test like-1.5.1 {
+  # Use sqlite3_exec() to verify fix for ticket [25ee81271091] 2011-06-26
+  sqlite3_exec db {PRAGMA case_sensitive_like=on}
+} {0 {}}
+do_test like-1.5.2 {
   execsql {
-    PRAGMA case_sensitive_like=on;
     SELECT x FROM t1 WHERE x LIKE 'abc' ORDER BY 1;
   }
 } {abc}
-do_test like-1.5.2 {
+do_test like-1.5.3 {
   execsql {
     PRAGMA case_sensitive_like; -- no argument; does not change setting
     SELECT x FROM t1 WHERE x LIKE 'abc' ORDER BY 1;
@@ -115,7 +118,7 @@ do_test like-2.1 {
   proc test_regexp {a b} {
     return [regexp $a $b]
   }
-  db function regexp test_regexp
+  db function regexp -argcount 2 test_regexp
   execsql {
     SELECT x FROM t1 WHERE x REGEXP 'abc' ORDER BY 1;
   }
@@ -305,8 +308,8 @@ do_test like-3.18 {
 #
 do_test like-3.19 {
   set sqlite_like_count 0
+  db eval {CREATE INDEX i1 ON t1(x);}
   queryplan {
-    CREATE INDEX i1 ON t1(x);
     SELECT x FROM t1 WHERE x GLOB 'abc*' ORDER BY 1;
   }
 } {abc abcd nosort {} i1}
@@ -519,7 +522,7 @@ do_test like-5.24 {
   }
 } {zz-lower-lower zZ-lower-upper Zz-upper-lower ZZ-upper-upper nosort {} i2}
 do_test like-5.25 {
-  queryplan {
+  db eval {
     PRAGMA case_sensitive_like=on;
     CREATE TABLE t3(x TEXT);
     CREATE INDEX i3 ON t3(x);
@@ -527,6 +530,8 @@ do_test like-5.25 {
     INSERT INTO t3 VALUES('zZ-lower-upper');
     INSERT INTO t3 VALUES('Zz-upper-lower');
     INSERT INTO t3 VALUES('zz-lower-lower');
+  }
+  queryplan {
     SELECT x FROM t3 WHERE x LIKE 'zz%';
   }
 } {zz-lower-lower nosort {} i3}
@@ -608,7 +613,7 @@ do_test like-8.4 {
 } {1 abcdef 1 ghijkl 1 mnopqr 2 abcdef 2 ghijkl 2 mnopqr}
 
 
-ifcapable like_opt {
+ifcapable like_opt&&!icu {
   # Evaluate SQL.  Return the result set followed by the
   # and the number of full-scan steps.
   #
@@ -673,110 +678,110 @@ ifcapable like_opt {
       regexp {INDEX i2} $res
     } {1}
   }
-}
 
-# Do an SQL statement.  Append the search count to the end of the result.
-#
-proc count sql {
-  set ::sqlite_search_count 0
-  set ::sqlite_like_count 0
-  return [concat [execsql $sql] scan $::sqlite_search_count \
-           like $::sqlite_like_count]
-}
+  # Do an SQL statement.  Append the search count to the end of the result.
+  #
+  proc count sql {
+    set ::sqlite_search_count 0
+    set ::sqlite_like_count 0
+    return [concat [execsql $sql] scan $::sqlite_search_count \
+             like $::sqlite_like_count]
+  }
 
-# The LIKE and GLOB optimizations do not work on columns with
-# affinity other than TEXT.
-# Ticket #3901
-#
-do_test like-10.1 {
-  db close
-  sqlite3 db test.db
-  execsql {
-    CREATE TABLE t10(
-      a INTEGER PRIMARY KEY,
-      b INTEGER COLLATE nocase UNIQUE,
-      c NUMBER COLLATE nocase UNIQUE,
-      d BLOB COLLATE nocase UNIQUE,
-      e COLLATE nocase UNIQUE,
-      f TEXT COLLATE nocase UNIQUE
-    );
-    INSERT INTO t10 VALUES(1,1,1,1,1,1);
-    INSERT INTO t10 VALUES(12,12,12,12,12,12);
-    INSERT INTO t10 VALUES(123,123,123,123,123,123);
-    INSERT INTO t10 VALUES(234,234,234,234,234,234);
-    INSERT INTO t10 VALUES(345,345,345,345,345,345);
-    INSERT INTO t10 VALUES(45,45,45,45,45,45);
-  }
-  count {
-    SELECT a FROM t10 WHERE b LIKE '12%' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.2 {
-  count {
-    SELECT a FROM t10 WHERE c LIKE '12%' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.3 {
-  count {
-    SELECT a FROM t10 WHERE d LIKE '12%' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.4 {
-  count {
-    SELECT a FROM t10 WHERE e LIKE '12%' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.5 {
-  count {
-    SELECT a FROM t10 WHERE f LIKE '12%' ORDER BY a;
-  }
-} {12 123 scan 3 like 0}
-do_test like-10.6 {
-  count {
-    SELECT a FROM t10 WHERE a LIKE '12%' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.10 {
-  execsql {
-    CREATE TABLE t10b(
-      a INTEGER PRIMARY KEY,
-      b INTEGER UNIQUE,
-      c NUMBER UNIQUE,
-      d BLOB UNIQUE,
-      e UNIQUE,
-      f TEXT UNIQUE
-    );
-    INSERT INTO t10b SELECT * FROM t10;
-  }
-  count {
-    SELECT a FROM t10b WHERE b GLOB '12*' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.11 {
-  count {
-    SELECT a FROM t10b WHERE c GLOB '12*' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.12 {
-  count {
-    SELECT a FROM t10b WHERE d GLOB '12*' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.13 {
-  count {
-    SELECT a FROM t10b WHERE e GLOB '12*' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
-do_test like-10.14 {
-  count {
-    SELECT a FROM t10b WHERE f GLOB '12*' ORDER BY a;
-  }
-} {12 123 scan 3 like 0}
-do_test like-10.15 {
-  count {
-    SELECT a FROM t10b WHERE a GLOB '12*' ORDER BY a;
-  }
-} {12 123 scan 5 like 6}
+  # The LIKE and GLOB optimizations do not work on columns with
+  # affinity other than TEXT.
+  # Ticket #3901
+  #
+  do_test like-10.1 {
+    db close
+    sqlite3 db test.db
+    execsql {
+      CREATE TABLE t10(
+        a INTEGER PRIMARY KEY,
+        b INTEGER COLLATE nocase UNIQUE,
+        c NUMBER COLLATE nocase UNIQUE,
+        d BLOB COLLATE nocase UNIQUE,
+        e COLLATE nocase UNIQUE,
+        f TEXT COLLATE nocase UNIQUE
+      );
+      INSERT INTO t10 VALUES(1,1,1,1,1,1);
+      INSERT INTO t10 VALUES(12,12,12,12,12,12);
+      INSERT INTO t10 VALUES(123,123,123,123,123,123);
+      INSERT INTO t10 VALUES(234,234,234,234,234,234);
+      INSERT INTO t10 VALUES(345,345,345,345,345,345);
+      INSERT INTO t10 VALUES(45,45,45,45,45,45);
+    }
+    count {
+      SELECT a FROM t10 WHERE b LIKE '12%' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.2 {
+    count {
+      SELECT a FROM t10 WHERE c LIKE '12%' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.3 {
+    count {
+      SELECT a FROM t10 WHERE d LIKE '12%' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.4 {
+    count {
+      SELECT a FROM t10 WHERE e LIKE '12%' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.5 {
+    count {
+      SELECT a FROM t10 WHERE f LIKE '12%' ORDER BY +a;
+    }
+  } {12 123 scan 3 like 0}
+  do_test like-10.6 {
+    count {
+      SELECT a FROM t10 WHERE a LIKE '12%' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.10 {
+    execsql {
+      CREATE TABLE t10b(
+        a INTEGER PRIMARY KEY,
+        b INTEGER UNIQUE,
+        c NUMBER UNIQUE,
+        d BLOB UNIQUE,
+        e UNIQUE,
+        f TEXT UNIQUE
+      );
+      INSERT INTO t10b SELECT * FROM t10;
+    }
+    count {
+      SELECT a FROM t10b WHERE b GLOB '12*' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.11 {
+    count {
+      SELECT a FROM t10b WHERE c GLOB '12*' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.12 {
+    count {
+      SELECT a FROM t10b WHERE d GLOB '12*' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.13 {
+    count {
+      SELECT a FROM t10b WHERE e GLOB '12*' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+  do_test like-10.14 {
+    count {
+      SELECT a FROM t10b WHERE f GLOB '12*' ORDER BY +a;
+    }
+  } {12 123 scan 3 like 0}
+  do_test like-10.15 {
+    count {
+      SELECT a FROM t10b WHERE a GLOB '12*' ORDER BY +a;
+    }
+  } {12 123 scan 5 like 6}
+}
 
 # LIKE and GLOB where the default collating sequence is not appropriate
 # but an index with the appropriate collating sequence exists.
@@ -819,7 +824,7 @@ do_test like-11.3 {
   queryplan {
     PRAGMA case_sensitive_like=OFF;
     CREATE INDEX t11b ON t11(b);
-    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY a;
+    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY +a;
   }
 } {abc abcd ABC ABCD sort {} t11b}
 do_test like-11.4 {
@@ -833,37 +838,37 @@ do_test like-11.5 {
     PRAGMA case_sensitive_like=OFF;
     DROP INDEX t11b;
     CREATE INDEX t11bnc ON t11(b COLLATE nocase);
-    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY a;
+    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY +a;
   }
 } {abc abcd ABC ABCD sort {} t11bnc}
 do_test like-11.6 {
   queryplan {
     CREATE INDEX t11bb ON t11(b COLLATE binary);
-    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY a;
+    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY +a;
   }
 } {abc abcd ABC ABCD sort {} t11bnc}
 do_test like-11.7 {
   queryplan {
     PRAGMA case_sensitive_like=ON;
-    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY a;
+    SELECT b FROM t11 WHERE b LIKE 'abc%' ORDER BY +a;
   }
 } {abc abcd sort {} t11bb}
 do_test like-11.8 {
   queryplan {
     PRAGMA case_sensitive_like=OFF;
-    SELECT b FROM t11 WHERE b GLOB 'abc*' ORDER BY a;
+    SELECT b FROM t11 WHERE b GLOB 'abc*' ORDER BY +a;
   }
 } {abc abcd sort {} t11bb}
 do_test like-11.9 {
   queryplan {
     CREATE INDEX t11cnc ON t11(c COLLATE nocase);
     CREATE INDEX t11cb ON t11(c COLLATE binary);
-    SELECT c FROM t11 WHERE c LIKE 'abc%' ORDER BY a;
+    SELECT c FROM t11 WHERE c LIKE 'abc%' ORDER BY +a;
   }
 } {abc abcd ABC ABCD sort {} t11cnc}
 do_test like-11.10 {
   queryplan {
-    SELECT c FROM t11 WHERE c GLOB 'abc*' ORDER BY a;
+    SELECT c FROM t11 WHERE c GLOB 'abc*' ORDER BY +a;
   }
 } {abc abcd sort {} t11cb}
 

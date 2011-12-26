@@ -412,6 +412,7 @@ struct Wal {
   sqlite3_file *pDbFd;       /* File handle for the database file */
   sqlite3_file *pWalFd;      /* File handle for WAL file */
   u32 iCallback;             /* Value to pass to log callback (or 0) */
+  i64 mxWalSize;             /* Truncate WAL to this size upon reset */
   int nWiData;               /* Size of array apWiData */
   volatile u32 **apWiData;   /* Pointer to wal-index content in memory */
   u32 szPage;                /* Database page size */
@@ -419,7 +420,7 @@ struct Wal {
   u8 exclusiveMode;          /* Non-zero if connection is in exclusive mode */
   u8 writeLock;              /* True if in a write transaction */
   u8 ckptLock;               /* True if holding a checkpoint lock */
-  u8 readOnly;               /* True if the WAL file is open read-only */
+  u8 readOnly;               /* WAL_RDWR, WAL_RDONLY, or WAL_SHM_RDONLY */
   WalIndexHdr hdr;           /* Wal-index header for current transaction */
   const char *zWalName;      /* Name of WAL file */
   u32 nCkpt;                 /* Checkpoint sequence counter in the wal-header */
@@ -427,6 +428,20 @@ struct Wal {
   u8 lockError;              /* True if a locking error has occurred */
 #endif
 };
+
+/*
+** Candidate values for Wal.exclusiveMode.
+*/
+#define WAL_NORMAL_MODE     0
+#define WAL_EXCLUSIVE_MODE  1     
+#define WAL_HEAPMEMORY_MODE 2
+
+/*
+** Possible values for WAL.readOnly
+*/
+#define WAL_RDWR        0    /* Normal read/write connection */
+#define WAL_RDONLY      1    /* The WAL file is readonly */
+#define WAL_SHM_RDONLY  2    /* The SHM file is readonly */
 
 /*
 ** Each page of the wal-index mapping contains a hash-table made up of
@@ -451,14 +466,14 @@ typedef u16 ht_slot;
 */
 struct WalIterator {
   int iPrior;                     /* Last result returned from the iterator */
-  int nSegment;                   /* Size of the aSegment[] array */
+  int nSegment;                   /* Number of entries in aSegment[] */
   struct WalSegment {
     int iNext;                    /* Next slot in aIndex[] not yet returned */
     ht_slot *aIndex;              /* i0, i1, i2... such that aPgno[iN] ascend */
     u32 *aPgno;                   /* Array of page numbers. */
-    int nEntry;                   /* Max size of aPgno[] and aIndex[] arrays */
+    int nEntry;                   /* Nr. of entries in aPgno[] and aIndex[] */
     int iZero;                    /* Frame number associated with aPgno[0] */
-  } aSegment[1];                  /* One for every 32KB page in the WAL */
+  } aSegment[1];                  /* One for every 32KB page in the wal-index */
 };
 
 /*
@@ -514,9 +529,18 @@ static int walIndexPage(Wal *pWal, int iPage, volatile u32 **ppPage){
 
   /* Request a pointer to the required page from the VFS */
   if( pWal->apWiData[iPage]==0 ){
-    rc = sqlite3OsShmMap(pWal->pDbFd, iPage, WALINDEX_PGSZ, 
-        pWal->writeLock, (void volatile **)&pWal->apWiData[iPage]
-    );
+    if( pWal->exclusiveMode==WAL_HEAPMEMORY_MODE ){
+      pWal->apWiData[iPage] = (u32 volatile *)sqlite3MallocZero(WALINDEX_PGSZ);
+      if( !pWal->apWiData[iPage] ) rc = SQLITE_NOMEM;
+    }else{
+      rc = sqlite3OsShmMap(pWal->pDbFd, iPage, WALINDEX_PGSZ, 
+          pWal->writeLock, (void volatile **)&pWal->apWiData[iPage]
+      );
+      if( rc==SQLITE_READONLY ){
+        pWal->readOnly |= WAL_SHM_RDONLY;
+        rc = SQLITE_OK;
+      }
+    }
   }
 
   *ppPage = pWal->apWiData[iPage];
@@ -599,6 +623,12 @@ static void walChecksumBytes(
   aOut[1] = s2;
 }
 
+static void walShmBarrier(Wal *pWal){
+  if( pWal->exclusiveMode!=WAL_HEAPMEMORY_MODE ){
+    sqlite3OsShmBarrier(pWal->pDbFd);
+  }
+}
+
 /*
 ** Write the header information in pWal->hdr into the wal-index.
 **
@@ -613,7 +643,7 @@ static void walIndexWriteHdr(Wal *pWal){
   pWal->hdr.iVersion = WALINDEX_MAX_VERSION;
   walChecksumBytes(1, (u8*)&pWal->hdr, nCksum, 0, pWal->hdr.aCksum);
   memcpy((void *)&aHdr[1], (void *)&pWal->hdr, sizeof(WalIndexHdr));
-  sqlite3OsShmBarrier(pWal->pDbFd);
+  walShmBarrier(pWal);
   memcpy((void *)&aHdr[0], (void *)&pWal->hdr, sizeof(WalIndexHdr));
 }
 
@@ -1185,7 +1215,15 @@ recovery_error:
 ** Close an open wal-index.
 */
 static void walIndexClose(Wal *pWal, int isDelete){
-  sqlite3OsShmUnmap(pWal->pDbFd, isDelete);
+  if( pWal->exclusiveMode==WAL_HEAPMEMORY_MODE ){
+    int i;
+    for(i=0; i<pWal->nWiData; i++){
+      sqlite3_free((void *)pWal->apWiData[i]);
+      pWal->apWiData[i] = 0;
+    }
+  }else{
+    sqlite3OsShmUnmap(pWal->pDbFd, isDelete);
+  }
 }
 
 /* 
@@ -1207,6 +1245,8 @@ int sqlite3WalOpen(
   sqlite3_vfs *pVfs,              /* vfs module to open wal and wal-index */
   sqlite3_file *pDbFd,            /* The open database file */
   const char *zWalName,           /* Name of the WAL file */
+  int bNoShm,                     /* True to run in heap-memory mode */
+  i64 mxWalSize,                  /* Truncate WAL to this size on reset */
   Wal **ppWal                     /* OUT: Allocated Wal handle */
 ){
   int rc;                         /* Return Code */
@@ -1239,13 +1279,15 @@ int sqlite3WalOpen(
   pRet->pWalFd = (sqlite3_file *)&pRet[1];
   pRet->pDbFd = pDbFd;
   pRet->readLock = -1;
+  pRet->mxWalSize = mxWalSize;
   pRet->zWalName = zWalName;
+  pRet->exclusiveMode = (bNoShm ? WAL_HEAPMEMORY_MODE: WAL_NORMAL_MODE);
 
   /* Open file handle on the write-ahead log file. */
   flags = (SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_WAL);
   rc = sqlite3OsOpen(pVfs, zWalName, pRet->pWalFd, flags, &flags);
   if( rc==SQLITE_OK && flags&SQLITE_OPEN_READONLY ){
-    pRet->readOnly = 1;
+    pRet->readOnly = WAL_RDONLY;
   }
 
   if( rc!=SQLITE_OK ){
@@ -1257,6 +1299,13 @@ int sqlite3WalOpen(
     WALTRACE(("WAL%d: opened\n", pRet));
   }
   return rc;
+}
+
+/*
+** Change the size to which the WAL file is trucated on each reset.
+*/
+void sqlite3WalLimit(Wal *pWal, i64 iLimit){
+  if( pWal ) pWal->mxWalSize = iLimit;
 }
 
 /*
@@ -1301,9 +1350,29 @@ static int walIteratorNext(
 
 /*
 ** This function merges two sorted lists into a single sorted list.
+**
+** aLeft[] and aRight[] are arrays of indices.  The sort key is
+** aContent[aLeft[]] and aContent[aRight[]].  Upon entry, the following
+** is guaranteed for all J<K:
+**
+**        aContent[aLeft[J]] < aContent[aLeft[K]]
+**        aContent[aRight[J]] < aContent[aRight[K]]
+**
+** This routine overwrites aRight[] with a new (probably longer) sequence
+** of indices such that the aRight[] contains every index that appears in
+** either aLeft[] or the old aRight[] and such that the second condition
+** above is still met.
+**
+** The aContent[aLeft[X]] values will be unique for all X.  And the
+** aContent[aRight[X]] values will be unique too.  But there might be
+** one or more combinations of X and Y such that
+**
+**      aLeft[X]!=aRight[Y]  &&  aContent[aLeft[X]] == aContent[aRight[Y]]
+**
+** When that happens, omit the aLeft[X] and use the aRight[Y] index.
 */
 static void walMerge(
-  u32 *aContent,                  /* Pages in wal */
+  const u32 *aContent,            /* Pages in wal - keys for the sort */
   ht_slot *aLeft,                 /* IN: Left hand input list */
   int nLeft,                      /* IN: Elements in array *paLeft */
   ht_slot **paRight,              /* IN/OUT: Right hand input list */
@@ -1343,10 +1412,24 @@ static void walMerge(
 }
 
 /*
-** Sort the elements in list aList, removing any duplicates.
+** Sort the elements in list aList using aContent[] as the sort key.
+** Remove elements with duplicate keys, preferring to keep the
+** larger aList[] values.
+**
+** The aList[] entries are indices into aContent[].  The values in
+** aList[] are to be sorted so that for all J<K:
+**
+**      aContent[aList[J]] < aContent[aList[K]]
+**
+** For any X and Y such that
+**
+**      aContent[aList[X]] == aContent[aList[Y]]
+**
+** Keep the larger of the two values aList[X] and aList[Y] and discard
+** the smaller.
 */
 static void walMergesort(
-  u32 *aContent,                  /* Pages in wal */
+  const u32 *aContent,            /* Pages in wal */
   ht_slot *aBuffer,               /* Buffer of at least *pnList items to use */
   ht_slot *aList,                 /* IN/OUT: List to sort */
   int *pnList                     /* IN/OUT: Number of elements in aList[] */
@@ -1411,6 +1494,7 @@ static void walIteratorFree(WalIterator *p){
 /*
 ** Construct a WalInterator object that can be used to loop over all 
 ** pages in the WAL in ascending order. The caller must hold the checkpoint
+** lock.
 **
 ** On success, make *pp point to the newly allocated WalInterator object
 ** return SQLITE_OK. Otherwise, return an error code. If this routine
@@ -1496,6 +1580,34 @@ static int walIteratorInit(Wal *pWal, WalIterator **pp){
 }
 
 /*
+** Attempt to obtain the exclusive WAL lock defined by parameters lockIdx and
+** n. If the attempt fails and parameter xBusy is not NULL, then it is a
+** busy-handler function. Invoke it and retry the lock until either the
+** lock is successfully obtained or the busy-handler returns 0.
+*/
+static int walBusyLock(
+  Wal *pWal,                      /* WAL connection */
+  int (*xBusy)(void*),            /* Function to call when busy */
+  void *pBusyArg,                 /* Context argument for xBusyHandler */
+  int lockIdx,                    /* Offset of first byte to lock */
+  int n                           /* Number of bytes to lock */
+){
+  int rc;
+  do {
+    rc = walLockExclusive(pWal, lockIdx, n);
+  }while( xBusy && rc==SQLITE_BUSY && xBusy(pBusyArg) );
+  return rc;
+}
+
+/*
+** The cache of the wal-index header must be valid to call this function.
+** Return the page-size in bytes used by the database.
+*/
+static int walPagesize(Wal *pWal){
+  return (pWal->hdr.szPage&0xfe00) + ((pWal->hdr.szPage&0x0001)<<16);
+}
+
+/*
 ** Copy as much content as we can from the WAL back into the database file
 ** in response to an sqlite3_wal_checkpoint() request or the equivalent.
 **
@@ -1528,8 +1640,10 @@ static int walIteratorInit(Wal *pWal, WalIterator **pp){
 */
 static int walCheckpoint(
   Wal *pWal,                      /* Wal connection */
+  int eMode,                      /* One of PASSIVE, FULL or RESTART */
+  int (*xBusyCall)(void*),        /* Function to call when busy */
+  void *pBusyArg,                 /* Context argument for xBusyHandler */
   int sync_flags,                 /* Flags for OsSync() (or 0) */
-  int nBuf,                       /* Size of zBuf in bytes */
   u8 *zBuf                        /* Temporary buffer to use */
 ){
   int rc;                         /* Return code */
@@ -1541,11 +1655,13 @@ static int walCheckpoint(
   u32 mxPage;                     /* Max database page to write */
   int i;                          /* Loop counter */
   volatile WalCkptInfo *pInfo;    /* The checkpoint status information */
+  int (*xBusy)(void*) = 0;        /* Function to call when waiting for locks */
 
-  szPage = (pWal->hdr.szPage&0xfe00) + ((pWal->hdr.szPage&0x0001)<<16);
+  szPage = walPagesize(pWal);
   testcase( szPage<=32768 );
   testcase( szPage>=65536 );
-  if( pWal->hdr.mxFrame==0 ) return SQLITE_OK;
+  pInfo = walCkptInfo(pWal);
+  if( pInfo->nBackfill>=pWal->hdr.mxFrame ) return SQLITE_OK;
 
   /* Allocate the iterator */
   rc = walIteratorInit(pWal, &pIter);
@@ -1554,11 +1670,7 @@ static int walCheckpoint(
   }
   assert( pIter );
 
-  /*** TODO:  Move this test out to the caller.  Make it an assert() here ***/
-  if( szPage!=nBuf ){
-    rc = SQLITE_CORRUPT_BKPT;
-    goto walcheckpoint_out;
-  }
+  if( eMode!=SQLITE_CHECKPOINT_PASSIVE ) xBusy = xBusyCall;
 
   /* Compute in mxSafeFrame the index of the last frame of the WAL that is
   ** safe to write into the database.  Frames beyond mxSafeFrame might
@@ -1567,17 +1679,17 @@ static int walCheckpoint(
   */
   mxSafeFrame = pWal->hdr.mxFrame;
   mxPage = pWal->hdr.nPage;
-  pInfo = walCkptInfo(pWal);
   for(i=1; i<WAL_NREADER; i++){
     u32 y = pInfo->aReadMark[i];
-    if( mxSafeFrame>=y ){
+    if( mxSafeFrame>y ){
       assert( y<=pWal->hdr.mxFrame );
-      rc = walLockExclusive(pWal, WAL_READ_LOCK(i), 1);
+      rc = walBusyLock(pWal, xBusy, pBusyArg, WAL_READ_LOCK(i), 1);
       if( rc==SQLITE_OK ){
         pInfo->aReadMark[i] = READMARK_NOT_USED;
         walUnlockExclusive(pWal, WAL_READ_LOCK(i), 1);
       }else if( rc==SQLITE_BUSY ){
         mxSafeFrame = y;
+        xBusy = 0;
       }else{
         goto walcheckpoint_out;
       }
@@ -1585,7 +1697,7 @@ static int walCheckpoint(
   }
 
   if( pInfo->nBackfill<mxSafeFrame
-   && (rc = walLockExclusive(pWal, WAL_READ_LOCK(0), 1))==SQLITE_OK
+   && (rc = walBusyLock(pWal, xBusy, pBusyArg, WAL_READ_LOCK(0), 1))==SQLITE_OK
   ){
     i64 nSize;                    /* Current size of database file */
     u32 nBackfill = pInfo->nBackfill;
@@ -1638,11 +1750,30 @@ static int walCheckpoint(
 
     /* Release the reader lock held while backfilling */
     walUnlockExclusive(pWal, WAL_READ_LOCK(0), 1);
-  }else if( rc==SQLITE_BUSY ){
+  }
+
+  if( rc==SQLITE_BUSY ){
     /* Reset the return code so as not to report a checkpoint failure
-    ** just because active readers prevent any backfill.
-    */
+    ** just because there are active readers.  */
     rc = SQLITE_OK;
+  }
+
+  /* If this is an SQLITE_CHECKPOINT_RESTART operation, and the entire wal
+  ** file has been copied into the database file, then block until all
+  ** readers have finished using the wal file. This ensures that the next
+  ** process to write to the database restarts the wal file.
+  */
+  if( rc==SQLITE_OK && eMode!=SQLITE_CHECKPOINT_PASSIVE ){
+    assert( pWal->writeLock );
+    if( pInfo->nBackfill<pWal->hdr.mxFrame ){
+      rc = SQLITE_BUSY;
+    }else if( eMode==SQLITE_CHECKPOINT_RESTART ){
+      assert( mxSafeFrame==pWal->hdr.mxFrame );
+      rc = walBusyLock(pWal, xBusy, pBusyArg, WAL_READ_LOCK(1), WAL_NREADER-1);
+      if( rc==SQLITE_OK ){
+        walUnlockExclusive(pWal, WAL_READ_LOCK(1), WAL_NREADER-1);
+      }
+    }
   }
 
  walcheckpoint_out:
@@ -1673,9 +1804,15 @@ int sqlite3WalClose(
     */
     rc = sqlite3OsLock(pWal->pDbFd, SQLITE_LOCK_EXCLUSIVE);
     if( rc==SQLITE_OK ){
-      pWal->exclusiveMode = 1;
-      rc = sqlite3WalCheckpoint(pWal, sync_flags, nBuf, zBuf);
-      if( rc==SQLITE_OK ){
+      int bPersistWal = -1;
+      if( pWal->exclusiveMode==WAL_NORMAL_MODE ){
+        pWal->exclusiveMode = WAL_EXCLUSIVE_MODE;
+      }
+      rc = sqlite3WalCheckpoint(
+          pWal, SQLITE_CHECKPOINT_PASSIVE, 0, 0, sync_flags, nBuf, zBuf, 0, 0
+      );
+      sqlite3OsFileControl(pWal->pDbFd, SQLITE_FCNTL_PERSIST_WAL, &bPersistWal);
+      if( rc==SQLITE_OK && bPersistWal!=1 ){
         isDelete = 1;
       }
     }
@@ -1729,7 +1866,7 @@ static int walIndexTryHdr(Wal *pWal, int *pChanged){
   */
   aHdr = walIndexHdr(pWal);
   memcpy(&h1, (void *)&aHdr[0], sizeof(h1));
-  sqlite3OsShmBarrier(pWal->pDbFd);
+  walShmBarrier(pWal);
   memcpy(&h2, (void *)&aHdr[1], sizeof(h2));
 
   if( memcmp(&h1, &h2, sizeof(h1))!=0 ){
@@ -1793,21 +1930,28 @@ static int walIndexReadHdr(Wal *pWal, int *pChanged){
   ** with a writer.  So get a WRITE lock and try again.
   */
   assert( badHdr==0 || pWal->writeLock==0 );
-  if( badHdr && SQLITE_OK==(rc = walLockExclusive(pWal, WAL_WRITE_LOCK, 1)) ){
-    pWal->writeLock = 1;
-    if( SQLITE_OK==(rc = walIndexPage(pWal, 0, &page0)) ){
-      badHdr = walIndexTryHdr(pWal, pChanged);
-      if( badHdr ){
-        /* If the wal-index header is still malformed even while holding
-        ** a WRITE lock, it can only mean that the header is corrupted and
-        ** needs to be reconstructed.  So run recovery to do exactly that.
-        */
-        rc = walIndexRecover(pWal);
-        *pChanged = 1;
+  if( badHdr ){
+    if( pWal->readOnly & WAL_SHM_RDONLY ){
+      if( SQLITE_OK==(rc = walLockShared(pWal, WAL_WRITE_LOCK)) ){
+        walUnlockShared(pWal, WAL_WRITE_LOCK);
+        rc = SQLITE_READONLY_RECOVERY;
       }
+    }else if( SQLITE_OK==(rc = walLockExclusive(pWal, WAL_WRITE_LOCK, 1)) ){
+      pWal->writeLock = 1;
+      if( SQLITE_OK==(rc = walIndexPage(pWal, 0, &page0)) ){
+        badHdr = walIndexTryHdr(pWal, pChanged);
+        if( badHdr ){
+          /* If the wal-index header is still malformed even while holding
+          ** a WRITE lock, it can only mean that the header is corrupted and
+          ** needs to be reconstructed.  So run recovery to do exactly that.
+          */
+          rc = walIndexRecover(pWal);
+          *pChanged = 1;
+        }
+      }
+      pWal->writeLock = 0;
+      walUnlockExclusive(pWal, WAL_WRITE_LOCK, 1);
     }
-    pWal->writeLock = 0;
-    walUnlockExclusive(pWal, WAL_WRITE_LOCK, 1);
   }
 
   /* If the header is read successfully, check the version number to make
@@ -1886,10 +2030,31 @@ static int walTryBeginRead(Wal *pWal, int *pChanged, int useWal, int cnt){
 
   assert( pWal->readLock<0 );     /* Not currently locked */
 
-  /* Take steps to avoid spinning forever if there is a protocol error. */
+  /* Take steps to avoid spinning forever if there is a protocol error.
+  **
+  ** Circumstances that cause a RETRY should only last for the briefest
+  ** instances of time.  No I/O or other system calls are done while the
+  ** locks are held, so the locks should not be held for very long. But 
+  ** if we are unlucky, another process that is holding a lock might get
+  ** paged out or take a page-fault that is time-consuming to resolve, 
+  ** during the few nanoseconds that it is holding the lock.  In that case,
+  ** it might take longer than normal for the lock to free.
+  **
+  ** After 5 RETRYs, we begin calling sqlite3OsSleep().  The first few
+  ** calls to sqlite3OsSleep() have a delay of 1 microsecond.  Really this
+  ** is more of a scheduler yield than an actual delay.  But on the 10th
+  ** an subsequent retries, the delays start becoming longer and longer, 
+  ** so that on the 100th (and last) RETRY we delay for 21 milliseconds.
+  ** The total delay time before giving up is less than 1 second.
+  */
   if( cnt>5 ){
-    if( cnt>100 ) return SQLITE_PROTOCOL;
-    sqlite3OsSleep(pWal->pVfs, 1);
+    int nDelay = 1;                      /* Pause time in microseconds */
+    if( cnt>100 ){
+      VVA_ONLY( pWal->lockError = 1; )
+      return SQLITE_PROTOCOL;
+    }
+    if( cnt>=10 ) nDelay = (cnt-9)*238;  /* Max delay 21ms. Total delay 996ms */
+    sqlite3OsSleep(pWal->pVfs, nDelay);
   }
 
   if( !useWal ){
@@ -1930,7 +2095,7 @@ static int walTryBeginRead(Wal *pWal, int *pChanged, int useWal, int cnt){
     ** and can be safely ignored.
     */
     rc = walLockShared(pWal, WAL_READ_LOCK(0));
-    sqlite3OsShmBarrier(pWal->pDbFd);
+    walShmBarrier(pWal);
     if( rc==SQLITE_OK ){
       if( memcmp((void *)walIndexHdr(pWal), &pWal->hdr, sizeof(WalIndexHdr)) ){
         /* It is not safe to allow the reader to continue here if frames
@@ -1971,22 +2136,11 @@ static int walTryBeginRead(Wal *pWal, int *pChanged, int useWal, int cnt){
       mxI = i;
     }
   }
-  if( mxI==0 ){
-    /* If we get here, it means that all of the aReadMark[] entries between
-    ** 1 and WAL_NREADER-1 are zero.  Try to initialize aReadMark[1] to
-    ** be mxFrame, then retry.
-    */
-    rc = walLockExclusive(pWal, WAL_READ_LOCK(1), 1);
-    if( rc==SQLITE_OK ){
-      pInfo->aReadMark[1] = pWal->hdr.mxFrame;
-      walUnlockExclusive(pWal, WAL_READ_LOCK(1), 1);
-      rc = WAL_RETRY;
-    }else if( rc==SQLITE_BUSY ){
-      rc = WAL_RETRY;
-    }
-    return rc;
-  }else{
-    if( mxReadMark < pWal->hdr.mxFrame ){
+  /* There was once an "if" here. The extra "{" is to preserve indentation. */
+  {
+    if( (pWal->readOnly & WAL_SHM_RDONLY)==0
+     && (mxReadMark<pWal->hdr.mxFrame || mxI==0)
+    ){
       for(i=1; i<WAL_NREADER; i++){
         rc = walLockExclusive(pWal, WAL_READ_LOCK(i), 1);
         if( rc==SQLITE_OK ){
@@ -1998,6 +2152,10 @@ static int walTryBeginRead(Wal *pWal, int *pChanged, int useWal, int cnt){
           return rc;
         }
       }
+    }
+    if( mxI==0 ){
+      assert( rc==SQLITE_BUSY || (pWal->readOnly & WAL_SHM_RDONLY)!=0 );
+      return rc==SQLITE_BUSY ? WAL_RETRY : SQLITE_READONLY_CANTLOCK;
     }
 
     rc = walLockShared(pWal, WAL_READ_LOCK(mxI));
@@ -2024,7 +2182,7 @@ static int walTryBeginRead(Wal *pWal, int *pChanged, int useWal, int cnt){
     ** log-wrap (either of which would require an exclusive lock on
     ** WAL_READ_LOCK(mxI)) has not occurred since the snapshot was valid.
     */
-    sqlite3OsShmBarrier(pWal->pDbFd);
+    walShmBarrier(pWal);
     if( pInfo->aReadMark[mxI]!=mxReadMark
      || memcmp((void *)walIndexHdr(pWal), &pWal->hdr, sizeof(WalIndexHdr))
     ){
@@ -2059,6 +2217,10 @@ int sqlite3WalBeginReadTransaction(Wal *pWal, int *pChanged){
   do{
     rc = walTryBeginRead(pWal, pChanged, 0, ++cnt);
   }while( rc==WAL_RETRY );
+  testcase( (rc&0xff)==SQLITE_BUSY );
+  testcase( (rc&0xff)==SQLITE_IOERR );
+  testcase( rc==SQLITE_PROTOCOL );
+  testcase( rc==SQLITE_OK );
   return rc;
 }
 
@@ -2181,7 +2343,7 @@ int sqlite3WalRead(
     int sz;
     i64 iOffset;
     sz = pWal->hdr.szPage;
-    sz = (pWal->hdr.szPage&0xfe00) + ((pWal->hdr.szPage&0x0001)<<16);
+    sz = (sz&0xfe00) + ((sz&0x0001)<<16);
     testcase( sz<=32768 );
     testcase( sz>=65536 );
     iOffset = walFrameOffset(iRead, sz) + WAL_FRAME_HDRSIZE;
@@ -2366,7 +2528,7 @@ int sqlite3WalSavepointUndo(Wal *pWal, u32 *aWalData){
 **
 ** SQLITE_OK is returned if no error is encountered (regardless of whether
 ** or not pWal->hdr.mxFrame is modified). An SQLite error code is returned
-** if some error 
+** if an error occurs.
 */
 static int walRestartLog(Wal *pWal){
   int rc = SQLITE_OK;
@@ -2376,6 +2538,8 @@ static int walRestartLog(Wal *pWal){
     volatile WalCkptInfo *pInfo = walCkptInfo(pWal);
     assert( pInfo->nBackfill==pWal->hdr.mxFrame );
     if( pInfo->nBackfill>0 ){
+      u32 salt1;
+      sqlite3_randomness(4, &salt1);
       rc = walLockExclusive(pWal, WAL_READ_LOCK(1), WAL_NREADER-1);
       if( rc==SQLITE_OK ){
         /* If all readers are using WAL_READ_LOCK(0) (in other words if no
@@ -2390,15 +2554,35 @@ static int walRestartLog(Wal *pWal){
         */
         int i;                    /* Loop counter */
         u32 *aSalt = pWal->hdr.aSalt;       /* Big-endian salt values */
+
+        /* Limit the size of WAL file if the journal_size_limit PRAGMA is
+        ** set to a non-negative value.  Log errors encountered
+        ** during the truncation attempt. */
+        if( pWal->mxWalSize>=0 ){
+          i64 sz;
+          int rx;
+          sqlite3BeginBenignMalloc();
+          rx = sqlite3OsFileSize(pWal->pWalFd, &sz);
+          if( rx==SQLITE_OK && (sz > pWal->mxWalSize) ){
+            rx = sqlite3OsTruncate(pWal->pWalFd, pWal->mxWalSize);
+          }
+          sqlite3EndBenignMalloc();
+          if( rx ){
+            sqlite3_log(rx, "cannot limit WAL size: %s", pWal->zWalName);
+          }
+        }
+
         pWal->nCkpt++;
         pWal->hdr.mxFrame = 0;
         sqlite3Put4byte((u8*)&aSalt[0], 1 + sqlite3Get4byte((u8*)&aSalt[0]));
-        sqlite3_randomness(4, &aSalt[1]);
+        aSalt[1] = salt1;
         walIndexWriteHdr(pWal);
         pInfo->nBackfill = 0;
         for(i=1; i<WAL_NREADER; i++) pInfo->aReadMark[i] = READMARK_NOT_USED;
         assert( pInfo->aReadMark[0]==0 );
         walUnlockExclusive(pWal, WAL_READ_LOCK(1), WAL_NREADER-1);
+      }else if( rc!=SQLITE_BUSY ){
+        return rc;
       }
     }
     walUnlockShared(pWal, WAL_READ_LOCK(0));
@@ -2408,6 +2592,10 @@ static int walRestartLog(Wal *pWal){
       int notUsed;
       rc = walTryBeginRead(pWal, &notUsed, 1, ++cnt);
     }while( rc==WAL_RETRY );
+    assert( (rc&0xff)!=SQLITE_BUSY ); /* BUSY not possible when useWal==1 */
+    testcase( (rc&0xff)==SQLITE_IOERR );
+    testcase( rc==SQLITE_PROTOCOL );
+    testcase( rc==SQLITE_OK );
   }
   return rc;
 }
@@ -2478,7 +2666,7 @@ int sqlite3WalFrames(
       return rc;
     }
   }
-  assert( pWal->szPage==szPage );
+  assert( (int)pWal->szPage==szPage );
 
   /* Write the log file. */
   for(p=pList; p; p=p->pDirty){
@@ -2587,18 +2775,29 @@ int sqlite3WalFrames(
 **
 ** Obtain a CHECKPOINT lock and then backfill as much information as
 ** we can from WAL into the database.
+**
+** If parameter xBusy is not NULL, it is a pointer to a busy-handler
+** callback. In this case this function runs a blocking checkpoint.
 */
 int sqlite3WalCheckpoint(
   Wal *pWal,                      /* Wal connection */
+  int eMode,                      /* PASSIVE, FULL or RESTART */
+  int (*xBusy)(void*),            /* Function to call when busy */
+  void *pBusyArg,                 /* Context argument for xBusyHandler */
   int sync_flags,                 /* Flags to sync db file with (or 0) */
   int nBuf,                       /* Size of temporary buffer */
-  u8 *zBuf                        /* Temporary buffer to use */
+  u8 *zBuf,                       /* Temporary buffer to use */
+  int *pnLog,                     /* OUT: Number of frames in WAL */
+  int *pnCkpt                     /* OUT: Number of backfilled frames in WAL */
 ){
   int rc;                         /* Return code */
   int isChanged = 0;              /* True if a new wal-index header is loaded */
+  int eMode2 = eMode;             /* Mode to pass to walCheckpoint() */
 
   assert( pWal->ckptLock==0 );
+  assert( pWal->writeLock==0 );
 
+  if( pWal->readOnly ) return SQLITE_READONLY;
   WALTRACE(("WAL%p: checkpoint begins\n", pWal));
   rc = walLockExclusive(pWal, WAL_CKPT_LOCK, 1);
   if( rc ){
@@ -2609,11 +2808,45 @@ int sqlite3WalCheckpoint(
   }
   pWal->ckptLock = 1;
 
-  /* Copy data from the log to the database file. */
-  rc = walIndexReadHdr(pWal, &isChanged);
-  if( rc==SQLITE_OK ){
-    rc = walCheckpoint(pWal, sync_flags, nBuf, zBuf);
+  /* If this is a blocking-checkpoint, then obtain the write-lock as well
+  ** to prevent any writers from running while the checkpoint is underway.
+  ** This has to be done before the call to walIndexReadHdr() below.
+  **
+  ** If the writer lock cannot be obtained, then a passive checkpoint is
+  ** run instead. Since the checkpointer is not holding the writer lock,
+  ** there is no point in blocking waiting for any readers. Assuming no 
+  ** other error occurs, this function will return SQLITE_BUSY to the caller.
+  */
+  if( eMode!=SQLITE_CHECKPOINT_PASSIVE ){
+    rc = walBusyLock(pWal, xBusy, pBusyArg, WAL_WRITE_LOCK, 1);
+    if( rc==SQLITE_OK ){
+      pWal->writeLock = 1;
+    }else if( rc==SQLITE_BUSY ){
+      eMode2 = SQLITE_CHECKPOINT_PASSIVE;
+      rc = SQLITE_OK;
+    }
   }
+
+  /* Read the wal-index header. */
+  if( rc==SQLITE_OK ){
+    rc = walIndexReadHdr(pWal, &isChanged);
+  }
+
+  /* Copy data from the log to the database file. */
+  if( rc==SQLITE_OK ){
+    if( pWal->hdr.mxFrame && walPagesize(pWal)!=nBuf ){
+      rc = SQLITE_CORRUPT_BKPT;
+    }else{
+      rc = walCheckpoint(pWal, eMode2, xBusy, pBusyArg, sync_flags, zBuf);
+    }
+
+    /* If no error occurred, set the output variables. */
+    if( rc==SQLITE_OK || rc==SQLITE_BUSY ){
+      if( pnLog ) *pnLog = (int)pWal->hdr.mxFrame;
+      if( pnCkpt ) *pnCkpt = (int)(walCkptInfo(pWal)->nBackfill);
+    }
+  }
+
   if( isChanged ){
     /* If a new wal-index header was loaded before the checkpoint was 
     ** performed, then the pager-cache associated with pWal is now
@@ -2625,10 +2858,11 @@ int sqlite3WalCheckpoint(
   }
 
   /* Release the locks. */
+  sqlite3WalEndWriteTransaction(pWal);
   walUnlockExclusive(pWal, WAL_CKPT_LOCK, 1);
   pWal->ckptLock = 0;
   WALTRACE(("WAL%p: checkpoint %s\n", pWal, rc ? "failed" : "ok"));
-  return rc;
+  return (rc==SQLITE_OK && eMode!=eMode2 ? SQLITE_BUSY : rc);
 }
 
 /* Return the value to pass to a sqlite3_wal_hook callback, the
@@ -2665,13 +2899,14 @@ int sqlite3WalCallback(Wal *pWal){
 ** on the main database file before invoking this operation.
 **
 ** If op is negative, then do a dry-run of the op==1 case but do
-** not actually change anything.  The pager uses this to see if it
+** not actually change anything. The pager uses this to see if it
 ** should acquire the database exclusive lock prior to invoking
 ** the op==1 case.
 */
 int sqlite3WalExclusiveMode(Wal *pWal, int op){
   int rc;
   assert( pWal->writeLock==0 );
+  assert( pWal->exclusiveMode!=WAL_HEAPMEMORY_MODE || op==-1 );
 
   /* pWal->readLock is usually set, but might be -1 if there was a 
   ** prior error while attempting to acquire are read-lock. This cannot 
@@ -2703,6 +2938,15 @@ int sqlite3WalExclusiveMode(Wal *pWal, int op){
     rc = pWal->exclusiveMode==0;
   }
   return rc;
+}
+
+/* 
+** Return true if the argument is non-NULL and the WAL module is using
+** heap-memory for the wal-index. Otherwise, if the argument is NULL or the
+** WAL module is using shared-memory, return false. 
+*/
+int sqlite3WalHeapMemory(Wal *pWal){
+  return (pWal && pWal->exclusiveMode==WAL_HEAPMEMORY_MODE );
 }
 
 #endif /* #ifndef SQLITE_OMIT_WAL */

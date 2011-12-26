@@ -380,25 +380,37 @@ static void fkLookupParent(
       sqlite3VdbeAddOp3(v, OP_OpenRead, iCur, pIdx->tnum, iDb);
       sqlite3VdbeChangeP4(v, -1, (char*)pKey, P4_KEYINFO_HANDOFF);
       for(i=0; i<nCol; i++){
-        sqlite3VdbeAddOp2(v, OP_SCopy, aiCol[i]+1+regData, regTemp+i);
+        sqlite3VdbeAddOp2(v, OP_Copy, aiCol[i]+1+regData, regTemp+i);
       }
   
       /* If the parent table is the same as the child table, and we are about
       ** to increment the constraint-counter (i.e. this is an INSERT operation),
       ** then check if the row being inserted matches itself. If so, do not
-      ** increment the constraint-counter.  */
+      ** increment the constraint-counter. 
+      **
+      ** If any of the parent-key values are NULL, then the row cannot match 
+      ** itself. So set JUMPIFNULL to make sure we do the OP_Found if any
+      ** of the parent-key values are NULL (at this point it is known that
+      ** none of the child key values are).
+      */
       if( pTab==pFKey->pFrom && nIncr==1 ){
         int iJump = sqlite3VdbeCurrentAddr(v) + nCol + 1;
         for(i=0; i<nCol; i++){
           int iChild = aiCol[i]+1+regData;
           int iParent = pIdx->aiColumn[i]+1+regData;
+          assert( aiCol[i]!=pTab->iPKey );
+          if( pIdx->aiColumn[i]==pTab->iPKey ){
+            /* The parent key is a composite key that includes the IPK column */
+            iParent = regData;
+          }
           sqlite3VdbeAddOp3(v, OP_Ne, iChild, iJump, iParent);
+          sqlite3VdbeChangeP5(v, SQLITE_JUMPIFNULL);
         }
         sqlite3VdbeAddOp2(v, OP_Goto, 0, iOk);
       }
   
       sqlite3VdbeAddOp3(v, OP_MakeRecord, regTemp, nCol, regRec);
-      sqlite3VdbeChangeP4(v, -1, sqlite3IndexAffinityStr(v, pIdx), 0);
+      sqlite3VdbeChangeP4(v, -1, sqlite3IndexAffinityStr(v,pIdx), P4_TRANSIENT);
       sqlite3VdbeAddOp4Int(v, OP_Found, iCur, iOk, regRec, 0);
   
       sqlite3ReleaseTempReg(pParse, regRec);
@@ -548,7 +560,7 @@ static void fkScanChildren(
   ** clause. If the constraint is not deferred, throw an exception for
   ** each row found. Otherwise, for deferred constraints, increment the
   ** deferred constraint counter by nIncr for each row selected.  */
-  pWInfo = sqlite3WhereBegin(pParse, pSrc, pWhere, 0, 0);
+  pWInfo = sqlite3WhereBegin(pParse, pSrc, pWhere, 0, 0, 0);
   if( nIncr>0 && pFKey->isDeferred==0 ){
     sqlite3ParseToplevel(pParse)->mayAbort = 1;
   }
@@ -687,7 +699,6 @@ void sqlite3FkCheck(
   int regNew                      /* New row data is stored here */
 ){
   sqlite3 *db = pParse->db;       /* Database handle */
-  Vdbe *v;                        /* VM to write code to */
   FKey *pFKey;                    /* Used to iterate through FKs */
   int iDb;                        /* Index of database containing pTab */
   const char *zDb;                /* Name of database containing pTab */
@@ -699,7 +710,6 @@ void sqlite3FkCheck(
   /* If foreign-keys are disabled, this function is a no-op. */
   if( (db->flags&SQLITE_ForeignKeys)==0 ) return;
 
-  v = sqlite3GetVdbe(pParse);
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
   zDb = db->aDb[iDb].zName;
 
@@ -724,7 +734,24 @@ void sqlite3FkCheck(
       pTo = sqlite3LocateTable(pParse, 0, pFKey->zTo, zDb);
     }
     if( !pTo || locateFkeyIndex(pParse, pTo, pFKey, &pIdx, &aiFree) ){
+      assert( isIgnoreErrors==0 || (regOld!=0 && regNew==0) );
       if( !isIgnoreErrors || db->mallocFailed ) return;
+      if( pTo==0 ){
+        /* If isIgnoreErrors is true, then a table is being dropped. In this
+        ** case SQLite runs a "DELETE FROM xxx" on the table being dropped
+        ** before actually dropping it in order to check FK constraints.
+        ** If the parent table of an FK constraint on the current table is
+        ** missing, behave as if it is empty. i.e. decrement the relevant
+        ** FK counter for each row of the current table with non-NULL keys.
+        */
+        Vdbe *v = sqlite3GetVdbe(pParse);
+        int iJump = sqlite3VdbeCurrentAddr(v) + pFKey->nCol + 1;
+        for(i=0; i<pFKey->nCol; i++){
+          int iReg = pFKey->aCol[i].iFrom + regOld + 1;
+          sqlite3VdbeAddOp2(v, OP_IsNull, iReg, iJump);
+        }
+        sqlite3VdbeAddOp2(v, OP_FkCounter, pFKey->isDeferred, -1);
+      }
       continue;
     }
     assert( pFKey->nCol==1 || (aiFree && pIdx) );
@@ -1097,6 +1124,7 @@ static Trigger *fkActionTrigger(
       fkTriggerDelete(db, pTrigger);
       return 0;
     }
+    assert( pStep!=0 );
 
     switch( action ){
       case OE_Restrict:
@@ -1156,6 +1184,7 @@ void sqlite3FkDelete(sqlite3 *db, Table *pTab){
   FKey *pFKey;                    /* Iterator variable */
   FKey *pNext;                    /* Copy of pFKey->pNextFrom */
 
+  assert( db==0 || sqlite3SchemaMutexHeld(db, 0, pTab->pSchema) );
   for(pFKey=pTab->pFKey; pFKey; pFKey=pNext){
 
     /* Remove the FK from the fkeyHash hash table. */

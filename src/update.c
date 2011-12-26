@@ -23,7 +23,8 @@ static void updateVirtualTable(
   ExprList *pChanges,  /* The columns to change in the UPDATE statement */
   Expr *pRowidExpr,    /* Expression used to recompute the rowid */
   int *aXRef,          /* Mapping from columns of pTab to entries in pChanges */
-  Expr *pWhere         /* WHERE clause of the UPDATE statement */
+  Expr *pWhere,        /* WHERE clause of the UPDATE statement */
+  int onError          /* ON CONFLICT strategy */
 );
 #endif /* SQLITE_OMIT_VIRTUALTABLE */
 
@@ -128,7 +129,6 @@ void sqlite3Update(
   int regNew;
   int regOld = 0;
   int regRowSet = 0;     /* Rowset of rows to be updated */
-  int regRec;            /* Register used for new table record to insert */
 
   memset(&sContext, 0, sizeof(sContext));
   db = pParse->db;
@@ -244,7 +244,7 @@ void sqlite3Update(
   }
   for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
     int reg;
-    if( chngRowid ){
+    if( hasFK || chngRowid ){
       reg = ++pParse->nMem;
     }else{
       reg = 0;
@@ -268,7 +268,7 @@ void sqlite3Update(
   /* Virtual tables must be handled separately */
   if( IsVirtual(pTab) ){
     updateVirtualTable(pParse, pTabList, pTab, pChanges, pRowidExpr, aXRef,
-                       pWhere);
+                       pWhere, onError);
     pWhere = 0;
     pTabList = 0;
     goto update_cleanup;
@@ -286,7 +286,6 @@ void sqlite3Update(
   }
   regNew = pParse->nMem + 1;
   pParse->nMem += pTab->nCol;
-  regRec = ++pParse->nMem;
 
   /* Start the view context. */
   if( isView ){
@@ -312,7 +311,9 @@ void sqlite3Update(
   /* Begin the database scan
   */
   sqlite3VdbeAddOp2(v, OP_Null, 0, regOldRowid);
-  pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere,0, WHERE_ONEPASS_DESIRED);
+  pWInfo = sqlite3WhereBegin(
+      pParse, pTabList, pWhere, 0, 0, WHERE_ONEPASS_DESIRED
+  );
   if( pWInfo==0 ) goto update_cleanup;
   okOnePass = pWInfo->okOnePass;
 
@@ -355,6 +356,7 @@ void sqlite3Update(
       }
     }
     for(i=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, i++){
+      assert( aRegIdx );
       if( openAll || aRegIdx[i]>0 ){
         KeyInfo *pKey = sqlite3IndexKeyinfo(pParse, pIdx);
         sqlite3VdbeAddOp4(v, OP_OpenWrite, iCur+i+1, pIdx->tnum, iDb,
@@ -396,7 +398,7 @@ void sqlite3Update(
         pTrigger, pChanges, 0, TRIGGER_BEFORE|TRIGGER_AFTER, pTab, onError
     );
     for(i=0; i<pTab->nCol; i++){
-      if( aXRef[i]<0 || oldmask==0xffffffff || (oldmask & (1<<i)) ){
+      if( aXRef[i]<0 || oldmask==0xffffffff || (i<32 && (oldmask & (1<<i))) ){
         sqlite3ExprCodeGetColumnOfTable(v, pTab, iCur, i, regOld+i);
       }else{
         sqlite3VdbeAddOp2(v, OP_Null, 0, regOld+i);
@@ -528,6 +530,7 @@ void sqlite3Update(
 
   /* Close all tables */
   for(i=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, i++){
+    assert( aRegIdx );
     if( openAll || aRegIdx[i]>0 ){
       sqlite3VdbeAddOp2(v, OP_Close, iCur+i+1, 0);
     }
@@ -599,7 +602,8 @@ static void updateVirtualTable(
   ExprList *pChanges,  /* The columns to change in the UPDATE statement */
   Expr *pRowid,        /* Expression used to recompute the rowid */
   int *aXRef,          /* Mapping from columns of pTab to entries in pChanges */
-  Expr *pWhere         /* WHERE clause of the UPDATE statement */
+  Expr *pWhere,        /* WHERE clause of the UPDATE statement */
+  int onError          /* ON CONFLICT strategy */
 ){
   Vdbe *v = pParse->pVdbe;  /* Virtual machine under construction */
   ExprList *pEList = 0;     /* The result set of the SELECT statement */
@@ -638,6 +642,7 @@ static void updateVirtualTable(
   assert( v );
   ephemTab = pParse->nTab++;
   sqlite3VdbeAddOp2(v, OP_OpenEphemeral, ephemTab, pTab->nCol+1+(pRowid!=0));
+  sqlite3VdbeChangeP5(v, BTREE_UNORDERED);
 
   /* fill the ephemeral table 
   */
@@ -655,6 +660,7 @@ static void updateVirtualTable(
   }
   sqlite3VtabMakeWritable(pParse, pTab);
   sqlite3VdbeAddOp4(v, OP_VUpdate, 0, pTab->nCol+2, iReg, pVTab, P4_VTAB);
+  sqlite3VdbeChangeP5(v, onError==OE_Default ? OE_Abort : onError);
   sqlite3MayAbort(pParse);
   sqlite3VdbeAddOp2(v, OP_Next, ephemTab, addr+1);
   sqlite3VdbeJumpHere(v, addr);

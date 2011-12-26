@@ -208,7 +208,7 @@ db3 close
 do_test vacuum-3.1 {
   db close
   db2 close
-  file delete test.db
+  delete_file test.db
   sqlite3 db test.db
   execsql {
     PRAGMA empty_result_callbacks=on;
@@ -234,7 +234,7 @@ do_test vacuum-4.2 {
 ifcapable view {
 do_test vacuum-5.1 {
   db close
-  file delete -force test.db
+  forcedelete test.db
   sqlite3 db test.db
   catchsql {
     CREATE TABLE Test (TestID int primary key);
@@ -290,31 +290,55 @@ ifcapable {bloblit} {
 }
 
 # Check what happens when an in-memory database is vacuumed. The
-# [file delete] command covers us in case the library was compiled
+# [delete_file] command covers us in case the library was compiled
 # without in-memory database support.
 #
-file delete -force :memory:
+forcedelete :memory:
 do_test vacuum-7.0 {
   sqlite3 db2 :memory:
   execsql {
     CREATE TABLE t1(t);
     VACUUM;
   } db2
+} {}
+do_test vacuum-7.1 {
   execsql {
     CREATE TABLE t2(t);
     CREATE TABLE t3(t);
     DROP TABLE t2;
+    PRAGMA freelist_count;
+  }
+} {1}
+do_test vacuum-7.2 {
+  execsql {
     VACUUM;
     pragma integrity_check;
   } db2
 } {ok}
+do_test vacuum-7.3 {
+  execsql { PRAGMA freelist_count; } db2
+} {0}
+ifcapable autovacuum {
+  do_test vacuum-7.4 {
+    execsql { PRAGMA auto_vacuum } db2
+  } {0}
+  do_test vacuum-7.5 {
+    execsql { PRAGMA auto_vacuum = 1} db2
+    execsql { PRAGMA auto_vacuum } db2
+  } {0}
+  do_test vacuum-7.6 {
+    execsql { PRAGMA auto_vacuum = 1} db2
+    execsql { VACUUM } db2
+    execsql { PRAGMA auto_vacuum } db2
+  } {1}
+}
 db2 close
 
 # Ticket #873.  VACUUM a database that has ' in its name.
 #
 do_test vacuum-8.1 {
-  file delete -force a'z.db
-  file delete -force a'z.db-journal
+  forcedelete a'z.db
+  forcedelete a'z.db-journal
   sqlite3 db2 a'z.db
   execsql {
     CREATE TABLE t1(t);
@@ -359,6 +383,22 @@ ifcapable {autoinc} {
   } $::cksum
 }
 
-file delete -force {a'z.db}
+forcedelete {a'z.db}
+
+# Test that "PRAGMA count_changes" does not interfere with VACUUM or cause
+# it to return any rows to the user.
+#
+do_test vacuum-10.1 {
+  db close
+  forcedelete test.db
+  sqlite3 db test.db
+  execsql {
+    CREATE TABLE t8(a, b);
+    INSERT INTO t8 VALUES('a', 'b');
+    INSERT INTO t8 VALUES('c', 'd');
+    PRAGMA count_changes = 1;
+  }
+} {}
+do_test vacuum-10.2 { execsql VACUUM } {}
 
 finish_test

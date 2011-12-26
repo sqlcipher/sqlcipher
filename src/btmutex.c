@@ -39,12 +39,13 @@ static void lockBtreeMutex(Btree *p){
 ** clear the p->locked boolean.
 */
 static void unlockBtreeMutex(Btree *p){
+  BtShared *pBt = p->pBt;
   assert( p->locked==1 );
-  assert( sqlite3_mutex_held(p->pBt->mutex) );
+  assert( sqlite3_mutex_held(pBt->mutex) );
   assert( sqlite3_mutex_held(p->db->mutex) );
-  assert( p->db==p->pBt->db );
+  assert( p->db==pBt->db );
 
-  sqlite3_mutex_leave(p->pBt->mutex);
+  sqlite3_mutex_leave(pBt->mutex);
   p->locked = 0;
 }
 
@@ -185,30 +186,11 @@ void sqlite3BtreeLeaveCursor(BtCursor *pCur){
 */
 void sqlite3BtreeEnterAll(sqlite3 *db){
   int i;
-  Btree *p, *pLater;
+  Btree *p;
   assert( sqlite3_mutex_held(db->mutex) );
   for(i=0; i<db->nDb; i++){
     p = db->aDb[i].pBt;
-    assert( !p || (p->locked==0 && p->sharable) || p->pBt->db==p->db );
-    if( p && p->sharable ){
-      p->wantToLock++;
-      if( !p->locked ){
-        assert( p->wantToLock==1 );
-        while( p->pPrev ) p = p->pPrev;
-        /* Reason for ALWAYS:  There must be at least on unlocked Btree in
-        ** the chain.  Otherwise the !p->locked test above would have failed */
-        while( p->locked && ALWAYS(p->pNext) ) p = p->pNext;
-        for(pLater = p->pNext; pLater; pLater=pLater->pNext){
-          if( pLater->locked ){
-            unlockBtreeMutex(pLater);
-          }
-        }
-        while( p ){
-          lockBtreeMutex(p);
-          p = p->pNext;
-        }
-      }
-    }
+    if( p ) sqlite3BtreeEnter(p);
   }
 }
 void sqlite3BtreeLeaveAll(sqlite3 *db){
@@ -217,14 +199,16 @@ void sqlite3BtreeLeaveAll(sqlite3 *db){
   assert( sqlite3_mutex_held(db->mutex) );
   for(i=0; i<db->nDb; i++){
     p = db->aDb[i].pBt;
-    if( p && p->sharable ){
-      assert( p->wantToLock>0 );
-      p->wantToLock--;
-      if( p->wantToLock==0 ){
-        unlockBtreeMutex(p);
-      }
-    }
+    if( p ) sqlite3BtreeLeave(p);
   }
+}
+
+/*
+** Return true if a particular Btree requires a lock.  Return FALSE if
+** no lock is ever required since it is not sharable.
+*/
+int sqlite3BtreeSharable(Btree *p){
+  return p->sharable;
 }
 
 #ifndef NDEBUG
@@ -251,97 +235,42 @@ int sqlite3BtreeHoldsAllMutexes(sqlite3 *db){
 }
 #endif /* NDEBUG */
 
-/*
-** Add a new Btree pointer to a BtreeMutexArray. 
-** if the pointer can possibly be shared with
-** another database connection.
-**
-** The pointers are kept in sorted order by pBtree->pBt.  That
-** way when we go to enter all the mutexes, we can enter them
-** in order without every having to backup and retry and without
-** worrying about deadlock.
-**
-** The number of shared btrees will always be small (usually 0 or 1)
-** so an insertion sort is an adequate algorithm here.
-*/
-void sqlite3BtreeMutexArrayInsert(BtreeMutexArray *pArray, Btree *pBtree){
-  int i, j;
-  BtShared *pBt;
-  if( pBtree==0 || pBtree->sharable==0 ) return;
 #ifndef NDEBUG
-  {
-    for(i=0; i<pArray->nMutex; i++){
-      assert( pArray->aBtree[i]!=pBtree );
-    }
-  }
-#endif
-  assert( pArray->nMutex>=0 );
-  assert( pArray->nMutex<ArraySize(pArray->aBtree)-1 );
-  pBt = pBtree->pBt;
-  for(i=0; i<pArray->nMutex; i++){
-    assert( pArray->aBtree[i]!=pBtree );
-    if( pArray->aBtree[i]->pBt>pBt ){
-      for(j=pArray->nMutex; j>i; j--){
-        pArray->aBtree[j] = pArray->aBtree[j-1];
-      }
-      pArray->aBtree[i] = pBtree;
-      pArray->nMutex++;
-      return;
-    }
-  }
-  pArray->aBtree[pArray->nMutex++] = pBtree;
-}
-
 /*
-** Enter the mutex of every btree in the array.  This routine is
-** called at the beginning of sqlite3VdbeExec().  The mutexes are
-** exited at the end of the same function.
+** Return true if the correct mutexes are held for accessing the
+** db->aDb[iDb].pSchema structure.  The mutexes required for schema
+** access are:
+**
+**   (1) The mutex on db
+**   (2) if iDb!=1, then the mutex on db->aDb[iDb].pBt.
+**
+** If pSchema is not NULL, then iDb is computed from pSchema and
+** db using sqlite3SchemaToIndex().
 */
-void sqlite3BtreeMutexArrayEnter(BtreeMutexArray *pArray){
-  int i;
-  for(i=0; i<pArray->nMutex; i++){
-    Btree *p = pArray->aBtree[i];
-    /* Some basic sanity checking */
-    assert( i==0 || pArray->aBtree[i-1]->pBt<p->pBt );
-    assert( !p->locked || p->wantToLock>0 );
-
-    /* We should already hold a lock on the database connection */
-    assert( sqlite3_mutex_held(p->db->mutex) );
-
-    /* The Btree is sharable because only sharable Btrees are entered
-    ** into the array in the first place. */
-    assert( p->sharable );
-
-    p->wantToLock++;
-    if( !p->locked ){
-      lockBtreeMutex(p);
-    }
-  }
+int sqlite3SchemaMutexHeld(sqlite3 *db, int iDb, Schema *pSchema){
+  Btree *p;
+  assert( db!=0 );
+  if( pSchema ) iDb = sqlite3SchemaToIndex(db, pSchema);
+  assert( iDb>=0 && iDb<db->nDb );
+  if( !sqlite3_mutex_held(db->mutex) ) return 0;
+  if( iDb==1 ) return 1;
+  p = db->aDb[iDb].pBt;
+  assert( p!=0 );
+  return p->sharable==0 || p->locked==1;
 }
+#endif /* NDEBUG */
 
+#else /* SQLITE_THREADSAFE>0 above.  SQLITE_THREADSAFE==0 below */
 /*
-** Leave the mutex of every btree in the group.
+** The following are special cases for mutex enter routines for use
+** in single threaded applications that use shared cache.  Except for
+** these two routines, all mutex operations are no-ops in that case and
+** are null #defines in btree.h.
+**
+** If shared cache is disabled, then all btree mutex routines, including
+** the ones below, are no-ops and are null #defines in btree.h.
 */
-void sqlite3BtreeMutexArrayLeave(BtreeMutexArray *pArray){
-  int i;
-  for(i=0; i<pArray->nMutex; i++){
-    Btree *p = pArray->aBtree[i];
-    /* Some basic sanity checking */
-    assert( i==0 || pArray->aBtree[i-1]->pBt<p->pBt );
-    assert( p->locked );
-    assert( p->wantToLock>0 );
 
-    /* We should already hold a lock on the database connection */
-    assert( sqlite3_mutex_held(p->db->mutex) );
-
-    p->wantToLock--;
-    if( p->wantToLock==0 ){
-      unlockBtreeMutex(p);
-    }
-  }
-}
-
-#else
 void sqlite3BtreeEnter(Btree *p){
   p->pBt->db = p->db;
 }

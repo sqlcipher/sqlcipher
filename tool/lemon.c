@@ -20,7 +20,13 @@
 #endif
 
 #ifdef __WIN32__
-extern int access();
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int access(const char *path, int mode);
+#ifdef __cplusplus
+}
+#endif
 #else
 #include <unistd.h>
 #endif
@@ -35,23 +41,6 @@ extern int access();
 #endif
 
 static int showPrecedenceConflict = 0;
-static const char **made_files = NULL;
-static int made_files_count = 0;
-static int successful_exit = 0;
-static void LemonAtExit(void)
-{
-    /* if we failed, delete (most) files we made, to unconfuse build tools. */
-    int i;
-    for (i = 0; i < made_files_count; i++) {
-        if (!successful_exit) {
-            remove(made_files[i]);
-        }
-    }
-    free(made_files);
-    made_files_count = 0;
-    made_files = NULL;
-}
-
 static char *msort(char*,char**,int(*)(const char*,const char*));
 
 /*
@@ -1427,8 +1416,6 @@ int main(int argc, char **argv)
   int exitcode;
   struct lemon lem;
 
-  atexit(LemonAtExit);
-
   OptInit(argv,options,stderr);
   if( version ){
      printf("Lemon version 1.0\n");
@@ -1531,7 +1518,6 @@ int main(int argc, char **argv)
 
   /* return 0 on success, 1 on failure. */
   exitcode = ((lem.errorcnt > 0) || (lem.nconflict > 0)) ? 1 : 0;
-  successful_exit = (exitcode == 0);
   exit(exitcode);
   return (exitcode);
 }
@@ -2536,6 +2522,7 @@ void Parse(struct lemon *gp)
     ErrorMsg(ps.filename,0,"Can't allocate %d of memory to hold this file.",
       filesize+1);
     gp->errorcnt++;
+    fclose(fp);
     return;
   }
   if( fread(filebuf,1,filesize,fp)!=filesize ){
@@ -2543,6 +2530,7 @@ void Parse(struct lemon *gp)
       filesize);
     free(filebuf);
     gp->errorcnt++;
+    fclose(fp);
     return;
   }
   fclose(fp);
@@ -2754,23 +2742,6 @@ PRIVATE FILE *file_open(
     fprintf(stderr,"Can't open file \"%s\".\n",lemp->outname);
     lemp->errorcnt++;
     return 0;
-  }
-
-  /* Add files we create to a list, so we can delete them if we fail. This
-  ** is to keep makefiles from getting confused. We don't include .out files,
-  ** though: this is debug information, and you don't want it deleted if there
-  ** was an error you need to track down.
-  */
-  if(( *mode=='w' ) && (strcmp(suffix, ".out") != 0)){
-    const char **ptr = (const char **)
-        realloc(made_files, sizeof (const char **) * (made_files_count + 1));
-    const char *fname = Strsafe(lemp->outname);
-    if ((ptr == NULL) || (fname == NULL)) {
-        free(ptr);
-        memory_error();
-    }
-    made_files = ptr;
-    made_files[made_files_count++] = fname;
   }
   return fp;
 }
@@ -3263,7 +3234,7 @@ PRIVATE char *append_str(const char *zText, int n, int p1, int p2){
     }
     n = lemonStrlen(zText);
   }
-  if( n+sizeof(zInt)*2+used >= alloced ){
+  if( (int) (n+sizeof(zInt)*2+used) >= alloced ){
     alloced = n + sizeof(zInt)*2 + used + 200;
     z = (char *) realloc(z,  alloced);
   }
@@ -3428,6 +3399,10 @@ void print_stack_union(
   /* Allocate and initialize types[] and allocate stddt[] */
   arraysize = lemp->nsymbol * 2;
   types = (char**)calloc( arraysize, sizeof(char*) );
+  if( types==0 ){
+    fprintf(stderr,"Out of memory.\n");
+    exit(1);
+  }
   for(i=0; i<arraysize; i++) types[i] = 0;
   maxdtlength = 0;
   if( lemp->vartype ){
@@ -3441,7 +3416,7 @@ void print_stack_union(
     if( len>maxdtlength ) maxdtlength = len;
   }
   stddt = (char*)malloc( maxdtlength*2 + 1 );
-  if( types==0 || stddt==0 ){
+  if( stddt==0 ){
     fprintf(stderr,"Out of memory.\n");
     exit(1);
   }

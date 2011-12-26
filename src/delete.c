@@ -15,9 +15,18 @@
 #include "sqliteInt.h"
 
 /*
-** Look up every table that is named in pSrc.  If any table is not found,
-** add an error message to pParse->zErrMsg and return NULL.  If all tables
-** are found, return a pointer to the last table.
+** While a SrcList can in general represent multiple tables and subqueries
+** (as in the FROM clause of a SELECT statement) in this case it contains
+** the name of a single table, as one might find in an INSERT, DELETE,
+** or UPDATE statement.  Look up that table in the symbol table and
+** return a pointer.  Set an error message and return NULL if the table 
+** name is not found or if any other error occurs.
+**
+** The following fields are initialized appropriate in pSrc:
+**
+**    pSrc->a[0].pTab       Pointer to the Table object
+**    pSrc->a[0].pIndex     Pointer to the INDEXED BY index, if there is one
+**
 */
 Table *sqlite3SrcListLookup(Parse *pParse, SrcList *pSrc){
   struct SrcList_item *pItem = pSrc->a;
@@ -362,7 +371,9 @@ void sqlite3DeleteFrom(
     /* Collect rowids of every row to be deleted.
     */
     sqlite3VdbeAddOp2(v, OP_Null, 0, iRowSet);
-    pWInfo = sqlite3WhereBegin(pParse, pTabList, pWhere,0,WHERE_DUPLICATES_OK);
+    pWInfo = sqlite3WhereBegin(
+        pParse, pTabList, pWhere, 0, 0, WHERE_DUPLICATES_OK
+    );
     if( pWInfo==0 ) goto delete_from_cleanup;
     regRowid = sqlite3ExprCodeGetColumn(pParse, pTab, -1, iCur, iRowid);
     sqlite3VdbeAddOp2(v, OP_RowSetAdd, iRowSet, regRowid);
@@ -392,6 +403,7 @@ void sqlite3DeleteFrom(
       const char *pVTab = (const char *)sqlite3GetVTable(db, pTab);
       sqlite3VtabMakeWritable(pParse, pTab);
       sqlite3VdbeAddOp4(v, OP_VUpdate, 0, 1, iRowid, pVTab, P4_VTAB);
+      sqlite3VdbeChangeP5(v, OE_Abort);
       sqlite3MayAbort(pParse);
     }else
 #endif
@@ -536,7 +548,7 @@ void sqlite3GenerateRowDelete(
     sqlite3GenerateRowIndexDelete(pParse, pTab, iCur, 0);
     sqlite3VdbeAddOp2(v, OP_Delete, iCur, (count?OPFLAG_NCHANGE:0));
     if( count ){
-      sqlite3VdbeChangeP4(v, -1, pTab->zName, P4_STATIC);
+      sqlite3VdbeChangeP4(v, -1, pTab->zName, P4_TRANSIENT);
     }
   }
 
@@ -626,8 +638,14 @@ int sqlite3GenerateIndexKey(
     }
   }
   if( doMakeRec ){
+    const char *zAff;
+    if( pTab->pSelect || (pParse->db->flags & SQLITE_IdxRealAsInt)!=0 ){
+      zAff = 0;
+    }else{
+      zAff = sqlite3IndexAffinityStr(v, pIdx);
+    }
     sqlite3VdbeAddOp3(v, OP_MakeRecord, regBase, nCol+1, regOut);
-    sqlite3VdbeChangeP4(v, -1, sqlite3IndexAffinityStr(v, pIdx), 0);
+    sqlite3VdbeChangeP4(v, -1, zAff, P4_TRANSIENT);
   }
   sqlite3ReleaseTempRange(pParse, regBase, nCol+1);
   return regBase;

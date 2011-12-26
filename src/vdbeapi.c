@@ -65,6 +65,8 @@ static int vdbeSafetyNotNull(Vdbe *p){
 int sqlite3_finalize(sqlite3_stmt *pStmt){
   int rc;
   if( pStmt==0 ){
+    /* IMPLEMENTATION-OF: R-57228-12904 Invoking sqlite3_finalize() on a NULL
+    ** pointer is a harmless no-op. */
     rc = SQLITE_OK;
   }else{
     Vdbe *v = (Vdbe*)pStmt;
@@ -100,7 +102,7 @@ int sqlite3_reset(sqlite3_stmt *pStmt){
     Vdbe *v = (Vdbe*)pStmt;
     sqlite3_mutex_enter(v->db->mutex);
     rc = sqlite3VdbeReset(v);
-    sqlite3VdbeMakeReady(v, -1, 0, 0, 0, 0, 0);
+    sqlite3VdbeRewind(v);
     assert( (rc & (v->db->errMask))==rc );
     rc = sqlite3ApiExit(v->db, rc);
     sqlite3_mutex_leave(v->db->mutex);
@@ -141,7 +143,7 @@ const void *sqlite3_value_blob(sqlite3_value *pVal){
     sqlite3VdbeMemExpandBlob(p);
     p->flags &= ~MEM_Str;
     p->flags |= MEM_Blob;
-    return p->z;
+    return p->n ? p->z : 0;
   }else{
     return sqlite3_value_text(pVal);
   }
@@ -343,11 +345,30 @@ static int sqlite3Step(Vdbe *p){
   assert(p);
   if( p->magic!=VDBE_MAGIC_RUN ){
     /* We used to require that sqlite3_reset() be called before retrying
-    ** sqlite3_step() after any error.  But after 3.6.23, we changed this
-    ** so that sqlite3_reset() would be called automatically instead of
-    ** throwing the error.
+    ** sqlite3_step() after any error or after SQLITE_DONE.  But beginning
+    ** with version 3.7.0, we changed this so that sqlite3_reset() would
+    ** be called automatically instead of throwing the SQLITE_MISUSE error.
+    ** This "automatic-reset" change is not technically an incompatibility, 
+    ** since any application that receives an SQLITE_MISUSE is broken by
+    ** definition.
+    **
+    ** Nevertheless, some published applications that were originally written
+    ** for version 3.6.23 or earlier do in fact depend on SQLITE_MISUSE 
+    ** returns, and the so were broken by the automatic-reset change.  As a
+    ** a work-around, the SQLITE_OMIT_AUTORESET compile-time restores the
+    ** legacy behavior of returning SQLITE_MISUSE for cases where the 
+    ** previous sqlite3_step() returned something other than a SQLITE_LOCKED
+    ** or SQLITE_BUSY error.
     */
+#ifdef SQLITE_OMIT_AUTORESET
+    if( p->rc==SQLITE_BUSY || p->rc==SQLITE_LOCKED ){
+      sqlite3_reset((sqlite3_stmt*)p);
+    }else{
+      return SQLITE_MISUSE_BKPT;
+    }
+#else
     sqlite3_reset((sqlite3_stmt*)p);
+#endif
   }
 
   /* Check that malloc() has not failed. If it has, return early. */
@@ -389,7 +410,9 @@ static int sqlite3Step(Vdbe *p){
   }else
 #endif /* SQLITE_OMIT_EXPLAIN */
   {
+    db->vdbeExecCnt++;
     rc = sqlite3VdbeExec(p);
+    db->vdbeExecCnt--;
   }
 
 #ifndef SQLITE_OMIT_TRACE
@@ -431,10 +454,18 @@ end_of_step:
     ** error has occured, then return the error code in p->rc to the
     ** caller. Set the error code in the database handle to the same value.
     */ 
-    rc = db->errCode = p->rc;
+    rc = sqlite3VdbeTransferError(p);
   }
   return (rc&db->errMask);
 }
+
+/*
+** The maximum number of times that a statement will try to reparse
+** itself before giving up and returning SQLITE_SCHEMA.
+*/
+#ifndef SQLITE_MAX_SCHEMA_RETRY
+# define SQLITE_MAX_SCHEMA_RETRY 5
+#endif
 
 /*
 ** This is the top-level implementation of sqlite3_step().  Call
@@ -454,10 +485,10 @@ int sqlite3_step(sqlite3_stmt *pStmt){
   db = v->db;
   sqlite3_mutex_enter(db->mutex);
   while( (rc = sqlite3Step(v))==SQLITE_SCHEMA
-         && cnt++ < 5
+         && cnt++ < SQLITE_MAX_SCHEMA_RETRY
          && (rc2 = rc = sqlite3Reprepare(v))==SQLITE_OK ){
     sqlite3_reset(pStmt);
-    v->expired = 0;
+    assert( v->expired==0 );
   }
   if( rc2!=SQLITE_OK && ALWAYS(v->isPrepareV2) && ALWAYS(db->pErr) ){
     /* This case occurs after failing to recompile an sql statement. 
@@ -495,6 +526,12 @@ void *sqlite3_user_data(sqlite3_context *p){
 /*
 ** Extract the user data from a sqlite3_context structure and return a
 ** pointer to it.
+**
+** IMPLEMENTATION-OF: R-46798-50301 The sqlite3_context_db_handle() interface
+** returns a copy of the pointer to the database connection (the 1st
+** parameter) of the sqlite3_create_function() and
+** sqlite3_create_function16() routines that originally registered the
+** application defined function.
 */
 sqlite3 *sqlite3_context_db_handle(sqlite3_context *p){
   assert( p && p->pFunc );
@@ -653,13 +690,11 @@ int sqlite3_data_count(sqlite3_stmt *pStmt){
 */
 static Mem *columnMem(sqlite3_stmt *pStmt, int i){
   Vdbe *pVm;
-  int vals;
   Mem *pOut;
 
   pVm = (Vdbe *)pStmt;
   if( pVm && pVm->pResultSet!=0 && i<pVm->nResColumn && i>=0 ){
     sqlite3_mutex_enter(pVm->db->mutex);
-    vals = sqlite3_data_count(pStmt);
     pOut = &pVm->pResultSet[i];
   }else{
     /* If the value passed as the second argument is out of range, return
@@ -677,7 +712,11 @@ static Mem *columnMem(sqlite3_stmt *pStmt, int i){
 #if defined(SQLITE_DEBUG) && defined(__GNUC__)
       __attribute__((aligned(8))) 
 #endif
-      = {{0}, (double)0, 0, "", 0, MEM_Null, SQLITE_NULL, 0, 0, 0 };
+      = {0, "", (double)0, {0}, 0, MEM_Null, SQLITE_NULL, 0,
+#ifdef SQLITE_DEBUG
+         0, 0,  /* pScopyFrom, pFiller */
+#endif
+         0, 0 };
 
     if( pVm && ALWAYS(pVm->db) ){
       sqlite3_mutex_enter(pVm->db->mutex);
@@ -704,8 +743,7 @@ static Mem *columnMem(sqlite3_stmt *pStmt, int i){
 **     sqlite3_column_real()
 **     sqlite3_column_bytes()
 **     sqlite3_column_bytes16()
-**
-** But not for sqlite3_column_blob(), which never calls malloc().
+**     sqiite3_column_blob()
 */
 static void columnMallocFailure(sqlite3_stmt *pStmt)
 {
@@ -973,6 +1011,12 @@ static int vdbeUnbind(Vdbe *p, int i){
 
   /* If the bit corresponding to this variable in Vdbe.expmask is set, then 
   ** binding a new value to this variable invalidates the current query plan.
+  **
+  ** IMPLEMENTATION-OF: R-48440-37595 If the specific value bound to host
+  ** parameter in the WHERE clause might influence the choice of query plan
+  ** for a statement, then the statement will be automatically recompiled,
+  ** as if there had been a schema change, on the first sqlite3_step() call
+  ** following any change to the bindings of that parameter.
   */
   if( p->isPrepareV2 &&
      ((i<32 && p->expmask & ((u32)1 << i)) || p->expmask==0xffffffff)
@@ -1009,6 +1053,8 @@ static int bindText(
       rc = sqlite3ApiExit(p->db, rc);
     }
     sqlite3_mutex_leave(p->db->mutex);
+  }else if( xDel!=SQLITE_STATIC && xDel!=SQLITE_TRANSIENT ){
+    xDel((void*)zData);
   }
   return rc;
 }
@@ -1130,32 +1176,6 @@ int sqlite3_bind_parameter_count(sqlite3_stmt *pStmt){
 }
 
 /*
-** Create a mapping from variable numbers to variable names
-** in the Vdbe.azVar[] array, if such a mapping does not already
-** exist.
-*/
-static void createVarMap(Vdbe *p){
-  if( !p->okVar ){
-    int j;
-    Op *pOp;
-    sqlite3_mutex_enter(p->db->mutex);
-    /* The race condition here is harmless.  If two threads call this
-    ** routine on the same Vdbe at the same time, they both might end
-    ** up initializing the Vdbe.azVar[] array.  That is a little extra
-    ** work but it results in the same answer.
-    */
-    for(j=0, pOp=p->aOp; j<p->nOp; j++, pOp++){
-      if( pOp->opcode==OP_Variable ){
-        assert( pOp->p1>0 && pOp->p1<=p->nVar );
-        p->azVar[pOp->p1-1] = pOp->p4.z;
-      }
-    }
-    p->okVar = 1;
-    sqlite3_mutex_leave(p->db->mutex);
-  }
-}
-
-/*
 ** Return the name of a wildcard parameter.  Return NULL if the index
 ** is out of range or if the wildcard is unnamed.
 **
@@ -1163,10 +1183,9 @@ static void createVarMap(Vdbe *p){
 */
 const char *sqlite3_bind_parameter_name(sqlite3_stmt *pStmt, int i){
   Vdbe *p = (Vdbe*)pStmt;
-  if( p==0 || i<1 || i>p->nVar ){
+  if( p==0 || i<1 || i>p->nzVar ){
     return 0;
   }
-  createVarMap(p);
   return p->azVar[i-1];
 }
 
@@ -1180,9 +1199,8 @@ int sqlite3VdbeParameterIndex(Vdbe *p, const char *zName, int nName){
   if( p==0 ){
     return 0;
   }
-  createVarMap(p); 
   if( zName ){
-    for(i=0; i<p->nVar; i++){
+    for(i=0; i<p->nzVar; i++){
       const char *z = p->azVar[i];
       if( z && memcmp(z,zName,nName)==0 && z[nName]==0 ){
         return i+1;
@@ -1249,6 +1267,14 @@ int sqlite3_transfer_bindings(sqlite3_stmt *pFromStmt, sqlite3_stmt *pToStmt){
 */
 sqlite3 *sqlite3_db_handle(sqlite3_stmt *pStmt){
   return pStmt ? ((Vdbe*)pStmt)->db : 0;
+}
+
+/*
+** Return true if the prepared statement is guaranteed to not modify the
+** database.
+*/
+int sqlite3_stmt_readonly(sqlite3_stmt *pStmt){
+  return pStmt ? ((Vdbe*)pStmt)->readOnly : 1;
 }
 
 /*

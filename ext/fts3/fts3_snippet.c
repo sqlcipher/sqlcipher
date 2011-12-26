@@ -11,11 +11,27 @@
 ******************************************************************************
 */
 
+#include "fts3Int.h"
 #if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_FTS3)
 
-#include "fts3Int.h"
 #include <string.h>
 #include <assert.h>
+
+/*
+** Characters that may appear in the second argument to matchinfo().
+*/
+#define FTS3_MATCHINFO_NPHRASE   'p'        /* 1 value */
+#define FTS3_MATCHINFO_NCOL      'c'        /* 1 value */
+#define FTS3_MATCHINFO_NDOC      'n'        /* 1 value */
+#define FTS3_MATCHINFO_AVGLENGTH 'a'        /* nCol values */
+#define FTS3_MATCHINFO_LENGTH    'l'        /* nCol values */
+#define FTS3_MATCHINFO_LCS       's'        /* nCol values */
+#define FTS3_MATCHINFO_HITS      'x'        /* 3*nCol*nPhrase values */
+
+/*
+** The default value for the second argument to matchinfo(). 
+*/
+#define FTS3_MATCHINFO_DEFAULT   "pcx"
 
 
 /*
@@ -24,7 +40,7 @@
 */
 typedef struct LoadDoclistCtx LoadDoclistCtx;
 struct LoadDoclistCtx {
-  Fts3Table *pTab;                /* FTS3 Table */
+  Fts3Cursor *pCsr;               /* FTS3 Cursor */
   int nPhrase;                    /* Number of phrases seen so far */
   int nToken;                     /* Number of tokens seen so far */
 };
@@ -70,6 +86,8 @@ typedef struct MatchInfo MatchInfo;
 struct MatchInfo {
   Fts3Cursor *pCursor;            /* FTS3 Cursor */
   int nCol;                       /* Number of columns in table */
+  int nPhrase;                    /* Number of matchable phrases in query */
+  sqlite3_int64 nDoc;             /* Number of docs in database */
   u32 *aMatchinfo;                /* Pre-allocated buffer */
 };
 
@@ -159,89 +177,21 @@ static int fts3ExprIterate(
 }
 
 /*
-** The argument to this function is always a phrase node. Its doclist 
-** (Fts3Expr.aDoclist[]) and the doclists associated with all phrase nodes
-** to the left of this one in the query tree have already been loaded.
-**
-** If this phrase node is part of a series of phrase nodes joined by 
-** NEAR operators (and is not the left-most of said series), then elements are
-** removed from the phrases doclist consistent with the NEAR restriction. If
-** required, elements may be removed from the doclists of phrases to the
-** left of this one that are part of the same series of NEAR operator 
-** connected phrases.
-**
-** If an OOM error occurs, SQLITE_NOMEM is returned. Otherwise, SQLITE_OK.
-*/
-static int fts3ExprNearTrim(Fts3Expr *pExpr){
-  int rc = SQLITE_OK;
-  Fts3Expr *pParent = pExpr->pParent;
-
-  assert( pExpr->eType==FTSQUERY_PHRASE );
-  while( rc==SQLITE_OK
-   && pParent 
-   && pParent->eType==FTSQUERY_NEAR 
-   && pParent->pRight==pExpr 
-  ){
-    /* This expression (pExpr) is the right-hand-side of a NEAR operator. 
-    ** Find the expression to the left of the same operator.
-    */
-    int nNear = pParent->nNear;
-    Fts3Expr *pLeft = pParent->pLeft;
-
-    if( pLeft->eType!=FTSQUERY_PHRASE ){
-      assert( pLeft->eType==FTSQUERY_NEAR );
-      assert( pLeft->pRight->eType==FTSQUERY_PHRASE );
-      pLeft = pLeft->pRight;
-    }
-
-    rc = sqlite3Fts3ExprNearTrim(pLeft, pExpr, nNear);
-
-    pExpr = pLeft;
-    pParent = pExpr->pParent;
-  }
-
-  return rc;
-}
-
-/*
 ** This is an fts3ExprIterate() callback used while loading the doclists
 ** for each phrase into Fts3Expr.aDoclist[]/nDoclist. See also
 ** fts3ExprLoadDoclists().
 */
-static int fts3ExprLoadDoclistsCb1(Fts3Expr *pExpr, int iPhrase, void *ctx){
+static int fts3ExprLoadDoclistsCb(Fts3Expr *pExpr, int iPhrase, void *ctx){
   int rc = SQLITE_OK;
+  Fts3Phrase *pPhrase = pExpr->pPhrase;
   LoadDoclistCtx *p = (LoadDoclistCtx *)ctx;
 
   UNUSED_PARAMETER(iPhrase);
 
   p->nPhrase++;
-  p->nToken += pExpr->pPhrase->nToken;
-
-  if( pExpr->isLoaded==0 ){
-    rc = sqlite3Fts3ExprLoadDoclist(p->pTab, pExpr);
-    pExpr->isLoaded = 1;
-    if( rc==SQLITE_OK ){
-      rc = fts3ExprNearTrim(pExpr);
-    }
-  }
+  p->nToken += pPhrase->nToken;
 
   return rc;
-}
-
-/*
-** This is an fts3ExprIterate() callback used while loading the doclists
-** for each phrase into Fts3Expr.aDoclist[]/nDoclist. See also
-** fts3ExprLoadDoclists().
-*/
-static int fts3ExprLoadDoclistsCb2(Fts3Expr *pExpr, int iPhrase, void *ctx){
-  UNUSED_PARAMETER(iPhrase);
-  UNUSED_PARAMETER(ctx);
-  if( pExpr->aDoclist ){
-    pExpr->pCurrent = pExpr->aDoclist;
-    pExpr->iCurrent = 0;
-    pExpr->pCurrent += sqlite3Fts3GetVarint(pExpr->pCurrent, &pExpr->iCurrent);
-  }
-  return SQLITE_OK;
 }
 
 /*
@@ -261,14 +211,23 @@ static int fts3ExprLoadDoclists(
 ){
   int rc;                         /* Return Code */
   LoadDoclistCtx sCtx = {0,0,0};  /* Context for fts3ExprIterate() */
-  sCtx.pTab = (Fts3Table *)pCsr->base.pVtab;
-  rc = fts3ExprIterate(pCsr->pExpr, fts3ExprLoadDoclistsCb1, (void *)&sCtx);
-  if( rc==SQLITE_OK ){
-    (void)fts3ExprIterate(pCsr->pExpr, fts3ExprLoadDoclistsCb2, 0);
-  }
+  sCtx.pCsr = pCsr;
+  rc = fts3ExprIterate(pCsr->pExpr, fts3ExprLoadDoclistsCb, (void *)&sCtx);
   if( pnPhrase ) *pnPhrase = sCtx.nPhrase;
   if( pnToken ) *pnToken = sCtx.nToken;
   return rc;
+}
+
+static int fts3ExprPhraseCountCb(Fts3Expr *pExpr, int iPhrase, void *ctx){
+  (*(int *)ctx)++;
+  UNUSED_PARAMETER(pExpr);
+  UNUSED_PARAMETER(iPhrase);
+  return SQLITE_OK;
+}
+static int fts3ExprPhraseCount(Fts3Expr *pExpr){
+  int nPhrase = 0;
+  (void)fts3ExprIterate(pExpr, fts3ExprPhraseCountCb, (void *)&nPhrase);
+  return nPhrase;
 }
 
 /*
@@ -404,11 +363,12 @@ static int fts3SnippetFindPositions(Fts3Expr *pExpr, int iPhrase, void *ctx){
 
   pPhrase->nToken = pExpr->pPhrase->nToken;
 
-  pCsr = sqlite3Fts3FindPositions(pExpr, p->pCsr->iPrevId, p->iCol);
+  pCsr = sqlite3Fts3EvalPhrasePoslist(p->pCsr, pExpr, p->iCol);
   if( pCsr ){
     int iFirst = 0;
     pPhrase->pList = pCsr;
     fts3GetDeltaPosition(&pCsr, &iFirst);
+    assert( iFirst>=0 );
     pPhrase->pHead = pCsr;
     pPhrase->pTail = pCsr;
     pPhrase->iHead = iFirst;
@@ -761,143 +721,452 @@ static int fts3ColumnlistCount(char **ppCollist){
   return nEntry;
 }
 
-static void fts3LoadColumnlistCounts(char **pp, u32 *aOut, int isGlobal){
-  char *pCsr = *pp;
-  while( *pCsr ){
-    int nHit;
-    sqlite3_int64 iCol = 0;
-    if( *pCsr==0x01 ){
-      pCsr++;
-      pCsr += sqlite3Fts3GetVarint(pCsr, &iCol);
-    }
-    nHit = fts3ColumnlistCount(&pCsr);
-    assert( nHit>0 );
-    if( isGlobal ){
-      aOut[iCol*3+1]++;
-    }
-    aOut[iCol*3] += nHit;
-  }
-  pCsr++;
-  *pp = pCsr;
-}
-
 /*
 ** fts3ExprIterate() callback used to collect the "global" matchinfo stats
-** for a single query. The "global" stats are those elements of the matchinfo
-** array that are constant for all rows returned by the current query.
+** for a single query. 
+**
+** fts3ExprIterate() callback to load the 'global' elements of a
+** FTS3_MATCHINFO_HITS matchinfo array. The global stats are those elements 
+** of the matchinfo array that are constant for all rows returned by the 
+** current query.
+**
+** Argument pCtx is actually a pointer to a struct of type MatchInfo. This
+** function populates Matchinfo.aMatchinfo[] as follows:
+**
+**   for(iCol=0; iCol<nCol; iCol++){
+**     aMatchinfo[3*iPhrase*nCol + 3*iCol + 1] = X;
+**     aMatchinfo[3*iPhrase*nCol + 3*iCol + 2] = Y;
+**   }
+**
+** where X is the number of matches for phrase iPhrase is column iCol of all
+** rows of the table. Y is the number of rows for which column iCol contains
+** at least one instance of phrase iPhrase.
+**
+** If the phrase pExpr consists entirely of deferred tokens, then all X and
+** Y values are set to nDoc, where nDoc is the number of documents in the 
+** file system. This is done because the full-text index doclist is required
+** to calculate these values properly, and the full-text index doclist is
+** not available for deferred tokens.
 */
-static int fts3ExprGlobalMatchinfoCb(
+static int fts3ExprGlobalHitsCb(
   Fts3Expr *pExpr,                /* Phrase expression node */
   int iPhrase,                    /* Phrase number (numbered from zero) */
   void *pCtx                      /* Pointer to MatchInfo structure */
 ){
   MatchInfo *p = (MatchInfo *)pCtx;
-  char *pCsr;
-  char *pEnd;
-  const int iStart = 2 + (iPhrase * p->nCol * 3) + 1;
-
-  assert( pExpr->isLoaded );
-
-  /* Fill in the global hit count matrix row for this phrase. */
-  pCsr = pExpr->aDoclist;
-  pEnd = &pExpr->aDoclist[pExpr->nDoclist];
-  while( pCsr<pEnd ){
-    while( *pCsr++ & 0x80 );      /* Skip past docid. */
-    fts3LoadColumnlistCounts(&pCsr, &p->aMatchinfo[iStart], 1);
-  }
-
-  return SQLITE_OK;
+  return sqlite3Fts3EvalPhraseStats(
+      p->pCursor, pExpr, &p->aMatchinfo[3*iPhrase*p->nCol]
+  );
 }
 
 /*
-** fts3ExprIterate() callback used to collect the "local" matchinfo stats
-** for a single query. The "local" stats are those elements of the matchinfo
+** fts3ExprIterate() callback used to collect the "local" part of the
+** FTS3_MATCHINFO_HITS array. The local stats are those elements of the 
 ** array that are different for each row returned by the query.
 */
-static int fts3ExprLocalMatchinfoCb(
+static int fts3ExprLocalHitsCb(
   Fts3Expr *pExpr,                /* Phrase expression node */
   int iPhrase,                    /* Phrase number */
   void *pCtx                      /* Pointer to MatchInfo structure */
 ){
   MatchInfo *p = (MatchInfo *)pCtx;
+  int iStart = iPhrase * p->nCol * 3;
+  int i;
 
-  if( pExpr->aDoclist ){
+  for(i=0; i<p->nCol; i++){
     char *pCsr;
-    int iStart = 2 + (iPhrase * p->nCol * 3);
-    int i;
-
-    for(i=0; i<p->nCol; i++) p->aMatchinfo[iStart+i*3] = 0;
-
-    pCsr = sqlite3Fts3FindPositions(pExpr, p->pCursor->iPrevId, -1);
+    pCsr = sqlite3Fts3EvalPhrasePoslist(p->pCursor, pExpr, i);
     if( pCsr ){
-      fts3LoadColumnlistCounts(&pCsr, &p->aMatchinfo[iStart], 0);
+      p->aMatchinfo[iStart+i*3] = fts3ColumnlistCount(&pCsr);
+    }else{
+      p->aMatchinfo[iStart+i*3] = 0;
     }
   }
 
   return SQLITE_OK;
 }
 
+static int fts3MatchinfoCheck(
+  Fts3Table *pTab, 
+  char cArg,
+  char **pzErr
+){
+  if( (cArg==FTS3_MATCHINFO_NPHRASE)
+   || (cArg==FTS3_MATCHINFO_NCOL)
+   || (cArg==FTS3_MATCHINFO_NDOC && pTab->bHasStat)
+   || (cArg==FTS3_MATCHINFO_AVGLENGTH && pTab->bHasStat)
+   || (cArg==FTS3_MATCHINFO_LENGTH && pTab->bHasDocsize)
+   || (cArg==FTS3_MATCHINFO_LCS)
+   || (cArg==FTS3_MATCHINFO_HITS)
+  ){
+    return SQLITE_OK;
+  }
+  *pzErr = sqlite3_mprintf("unrecognized matchinfo request: %c", cArg);
+  return SQLITE_ERROR;
+}
+
+static int fts3MatchinfoSize(MatchInfo *pInfo, char cArg){
+  int nVal;                       /* Number of integers output by cArg */
+
+  switch( cArg ){
+    case FTS3_MATCHINFO_NDOC:
+    case FTS3_MATCHINFO_NPHRASE: 
+    case FTS3_MATCHINFO_NCOL: 
+      nVal = 1;
+      break;
+
+    case FTS3_MATCHINFO_AVGLENGTH:
+    case FTS3_MATCHINFO_LENGTH:
+    case FTS3_MATCHINFO_LCS:
+      nVal = pInfo->nCol;
+      break;
+
+    default:
+      assert( cArg==FTS3_MATCHINFO_HITS );
+      nVal = pInfo->nCol * pInfo->nPhrase * 3;
+      break;
+  }
+
+  return nVal;
+}
+
+static int fts3MatchinfoSelectDoctotal(
+  Fts3Table *pTab,
+  sqlite3_stmt **ppStmt,
+  sqlite3_int64 *pnDoc,
+  const char **paLen
+){
+  sqlite3_stmt *pStmt;
+  const char *a;
+  sqlite3_int64 nDoc;
+
+  if( !*ppStmt ){
+    int rc = sqlite3Fts3SelectDoctotal(pTab, ppStmt);
+    if( rc!=SQLITE_OK ) return rc;
+  }
+  pStmt = *ppStmt;
+  assert( sqlite3_data_count(pStmt)==1 );
+
+  a = sqlite3_column_blob(pStmt, 0);
+  a += sqlite3Fts3GetVarint(a, &nDoc);
+  if( nDoc==0 ) return FTS_CORRUPT_VTAB;
+  *pnDoc = (u32)nDoc;
+
+  if( paLen ) *paLen = a;
+  return SQLITE_OK;
+}
+
+/*
+** An instance of the following structure is used to store state while 
+** iterating through a multi-column position-list corresponding to the
+** hits for a single phrase on a single row in order to calculate the
+** values for a matchinfo() FTS3_MATCHINFO_LCS request.
+*/
+typedef struct LcsIterator LcsIterator;
+struct LcsIterator {
+  Fts3Expr *pExpr;                /* Pointer to phrase expression */
+  int iPosOffset;                 /* Tokens count up to end of this phrase */
+  char *pRead;                    /* Cursor used to iterate through aDoclist */
+  int iPos;                       /* Current position */
+};
+
+/* 
+** If LcsIterator.iCol is set to the following value, the iterator has
+** finished iterating through all offsets for all columns.
+*/
+#define LCS_ITERATOR_FINISHED 0x7FFFFFFF;
+
+static int fts3MatchinfoLcsCb(
+  Fts3Expr *pExpr,                /* Phrase expression node */
+  int iPhrase,                    /* Phrase number (numbered from zero) */
+  void *pCtx                      /* Pointer to MatchInfo structure */
+){
+  LcsIterator *aIter = (LcsIterator *)pCtx;
+  aIter[iPhrase].pExpr = pExpr;
+  return SQLITE_OK;
+}
+
+/*
+** Advance the iterator passed as an argument to the next position. Return
+** 1 if the iterator is at EOF or if it now points to the start of the
+** position list for the next column.
+*/
+static int fts3LcsIteratorAdvance(LcsIterator *pIter){
+  char *pRead = pIter->pRead;
+  sqlite3_int64 iRead;
+  int rc = 0;
+
+  pRead += sqlite3Fts3GetVarint(pRead, &iRead);
+  if( iRead==0 || iRead==1 ){
+    pRead = 0;
+    rc = 1;
+  }else{
+    pIter->iPos += (int)(iRead-2);
+  }
+
+  pIter->pRead = pRead;
+  return rc;
+}
+  
+/*
+** This function implements the FTS3_MATCHINFO_LCS matchinfo() flag. 
+**
+** If the call is successful, the longest-common-substring lengths for each
+** column are written into the first nCol elements of the pInfo->aMatchinfo[] 
+** array before returning. SQLITE_OK is returned in this case.
+**
+** Otherwise, if an error occurs, an SQLite error code is returned and the
+** data written to the first nCol elements of pInfo->aMatchinfo[] is 
+** undefined.
+*/
+static int fts3MatchinfoLcs(Fts3Cursor *pCsr, MatchInfo *pInfo){
+  LcsIterator *aIter;
+  int i;
+  int iCol;
+  int nToken = 0;
+
+  /* Allocate and populate the array of LcsIterator objects. The array
+  ** contains one element for each matchable phrase in the query.
+  **/
+  aIter = sqlite3_malloc(sizeof(LcsIterator) * pCsr->nPhrase);
+  if( !aIter ) return SQLITE_NOMEM;
+  memset(aIter, 0, sizeof(LcsIterator) * pCsr->nPhrase);
+  (void)fts3ExprIterate(pCsr->pExpr, fts3MatchinfoLcsCb, (void*)aIter);
+
+  for(i=0; i<pInfo->nPhrase; i++){
+    LcsIterator *pIter = &aIter[i];
+    nToken -= pIter->pExpr->pPhrase->nToken;
+    pIter->iPosOffset = nToken;
+  }
+
+  for(iCol=0; iCol<pInfo->nCol; iCol++){
+    int nLcs = 0;                 /* LCS value for this column */
+    int nLive = 0;                /* Number of iterators in aIter not at EOF */
+
+    for(i=0; i<pInfo->nPhrase; i++){
+      LcsIterator *pIt = &aIter[i];
+      pIt->pRead = sqlite3Fts3EvalPhrasePoslist(pCsr, pIt->pExpr, iCol);
+      if( pIt->pRead ){
+        pIt->iPos = pIt->iPosOffset;
+        fts3LcsIteratorAdvance(&aIter[i]);
+        nLive++;
+      }
+    }
+
+    while( nLive>0 ){
+      LcsIterator *pAdv = 0;      /* The iterator to advance by one position */
+      int nThisLcs = 0;           /* LCS for the current iterator positions */
+
+      for(i=0; i<pInfo->nPhrase; i++){
+        LcsIterator *pIter = &aIter[i];
+        if( pIter->pRead==0 ){
+          /* This iterator is already at EOF for this column. */
+          nThisLcs = 0;
+        }else{
+          if( pAdv==0 || pIter->iPos<pAdv->iPos ){
+            pAdv = pIter;
+          }
+          if( nThisLcs==0 || pIter->iPos==pIter[-1].iPos ){
+            nThisLcs++;
+          }else{
+            nThisLcs = 1;
+          }
+          if( nThisLcs>nLcs ) nLcs = nThisLcs;
+        }
+      }
+      if( fts3LcsIteratorAdvance(pAdv) ) nLive--;
+    }
+
+    pInfo->aMatchinfo[iCol] = nLcs;
+  }
+
+  sqlite3_free(aIter);
+  return SQLITE_OK;
+}
+
+/*
+** Populate the buffer pInfo->aMatchinfo[] with an array of integers to
+** be returned by the matchinfo() function. Argument zArg contains the 
+** format string passed as the second argument to matchinfo (or the
+** default value "pcx" if no second argument was specified). The format
+** string has already been validated and the pInfo->aMatchinfo[] array
+** is guaranteed to be large enough for the output.
+**
+** If bGlobal is true, then populate all fields of the matchinfo() output.
+** If it is false, then assume that those fields that do not change between
+** rows (i.e. FTS3_MATCHINFO_NPHRASE, NCOL, NDOC, AVGLENGTH and part of HITS)
+** have already been populated.
+**
+** Return SQLITE_OK if successful, or an SQLite error code if an error 
+** occurs. If a value other than SQLITE_OK is returned, the state the
+** pInfo->aMatchinfo[] buffer is left in is undefined.
+*/
+static int fts3MatchinfoValues(
+  Fts3Cursor *pCsr,               /* FTS3 cursor object */
+  int bGlobal,                    /* True to grab the global stats */
+  MatchInfo *pInfo,               /* Matchinfo context object */
+  const char *zArg                /* Matchinfo format string */
+){
+  int rc = SQLITE_OK;
+  int i;
+  Fts3Table *pTab = (Fts3Table *)pCsr->base.pVtab;
+  sqlite3_stmt *pSelect = 0;
+
+  for(i=0; rc==SQLITE_OK && zArg[i]; i++){
+
+    switch( zArg[i] ){
+      case FTS3_MATCHINFO_NPHRASE:
+        if( bGlobal ) pInfo->aMatchinfo[0] = pInfo->nPhrase;
+        break;
+
+      case FTS3_MATCHINFO_NCOL:
+        if( bGlobal ) pInfo->aMatchinfo[0] = pInfo->nCol;
+        break;
+        
+      case FTS3_MATCHINFO_NDOC:
+        if( bGlobal ){
+          sqlite3_int64 nDoc = 0;
+          rc = fts3MatchinfoSelectDoctotal(pTab, &pSelect, &nDoc, 0);
+          pInfo->aMatchinfo[0] = (u32)nDoc;
+        }
+        break;
+
+      case FTS3_MATCHINFO_AVGLENGTH: 
+        if( bGlobal ){
+          sqlite3_int64 nDoc;     /* Number of rows in table */
+          const char *a;          /* Aggregate column length array */
+
+          rc = fts3MatchinfoSelectDoctotal(pTab, &pSelect, &nDoc, &a);
+          if( rc==SQLITE_OK ){
+            int iCol;
+            for(iCol=0; iCol<pInfo->nCol; iCol++){
+              u32 iVal;
+              sqlite3_int64 nToken;
+              a += sqlite3Fts3GetVarint(a, &nToken);
+              iVal = (u32)(((u32)(nToken&0xffffffff)+nDoc/2)/nDoc);
+              pInfo->aMatchinfo[iCol] = iVal;
+            }
+          }
+        }
+        break;
+
+      case FTS3_MATCHINFO_LENGTH: {
+        sqlite3_stmt *pSelectDocsize = 0;
+        rc = sqlite3Fts3SelectDocsize(pTab, pCsr->iPrevId, &pSelectDocsize);
+        if( rc==SQLITE_OK ){
+          int iCol;
+          const char *a = sqlite3_column_blob(pSelectDocsize, 0);
+          for(iCol=0; iCol<pInfo->nCol; iCol++){
+            sqlite3_int64 nToken;
+            a += sqlite3Fts3GetVarint(a, &nToken);
+            pInfo->aMatchinfo[iCol] = (u32)nToken;
+          }
+        }
+        sqlite3_reset(pSelectDocsize);
+        break;
+      }
+
+      case FTS3_MATCHINFO_LCS:
+        rc = fts3ExprLoadDoclists(pCsr, 0, 0);
+        if( rc==SQLITE_OK ){
+          rc = fts3MatchinfoLcs(pCsr, pInfo);
+        }
+        break;
+
+      default: {
+        Fts3Expr *pExpr;
+        assert( zArg[i]==FTS3_MATCHINFO_HITS );
+        pExpr = pCsr->pExpr;
+        rc = fts3ExprLoadDoclists(pCsr, 0, 0);
+        if( rc!=SQLITE_OK ) break;
+        if( bGlobal ){
+          if( pCsr->pDeferred ){
+            rc = fts3MatchinfoSelectDoctotal(pTab, &pSelect, &pInfo->nDoc, 0);
+            if( rc!=SQLITE_OK ) break;
+          }
+          rc = fts3ExprIterate(pExpr, fts3ExprGlobalHitsCb,(void*)pInfo);
+          if( rc!=SQLITE_OK ) break;
+        }
+        (void)fts3ExprIterate(pExpr, fts3ExprLocalHitsCb,(void*)pInfo);
+        break;
+      }
+    }
+
+    pInfo->aMatchinfo += fts3MatchinfoSize(pInfo, zArg[i]);
+  }
+
+  sqlite3_reset(pSelect);
+  return rc;
+}
+
+
 /*
 ** Populate pCsr->aMatchinfo[] with data for the current row. The 
 ** 'matchinfo' data is an array of 32-bit unsigned integers (C type u32).
 */
-static int fts3GetMatchinfo(Fts3Cursor *pCsr){
+static int fts3GetMatchinfo(
+  Fts3Cursor *pCsr,               /* FTS3 Cursor object */
+  const char *zArg                /* Second argument to matchinfo() function */
+){
   MatchInfo sInfo;
   Fts3Table *pTab = (Fts3Table *)pCsr->base.pVtab;
   int rc = SQLITE_OK;
+  int bGlobal = 0;                /* Collect 'global' stats as well as local */
 
+  memset(&sInfo, 0, sizeof(MatchInfo));
   sInfo.pCursor = pCsr;
   sInfo.nCol = pTab->nColumn;
 
+  /* If there is cached matchinfo() data, but the format string for the 
+  ** cache does not match the format string for this request, discard 
+  ** the cached data. */
+  if( pCsr->zMatchinfo && strcmp(pCsr->zMatchinfo, zArg) ){
+    assert( pCsr->aMatchinfo );
+    sqlite3_free(pCsr->aMatchinfo);
+    pCsr->zMatchinfo = 0;
+    pCsr->aMatchinfo = 0;
+  }
+
+  /* If Fts3Cursor.aMatchinfo[] is NULL, then this is the first time the
+  ** matchinfo function has been called for this query. In this case 
+  ** allocate the array used to accumulate the matchinfo data and
+  ** initialize those elements that are constant for every row.
+  */
   if( pCsr->aMatchinfo==0 ){
-    /* If Fts3Cursor.aMatchinfo[] is NULL, then this is the first time the
-    ** matchinfo function has been called for this query. In this case 
-    ** allocate the array used to accumulate the matchinfo data and
-    ** initialize those elements that are constant for every row.
-    */
-    int nPhrase;                  /* Number of phrases */
-    int nMatchinfo;               /* Number of u32 elements in match-info */
+    int nMatchinfo = 0;           /* Number of u32 elements in match-info */
+    int nArg;                     /* Bytes in zArg */
+    int i;                        /* Used to iterate through zArg */
 
-    /* Load doclists for each phrase in the query. */
-    rc = fts3ExprLoadDoclists(pCsr, &nPhrase, 0);
-    if( rc!=SQLITE_OK ){
-      return rc;
-    }
-    nMatchinfo = 2 + 3*sInfo.nCol*nPhrase;
-    if( pTab->bHasDocsize ){
-      nMatchinfo += 1 + 2*pTab->nColumn;
+    /* Determine the number of phrases in the query */
+    pCsr->nPhrase = fts3ExprPhraseCount(pCsr->pExpr);
+    sInfo.nPhrase = pCsr->nPhrase;
+
+    /* Determine the number of integers in the buffer returned by this call. */
+    for(i=0; zArg[i]; i++){
+      nMatchinfo += fts3MatchinfoSize(&sInfo, zArg[i]);
     }
 
-    sInfo.aMatchinfo = (u32 *)sqlite3_malloc(sizeof(u32)*nMatchinfo);
-    if( !sInfo.aMatchinfo ){ 
-      return SQLITE_NOMEM;
-    }
-    memset(sInfo.aMatchinfo, 0, sizeof(u32)*nMatchinfo);
+    /* Allocate space for Fts3Cursor.aMatchinfo[] and Fts3Cursor.zMatchinfo. */
+    nArg = (int)strlen(zArg);
+    pCsr->aMatchinfo = (u32 *)sqlite3_malloc(sizeof(u32)*nMatchinfo + nArg + 1);
+    if( !pCsr->aMatchinfo ) return SQLITE_NOMEM;
 
-
-    /* First element of match-info is the number of phrases in the query */
-    sInfo.aMatchinfo[0] = nPhrase;
-    sInfo.aMatchinfo[1] = sInfo.nCol;
-    (void)fts3ExprIterate(pCsr->pExpr, fts3ExprGlobalMatchinfoCb,(void*)&sInfo);
-    if( pTab->bHasDocsize ){
-      int ofst = 2 + 3*sInfo.aMatchinfo[0]*sInfo.aMatchinfo[1];
-      rc = sqlite3Fts3MatchinfoDocsizeGlobal(pCsr, &sInfo.aMatchinfo[ofst]);
-    }
-    pCsr->aMatchinfo = sInfo.aMatchinfo;
+    pCsr->zMatchinfo = (char *)&pCsr->aMatchinfo[nMatchinfo];
+    pCsr->nMatchinfo = nMatchinfo;
+    memcpy(pCsr->zMatchinfo, zArg, nArg+1);
+    memset(pCsr->aMatchinfo, 0, sizeof(u32)*nMatchinfo);
     pCsr->isMatchinfoNeeded = 1;
+    bGlobal = 1;
   }
 
   sInfo.aMatchinfo = pCsr->aMatchinfo;
-  if( rc==SQLITE_OK && pCsr->isMatchinfoNeeded ){
-    (void)fts3ExprIterate(pCsr->pExpr, fts3ExprLocalMatchinfoCb, (void*)&sInfo);
-    if( pTab->bHasDocsize ){
-      int ofst = 2 + 3*sInfo.aMatchinfo[0]*sInfo.aMatchinfo[1];
-      rc = sqlite3Fts3MatchinfoDocsizeLocal(pCsr, &sInfo.aMatchinfo[ofst]);
-    }
+  sInfo.nPhrase = pCsr->nPhrase;
+  if( pCsr->isMatchinfoNeeded ){
+    rc = fts3MatchinfoValues(pCsr, bGlobal, &sInfo, zArg);
     pCsr->isMatchinfoNeeded = 0;
   }
 
-  return SQLITE_OK;
+  return rc;
 }
 
 /*
@@ -958,7 +1227,7 @@ void sqlite3Fts3Snippet(
       ** columns of the FTS3 table. Otherwise, only column iCol is considered.
       */
       for(iRead=0; iRead<pTab->nColumn; iRead++){
-        SnippetFragment sF;
+        SnippetFragment sF = {0, 0, 0, 0};
         int iS;
         if( iCol>=0 && iRead!=iCol ) continue;
 
@@ -992,6 +1261,7 @@ void sqlite3Fts3Snippet(
   }
 
  snippet_out:
+  sqlite3Fts3SegmentsClose(pTab);
   if( rc!=SQLITE_OK ){
     sqlite3_result_error_code(pCtx, rc);
     sqlite3_free(res.z);
@@ -1011,6 +1281,7 @@ struct TermOffset {
 };
 
 struct TermOffsetCtx {
+  Fts3Cursor *pCsr;
   int iCol;                       /* Column of table to populate aTerm for */
   int iTerm;
   sqlite3_int64 iDocid;
@@ -1028,7 +1299,7 @@ static int fts3ExprTermOffsetInit(Fts3Expr *pExpr, int iPhrase, void *ctx){
   int iPos = 0;                   /* First position in position-list */
 
   UNUSED_PARAMETER(iPhrase);
-  pList = sqlite3Fts3FindPositions(pExpr, p->iDocid, p->iCol);
+  pList = sqlite3Fts3EvalPhrasePoslist(p->pCsr, pExpr, p->iCol);
   nTerm = pExpr->pPhrase->nToken;
   if( pList ){
     fts3GetDeltaPosition(&pList, &iPos);
@@ -1081,6 +1352,7 @@ void sqlite3Fts3Offsets(
     goto offsets_out;
   }
   sCtx.iDocid = pCsr->iPrevId;
+  sCtx.pCsr = pCsr;
 
   /* Loop through the table columns, appending offset information to 
   ** string-buffer res for each column.
@@ -1138,7 +1410,7 @@ void sqlite3Fts3Offsets(
 
       if( !pTerm ){
         /* All offsets for this column have been gathered. */
-        break;
+        rc = SQLITE_DONE;
       }else{
         assert( iCurrent<=iMinPos );
         if( 0==(0xFE&*pTerm->pList) ){
@@ -1155,8 +1427,8 @@ void sqlite3Fts3Offsets(
               "%d %d %d %d ", iCol, pTerm-sCtx.aTerm, iStart, iEnd-iStart
           );
           rc = fts3StringAppend(&res, aBuffer, -1);
-        }else if( rc==SQLITE_DONE ){
-          rc = SQLITE_CORRUPT;
+        }else if( rc==SQLITE_DONE && pTab->zContentTbl==0 ){
+          rc = FTS_CORRUPT_VTAB;
         }
       }
     }
@@ -1171,6 +1443,7 @@ void sqlite3Fts3Offsets(
  offsets_out:
   sqlite3_free(sCtx.aTerm);
   assert( rc!=SQLITE_DONE );
+  sqlite3Fts3SegmentsClose(pTab);
   if( rc!=SQLITE_OK ){
     sqlite3_result_error_code(pCtx,  rc);
     sqlite3_free(res.z);
@@ -1183,21 +1456,43 @@ void sqlite3Fts3Offsets(
 /*
 ** Implementation of matchinfo() function.
 */
-void sqlite3Fts3Matchinfo(sqlite3_context *pContext, Fts3Cursor *pCsr){
+void sqlite3Fts3Matchinfo(
+  sqlite3_context *pContext,      /* Function call context */
+  Fts3Cursor *pCsr,               /* FTS3 table cursor */
+  const char *zArg                /* Second arg to matchinfo() function */
+){
+  Fts3Table *pTab = (Fts3Table *)pCsr->base.pVtab;
   int rc;
+  int i;
+  const char *zFormat;
+
+  if( zArg ){
+    for(i=0; zArg[i]; i++){
+      char *zErr = 0;
+      if( fts3MatchinfoCheck(pTab, zArg[i], &zErr) ){
+        sqlite3_result_error(pContext, zErr, -1);
+        sqlite3_free(zErr);
+        return;
+      }
+    }
+    zFormat = zArg;
+  }else{
+    zFormat = FTS3_MATCHINFO_DEFAULT;
+  }
+
   if( !pCsr->pExpr ){
     sqlite3_result_blob(pContext, "", 0, SQLITE_STATIC);
     return;
   }
-  rc = fts3GetMatchinfo(pCsr);
+
+  /* Retrieve matchinfo() data. */
+  rc = fts3GetMatchinfo(pCsr, zFormat);
+  sqlite3Fts3SegmentsClose(pTab);
+
   if( rc!=SQLITE_OK ){
     sqlite3_result_error_code(pContext, rc);
   }else{
-    Fts3Table *pTab = (Fts3Table*)pCsr->base.pVtab;
-    int n = sizeof(u32)*(2+pCsr->aMatchinfo[0]*pCsr->aMatchinfo[1]*3);
-    if( pTab->bHasDocsize ){
-      n += sizeof(u32)*(1 + 2*pTab->nColumn);
-    }
+    int n = pCsr->nMatchinfo * sizeof(u32);
     sqlite3_result_blob(pContext, pCsr->aMatchinfo, n, SQLITE_TRANSIENT);
   }
 }

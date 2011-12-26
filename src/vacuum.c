@@ -45,7 +45,7 @@ static int execSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
     return sqlite3_errcode(db);
   }
   VVA_ONLY( rc = ) sqlite3_step(pStmt);
-  assert( rc!=SQLITE_ROW );
+  assert( rc!=SQLITE_ROW || (db->flags&SQLITE_CountRows) );
   return vacuumFinalize(db, pStmt, pzErrMsg);
 }
 
@@ -108,6 +108,10 @@ int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
 
   if( !db->autoCommit ){
     sqlite3SetString(pzErrMsg, db, "cannot VACUUM from within a transaction");
+    return SQLITE_ERROR;
+  }
+  if( db->activeVdbeCnt>1 ){
+    sqlite3SetString(pzErrMsg, db,"cannot VACUUM - SQL statements in progress");
     return SQLITE_ERROR;
   }
 
@@ -259,13 +263,11 @@ int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
   );
   if( rc ) goto end_of_vacuum;
 
-  /* At this point, unless the main db was completely empty, there is now a
-  ** transaction open on the vacuum database, but not on the main database.
-  ** Open a btree level transaction on the main database. This allows a
-  ** call to sqlite3BtreeCopyFile(). The main database btree level
-  ** transaction is then committed, so the SQL level never knows it was
-  ** opened for writing. This way, the SQL transaction used to create the
-  ** temporary database never needs to be committed.
+  /* At this point, there is a write transaction open on both the 
+  ** vacuum database and the main database. Assuming no error occurs,
+  ** both transactions are closed by this block - the main database
+  ** transaction by sqlite3BtreeCopyFile() and the other by an explicit
+  ** call to sqlite3BtreeCommit().
   */
   {
     u32 meta;
@@ -331,8 +333,11 @@ end_of_vacuum:
     pDb->pSchema = 0;
   }
 
-  sqlite3ResetInternalSchema(db, 0);
+  /* This both clears the schemas and reduces the size of the db->aDb[]
+  ** array. */ 
+  sqlite3ResetInternalSchema(db, -1);
 
   return rc;
 }
+
 #endif  /* SQLITE_OMIT_VACUUM && SQLITE_OMIT_ATTACH */
