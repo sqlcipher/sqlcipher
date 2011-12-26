@@ -670,8 +670,8 @@ struct Pager {
   char *zJournal;             /* Name of the journal file */
   int (*xBusyHandler)(void*); /* Function to call when busy */
   void *pBusyHandlerArg;      /* Context argument for xBusyHandler */
+  int nHit, nMiss;            /* Total cache hits and misses */
 #ifdef SQLITE_TEST
-  int nHit, nMiss;            /* Cache hits and missing */
   int nRead, nWrite;          /* Database pages read/written */
 #endif
   void (*xReiniter)(DbPage*); /* Call this routine when reloading pages */
@@ -2703,7 +2703,6 @@ static int pager_playback(Pager *pPager, int isHot){
       rc = pager_playback_one_page(pPager,&pPager->journalOff,0,1,0);
       if( rc!=SQLITE_OK ){
         if( rc==SQLITE_DONE ){
-          rc = SQLITE_OK;
           pPager->journalOff = szJ;
           break;
         }else if( rc==SQLITE_IOERR_SHORT_READ ){
@@ -2965,6 +2964,7 @@ static int pagerWalFrames(
 #endif
 
   assert( pPager->pWal );
+  assert( pList );
 #ifdef SQLITE_DEBUG
   /* Verify that the page list is in accending order */
   for(p=pList; p && p->pDirty; p=p->pDirty){
@@ -3739,6 +3739,7 @@ static int pagerSyncHotJournal(Pager *pPager){
 int sqlite3PagerClose(Pager *pPager){
   u8 *pTmp = (u8 *)pPager->pTmpSpace;
 
+  assert( assert_pager_state(pPager) );
   disable_simulated_io_errors();
   sqlite3BeginBenignMalloc();
   /* pPager->errCode = 0; */
@@ -4168,7 +4169,7 @@ static int pagerStress(void *p, PgHdr *pPg){
   **
   ** Spilling is also prohibited when in an error state since that could
   ** lead to database corruption.   In the current implementaton it 
-  ** is impossible for sqlite3PCacheFetch() to be called with createFlag==1
+  ** is impossible for sqlite3PcacheFetch() to be called with createFlag==1
   ** while in the error state, hence it is impossible for this routine to
   ** be called in the error state.  Nevertheless, we include a NEVER()
   ** test for the error state as a safeguard against future changes.
@@ -5004,14 +5005,13 @@ int sqlite3PagerAcquire(
     /* In this case the pcache already contains an initialized copy of
     ** the page. Return without further ado.  */
     assert( pgno<=PAGER_MAX_PGNO && pgno!=PAGER_MJ_PGNO(pPager) );
-    PAGER_INCR(pPager->nHit);
+    pPager->nHit++;
     return SQLITE_OK;
 
   }else{
     /* The pager cache has created a new page. Its content needs to 
     ** be initialized.  */
 
-    PAGER_INCR(pPager->nMiss);
     pPg = *ppPage;
     pPg->pPager = pPager;
 
@@ -5047,6 +5047,7 @@ int sqlite3PagerAcquire(
       IOTRACE(("ZERO %p %d\n", pPager, pgno));
     }else{
       assert( pPg->pPager==pPager );
+      pPager->nMiss++;
       rc = readDbPage(pPg);
       if( rc!=SQLITE_OK ){
         goto pager_acquire_err;
@@ -6082,6 +6083,31 @@ int *sqlite3PagerStats(Pager *pPager){
 #endif
 
 /*
+** Parameter eStat must be either SQLITE_DBSTATUS_CACHE_HIT or
+** SQLITE_DBSTATUS_CACHE_MISS. Before returning, *pnVal is incremented by the
+** current cache hit or miss count, according to the value of eStat. If the 
+** reset parameter is non-zero, the cache hit or miss count is zeroed before 
+** returning.
+*/
+void sqlite3PagerCacheStat(Pager *pPager, int eStat, int reset, int *pnVal){
+  int *piStat;
+
+  assert( eStat==SQLITE_DBSTATUS_CACHE_HIT
+       || eStat==SQLITE_DBSTATUS_CACHE_MISS
+  );
+  if( eStat==SQLITE_DBSTATUS_CACHE_HIT ){
+    piStat = &pPager->nHit;
+  }else{
+    piStat = &pPager->nMiss;
+  }
+
+  *pnVal += *piStat;
+  if( reset ){
+    *piStat = 0;
+  }
+}
+
+/*
 ** Return true if this is an in-memory pager.
 */
 int sqlite3PagerIsMemdb(Pager *pPager){
@@ -6808,6 +6834,13 @@ int sqlite3PagerCloseWal(Pager *pPager){
     }
   }
   return rc;
+}
+
+/*
+** Unless this is an in-memory or temporary database, clear the pager cache.
+*/
+void sqlite3PagerClearCache(Pager *pPager){
+  if( !MEMDB && pPager->tempFile==0 ) pager_reset(pPager);
 }
 
 #ifdef SQLITE_HAS_CODEC

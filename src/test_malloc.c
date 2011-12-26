@@ -1222,7 +1222,7 @@ static int test_dump_memsys3(
     return TCL_ERROR;
   }
 
-  switch( (int)clientData ){
+  switch( SQLITE_PTR_TO_INT(clientData) ){
     case 3: {
 #ifdef SQLITE_ENABLE_MEMSYS3
       extern void sqlite3Memsys3Dump(const char*);
@@ -1325,11 +1325,13 @@ static int test_db_status(
     { "STMT_USED",           SQLITE_DBSTATUS_STMT_USED           },
     { "LOOKASIDE_HIT",       SQLITE_DBSTATUS_LOOKASIDE_HIT       },
     { "LOOKASIDE_MISS_SIZE", SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE },
-    { "LOOKASIDE_MISS_FULL", SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL }
+    { "LOOKASIDE_MISS_FULL", SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL },
+    { "CACHE_HIT",           SQLITE_DBSTATUS_CACHE_HIT           },
+    { "CACHE_MISS",          SQLITE_DBSTATUS_CACHE_MISS          }
   };
   Tcl_Obj *pResult;
   if( objc!=4 ){
-    Tcl_WrongNumArgs(interp, 1, objv, "PARAMETER RESETFLAG");
+    Tcl_WrongNumArgs(interp, 1, objv, "DB PARAMETER RESETFLAG");
     return TCL_ERROR;
   }
   if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
@@ -1460,7 +1462,7 @@ int Sqlitetest_malloc_Init(Tcl_Interp *interp){
   };
   int i;
   for(i=0; i<sizeof(aObjCmd)/sizeof(aObjCmd[0]); i++){
-    ClientData c = (ClientData)aObjCmd[i].clientData;
+    ClientData c = (ClientData)SQLITE_INT_TO_PTR(aObjCmd[i].clientData);
     Tcl_CreateObjCommand(interp, aObjCmd[i].zName, aObjCmd[i].xProc, c, 0);
   }
   return TCL_OK;

@@ -98,6 +98,24 @@ static void resolveAlias(
   sqlite3DbFree(db, pDup);
 }
 
+
+/*
+** Return TRUE if the name zCol occurs anywhere in the USING clause.
+**
+** Return FALSE if the USING clause is NULL or if it does not contain
+** zCol.
+*/
+static int nameInUsingClause(IdList *pUsing, const char *zCol){
+  if( pUsing ){
+    int k;
+    for(k=0; k<pUsing->nId; k++){
+      if( sqlite3StrICmp(pUsing->a[k].zName, zCol)==0 ) return 1;
+    }
+  }
+  return 0;
+}
+
+
 /*
 ** Given the name of a column of the form X.Y.Z or Y.Z or just Z, look up
 ** that name in the set of source tables in pSrcList and make the pExpr 
@@ -189,7 +207,14 @@ static int lookupName(
         }
         for(j=0, pCol=pTab->aCol; j<pTab->nCol; j++, pCol++){
           if( sqlite3StrICmp(pCol->zName, zCol)==0 ){
-            IdList *pUsing;
+            /* If there has been exactly one prior match and this match
+            ** is for the right-hand table of a NATURAL JOIN or is in a 
+            ** USING clause, then skip this match.
+            */
+            if( cnt==1 ){
+              if( pItem->jointype & JT_NATURAL ) continue;
+              if( nameInUsingClause(pItem->pUsing, zCol) ) continue;
+            }
             cnt++;
             pExpr->iTable = pItem->iCursor;
             pExpr->pTab = pTab;
@@ -197,26 +222,6 @@ static int lookupName(
             pSchema = pTab->pSchema;
             /* Substitute the rowid (column -1) for the INTEGER PRIMARY KEY */
             pExpr->iColumn = j==pTab->iPKey ? -1 : (i16)j;
-            if( i<pSrcList->nSrc-1 ){
-              if( pItem[1].jointype & JT_NATURAL ){
-                /* If this match occurred in the left table of a natural join,
-                ** then skip the right table to avoid a duplicate match */
-                pItem++;
-                i++;
-              }else if( (pUsing = pItem[1].pUsing)!=0 ){
-                /* If this match occurs on a column that is in the USING clause
-                ** of a join, skip the search of the right table of the join
-                ** to avoid a duplicate match there. */
-                int k;
-                for(k=0; k<pUsing->nId; k++){
-                  if( sqlite3StrICmp(pUsing->a[k].zName, zCol)==0 ){
-                    pItem++;
-                    i++;
-                    break;
-                  }
-                }
-              }
-            }
             break;
           }
         }
@@ -996,11 +1001,25 @@ static int resolveSelectStep(Walker *pWalker, Select *p){
     for(i=0; i<p->pSrc->nSrc; i++){
       struct SrcList_item *pItem = &p->pSrc->a[i];
       if( pItem->pSelect ){
+        NameContext *pNC;         /* Used to iterate name contexts */
+        int nRef = 0;             /* Refcount for pOuterNC and outer contexts */
         const char *zSavedContext = pParse->zAuthContext;
+
+        /* Count the total number of references to pOuterNC and all of its
+        ** parent contexts. After resolving references to expressions in
+        ** pItem->pSelect, check if this value has changed. If so, then
+        ** SELECT statement pItem->pSelect must be correlated. Set the
+        ** pItem->isCorrelated flag if this is the case. */
+        for(pNC=pOuterNC; pNC; pNC=pNC->pNext) nRef += pNC->nRef;
+
         if( pItem->zName ) pParse->zAuthContext = pItem->zName;
         sqlite3ResolveSelectNames(pParse, pItem->pSelect, pOuterNC);
         pParse->zAuthContext = zSavedContext;
         if( pParse->nErr || db->mallocFailed ) return WRC_Abort;
+
+        for(pNC=pOuterNC; pNC; pNC=pNC->pNext) nRef -= pNC->nRef;
+        assert( pItem->isCorrelated==0 && nRef<=0 );
+        pItem->isCorrelated = (nRef!=0);
       }
     }
   

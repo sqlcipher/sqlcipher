@@ -7,18 +7,18 @@ make sqlite3.c
 
 echo '****** Exported symbols from a build including RTREE, FTS4 & ICU ******'
 gcc -c -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_RTREE \
-  -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_STAT2 \
+  -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_STAT3 \
   -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_ENABLE_UNLOCK_NOTIFY \
   -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_ATOMIC_WRITE \
   -DSQLITE_ENABLE_ICU \
   sqlite3.c
-nm sqlite3.o | grep ' T ' | sort -k 3
+nm sqlite3.o | grep ' [TD] ' | sort -k 3
 
 echo '****** Surplus symbols from a build including RTREE, FTS4 & ICU ******'
-nm sqlite3.o | grep ' T ' | grep -v ' sqlite3_'
+nm sqlite3.o | grep ' [TD] ' | grep -v ' .*sqlite3_'
 
 echo '****** Dependencies of the core. No extensions. No OS interface *******'
-gcc -c -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_STAT2 \
+gcc -c -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_STAT3 \
   -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_ENABLE_UNLOCK_NOTIFY \
   -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_ATOMIC_WRITE \
   -DSQLITE_OS_OTHER -DSQLITE_THREADSAFE=0 \
@@ -27,7 +27,7 @@ nm sqlite3.o | grep ' U ' | sort -k 3
 
 echo '****** Dependencies including RTREE & FTS4 *******'
 gcc -c -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_RTREE \
-  -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_STAT2 \
+  -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_STAT3 \
   -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_ENABLE_UNLOCK_NOTIFY \
   -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_ATOMIC_WRITE \
   sqlite3.c

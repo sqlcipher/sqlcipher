@@ -560,7 +560,7 @@ static void fkScanChildren(
   ** clause. If the constraint is not deferred, throw an exception for
   ** each row found. Otherwise, for deferred constraints, increment the
   ** deferred constraint counter by nIncr for each row selected.  */
-  pWInfo = sqlite3WhereBegin(pParse, pSrc, pWhere, 0, 0);
+  pWInfo = sqlite3WhereBegin(pParse, pSrc, pWhere, 0, 0, 0);
   if( nIncr>0 && pFKey->isDeferred==0 ){
     sqlite3ParseToplevel(pParse)->mayAbort = 1;
   }
@@ -734,7 +734,24 @@ void sqlite3FkCheck(
       pTo = sqlite3LocateTable(pParse, 0, pFKey->zTo, zDb);
     }
     if( !pTo || locateFkeyIndex(pParse, pTo, pFKey, &pIdx, &aiFree) ){
+      assert( isIgnoreErrors==0 || (regOld!=0 && regNew==0) );
       if( !isIgnoreErrors || db->mallocFailed ) return;
+      if( pTo==0 ){
+        /* If isIgnoreErrors is true, then a table is being dropped. In this
+        ** case SQLite runs a "DELETE FROM xxx" on the table being dropped
+        ** before actually dropping it in order to check FK constraints.
+        ** If the parent table of an FK constraint on the current table is
+        ** missing, behave as if it is empty. i.e. decrement the relevant
+        ** FK counter for each row of the current table with non-NULL keys.
+        */
+        Vdbe *v = sqlite3GetVdbe(pParse);
+        int iJump = sqlite3VdbeCurrentAddr(v) + pFKey->nCol + 1;
+        for(i=0; i<pFKey->nCol; i++){
+          int iReg = pFKey->aCol[i].iFrom + regOld + 1;
+          sqlite3VdbeAddOp2(v, OP_IsNull, iReg, iJump);
+        }
+        sqlite3VdbeAddOp2(v, OP_FkCounter, pFKey->isDeferred, -1);
+      }
       continue;
     }
     assert( pFKey->nCol==1 || (aiFree && pIdx) );
@@ -1107,6 +1124,7 @@ static Trigger *fkActionTrigger(
       fkTriggerDelete(db, pTrigger);
       return 0;
     }
+    assert( pStep!=0 );
 
     switch( action ){
       case OE_Restrict:

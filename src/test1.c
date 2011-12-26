@@ -4395,7 +4395,7 @@ static u8 *sqlite3_stack_baseline = 0;
 static void prepStack(void){
   int i;
   u32 bigBuf[65536];
-  for(i=0; i<sizeof(bigBuf); i++) bigBuf[i] = 0xdeadbeef;
+  for(i=0; i<sizeof(bigBuf)/sizeof(bigBuf[0]); i++) bigBuf[i] = 0xdeadbeef;
   sqlite3_stack_baseline = (u8*)&bigBuf[65536];
 }
 
@@ -4991,9 +4991,8 @@ static int file_control_chunksize_test(
 /*
 ** tclcmd:   file_control_sizehint_test DB DBNAME SIZE
 **
-** This TCL command runs the sqlite3_file_control interface and
-** verifies correct operation of the SQLITE_GET_LOCKPROXYFILE and
-** SQLITE_SET_LOCKPROXYFILE verbs.
+** This TCL command runs the sqlite3_file_control interface 
+** with SQLITE_FCNTL_SIZE_HINT
 */
 static int file_control_sizehint_test(
   ClientData clientData, /* Pointer to sqlite3_enable_XXX function */
@@ -5093,6 +5092,71 @@ static int file_control_lockproxy_test(
     }
   }
 #endif
+  return TCL_OK;  
+}
+
+/*
+** tclcmd:   file_control_win32_av_retry DB  NRETRY  DELAY
+**
+** This TCL command runs the sqlite3_file_control interface with
+** the SQLITE_FCNTL_WIN32_AV_RETRY opcode.
+*/
+static int file_control_win32_av_retry(
+  ClientData clientData, /* Pointer to sqlite3_enable_XXX function */
+  Tcl_Interp *interp,    /* The TCL interpreter that invoked this command */
+  int objc,              /* Number of arguments */
+  Tcl_Obj *CONST objv[]  /* Command arguments */
+){
+  sqlite3 *db;
+  int rc;
+  int a[2];
+  char z[100];
+
+  if( objc!=4 ){
+    Tcl_AppendResult(interp, "wrong # args: should be \"",
+        Tcl_GetStringFromObj(objv[0], 0), " DB NRETRY DELAY", 0);
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
+    return TCL_ERROR;
+  }
+  if( Tcl_GetIntFromObj(interp, objv[2], &a[0]) ) return TCL_ERROR;
+  if( Tcl_GetIntFromObj(interp, objv[3], &a[1]) ) return TCL_ERROR;
+  rc = sqlite3_file_control(db, NULL, SQLITE_FCNTL_WIN32_AV_RETRY, (void*)a);
+  sqlite3_snprintf(sizeof(z), z, "%d %d %d", rc, a[0], a[1]);
+  Tcl_AppendResult(interp, z, (char*)0);
+  return TCL_OK;  
+}
+
+/*
+** tclcmd:   file_control_persist_wal DB PERSIST-FLAG
+**
+** This TCL command runs the sqlite3_file_control interface with
+** the SQLITE_FCNTL_PERSIST_WAL opcode.
+*/
+static int file_control_persist_wal(
+  ClientData clientData, /* Pointer to sqlite3_enable_XXX function */
+  Tcl_Interp *interp,    /* The TCL interpreter that invoked this command */
+  int objc,              /* Number of arguments */
+  Tcl_Obj *CONST objv[]  /* Command arguments */
+){
+  sqlite3 *db;
+  int rc;
+  int bPersist;
+  char z[100];
+
+  if( objc!=3 ){
+    Tcl_AppendResult(interp, "wrong # args: should be \"",
+        Tcl_GetStringFromObj(objv[0], 0), " DB FLAG", 0);
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
+    return TCL_ERROR;
+  }
+  if( Tcl_GetIntFromObj(interp, objv[2], &bPersist) ) return TCL_ERROR;
+  rc = sqlite3_file_control(db, NULL, SQLITE_FCNTL_PERSIST_WAL, (void*)&bPersist);
+  sqlite3_snprintf(sizeof(z), z, "%d %d", rc, bPersist);
+  Tcl_AppendResult(interp, z, (char*)0);
   return TCL_OK;  
 }
 
@@ -5574,6 +5638,116 @@ static int test_test_control(
   return TCL_OK;
 }
 
+#if SQLITE_OS_WIN
+/*
+** Information passed from the main thread into the windows file locker
+** background thread.
+*/
+struct win32FileLocker {
+  char *evName;       /* Name of event to signal thread startup */
+  HANDLE h;           /* Handle of the file to be locked */
+  int delay1;         /* Delay before locking */
+  int delay2;         /* Delay before unlocking */
+  int ok;             /* Finished ok */
+  int err;            /* True if an error occurs */
+};
+#endif
+
+
+#if SQLITE_OS_WIN
+/*
+** The background thread that does file locking.
+*/
+static void win32_file_locker(void *pAppData){
+  struct win32FileLocker *p = (struct win32FileLocker*)pAppData;
+  if( p->evName ){
+    HANDLE ev = OpenEvent(EVENT_MODIFY_STATE, FALSE, p->evName);
+    if ( ev ){
+      SetEvent(ev);
+      CloseHandle(ev);
+    }
+  }
+  if( p->delay1 ) Sleep(p->delay1);
+  if( LockFile(p->h, 0, 0, 100000000, 0) ){
+    Sleep(p->delay2);
+    UnlockFile(p->h, 0, 0, 100000000, 0);
+    p->ok = 1;
+  }else{
+    p->err = 1;
+  }
+  CloseHandle(p->h);
+  p->h = 0;
+  p->delay1 = 0;
+  p->delay2 = 0;
+}
+#endif
+
+#if SQLITE_OS_WIN
+/*
+**      lock_win32_file FILENAME DELAY1 DELAY2
+**
+** Get an exclusive manditory lock on file for DELAY2 milliseconds.
+** Wait DELAY1 milliseconds before acquiring the lock.
+*/
+static int win32_file_lock(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  static struct win32FileLocker x = { "win32_file_lock", 0, 0, 0, 0, 0 };
+  const char *zFilename;
+  char zBuf[200];
+  int retry = 0;
+  HANDLE ev;
+  DWORD wResult;
+  
+  if( objc!=4 && objc!=1 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "FILENAME DELAY1 DELAY2");
+    return TCL_ERROR;
+  }
+  if( objc==1 ){
+    sqlite3_snprintf(sizeof(zBuf), zBuf, "%d %d %d %d %d",
+                     x.ok, x.err, x.delay1, x.delay2, x.h);
+    Tcl_AppendResult(interp, zBuf, (char*)0);
+    return TCL_OK;
+  }
+  while( x.h && retry<30 ){
+    retry++;
+    Sleep(100);
+  }
+  if( x.h ){
+    Tcl_AppendResult(interp, "busy", (char*)0);
+    return TCL_ERROR;
+  }
+  if( Tcl_GetIntFromObj(interp, objv[2], &x.delay1) ) return TCL_ERROR;
+  if( Tcl_GetIntFromObj(interp, objv[3], &x.delay2) ) return TCL_ERROR;
+  zFilename = Tcl_GetString(objv[1]);
+  x.h = CreateFile(zFilename, GENERIC_READ|GENERIC_WRITE,
+              FILE_SHARE_READ|FILE_SHARE_WRITE, 0, OPEN_ALWAYS,
+              FILE_ATTRIBUTE_NORMAL, 0);
+  if( !x.h ){
+    Tcl_AppendResult(interp, "cannot open file: ", zFilename, (char*)0);
+    return TCL_ERROR;
+  }
+  ev = CreateEvent(NULL, TRUE, FALSE, x.evName);
+  if ( !ev ){
+    Tcl_AppendResult(interp, "cannot create event: ", x.evName, (char*)0);
+    return TCL_ERROR;
+  }
+  _beginthread(win32_file_locker, 0, (void*)&x);
+  Sleep(0);
+  if ( (wResult = WaitForSingleObject(ev, 10000))!=WAIT_OBJECT_0 ){
+    sqlite3_snprintf(sizeof(zBuf), zBuf, "0x%x", wResult);
+    Tcl_AppendResult(interp, "wait failed: ", zBuf, (char*)0);
+    CloseHandle(ev);
+    return TCL_ERROR;
+  }
+  CloseHandle(ev);
+  return TCL_OK;
+}
+#endif
+
 
 /*
 **      optimization_control DB OPT BOOLEAN
@@ -5754,6 +5928,9 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "restore_prng_state",            restore_prng_state, 0 },
      { "reset_prng_state",              reset_prng_state,   0 },
      { "optimization_control",          optimization_control,0},
+#if SQLITE_OS_WIN
+     { "lock_win32_file",               win32_file_lock,    0 },
+#endif
      { "tcl_objproc",                   runAsObjProc,       0 },
 
      /* sqlite3_column_*() API */
@@ -5802,7 +5979,9 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "file_control_lasterrno_test", file_control_lasterrno_test,  0   },
      { "file_control_lockproxy_test", file_control_lockproxy_test,  0   },
      { "file_control_chunksize_test", file_control_chunksize_test,  0   },
-     { "file_control_sizehint_test", file_control_sizehint_test,  0   },
+     { "file_control_sizehint_test",  file_control_sizehint_test,   0   },
+     { "file_control_win32_av_retry", file_control_win32_av_retry,  0   },
+     { "file_control_persist_wal",    file_control_persist_wal,     0   },
      { "sqlite3_vfs_list",           vfs_list,     0   },
      { "sqlite3_create_function_v2", test_create_function_v2, 0 },
 

@@ -433,6 +433,12 @@ static void resolveP2Values(Vdbe *p, int *pMaxFuncArgs){
       n = pOp[-1].p1;
       if( n>nMaxArgs ) nMaxArgs = n;
 #endif
+    }else if( opcode==OP_Next || opcode==OP_SorterNext ){
+      pOp->p4.xAdvance = sqlite3BtreeNext;
+      pOp->p4type = P4_ADVANCE;
+    }else if( opcode==OP_Prev ){
+      pOp->p4.xAdvance = sqlite3BtreePrevious;
+      pOp->p4type = P4_ADVANCE;
     }
 
     if( (pOp->opflags & OPFLG_JUMP)!=0 && pOp->p2<0 ){
@@ -524,10 +530,9 @@ int sqlite3VdbeAddOpList(Vdbe *p, int nOp, VdbeOpList const *aOp){
 ** static array using sqlite3VdbeAddOpList but we want to make a
 ** few minor changes to the program.
 */
-void sqlite3VdbeChangeP1(Vdbe *p, int addr, int val){
+void sqlite3VdbeChangeP1(Vdbe *p, u32 addr, int val){
   assert( p!=0 );
-  assert( addr>=0 );
-  if( p->nOp>addr ){
+  if( ((u32)p->nOp)>addr ){
     p->aOp[addr].p1 = val;
   }
 }
@@ -536,10 +541,9 @@ void sqlite3VdbeChangeP1(Vdbe *p, int addr, int val){
 ** Change the value of the P2 operand for a specific instruction.
 ** This routine is useful for setting a jump destination.
 */
-void sqlite3VdbeChangeP2(Vdbe *p, int addr, int val){
+void sqlite3VdbeChangeP2(Vdbe *p, u32 addr, int val){
   assert( p!=0 );
-  assert( addr>=0 );
-  if( p->nOp>addr ){
+  if( ((u32)p->nOp)>addr ){
     p->aOp[addr].p2 = val;
   }
 }
@@ -547,10 +551,9 @@ void sqlite3VdbeChangeP2(Vdbe *p, int addr, int val){
 /*
 ** Change the value of the P3 operand for a specific instruction.
 */
-void sqlite3VdbeChangeP3(Vdbe *p, int addr, int val){
+void sqlite3VdbeChangeP3(Vdbe *p, u32 addr, int val){
   assert( p!=0 );
-  assert( addr>=0 );
-  if( p->nOp>addr ){
+  if( ((u32)p->nOp)>addr ){
     p->aOp[addr].p3 = val;
   }
 }
@@ -572,8 +575,8 @@ void sqlite3VdbeChangeP5(Vdbe *p, u8 val){
 ** the address of the next instruction to be coded.
 */
 void sqlite3VdbeJumpHere(Vdbe *p, int addr){
-  assert( addr>=0 );
-  sqlite3VdbeChangeP2(p, addr, p->nOp);
+  assert( addr>=0 || p->db->mallocFailed );
+  if( addr>=0 ) sqlite3VdbeChangeP2(p, addr, p->nOp);
 }
 
 
@@ -667,18 +670,15 @@ void sqlite3VdbeLinkSubProgram(Vdbe *pVdbe, SubProgram *p){
 }
 
 /*
-** Change N opcodes starting at addr to No-ops.
+** Change the opcode at addr into OP_Noop
 */
-void sqlite3VdbeChangeToNoop(Vdbe *p, int addr, int N){
+void sqlite3VdbeChangeToNoop(Vdbe *p, int addr){
   if( p->aOp ){
     VdbeOp *pOp = &p->aOp[addr];
     sqlite3 *db = p->db;
-    while( N-- ){
-      freeP4(db, pOp->p4type, pOp->p4.p);
-      memset(pOp, 0, sizeof(pOp[0]));
-      pOp->opcode = OP_Noop;
-      pOp++;
-    }
+    freeP4(db, pOp->p4type, pOp->p4.p);
+    memset(pOp, 0, sizeof(pOp[0]));
+    pOp->opcode = OP_Noop;
   }
 }
 
@@ -781,30 +781,29 @@ void sqlite3VdbeChangeP4(Vdbe *p, int addr, const char *zP4, int n){
 ** makes the code easier to read during debugging.  None of this happens
 ** in a production build.
 */
-void sqlite3VdbeComment(Vdbe *p, const char *zFormat, ...){
-  va_list ap;
-  if( !p ) return;
+static void vdbeVComment(Vdbe *p, const char *zFormat, va_list ap){
   assert( p->nOp>0 || p->aOp==0 );
   assert( p->aOp==0 || p->aOp[p->nOp-1].zComment==0 || p->db->mallocFailed );
   if( p->nOp ){
-    char **pz = &p->aOp[p->nOp-1].zComment;
+    assert( p->aOp );
+    sqlite3DbFree(p->db, p->aOp[p->nOp-1].zComment);
+    p->aOp[p->nOp-1].zComment = sqlite3VMPrintf(p->db, zFormat, ap);
+  }
+}
+void sqlite3VdbeComment(Vdbe *p, const char *zFormat, ...){
+  va_list ap;
+  if( p ){
     va_start(ap, zFormat);
-    sqlite3DbFree(p->db, *pz);
-    *pz = sqlite3VMPrintf(p->db, zFormat, ap);
+    vdbeVComment(p, zFormat, ap);
     va_end(ap);
   }
 }
 void sqlite3VdbeNoopComment(Vdbe *p, const char *zFormat, ...){
   va_list ap;
-  if( !p ) return;
-  sqlite3VdbeAddOp0(p, OP_Noop);
-  assert( p->nOp>0 || p->aOp==0 );
-  assert( p->aOp==0 || p->aOp[p->nOp-1].zComment==0 || p->db->mallocFailed );
-  if( p->nOp ){
-    char **pz = &p->aOp[p->nOp-1].zComment;
+  if( p ){
+    sqlite3VdbeAddOp0(p, OP_Noop);
     va_start(ap, zFormat);
-    sqlite3DbFree(p->db, *pz);
-    *pz = sqlite3VMPrintf(p->db, zFormat, ap);
+    vdbeVComment(p, zFormat, ap);
     va_end(ap);
   }
 }
@@ -834,7 +833,7 @@ void sqlite3VdbeNoopComment(Vdbe *p, const char *zFormat, ...){
 VdbeOp *sqlite3VdbeGetOp(Vdbe *p, int addr){
   /* C89 specifies that the constant "dummy" will be initialized to all
   ** zeros, which is correct.  MSVC generates a warning, nevertheless. */
-  static const VdbeOp dummy;  /* Ignore the MSVC warning about no initializer */
+  static VdbeOp dummy;  /* Ignore the MSVC warning about no initializer */
   assert( p->magic==VDBE_MAGIC_INIT );
   if( addr<0 ){
 #ifdef SQLITE_OMIT_TRACE
@@ -940,6 +939,10 @@ static char *displayP4(Op *pOp, char *zTemp, int nTemp){
     }
     case P4_SUBPROGRAM: {
       sqlite3_snprintf(nTemp, zTemp, "program");
+      break;
+    }
+    case P4_ADVANCE: {
+      zTemp[0] = 0;
       break;
     }
     default: {
@@ -1138,7 +1141,7 @@ int sqlite3VdbeList(
   sqlite3 *db = p->db;                 /* The database connection */
   int i;                               /* Loop counter */
   int rc = SQLITE_OK;                  /* Return code */
-  Mem *pMem = p->pResultSet = &p->aMem[1];  /* First Mem of result set */
+  Mem *pMem = &p->aMem[1];             /* First Mem of result set */
 
   assert( p->explain );
   assert( p->magic==VDBE_MAGIC_RUN );
@@ -1149,6 +1152,7 @@ int sqlite3VdbeList(
   ** sqlite3_column_text16(), causing a translation to UTF-16 encoding.
   */
   releaseMemArray(pMem, 8);
+  p->pResultSet = 0;
 
   if( p->rc==SQLITE_NOMEM ){
     /* This happens if a malloc() inside a call to sqlite3_column_text() or
@@ -1303,6 +1307,7 @@ int sqlite3VdbeList(
     }
 
     p->nResColumn = 8 - 4*(p->explain-1);
+    p->pResultSet = &p->aMem[1];
     p->rc = SQLITE_OK;
     rc = SQLITE_ROW;
   }
@@ -1565,6 +1570,7 @@ void sqlite3VdbeFreeCursor(Vdbe *p, VdbeCursor *pCx){
   if( pCx==0 ){
     return;
   }
+  sqlite3VdbeSorterClose(p->db, pCx);
   if( pCx->pBt ){
     sqlite3BtreeClose(pCx->pBt);
     /* The pCx->pCursor will be close automatically, if it exists, by
@@ -2305,6 +2311,30 @@ void sqlite3VdbeResetStepResult(Vdbe *p){
 }
 
 /*
+** Copy the error code and error message belonging to the VDBE passed
+** as the first argument to its database handle (so that they will be 
+** returned by calls to sqlite3_errcode() and sqlite3_errmsg()).
+**
+** This function does not clear the VDBE error code or message, just
+** copies them to the database handle.
+*/
+int sqlite3VdbeTransferError(Vdbe *p){
+  sqlite3 *db = p->db;
+  int rc = p->rc;
+  if( p->zErrMsg ){
+    u8 mallocFailed = db->mallocFailed;
+    sqlite3BeginBenignMalloc();
+    sqlite3ValueSetStr(db->pErr, -1, p->zErrMsg, SQLITE_UTF8, SQLITE_TRANSIENT);
+    sqlite3EndBenignMalloc();
+    db->mallocFailed = mallocFailed;
+    db->errCode = rc;
+  }else{
+    sqlite3Error(db, rc, 0);
+  }
+  return rc;
+}
+
+/*
 ** Clean up a VDBE after execution but do not delete the VDBE just yet.
 ** Write any error messages into *pzErrMsg.  Return the result code.
 **
@@ -2331,18 +2361,9 @@ int sqlite3VdbeReset(Vdbe *p){
   ** instructions yet, leave the main database error information unchanged.
   */
   if( p->pc>=0 ){
-    if( p->zErrMsg ){
-      sqlite3BeginBenignMalloc();
-      sqlite3ValueSetStr(db->pErr,-1,p->zErrMsg,SQLITE_UTF8,SQLITE_TRANSIENT);
-      sqlite3EndBenignMalloc();
-      db->errCode = p->rc;
-      sqlite3DbFree(db, p->zErrMsg);
-      p->zErrMsg = 0;
-    }else if( p->rc ){
-      sqlite3Error(db, p->rc, 0);
-    }else{
-      sqlite3Error(db, SQLITE_OK, 0);
-    }
+    sqlite3VdbeTransferError(p);
+    sqlite3DbFree(db, p->zErrMsg);
+    p->zErrMsg = 0;
     if( p->runOnlyOnce ) p->expired = 1;
   }else if( p->rc && p->expired ){
     /* The expired flag was set on the VDBE before the first call
@@ -2822,57 +2843,70 @@ u32 sqlite3VdbeSerialGet(
   return 0;
 }
 
-
 /*
-** Given the nKey-byte encoding of a record in pKey[], parse the
-** record into a UnpackedRecord structure.  Return a pointer to
-** that structure.
+** This routine is used to allocate sufficient space for an UnpackedRecord
+** structure large enough to be used with sqlite3VdbeRecordUnpack() if
+** the first argument is a pointer to KeyInfo structure pKeyInfo.
 **
-** The calling function might provide szSpace bytes of memory
-** space at pSpace.  This space can be used to hold the returned
-** VDbeParsedRecord structure if it is large enough.  If it is
-** not big enough, space is obtained from sqlite3_malloc().
+** The space is either allocated using sqlite3DbMallocRaw() or from within
+** the unaligned buffer passed via the second and third arguments (presumably
+** stack space). If the former, then *ppFree is set to a pointer that should
+** be eventually freed by the caller using sqlite3DbFree(). Or, if the 
+** allocation comes from the pSpace/szSpace buffer, *ppFree is set to NULL
+** before returning.
 **
-** The returned structure should be closed by a call to
-** sqlite3VdbeDeleteUnpackedRecord().
-*/ 
-UnpackedRecord *sqlite3VdbeRecordUnpack(
-  KeyInfo *pKeyInfo,     /* Information about the record format */
-  int nKey,              /* Size of the binary record */
-  const void *pKey,      /* The binary record */
-  char *pSpace,          /* Unaligned space available to hold the object */
-  int szSpace            /* Size of pSpace[] in bytes */
+** If an OOM error occurs, NULL is returned.
+*/
+UnpackedRecord *sqlite3VdbeAllocUnpackedRecord(
+  KeyInfo *pKeyInfo,              /* Description of the record */
+  char *pSpace,                   /* Unaligned space available */
+  int szSpace,                    /* Size of pSpace[] in bytes */
+  char **ppFree                   /* OUT: Caller should free this pointer */
 ){
-  const unsigned char *aKey = (const unsigned char *)pKey;
-  UnpackedRecord *p;  /* The unpacked record that we will return */
-  int nByte;          /* Memory space needed to hold p, in bytes */
-  int d;
-  u32 idx;
-  u16 u;              /* Unsigned loop counter */
-  u32 szHdr;
-  Mem *pMem;
-  int nOff;           /* Increase pSpace by this much to 8-byte align it */
-  
-  /*
-  ** We want to shift the pointer pSpace up such that it is 8-byte aligned.
+  UnpackedRecord *p;              /* Unpacked record to return */
+  int nOff;                       /* Increment pSpace by nOff to align it */
+  int nByte;                      /* Number of bytes required for *p */
+
+  /* We want to shift the pointer pSpace up such that it is 8-byte aligned.
   ** Thus, we need to calculate a value, nOff, between 0 and 7, to shift 
   ** it by.  If pSpace is already 8-byte aligned, nOff should be zero.
   */
   nOff = (8 - (SQLITE_PTR_TO_INT(pSpace) & 7)) & 7;
-  pSpace += nOff;
-  szSpace -= nOff;
   nByte = ROUND8(sizeof(UnpackedRecord)) + sizeof(Mem)*(pKeyInfo->nField+1);
-  if( nByte>szSpace ){
-    p = sqlite3DbMallocRaw(pKeyInfo->db, nByte);
-    if( p==0 ) return 0;
-    p->flags = UNPACKED_NEED_FREE | UNPACKED_NEED_DESTROY;
+  if( nByte>szSpace+nOff ){
+    p = (UnpackedRecord *)sqlite3DbMallocRaw(pKeyInfo->db, nByte);
+    *ppFree = (char *)p;
+    if( !p ) return 0;
   }else{
-    p = (UnpackedRecord*)pSpace;
-    p->flags = UNPACKED_NEED_DESTROY;
+    p = (UnpackedRecord*)&pSpace[nOff];
+    *ppFree = 0;
   }
+
+  p->aMem = (Mem*)&((char*)p)[ROUND8(sizeof(UnpackedRecord))];
   p->pKeyInfo = pKeyInfo;
   p->nField = pKeyInfo->nField + 1;
-  p->aMem = pMem = (Mem*)&((char*)p)[ROUND8(sizeof(UnpackedRecord))];
+  return p;
+}
+
+/*
+** Given the nKey-byte encoding of a record in pKey[], populate the 
+** UnpackedRecord structure indicated by the fourth argument with the
+** contents of the decoded record.
+*/ 
+void sqlite3VdbeRecordUnpack(
+  KeyInfo *pKeyInfo,     /* Information about the record format */
+  int nKey,              /* Size of the binary record */
+  const void *pKey,      /* The binary record */
+  UnpackedRecord *p      /* Populate this structure before returning. */
+){
+  const unsigned char *aKey = (const unsigned char *)pKey;
+  int d; 
+  u32 idx;                        /* Offset in aKey[] to read from */
+  u16 u;                          /* Unsigned loop counter */
+  u32 szHdr;
+  Mem *pMem = p->aMem;
+
+  p->flags = 0;
   assert( EIGHT_BYTE_ALIGNMENT(pMem) );
   idx = getVarint32(aKey, szHdr);
   d = szHdr;
@@ -2891,31 +2925,6 @@ UnpackedRecord *sqlite3VdbeRecordUnpack(
   }
   assert( u<=pKeyInfo->nField + 1 );
   p->nField = u;
-  return (void*)p;
-}
-
-/*
-** This routine destroys a UnpackedRecord object.
-*/
-void sqlite3VdbeDeleteUnpackedRecord(UnpackedRecord *p){
-#ifdef SQLITE_DEBUG
-  int i;
-  Mem *pMem;
-
-  assert( p!=0 );
-  assert( p->flags & UNPACKED_NEED_DESTROY );
-  for(i=0, pMem=p->aMem; i<p->nField; i++, pMem++){
-    /* The unpacked record is always constructed by the
-    ** sqlite3VdbeUnpackRecord() function above, which makes all
-    ** strings and blobs static.  And none of the elements are
-    ** ever transformed, so there is never anything to delete.
-    */
-    if( NEVER(pMem->zMalloc) ) sqlite3VdbeMemRelease(pMem);
-  }
-#endif
-  if( p->flags & UNPACKED_NEED_FREE ){
-    sqlite3DbFree(p->pKeyInfo->db, p);
-  }
 }
 
 /*
@@ -3069,7 +3078,7 @@ int sqlite3VdbeIdxRowid(sqlite3 *db, BtCursor *pCur, i64 *rowid){
   ** this code can safely assume that nCellKey is 32-bits  
   */
   assert( sqlite3BtreeCursorIsValid(pCur) );
-  rc = sqlite3BtreeKeySize(pCur, &nCellKey);
+  VVA_ONLY(rc =) sqlite3BtreeKeySize(pCur, &nCellKey);
   assert( rc==SQLITE_OK );     /* pCur is always valid so KeySize cannot fail */
   assert( (nCellKey & SQLITE_MAX_U32)==(u64)nCellKey );
 
@@ -3144,7 +3153,7 @@ int sqlite3VdbeIdxKeyCompare(
   Mem m;
 
   assert( sqlite3BtreeCursorIsValid(pCur) );
-  rc = sqlite3BtreeKeySize(pCur, &nCellKey);
+  VVA_ONLY(rc =) sqlite3BtreeKeySize(pCur, &nCellKey);
   assert( rc==SQLITE_OK );    /* pCur is always valid so KeySize cannot fail */
   /* nCellKey will always be between 0 and 0xffffffff because of the say
   ** that btreeParseCellPtr() and sqlite3GetVarint32() are implemented */

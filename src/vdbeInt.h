@@ -30,6 +30,9 @@ typedef struct VdbeOp Op;
 */
 typedef unsigned char Bool;
 
+/* Opaque type used by code in vdbesort.c */
+typedef struct VdbeSorter VdbeSorter;
+
 /*
 ** A cursor is a pointer into a single BTree within a database file.
 ** The cursor can seek to a BTree entry with a particular key, or
@@ -56,11 +59,13 @@ struct VdbeCursor {
   Bool isTable;         /* True if a table requiring integer keys */
   Bool isIndex;         /* True if an index containing keys only - no data */
   Bool isOrdered;       /* True if the underlying table is BTREE_UNORDERED */
+  Bool isSorter;        /* True if a new-style sorter */
   sqlite3_vtab_cursor *pVtabCursor;  /* The cursor for a virtual table */
   const sqlite3_module *pModule;     /* Module for cursor pVtabCursor */
   i64 seqCount;         /* Sequence counter */
   i64 movetoTarget;     /* Argument to the deferred sqlite3BtreeMoveto() */
   i64 lastRowid;        /* Last rowid from a Next or NextIdx operation */
+  VdbeSorter *pSorter;  /* Sorter object for OP_SorterOpen cursors */
 
   /* Result of last sqlite3BtreeMoveto() done by an OP_NotExists or 
   ** OP_IsUnique opcode on this cursor. */
@@ -380,6 +385,9 @@ int sqlite3VdbeMemNumerify(Mem*);
 int sqlite3VdbeMemFromBtree(BtCursor*,int,int,int,Mem*);
 void sqlite3VdbeMemRelease(Mem *p);
 void sqlite3VdbeMemReleaseExternal(Mem *p);
+#define MemReleaseExt(X)  \
+  if((X)->flags&(MEM_Agg|MEM_Dyn|MEM_RowSet|MEM_Frame)) \
+    sqlite3VdbeMemReleaseExternal(X);
 int sqlite3VdbeMemFinalize(Mem*, FuncDef*);
 const char *sqlite3OpcodeName(int);
 int sqlite3VdbeMemGrow(Mem *pMem, int n, int preserve);
@@ -387,6 +395,25 @@ int sqlite3VdbeCloseStatement(Vdbe *, int);
 void sqlite3VdbeFrameDelete(VdbeFrame*);
 int sqlite3VdbeFrameRestore(VdbeFrame *);
 void sqlite3VdbeMemStoreType(Mem *pMem);
+int sqlite3VdbeTransferError(Vdbe *p);
+
+#ifdef SQLITE_OMIT_MERGE_SORT
+# define sqlite3VdbeSorterInit(Y,Z)      SQLITE_OK
+# define sqlite3VdbeSorterWrite(X,Y,Z)   SQLITE_OK
+# define sqlite3VdbeSorterClose(Y,Z)
+# define sqlite3VdbeSorterRowkey(Y,Z)    SQLITE_OK
+# define sqlite3VdbeSorterRewind(X,Y,Z)  SQLITE_OK
+# define sqlite3VdbeSorterNext(X,Y,Z)    SQLITE_OK
+# define sqlite3VdbeSorterCompare(X,Y,Z) SQLITE_OK
+#else
+int sqlite3VdbeSorterInit(sqlite3 *, VdbeCursor *);
+void sqlite3VdbeSorterClose(sqlite3 *, VdbeCursor *);
+int sqlite3VdbeSorterRowkey(VdbeCursor *, Mem *);
+int sqlite3VdbeSorterNext(sqlite3 *, VdbeCursor *, int *);
+int sqlite3VdbeSorterRewind(sqlite3 *, VdbeCursor *, int *);
+int sqlite3VdbeSorterWrite(sqlite3 *, VdbeCursor *, Mem *);
+int sqlite3VdbeSorterCompare(VdbeCursor *, Mem *, int *);
+#endif
 
 #if !defined(SQLITE_OMIT_SHARED_CACHE) && SQLITE_THREADSAFE>0
   void sqlite3VdbeEnter(Vdbe*);

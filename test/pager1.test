@@ -452,7 +452,7 @@ do_test pager1.4.2.2 {
 } {4 ok}
 do_test pager1.4.2.3 {
   faultsim_restore_and_reopen
-  foreach f [glob test.db-mj*] { file delete -force $f }
+  foreach f [glob test.db-mj*] { forcedelete $f }
   execsql {
     SELECT count(*) FROM t1;
     PRAGMA integrity_check;
@@ -469,7 +469,7 @@ do_test pager1.4.2.4 {
 do_test pager1.4.2.5 {
   faultsim_restore_and_reopen
   hexio_write test.db-journal [expr [file size test.db-journal]-20] 123456
-  foreach f [glob test.db-mj*] { file delete -force $f }
+  foreach f [glob test.db-mj*] { forcedelete $f }
   execsql {
     SELECT count(*) FROM t1;
     PRAGMA integrity_check;
@@ -649,7 +649,7 @@ foreach {tn1 tcl} {
     #
     do_test pager1-4.4.$tn.7 {
       faultsim_restore_and_reopen $prefix
-      foreach f [glob ${prefix}-mj*] { file delete -force $f }
+      foreach f [glob ${prefix}-mj*] { forcedelete $f }
       execsql "ATTACH '${prefix}2' AS aux"
     } {}
     do_execsql_test pager1-4.4.$tn.8 {
@@ -664,7 +664,7 @@ foreach {tn1 tcl} {
 }
 db close
 tv delete
-file delete -force $dirname
+forcedelete $dirname
 
 
 # Set up a VFS to make a copy of the file-system just before deleting a
@@ -882,7 +882,7 @@ do_test pager1.4.7.3 {
   db close
   catch {file attributes test.db-journal -permissions rw-rw-rw-}
   catch {file attributes test.db-journal -readonly 0}
-  file delete test.db-journal
+  delete_file test.db-journal
   file exists test.db-journal
 } {0}
 
@@ -1766,6 +1766,10 @@ do_multiclient_test tn {
 #   + Page 0,
 #   + A page with a page number greater than (2^31-1).
 #
+# These tests will not work if SQLITE_DIRECT_OVERFLOW_READ is defined. In
+# that case IO errors are sometimes reported instead of SQLITE_CORRUPT.
+#
+ifcapable !direct_read {
 do_test pager1-18.1 {
   faultsim_delete_and_reopen
   db func a_string a_string
@@ -1841,6 +1845,7 @@ do_test pager1-18.6 {
   sqlite3 db test.db
   catchsql { SELECT length(x) FROM t1 }
 } {1 {database disk image is malformed}}
+}
 
 do_test pager1-19.1 {
   sqlite3 db ""
@@ -1992,31 +1997,33 @@ ifcapable wal {
 #   pager1-22.1.*: is a no-op on a non-WAL db, and
 #   pager1-22.2.*: does not cause xSync calls with a synchronous=off db.
 #
-do_test pager1-22.1.1 {
-  faultsim_delete_and_reopen
-  execsql {
-    CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
-    INSERT INTO ko DEFAULT VALUES;
-  }
-  execsql { PRAGMA wal_checkpoint }
-} {0 -1 -1}
-do_test pager1-22.2.1 {
-  testvfs tv -default 1
-  tv filter xSync
-  tv script xSyncCb
-  proc xSyncCb {args} {incr ::synccount}
-  set ::synccount 0
-  sqlite3 db test.db
-  execsql {
-    PRAGMA synchronous = off;
-    PRAGMA journal_mode = WAL;
-    INSERT INTO ko DEFAULT VALUES;
-  }
-  execsql { PRAGMA wal_checkpoint }
-  set synccount
-} {0}
-db close
-tv delete
+ifcapable wal {
+  do_test pager1-22.1.1 {
+    faultsim_delete_and_reopen
+    execsql {
+      CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
+      INSERT INTO ko DEFAULT VALUES;
+    }
+    execsql { PRAGMA wal_checkpoint }
+  } {0 -1 -1}
+  do_test pager1-22.2.1 {
+    testvfs tv -default 1
+    tv filter xSync
+    tv script xSyncCb
+    proc xSyncCb {args} {incr ::synccount}
+    set ::synccount 0
+    sqlite3 db test.db
+    execsql {
+      PRAGMA synchronous = off;
+      PRAGMA journal_mode = WAL;
+      INSERT INTO ko DEFAULT VALUES;
+    }
+    execsql { PRAGMA wal_checkpoint }
+    set synccount
+  } {0}
+  db close
+  tv delete
+}
 
 #-------------------------------------------------------------------------
 # Tests for changing journal mode.
@@ -2368,8 +2375,8 @@ do_test pager1-29.2 {
 #
 do_test pager1-30.1 {
   db close
-  file delete test.db
-  file delete test.db-journal
+  delete_file test.db
+  delete_file test.db-journal
   set fd [open test.db-journal w]
   seek $fd [expr 512+1032*2]
   puts -nonewline $fd x
@@ -2409,8 +2416,8 @@ do_test pager1-31.1 {
     BEGIN;
       UPDATE t1 SET y = randomblob(1499);
   }
-  file copy test.db test.db2
-  file copy test.db-journal test.db2-journal
+  copy_file test.db test.db2
+  copy_file test.db-journal test.db2-journal
   
   hexio_write test.db2-journal 24 00000000
   sqlite3 db2 test.db2
@@ -2418,5 +2425,43 @@ do_test pager1-31.1 {
 } {ok}
 }
 
+#-------------------------------------------------------------------------
+# Test that a database file can be "pre-hinted" to a certain size and that
+# subsequent spilling of the pager cache does not result in the database
+# file being shrunk.
+#
+catch {db close}
+forcedelete test.db
+
+do_test pager1-32.1 {
+  sqlite3 db test.db
+  execsql {
+    CREATE TABLE t1(x, y);
+  }
+  db close
+  sqlite3 db test.db
+  execsql {
+    BEGIN;
+    INSERT INTO t1 VALUES(1, randomblob(10000));
+  }
+  file_control_chunksize_test db main 1024
+  file_control_sizehint_test db main 20971520; # 20MB
+  execsql {
+    PRAGMA cache_size = 10;
+    INSERT INTO t1 VALUES(1, randomblob(10000));
+    INSERT INTO t1 VALUES(2, randomblob(10000));
+    INSERT INTO t1 SELECT x+2, randomblob(10000) from t1;
+    INSERT INTO t1 SELECT x+4, randomblob(10000) from t1;
+    INSERT INTO t1 SELECT x+8, randomblob(10000) from t1;
+    INSERT INTO t1 SELECT x+16, randomblob(10000) from t1;
+    SELECT count(*) FROM t1;
+    COMMIT;
+  }
+  db close
+  file size test.db
+} {20971520}
+
+# Cleanup 20MB file left by the previous test.
+forcedelete test.db
 
 finish_test

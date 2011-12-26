@@ -271,24 +271,18 @@ int sqlite3VdbeMemFinalize(Mem *pMem, FuncDef *pFunc){
 */
 void sqlite3VdbeMemReleaseExternal(Mem *p){
   assert( p->db==0 || sqlite3_mutex_held(p->db->mutex) );
-  testcase( p->flags & MEM_Agg );
-  testcase( p->flags & MEM_Dyn );
-  testcase( p->flags & MEM_RowSet );
-  testcase( p->flags & MEM_Frame );
-  if( p->flags&(MEM_Agg|MEM_Dyn|MEM_RowSet|MEM_Frame) ){
-    if( p->flags&MEM_Agg ){
-      sqlite3VdbeMemFinalize(p, p->u.pDef);
-      assert( (p->flags & MEM_Agg)==0 );
-      sqlite3VdbeMemRelease(p);
-    }else if( p->flags&MEM_Dyn && p->xDel ){
-      assert( (p->flags&MEM_RowSet)==0 );
-      p->xDel((void *)p->z);
-      p->xDel = 0;
-    }else if( p->flags&MEM_RowSet ){
-      sqlite3RowSetClear(p->u.pRowSet);
-    }else if( p->flags&MEM_Frame ){
-      sqlite3VdbeMemSetNull(p);
-    }
+  if( p->flags&MEM_Agg ){
+    sqlite3VdbeMemFinalize(p, p->u.pDef);
+    assert( (p->flags & MEM_Agg)==0 );
+    sqlite3VdbeMemRelease(p);
+  }else if( p->flags&MEM_Dyn && p->xDel ){
+    assert( (p->flags&MEM_RowSet)==0 );
+    p->xDel((void *)p->z);
+    p->xDel = 0;
+  }else if( p->flags&MEM_RowSet ){
+    sqlite3RowSetClear(p->u.pRowSet);
+  }else if( p->flags&MEM_Frame ){
+    sqlite3VdbeMemSetNull(p);
   }
 }
 
@@ -298,7 +292,7 @@ void sqlite3VdbeMemReleaseExternal(Mem *p){
 ** (Mem.type==SQLITE_TEXT).
 */
 void sqlite3VdbeMemRelease(Mem *p){
-  sqlite3VdbeMemReleaseExternal(p);
+  MemReleaseExt(p);
   sqlite3DbFree(p->db, p->zMalloc);
   p->z = 0;
   p->zMalloc = 0;
@@ -620,7 +614,7 @@ void sqlite3VdbeMemPrepareToChange(Vdbe *pVdbe, Mem *pMem){
 */
 void sqlite3VdbeMemShallowCopy(Mem *pTo, const Mem *pFrom, int srcType){
   assert( (pFrom->flags & MEM_RowSet)==0 );
-  sqlite3VdbeMemReleaseExternal(pTo);
+  MemReleaseExt(pTo);
   memcpy(pTo, pFrom, MEMCELLSIZE);
   pTo->xDel = 0;
   if( (pFrom->flags&MEM_Static)==0 ){
@@ -638,7 +632,7 @@ int sqlite3VdbeMemCopy(Mem *pTo, const Mem *pFrom){
   int rc = SQLITE_OK;
 
   assert( (pFrom->flags & MEM_RowSet)==0 );
-  sqlite3VdbeMemReleaseExternal(pTo);
+  MemReleaseExt(pTo);
   memcpy(pTo, pFrom, MEMCELLSIZE);
   pTo->flags &= ~MEM_Dyn;
 
@@ -1032,11 +1026,11 @@ int sqlite3ValueFromExpr(
   }
   op = pExpr->op;
 
-  /* op can only be TK_REGISTER if we have compiled with SQLITE_ENABLE_STAT2.
+  /* op can only be TK_REGISTER if we have compiled with SQLITE_ENABLE_STAT3.
   ** The ifdef here is to enable us to achieve 100% branch test coverage even
-  ** when SQLITE_ENABLE_STAT2 is omitted.
+  ** when SQLITE_ENABLE_STAT3 is omitted.
   */
-#ifdef SQLITE_ENABLE_STAT2
+#ifdef SQLITE_ENABLE_STAT3
   if( op==TK_REGISTER ) op = pExpr->op2;
 #else
   if( NEVER(op==TK_REGISTER) ) op = pExpr->op2;

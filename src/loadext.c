@@ -84,6 +84,8 @@
 # define sqlite3_create_module 0
 # define sqlite3_create_module_v2 0
 # define sqlite3_declare_vtab 0
+# define sqlite3_vtab_config 0
+# define sqlite3_vtab_on_conflict 0
 #endif
 
 #ifdef SQLITE_OMIT_SHARED_CACHE
@@ -107,6 +109,7 @@
 #define sqlite3_blob_open      0
 #define sqlite3_blob_read      0
 #define sqlite3_blob_write     0
+#define sqlite3_blob_reopen    0
 #endif
 
 /*
@@ -372,6 +375,9 @@ static const sqlite3_api_routines sqlite3Apis = {
   0,
   0,
 #endif
+  sqlite3_blob_reopen,
+  sqlite3_vtab_config,
+  sqlite3_vtab_on_conflict,
 };
 
 /*
@@ -397,7 +403,7 @@ static int sqlite3LoadExtension(
   int (*xInit)(sqlite3*,char**,const sqlite3_api_routines*);
   char *zErrmsg = 0;
   void **aHandle;
-  const int nMsg = 300;
+  int nMsg = 300 + sqlite3Strlen30(zFile);
 
   if( pzErrMsg ) *pzErrMsg = 0;
 
@@ -434,6 +440,7 @@ static int sqlite3LoadExtension(
                    sqlite3OsDlSym(pVfs, handle, zProc);
   if( xInit==0 ){
     if( pzErrMsg ){
+      nMsg += sqlite3Strlen30(zProc);
       *pzErrMsg = zErrmsg = sqlite3_malloc(nMsg);
       if( zErrmsg ){
         sqlite3_snprintf(nMsg, zErrmsg,

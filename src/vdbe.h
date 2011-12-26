@@ -61,6 +61,7 @@ struct VdbeOp {
     KeyInfo *pKeyInfo;     /* Used when p4type is P4_KEYINFO */
     int *ai;               /* Used when p4type is P4_INTARRAY */
     SubProgram *pProgram;  /* Used when p4type is P4_SUBPROGRAM */
+    int (*xAdvance)(BtCursor *, int *);
   } p4;
 #ifdef SQLITE_DEBUG
   char *zComment;          /* Comment to improve readability */
@@ -116,6 +117,7 @@ typedef struct VdbeOpList VdbeOpList;
 #define P4_INT32    (-14) /* P4 is a 32-bit signed integer */
 #define P4_INTARRAY (-15) /* P4 is a vector of 32-bit integers */
 #define P4_SUBPROGRAM  (-18) /* P4 is a pointer to a SubProgram structure */
+#define P4_ADVANCE  (-19) /* P4 is a pointer to BtreeNext() or BtreePrev() */
 
 /* When adding a P4 argument using P4_KEYINFO, a copy of the KeyInfo structure
 ** is made.  That copy is freed when the Vdbe is finalized.  But if the
@@ -173,12 +175,12 @@ int sqlite3VdbeAddOp4(Vdbe*,int,int,int,int,const char *zP4,int);
 int sqlite3VdbeAddOp4Int(Vdbe*,int,int,int,int,int);
 int sqlite3VdbeAddOpList(Vdbe*, int nOp, VdbeOpList const *aOp);
 void sqlite3VdbeAddParseSchemaOp(Vdbe*,int,char*);
-void sqlite3VdbeChangeP1(Vdbe*, int addr, int P1);
-void sqlite3VdbeChangeP2(Vdbe*, int addr, int P2);
-void sqlite3VdbeChangeP3(Vdbe*, int addr, int P3);
+void sqlite3VdbeChangeP1(Vdbe*, u32 addr, int P1);
+void sqlite3VdbeChangeP2(Vdbe*, u32 addr, int P2);
+void sqlite3VdbeChangeP3(Vdbe*, u32 addr, int P3);
 void sqlite3VdbeChangeP5(Vdbe*, u8 P5);
 void sqlite3VdbeJumpHere(Vdbe*, int addr);
-void sqlite3VdbeChangeToNoop(Vdbe*, int addr, int N);
+void sqlite3VdbeChangeToNoop(Vdbe*, int addr);
 void sqlite3VdbeChangeP4(Vdbe*, int addr, const char *zP4, int N);
 void sqlite3VdbeUsesBtree(Vdbe*, int);
 VdbeOp *sqlite3VdbeGetOp(Vdbe*, int);
@@ -210,9 +212,9 @@ void sqlite3VdbeSetVarmask(Vdbe*, int);
   char *sqlite3VdbeExpandSql(Vdbe*, const char*);
 #endif
 
-UnpackedRecord *sqlite3VdbeRecordUnpack(KeyInfo*,int,const void*,char*,int);
-void sqlite3VdbeDeleteUnpackedRecord(UnpackedRecord*);
+void sqlite3VdbeRecordUnpack(KeyInfo*,int,const void*,UnpackedRecord*);
 int sqlite3VdbeRecordCompare(int,const void*,UnpackedRecord*);
+UnpackedRecord *sqlite3VdbeAllocUnpackedRecord(KeyInfo *, char *, int, char **);
 
 #ifndef SQLITE_OMIT_TRIGGER
 void sqlite3VdbeLinkSubProgram(Vdbe *, SubProgram *);
