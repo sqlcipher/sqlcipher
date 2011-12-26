@@ -155,6 +155,8 @@ const char *sqlite3PagerJournalname(Pager*);
 int sqlite3PagerNosync(Pager*);
 void *sqlite3PagerTempSpace(Pager*);
 int sqlite3PagerIsMemdb(Pager*);
+void sqlite3PagerCacheStat(Pager *, int, int, int *);
+void sqlite3PagerClearCache(Pager *);
 
 /* Functions used to truncate the database file. */
 void sqlite3PagerTruncateImage(Pager*,Pgno);

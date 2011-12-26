@@ -111,7 +111,7 @@ set allquicktests [test_set $alltests -exclude {
   thread003.test thread004.test thread005.test trans2.test vacuum3.test 
   incrvacuum_ioerr.test autovacuum_crash.test btree8.test shared_err.test
   vtab_err.test walslow.test walcrash.test 
-  walthread.test rtree3.test
+  walthread.test rtree3.test indexfault.test
 }]
 if {[info exists ::env(QUICKTEST_INCLUDE)]} {
   set allquicktests [concat $allquicktests $::env(QUICKTEST_INCLUDE)]
@@ -180,10 +180,12 @@ test_suite "fts3" -prefix "" -description {
   fts3defer.test fts3defer2.test fts3e.test fts3expr.test fts3expr2.test 
   fts3near.test fts3query.test fts3shared.test fts3snippet.test 
   fts3sort.test
-
   fts3fault.test fts3malloc.test fts3matchinfo.test
-
   fts3aux1.test fts3comp1.test fts3auto.test
+  fts4aa.test fts4content.test
+  fts3conf.test fts3prefix.test fts3fault2.test fts3corrupt.test
+  fts3corrupt2.test
+  fts3first.test
 }
 
 
@@ -520,7 +522,7 @@ test_suite "inmemory_journal" -description {
   # the number of fsync() calls.
   pager.test exclusive.test jrnlmode.test sync.test misc1.test 
   journal1.test conflict.test crash8.test tkt3457.test io.test
-  journal3.test
+  journal3.test 8_3_names.test
 
   pager1.test async4.test corrupt.test filefmt.test pager2.test
   corrupt5.test corruptA.test pageropt.test
@@ -529,7 +531,7 @@ test_suite "inmemory_journal" -description {
   stmt.test
 
   # WAL mode is different.
-  wal* tkt-2d1a5c67d.test
+  wal* tkt-2d1a5c67d.test backcompat.test
 }]
 
 ifcapable mem3 {
@@ -726,7 +728,7 @@ test_suite "journaltest" -description {
   unregister_jt_vfs
 } -files [test_set $::allquicktests -exclude {
   wal* incrvacuum.test ioerr.test corrupt4.test io.test crash8.test 
-  async4.test bigfile.test
+  async4.test bigfile.test backcompat.test
 }]
 
 if {[info commands register_demovfs] != ""} {
@@ -775,6 +777,15 @@ test_suite "no_optimization" -description {
 } -dbconfig {
   optimization_control $::dbhandle all 0
 }
+
+test_suite "prepare" -description {
+  Run tests with the db connection using sqlite3_prepare() instead of _v2().
+} -dbconfig {
+  db_use_legacy_prepare $::dbhandle 1
+  #$::dbhandle cache size 0
+} -files [
+  test_set $allquicktests -exclude *malloc* *ioerr* *fault*
+]
 
 # End of tests
 #############################################################################
@@ -856,4 +867,3 @@ if {[info script] == $argv0} {
   main $argv
   finish_test
 }
-

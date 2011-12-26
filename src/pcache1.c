@@ -24,6 +24,7 @@ typedef struct PgHdr1 PgHdr1;
 typedef struct PgFreeslot PgFreeslot;
 typedef struct PGroup PGroup;
 
+
 /* Each page cache (or PCache) belongs to a PGroup.  A PGroup is a set 
 ** of one or more PCaches that are able to recycle each others unpinned
 ** pages when they are under memory pressure.  A PGroup is an instance of
@@ -288,15 +289,22 @@ static int pcache1MemSize(void *p){
 */
 static PgHdr1 *pcache1AllocPage(PCache1 *pCache){
   int nByte = sizeof(PgHdr1) + pCache->szPage;
-  void *pPg = pcache1Alloc(nByte);
-  PgHdr1 *p;
+  PgHdr1 *p = 0;
+  void *pPg;
+
+  /* The group mutex must be released before pcache1Alloc() is called. This
+  ** is because it may call sqlite3_release_memory(), which assumes that 
+  ** this mutex is not held. */
+  assert( sqlite3_mutex_held(pCache->pGroup->mutex) );
+  pcache1LeaveMutex(pCache->pGroup);
+  pPg = pcache1Alloc(nByte);
+  pcache1EnterMutex(pCache->pGroup);
+
   if( pPg ){
     p = PAGE_TO_PGHDR1(pCache, pPg);
     if( pCache->bPurgeable ){
       pCache->pGroup->nCurrentPage++;
     }
-  }else{
-    p = 0;
   }
   return p;
 }
@@ -311,10 +319,11 @@ static PgHdr1 *pcache1AllocPage(PCache1 *pCache){
 static void pcache1FreePage(PgHdr1 *p){
   if( ALWAYS(p) ){
     PCache1 *pCache = p->pCache;
+    assert( sqlite3_mutex_held(p->pCache->pGroup->mutex) );
+    pcache1Free(PGHDR1_TO_PAGE(p));
     if( pCache->bPurgeable ){
       pCache->pGroup->nCurrentPage--;
     }
-    pcache1Free(PGHDR1_TO_PAGE(p));
   }
 }
 
@@ -752,9 +761,7 @@ static void *pcache1Fetch(sqlite3_pcache *p, unsigned int iKey, int createFlag){
   */
   if( !pPage ){
     if( createFlag==1 ) sqlite3BeginBenignMalloc();
-    pcache1LeaveMutex(pGroup);
     pPage = pcache1AllocPage(pCache);
-    pcache1EnterMutex(pGroup);
     if( createFlag==1 ) sqlite3EndBenignMalloc();
   }
 
