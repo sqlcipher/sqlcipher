@@ -896,5 +896,33 @@ do_test rekey-then-key-as-first-ops {
 
 } {100}
 db close
+file delete -force test.db
+
+setup test.db "'testkey'"
+do_test multiple-key-calls-safe-1 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cache_size = 0; 
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {t1} 
+
+do_test multiple-key-calls-safe-2 {
+  catchsql {
+    PRAGMA key = 'wrong key'; 
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {1 {file is encrypted or is not a database}}
+
+do_test multiple-key-calls-safe-3 {
+  execsql {
+    PRAGMA key = 'testkey'; 
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {t1} 
+
+db close
+file delete -force test.db
 
 finish_test
