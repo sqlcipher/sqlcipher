@@ -65,8 +65,8 @@ int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len) 
 }
 
 /* generate a defined number of pseudorandom bytes */
-int sqlcipher_pseudorandom (void *buffer, int length) {
-  return RAND_pseudo_bytes(buffer, length);
+int sqlcipher_random (void *buffer, int length) {
+  return RAND_bytes(buffer, length);
 }
 
 /**
@@ -312,7 +312,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
     /* if unable to read the bytes, generate random salt */
-    sqlcipher_pseudorandom(ctx->kdf_salt, FILE_HEADER_SZ);
+    if(sqlcipher_random(ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
   }
 
   sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0);
@@ -392,7 +392,8 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   } 
 
   if(mode == CIPHER_ENCRYPT) {
-    sqlcipher_pseudorandom(iv_out, c_ctx->reserve_sz); /* start at front of the reserve block, write random data to the end */
+    /* start at front of the reserve block, write random data to the end */
+    if(sqlcipher_random(iv_out, c_ctx->reserve_sz) != 1) return SQLITE_ERROR; 
   } else { /* CIPHER_DECRYPT */
     memcpy(iv_out, iv_in, c_ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
