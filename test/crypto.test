@@ -69,7 +69,7 @@ proc setup {file key} {
 # hex key. verify that the table is readable
 # and the data just inserted is visible
 setup test.db "\"x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'\""
-do_test codec-1.1 {
+do_test will-open-with-correct-raw-key {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
@@ -86,7 +86,7 @@ file delete -force test.db
 # key. verify that the table is readable
 # and the data just inserted is visible
 setup test.db "'testkey'"
-do_test codec-1.2 {
+do_test will-open-with-correct-derived-key {
 
   sqlite_orig db test.db
   execsql {
@@ -102,7 +102,7 @@ file delete -force test.db
 # providing a passphrase. verify that the 
 # an error is returned from the library
 setup test.db "'testkey'"
-do_test codec-1.3 {
+do_test wont-open-without-key {
   sqlite_orig db test.db
   catchsql {
     SELECT name FROM sqlite_master WHERE type='table';
@@ -115,7 +115,7 @@ file delete -force test.db
 # passphrase. verify that an error is returned
 # and that data couldn't be read
 setup test.db "'testkey'"
-do_test codec-1.3.1 {
+do_test wont-open-with-invalid-derived-key {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey2';
@@ -125,23 +125,11 @@ do_test codec-1.3.1 {
 db close
 file delete -force test.db
 
-setup test.db "'testkey'"
-do_test codec-1.3.2 {
-  sqlite_orig db test.db
-  catchsql {
-    PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
-    SELECT name FROM sqlite_master WHERE type='table';
-  }
-
-} {1 {file is encrypted or is not a database}}
-db close
-file delete -force test.db
-
 # open the database and try to set an invalid
 # hex key. verify that an error is returned
 # and that data couldn't be read
 setup test.db "'testkey'"
-do_test codec-1.5 {
+do_test wont-open-with-invalid-raw-key {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
@@ -152,7 +140,7 @@ db close
 file delete -force test.db
 
 # test a large number of inserts in a transaction to a memory database 
-do_test codec-1.6 {
+do_test memory-database {
   sqlite_orig db :memory:
   execsql {
     PRAGMA key = 'testkey3';
@@ -173,7 +161,7 @@ do_test codec-1.6 {
 db close
 
 # test a large number of inserts in a transaction for multiple pages
-do_test codec-1.7 {
+do_test multi-page-database {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -196,7 +184,7 @@ file delete -force test.db
 # then test that now the new key opens the database
 # now close database re-open with new key
 setup test.db "'testkey'"
-do_test codec-1.8 {
+do_test rekey-as-first-operation {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -217,7 +205,7 @@ file delete -force test.db
 # where both database have the same
 # key
 setup test.db "'testkey'"
-do_test codec-1.10 {
+do_test attach-database-with-same-key {
   sqlite_orig db2 test2.db
 
   execsql {
@@ -240,7 +228,7 @@ file delete -force test2.db
 # attach an encrypted database
 # where databases have different keys
 setup test.db "'testkey'"
-do_test codec-1.11 {
+do_test attach-database-with-different-keys {
   sqlite_orig db2 test2.db
 
   execsql {
@@ -262,7 +250,7 @@ file delete -force test2.db
 
 # test locking across multiple handles
 setup test.db "'testkey'"
-do_test codec-1.12 {
+do_test locking-across-multiple-handles-start {
   sqlite_orig db test.db
 
   execsql {
@@ -279,7 +267,7 @@ do_test codec-1.12 {
 
  } {1 {database is locked}} 
 
-do_test codec-1.12.1 {
+do_test locking-accross-multiple-handles-finish {
  execsql {
     COMMIT;
   }
@@ -294,7 +282,7 @@ file delete -force test.db
 
 # alter schema
 setup test.db "'testkey'"
-do_test codec-1.13 {
+do_test alter-schema {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -321,7 +309,7 @@ file delete -force test.db
 # test alterations of KDF iterations and ciphers
 # rekey then add
 setup test.db "'testkey'"
-do_test codec-1.14 {
+do_test non-standard-kdf-and-ciphers {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -347,7 +335,7 @@ file delete -force test.db
 # test alterations of CIPHER from CBC Mode requiring
 # IV to ECB mode that does not
 setup test.db "'testkey'"
-do_test codec-1.15 {
+do_test rekey-from-cbc-to-ecb-no-iv {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -380,7 +368,7 @@ db close
 file delete -force test.db
 
 # test alterations of CIPHER from ECB Mode (no IV) to CBC Mode
-do_test codec-1.16 {
+do_test rekey-from-ecb-to-cbc-with-iv {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
