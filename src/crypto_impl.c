@@ -395,14 +395,14 @@ int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz
   HMAC_CTX hctx;
   HMAC_CTX_init(&hctx);
   
-  if(!HMAC_Init_ex(&hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL)) return SQLITE_ERROR; 
+  HMAC_Init_ex(&hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL);
 
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
-  if(!HMAC_Update(&hctx, in, in_sz)) return SQLITE_ERROR; 
-  if(!HMAC_Update(&hctx, (const unsigned char*) &pgno, sizeof(Pgno))) return SQLITE_ERROR;
-  if(!HMAC_Final(&hctx, out, NULL)) return SQLITE_ERROR;
+  HMAC_Update(&hctx, in, in_sz);
+  HMAC_Update(&hctx, (const unsigned char*) &pgno, sizeof(Pgno));
+  HMAC_Final(&hctx, out, NULL);
   HMAC_CTX_cleanup(&hctx);
   return SQLITE_OK; 
 }
