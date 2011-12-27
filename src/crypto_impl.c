@@ -4,6 +4,13 @@
 #include "sqliteInt.h"
 #include "btreeInt.h"
 #include "crypto.h"
+#ifndef OMIT_MEMLOCK
+#if defined __unix__ || defined MAC_OS_X
+#include <sys/mman.h>
+#elif defined _WIN32 
+# include <windows.h>
+#endif
+#endif
 
 
 /* the default implementation of SQLCipher uses a cipher_ctx
@@ -70,16 +77,48 @@ int sqlcipher_random (void *buffer, int length) {
 }
 
 /**
-  * Free and wipe memory
+  * Free and wipe memory. Uses SQLites internal sqlite3_free so that memory
+  * can be countend and memory leak detection works in the tet suite. 
   * If ptr is not null memory will be freed. 
   * If sz is greater than zero, the memory will be overwritten with zero before it is freed
+  * If sz is > 0, and not compiled with OMIT_MEMLOCK, system will attempt to unlock the
+  * memory segment so it can be paged
   */
 void sqlcipher_free(void *ptr, int sz) {
   if(ptr) {
-    if(sz > 0) memset(ptr, 0, sz);
+    if(sz > 0) {
+      memset(ptr, 0, sz);
+#ifndef OMIT_MEMLOCK
+#if defined __unix__ || defined MAC_OS_X
+      munlock(ptr, sz);
+#elif defined _WIN32
+      VirtualUnlock(ptr, sz);
+#endif
+#endif
+    }
     sqlite3_free(ptr);
   }
 }
+
+/**
+  * allocate memory. Uses sqlite's internall malloc wrapper so memory can be 
+  * reference counted and leak detection works. Unless compiled with OMIT_MEMLOCK
+  * attempts to lock the memory pages so sensitive information won't be swapped
+  */
+void* sqlcipher_malloc(size_t sz) {
+  void *ptr = sqlite3Malloc(sz);
+#ifndef OMIT_MEMLOCK
+  if(ptr) {
+#ifdef __unix__ 
+    mlock(ptr, sz);
+#elif defined _WIN32
+    VirtualLock(ptr, sz);
+#endif
+  }
+#endif
+  return ptr;
+}
+
 
 /**
   * Initialize a a new cipher_ctx struct. This function will allocate memory
@@ -90,12 +129,12 @@ void sqlcipher_free(void *ptr, int sz) {
   */
 int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   cipher_ctx *ctx;
-  *iCtx = sqlite3Malloc(sizeof(cipher_ctx));
+  *iCtx = sqlcipher_malloc(sizeof(cipher_ctx));
   ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
   memset(ctx, 0, sizeof(cipher_ctx)); 
-  ctx->key = sqlite3Malloc(EVP_MAX_KEY_LENGTH);
-  ctx->hmac_key = sqlite3Malloc(EVP_MAX_KEY_LENGTH);
+  ctx->key = sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
+  ctx->hmac_key = sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
   if(ctx->hmac_key == NULL) return SQLITE_NOMEM;
   return SQLITE_OK;
@@ -160,7 +199,7 @@ int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   target->hmac_key = hmac_key; //restore pointer to previously allocated hmac key data
   memcpy(target->hmac_key, source->hmac_key, EVP_MAX_KEY_LENGTH);
 
-  target->pass = sqlite3Malloc(source->pass_sz);
+  target->pass = sqlcipher_malloc(source->pass_sz);
   if(target->pass == NULL) return SQLITE_NOMEM;
   memcpy(target->pass, source->pass, source->pass_sz);
 
@@ -179,7 +218,7 @@ int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
   sqlcipher_free(ctx->pass, ctx->pass_sz);
   ctx->pass_sz = nKey;
   if(zKey && nKey) {
-    ctx->pass = sqlite3Malloc(nKey);
+    ctx->pass = sqlcipher_malloc(nKey);
     if(ctx->pass == NULL) return SQLITE_NOMEM;
     memcpy(ctx->pass, zKey, nKey);
     return SQLITE_OK;
@@ -285,7 +324,7 @@ int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
   /* pre-allocate a page buffer of PageSize bytes. This will
      be used as a persistent buffer for encryption and decryption 
      operations to avoid overhead of multiple memory allocations*/
-  ctx->buffer = sqlite3Malloc(size);
+  ctx->buffer = sqlcipher_malloc(size);
   if(ctx->buffer == NULL) return SQLITE_NOMEM;
 
   return SQLITE_OK;
@@ -294,7 +333,7 @@ int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
 int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
   int rc;
   codec_ctx *ctx;
-  *iCtx = sqlite3Malloc(sizeof(codec_ctx));
+  *iCtx = sqlcipher_malloc(sizeof(codec_ctx));
   ctx = *iCtx;
 
   if(ctx == NULL) return SQLITE_NOMEM;
@@ -307,7 +346,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
        key derivation function. If we get a short read allocate
        a new random salt value */
   ctx->kdf_salt_sz = FILE_HEADER_SZ;
-  ctx->kdf_salt = sqlite3Malloc(ctx->kdf_salt_sz);
+  ctx->kdf_salt = sqlcipher_malloc(ctx->kdf_salt_sz);
   if(ctx->kdf_salt == NULL) return SQLITE_NOMEM;
 
   /*
