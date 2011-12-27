@@ -73,7 +73,7 @@ int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len) 
 
 /* generate a defined number of pseudorandom bytes */
 int sqlcipher_random (void *buffer, int length) {
-  return RAND_bytes(buffer, length);
+  return RAND_bytes((unsigned char *)buffer, length);
 }
 
 /**
@@ -105,7 +105,7 @@ void sqlcipher_free(void *ptr, int sz) {
   * reference counted and leak detection works. Unless compiled with OMIT_MEMLOCK
   * attempts to lock the memory pages so sensitive information won't be swapped
   */
-void* sqlcipher_malloc(size_t sz) {
+void* sqlcipher_malloc(int sz) {
   void *ptr = sqlite3Malloc(sz);
 #ifndef OMIT_MEMLOCK
   if(ptr) {
@@ -129,12 +129,12 @@ void* sqlcipher_malloc(size_t sz) {
   */
 int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   cipher_ctx *ctx;
-  *iCtx = sqlcipher_malloc(sizeof(cipher_ctx));
+  *iCtx = (cipher_ctx *) sqlcipher_malloc(sizeof(cipher_ctx));
   ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
   memset(ctx, 0, sizeof(cipher_ctx)); 
-  ctx->key = sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
-  ctx->hmac_key = sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
+  ctx->key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
+  ctx->hmac_key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
   if(ctx->hmac_key == NULL) return SQLITE_NOMEM;
   return SQLITE_OK;
@@ -419,7 +419,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   EVP_CIPHER_CTX ectx;
   unsigned char *iv_in, *iv_out, *hmac_in, *hmac_out, *out_start;
-  int tmp_csz, csz, size, rc;
+  int tmp_csz, csz, size;
 
   /* calculate some required positions into various buffers */
   size = page_sz - c_ctx->reserve_sz; /* adjust size to useable size and memset reserve at end of page */
@@ -532,8 +532,6 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 }
 
 int sqlcipher_codec_key_derive(codec_ctx *ctx) {
-  int rc;
-
   /* derive key on first use if necessary */
   if(ctx->read_ctx->derive_key) {
     if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->read_ctx) != SQLITE_OK) return SQLITE_ERROR;
