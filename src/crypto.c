@@ -41,6 +41,16 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
+
+#ifndef OMIT_MEMLOCK
+#if defined(__unix__) || defined(__APPLE__) 
+#include <sys/mman.h>
+#elif defined(_WIN32)
+# include <windows.h>
+#endif
+#endif
+
+
 #ifdef CODEC_DEBUG
 #define CODEC_TRACE(X)  {printf X;fflush(stdout);}
 #else
@@ -102,10 +112,39 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
   */
 static void codec_free(void *ptr, int sz) {
   if(ptr) {
-    if(sz > 0) memset(ptr, 0, sz); // FIXME - require buffer size
+    if(sz > 0) {
+      memset(ptr, 0, sz);
+#ifndef OMIT_MEMLOCK
+#if defined(__unix__) || defined(__APPLE__) 
+      munlock(ptr, sz);
+#elif defined(_WIN32)
+      VirtualUnlock(ptr, sz);
+#endif
+#endif
+    }
     sqlite3_free(ptr);
   }
 }
+
+/**
+  * allocate memory. Uses sqlite's internall malloc wrapper so memory can be 
+  * reference counted and leak detection works. Unless compiled with OMIT_MEMLOCK
+  * attempts to lock the memory pages so sensitive information won't be swapped
+  */
+void* codec_malloc(int sz) {
+  void *ptr = sqlite3Malloc(sz);
+#ifndef OMIT_MEMLOCK
+  if(ptr) {
+#if defined(__unix__) || defined(__APPLE__) 
+    mlock(ptr, sz);
+#elif defined(_WIN32)
+    VirtualLock(ptr, sz);
+#endif
+  }
+#endif
+  return ptr;
+}
+
 
 /**
   * Set the raw password / key data for a cipher context
@@ -118,7 +157,7 @@ static int cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
   codec_free(ctx->pass, ctx->pass_sz);
   ctx->pass_sz = nKey;
   if(zKey && nKey) {
-    ctx->pass = sqlite3Malloc(nKey);
+    ctx->pass = codec_malloc(nKey);
     if(ctx->pass == NULL) return SQLITE_NOMEM;
     memcpy(ctx->pass, zKey, nKey);
     return SQLITE_OK;
@@ -135,11 +174,11 @@ static int cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
   */
 static int cipher_ctx_init(cipher_ctx **iCtx) {
   cipher_ctx *ctx;
-  *iCtx = sqlite3Malloc(sizeof(cipher_ctx));
+  *iCtx = codec_malloc(sizeof(cipher_ctx));
   ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
   memset(ctx, 0, sizeof(cipher_ctx)); 
-  ctx->key = sqlite3Malloc(EVP_MAX_KEY_LENGTH);
+  ctx->key = codec_malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
   return SQLITE_OK;
 }
@@ -171,7 +210,7 @@ static int cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   
   target->key = key; //restore pointer to previously allocated key data
   memcpy(target->key, source->key, EVP_MAX_KEY_LENGTH);
-  target->pass = sqlite3Malloc(source->pass_sz);
+  target->pass = codec_malloc(source->pass_sz);
   if(target->pass == NULL) return SQLITE_NOMEM;
   memcpy(target->pass, source->pass, source->pass_sz);
   return SQLITE_OK;
@@ -270,7 +309,7 @@ static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, unsigned
   size = size - ctx->iv_sz; /* adjust size to useable size and memset reserve at end of page */
   iv = out + size;
   if(mode == CIPHER_ENCRYPT) {
-    RAND_pseudo_bytes(iv, ctx->iv_sz);
+    RAND_bytes(iv, ctx->iv_sz);
   } else {
     memcpy(iv, in+size, ctx->iv_sz);
   } 
@@ -425,7 +464,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     Pager *pPager = pDb->pBt->pBt->pPager;
     sqlite3_file *fd;
 
-    ctx = sqlite3Malloc(sizeof(codec_ctx));
+    ctx = codec_malloc(sizeof(codec_ctx));
     if(ctx == NULL) return SQLITE_NOMEM;
     memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
 
@@ -437,7 +476,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* pre-allocate a page buffer of PageSize bytes. This will
        be used as a persistent buffer for encryption and decryption 
        operations to avoid overhead of multiple memory allocations*/
-    ctx->buffer = sqlite3Malloc(SQLITE_DEFAULT_PAGE_SIZE);
+    ctx->buffer = codec_malloc(SQLITE_DEFAULT_PAGE_SIZE);
     if(ctx->buffer == NULL) return SQLITE_NOMEM;
      
     /* allocate space for salt data. Then read the first 16 bytes 
@@ -445,14 +484,14 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
        key derivation function. If we get a short read allocate
        a new random salt value */
     ctx->kdf_salt_sz = FILE_HEADER_SZ;
-    ctx->kdf_salt = sqlite3Malloc(ctx->kdf_salt_sz);
+    ctx->kdf_salt = codec_malloc(ctx->kdf_salt_sz);
     if(ctx->kdf_salt == NULL) return SQLITE_NOMEM;
 
 
     fd = sqlite3Pager_get_fd(pPager);
     if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
       /* if unable to read the bytes, generate random salt */
-      RAND_pseudo_bytes(ctx->kdf_salt, FILE_HEADER_SZ);
+      RAND_bytes(ctx->kdf_salt, FILE_HEADER_SZ);
     }
 
     sqlite3pager_sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
@@ -542,7 +581,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
         
         /* prepare this setup as if it had already been initialized */
-        RAND_pseudo_bytes(ctx->kdf_salt, ctx->kdf_salt_sz);
+        RAND_bytes(ctx->kdf_salt, ctx->kdf_salt_sz);
         ctx->read_ctx->key_sz = ctx->read_ctx->iv_sz =  ctx->read_ctx->pass_sz = 0;
       }
 
