@@ -189,17 +189,21 @@ int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
 
 int sqlcipher_codec_ctx_set_pass(codec_ctx *ctx, const void *zKey, int nKey, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  int rc;
 
-  sqlcipher_cipher_ctx_set_pass(c_ctx, zKey, nKey);
+  if((rc = sqlcipher_cipher_ctx_set_pass(c_ctx, zKey, nKey)) != SQLITE_OK) return rc; 
   c_ctx->derive_key = 1;
 
-  /* FIXME: return value of copy */
-  if(for_ctx == 2) sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx); 
+  if(for_ctx == 2)
+    if((rc = sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK) 
+      return rc; 
+
   return SQLITE_OK;
 } 
 
 int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  int rc;
 
   c_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
   c_ctx->key_sz = EVP_CIPHER_key_length(c_ctx->evp_cipher);
@@ -208,18 +212,24 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   c_ctx->hmac_sz = EVP_MD_size(EVP_sha1());
   c_ctx->derive_key = 1;
 
-  if(for_ctx == 2) sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx); 
+  if(for_ctx == 2)
+    if((rc = sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK)
+      return rc; 
 
   return SQLITE_OK;
 }
 
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  int rc;
 
   c_ctx->kdf_iter = kdf_iter;
   c_ctx->derive_key = 1;
 
-  if(for_ctx == 2) sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx); 
+  if(for_ctx == 2)
+    if((rc = sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK)
+      return rc; 
+
   return SQLITE_OK;
 }
 
@@ -315,15 +325,15 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
     if(sqlcipher_random(ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
   }
 
-  sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0);
-  sqlcipher_codec_ctx_set_kdf_iter(ctx, PBKDF2_ITER, 0);
-  sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0);
+  if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_kdf_iter(ctx, PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) return rc;
 
   /* Use HMAC signatures by default. Note that codec_set_use_hmac will implicity call
      codec_set_page_size to set the default */
   if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, DEFAULT_USE_HMAC)) != SQLITE_OK) return rc;
 
-  sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx);
+  if((rc = sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) return rc;
 
   return SQLITE_OK;
 }
@@ -345,16 +355,17 @@ void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
 int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
   HMAC_CTX hctx;
   HMAC_CTX_init(&hctx);
-  HMAC_Init_ex(&hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL); 
+  
+  if(!HMAC_Init_ex(&hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL)) return SQLITE_ERROR; 
 
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
-  HMAC_Update(&hctx, in, in_sz); 
-  HMAC_Update(&hctx, (const unsigned char*) &pgno, sizeof(Pgno));
-  HMAC_Final(&hctx, out, NULL);
+  if(!HMAC_Update(&hctx, in, in_sz)) return SQLITE_ERROR; 
+  if(!HMAC_Update(&hctx, (const unsigned char*) &pgno, sizeof(Pgno))) return SQLITE_ERROR;
+  if(!HMAC_Final(&hctx, out, NULL)) return SQLITE_ERROR;
   HMAC_CTX_cleanup(&hctx);
-  return SQLITE_OK; /* FIXME: check for errors in HMAC routine to be safe */
+  return SQLITE_OK; 
 }
 
 /*
@@ -369,7 +380,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   EVP_CIPHER_CTX ectx;
   unsigned char *iv_in, *iv_out, *hmac_in, *hmac_out, *out_start;
-  int tmp_csz, csz, size;
+  int tmp_csz, csz, size, rc;
 
   /* calculate some required positions into various buffers */
   size = page_sz - c_ctx->reserve_sz; /* adjust size to useable size and memset reserve at end of page */
@@ -399,7 +410,11 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   } 
 
   if(c_ctx->use_hmac && (mode == CIPHER_DECRYPT)) {
-    sqlcipher_page_hmac(c_ctx, pgno, in, size + c_ctx->iv_sz, hmac_out); 
+    if(sqlcipher_page_hmac(c_ctx, pgno, in, size + c_ctx->iv_sz, hmac_out) != SQLITE_OK) {
+      memset(out, 0, page_sz); 
+      CODEC_TRACE(("codec_cipher: hmac operations failed for pgno=%d\n", pgno));
+      return SQLITE_ERROR;
+    }
 
     CODEC_TRACE(("codec_cipher: comparing hmac on in=%d out=%d hmac_sz=%d\n", hmac_in, hmac_out, c_ctx->hmac_sz));
     if(sqlcipher_memcmp(hmac_in, hmac_out, c_ctx->hmac_sz) != 0) {
@@ -478,19 +493,22 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 }
 
 int sqlcipher_codec_key_derive(codec_ctx *ctx) {
+  int rc;
+
   /* derive key on first use if necessary */
   if(ctx->read_ctx->derive_key) {
-    sqlcipher_cipher_ctx_key_derive(ctx, ctx->read_ctx);
+    if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->read_ctx) != SQLITE_OK) return SQLITE_ERROR;
   }
 
   if(ctx->write_ctx->derive_key) {
     if(sqlcipher_cipher_ctx_cmp(ctx->write_ctx, ctx->read_ctx) == 0) {
-      sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx); // the relevant parameters are the same, just copy read key
+      // the relevant parameters are the same, just copy read key
+      if(sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx) != SQLITE_OK) return SQLITE_ERROR;
     } else {
-      sqlcipher_cipher_ctx_key_derive(ctx, ctx->write_ctx);
+      if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->write_ctx) != SQLITE_OK) return SQLITE_ERROR;
     }
   }
-  return SQLITE_OK; /* FIXME set proper return value */
+  return SQLITE_OK; 
 }
 
 int sqlcipher_codec_key_copy(codec_ctx *ctx, int source) {

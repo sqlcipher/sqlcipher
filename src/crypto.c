@@ -148,7 +148,11 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   void *kdf_salt = sqlcipher_codec_ctx_get_kdf_salt(ctx);
   CODEC_TRACE(("sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz));
 
-  sqlcipher_codec_key_derive(ctx); /* call to derive keys if not present yet */
+  /* call to derive keys if not present yet */
+  if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
+   sqlcipher_codec_ctx_set_error(ctx, rc); 
+   return NULL;
+  }
 
   if(pgno == 1) offset = FILE_HEADER_SZ; /* adjust starting pointers in data page for header offset on first page*/
 
