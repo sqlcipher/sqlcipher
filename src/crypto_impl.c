@@ -5,9 +5,9 @@
 #include "btreeInt.h"
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
-#if defined __unix__ || defined MAC_OS_X
+#if defined(__unix__) || defined(__APPLE__) 
 #include <sys/mman.h>
-#elif defined _WIN32 
+#elif defined(_WIN32)
 # include <windows.h>
 #endif
 #endif
@@ -89,9 +89,9 @@ void sqlcipher_free(void *ptr, int sz) {
     if(sz > 0) {
       memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
-#if defined __unix__ || defined MAC_OS_X
+#if defined(__unix__) || defined(__APPLE__) 
       munlock(ptr, sz);
-#elif defined _WIN32
+#elif defined(_WIN32)
       VirtualUnlock(ptr, sz);
 #endif
 #endif
@@ -109,9 +109,9 @@ void* sqlcipher_malloc(size_t sz) {
   void *ptr = sqlite3Malloc(sz);
 #ifndef OMIT_MEMLOCK
   if(ptr) {
-#ifdef __unix__ 
+#if defined(__unix__) || defined(__APPLE__) 
     mlock(ptr, sz);
-#elif defined _WIN32
+#elif defined(_WIN32)
     VirtualLock(ptr, sz);
 #endif
   }
