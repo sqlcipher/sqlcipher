@@ -76,7 +76,7 @@ int sqlcipher_random (void *buffer, int length) {
   */
 void sqlcipher_free(void *ptr, int sz) {
   if(ptr) {
-    if(sz > 0) memset(ptr, 0, sz); // FIXME - require buffer size
+    if(sz > 0) memset(ptr, 0, sz);
     sqlite3_free(ptr);
   }
 }

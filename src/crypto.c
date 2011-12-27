@@ -266,7 +266,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 
       sqlite3_mutex_enter(db->mutex);
 
-      codec_set_pass_key(db, 0, pKey, nKey, 1);
+      codec_set_pass_key(db, 0, pKey, nKey, CIPHER_WRITE_CTX);
     
       /* do stuff here to rewrite the database 
       ** 1. Create a transaction on the database
