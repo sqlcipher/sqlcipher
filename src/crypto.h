@@ -56,6 +56,25 @@
 #define DEFAULT_USE_HMAC 1
 #endif
 
+/* by default, sqlcipher will use an equal number of rounds to generate
+   the HMAC key as it will to generate the encryption key */
+#ifndef HMAC_PBKDF2_ITER
+#define HMAC_PBKDF2_ITER PBKDF2_ITER
+#endif
+
+/* this if a fixed random array that will be xor'd with the database salt to ensure that the
+   salt passed to the HMAC key derivation function is not the same as that used to derive
+   the encryption key. This can be overridden at compile time but it will make the resulting
+   binary incompatible with the default builds when using HMAC. A future version of SQLcipher
+   will likely allow this to be defined at runtime via pragma */ 
+#ifndef HMAC_FIXED_SALT
+#define HMAC_FIXED_SALT {42,172,104,131,19,119,84,255,184,238,54,135,186,222,53,250}
+#endif
+
+#ifndef HMAC_FIXED_SALT_SZ
+#define HMAC_FIXED_SALT_SZ 16
+#endif
+
 #ifdef CODEC_DEBUG
 #define CODEC_TRACE(X)  {printf X;fflush(stdout);}
 #else
@@ -124,6 +143,8 @@ int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);
 
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int, int);
 void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
+
+int sqlcipher_codec_ctx_set_hmac_kdf_iter(codec_ctx *, int, int);
 
 int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *, int);
 

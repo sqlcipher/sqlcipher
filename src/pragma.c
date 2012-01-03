@@ -1503,6 +1503,10 @@ void sqlite3Pragma(
     extern int codec_set_kdf_iter(sqlite3*, int, int, int);
     codec_set_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
   }else
+  if( sqlite3StrICmp(zLeft, "hmac_kdf_iter")==0 && zRight ){
+    extern int codec_set_hmac_kdf_iter(sqlite3*, int, int, int);
+    codec_set_hmac_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
+  }else
   if( sqlite3StrICmp(zLeft, "rekey_kdf_iter")==0 && zRight ){
     extern int codec_set_kdf_iter(sqlite3*, int, int, int); 
     codec_set_kdf_iter(db, iDb, atoi(zRight), 1); // change # if W iterations

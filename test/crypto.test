@@ -925,4 +925,54 @@ do_test multiple-key-calls-safe-3 {
 db close
 file delete -force test.db
 
+# 1. create a database with a custom hmac kdf iteration count, 
+# 2. create table and insert operations should work
+# 3. close database, open it again with the same
+#    key and  hmac kdf iteration count
+# 4. verify that the table is readable
+#    and the data just inserted is visible
+do_test custom-hmac-kdf-iter {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA hmac_kdf_iter = 10;
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA hmac_kdf_iter = 10;
+    SELECT count(*) FROM t1;
+  }
+
+} {1000}
+db close
+
+# open the database with the default hmac
+# kdf iteration count
+# to verify that it is not readable 
+do_test custom-hmac-kdf-iter-must-match {
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {1 {file is encrypted or is not a database}}
+db close
+file delete -force test.db
+
 finish_test
