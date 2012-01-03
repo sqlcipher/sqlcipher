@@ -54,6 +54,8 @@
 typedef struct {
   int derive_key;
   EVP_CIPHER *evp_cipher;
+  EVP_CIPHER_CTX ectx;
+  HMAC_CTX hctx;
   int kdf_iter;
   int key_sz;
   int iv_sz;
@@ -427,18 +429,17 @@ void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
 }
 
 int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
-  HMAC_CTX hctx;
-  HMAC_CTX_init(&hctx);
+  HMAC_CTX_init(&ctx->hctx);
   
-  HMAC_Init_ex(&hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL);
+  HMAC_Init_ex(&ctx->hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL);
 
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
-  HMAC_Update(&hctx, in, in_sz);
-  HMAC_Update(&hctx, (const unsigned char*) &pgno, sizeof(Pgno));
-  HMAC_Final(&hctx, out, NULL);
-  HMAC_CTX_cleanup(&hctx);
+  HMAC_Update(&ctx->hctx, in, in_sz);
+  HMAC_Update(&ctx->hctx, (const unsigned char*) &pgno, sizeof(Pgno));
+  HMAC_Final(&ctx->hctx, out, NULL);
+  HMAC_CTX_cleanup(&ctx->hctx);
   return SQLITE_OK; 
 }
 
@@ -452,7 +453,6 @@ int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz
  */
 int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int page_sz, unsigned char *in, unsigned char *out) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
-  EVP_CIPHER_CTX ectx;
   unsigned char *iv_in, *iv_out, *hmac_in, *hmac_out, *out_start;
   int tmp_csz, csz, size;
 
@@ -501,15 +501,15 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     }
   } 
 
-  EVP_CipherInit(&ectx, c_ctx->evp_cipher, NULL, NULL, mode);
-  EVP_CIPHER_CTX_set_padding(&ectx, 0);
-  EVP_CipherInit(&ectx, NULL, c_ctx->key, iv_out, mode);
-  EVP_CipherUpdate(&ectx, out, &tmp_csz, in, size);
+  EVP_CipherInit(&c_ctx->ectx, c_ctx->evp_cipher, NULL, NULL, mode);
+  EVP_CIPHER_CTX_set_padding(&c_ctx->ectx, 0);
+  EVP_CipherInit(&c_ctx->ectx, NULL, c_ctx->key, iv_out, mode);
+  EVP_CipherUpdate(&c_ctx->ectx, out, &tmp_csz, in, size);
   csz = tmp_csz;  
   out += tmp_csz;
-  EVP_CipherFinal(&ectx, out, &tmp_csz);
+  EVP_CipherFinal(&c_ctx->ectx, out, &tmp_csz);
   csz += tmp_csz;
-  EVP_CIPHER_CTX_cleanup(&ectx);
+  EVP_CIPHER_CTX_cleanup(&c_ctx->ectx);
   assert(size == csz);
 
   if(c_ctx->use_hmac && (mode == CIPHER_ENCRYPT)) {
