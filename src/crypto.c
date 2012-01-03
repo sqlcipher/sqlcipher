@@ -62,6 +62,7 @@ void sqlite3FreeCodecArg(void *pCodecArg);
 typedef struct {
   int derive_key;
   EVP_CIPHER *evp_cipher;
+  EVP_CIPHER_CTX ectx;
   int kdf_iter;
   int key_sz;
   int iv_sz;
@@ -292,7 +293,6 @@ static int codec_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
  * out - pouter to output bytes
  */
 static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, unsigned char *in, unsigned char *out) {
-  EVP_CIPHER_CTX ectx;
   unsigned char *iv;
   int tmp_csz, csz;
 
@@ -314,15 +314,15 @@ static int codec_cipher(cipher_ctx *ctx, Pgno pgno, int mode, int size, unsigned
     memcpy(iv, in+size, ctx->iv_sz);
   } 
   
-  EVP_CipherInit(&ectx, ctx->evp_cipher, NULL, NULL, mode);
-  EVP_CIPHER_CTX_set_padding(&ectx, 0);
-  EVP_CipherInit(&ectx, NULL, ctx->key, iv, mode);
-  EVP_CipherUpdate(&ectx, out, &tmp_csz, in, size);
+  EVP_CipherInit(&ctx->ectx, ctx->evp_cipher, NULL, NULL, mode);
+  EVP_CIPHER_CTX_set_padding(&ctx->ectx, 0);
+  EVP_CipherInit(&ctx->ectx, NULL, ctx->key, iv, mode);
+  EVP_CipherUpdate(&ctx->ectx, out, &tmp_csz, in, size);
   csz = tmp_csz;  
   out += tmp_csz;
-  EVP_CipherFinal(&ectx, out, &tmp_csz);
+  EVP_CipherFinal(&ctx->ectx, out, &tmp_csz);
   csz += tmp_csz;
-  EVP_CIPHER_CTX_cleanup(&ectx);
+  EVP_CIPHER_CTX_cleanup(&ctx->ectx);
   assert(size == csz);
 
   return SQLITE_OK;
