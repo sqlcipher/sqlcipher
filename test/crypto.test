@@ -432,6 +432,40 @@ db2 close
 file delete -force test.db
 file delete -force test2.db
 
+# create an unencrypted database, attach a new encrypted volume
+# using a raw key copy data between, verify the encypted 
+# database is good afterwards 
+do_test unencryped-attach-raw-key {
+  sqlite_orig db test.db
+
+  execsql {
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  } 
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,$r);" 
+  }
+  
+  execsql {
+    COMMIT;
+    ATTACH DATABASE 'test2.db' AS db2 KEY "x'10483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
+    CREATE TABLE db2.t1(a,b);
+    INSERT INTO db2.t1 SELECT * FROM t1;
+    DETACH DATABASE db2;
+  }
+  
+  sqlite_orig db2 test2.db
+  execsql {
+    PRAGMA key="x'10483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
+    SELECT count(*) FROM t1;
+  } db2 
+} {1000}
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
 # create an encrypted database, attach an unencrypted volume
 # copy data between, verify the unencypted database is good afterwards
 do_test encryped-attach-unencrypted {
