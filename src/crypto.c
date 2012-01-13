@@ -50,14 +50,14 @@ int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   return SQLITE_ERROR;
 }
 
-int codec_set_hmac_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
+int codec_set_fast_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE(("codec_set_kdf_iter: entered db=%d nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
 
   if(pDb->pBt) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    return sqlcipher_codec_ctx_set_hmac_kdf_iter(ctx, kdf_iter, for_ctx);
+    return sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, kdf_iter, for_ctx);
   }
   return SQLITE_ERROR;
 }

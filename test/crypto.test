@@ -936,7 +936,7 @@ do_test custom-hmac-kdf-iter {
 
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA hmac_kdf_iter = 10;
+    PRAGMA fast_kdf_iter = 10;
     CREATE table t1(a,b);
     BEGIN;
   }
@@ -955,7 +955,7 @@ do_test custom-hmac-kdf-iter {
 
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA hmac_kdf_iter = 10;
+    PRAGMA fast_kdf_iter = 10;
     SELECT count(*) FROM t1;
   }
 

@@ -47,8 +47,6 @@
 #endif
 #endif
 
-static unsigned char cipher_hmac_fixed_salt[HMAC_FIXED_SALT_SZ] = HMAC_FIXED_SALT;
-
 /* the default implementation of SQLCipher uses a cipher_ctx
    to keep track of read / write state separately. The following
    struct and associated functions are defined here */
@@ -58,7 +56,7 @@ typedef struct {
   EVP_CIPHER_CTX ectx;
   HMAC_CTX hctx;
   int kdf_iter;
-  int hmac_kdf_iter;
+  int fast_kdf_iter;
   int key_sz;
   int iv_sz;
   int block_sz;
@@ -205,7 +203,7 @@ int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
     c1->evp_cipher == c2->evp_cipher
     && c1->iv_sz == c2->iv_sz
     && c1->kdf_iter == c2->kdf_iter
-    && c1->hmac_kdf_iter == c2->hmac_kdf_iter
+    && c1->fast_kdf_iter == c2->fast_kdf_iter
     && c1->key_sz == c2->key_sz
     && c1->pass_sz == c2->pass_sz
     && (
@@ -313,11 +311,11 @@ int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) 
   return SQLITE_OK;
 }
 
-int sqlcipher_codec_ctx_set_hmac_kdf_iter(codec_ctx *ctx, int hmac_kdf_iter, int for_ctx) {
+int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
 
-  c_ctx->hmac_kdf_iter = hmac_kdf_iter;
+  c_ctx->fast_kdf_iter = fast_kdf_iter;
   c_ctx->derive_key = 1;
 
   if(for_ctx == 2)
@@ -429,7 +427,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
   if((rc = sqlcipher_codec_ctx_set_kdf_iter(ctx, PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
-  if((rc = sqlcipher_codec_ctx_set_hmac_kdf_iter(ctx, HMAC_PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, FAST_PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
   if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) return rc;
 
   /* Use HMAC signatures by default. Note that codec_set_use_hmac will implicity call
@@ -561,19 +559,19 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
 int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
                 ctx->kdf_salt=%d ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
-                ctx->hmac_kdf_salt=%d, c_ctx->hmac_kdf_iter=%d c_ctx->key_sz=%d\n", 
+                ctx->hmac_kdf_salt=%d, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 
                 c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, 
-                ctx->hmac_kdf_salt, c_ctx->hmac_kdf_iter, c_ctx->key_sz)); 
+                ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, c_ctx->key_sz)); 
                 
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
     if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
-      const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */ 
+      const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("codec_key_derive: deriving key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
     } else { 
-      CODEC_TRACE(("codec_key_derive: deriving key using PBKDF2\n")); 
+      CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
       PKCS5_PBKDF2_HMAC_SHA1( c_ctx->pass, c_ctx->pass_sz, 
                               ctx->kdf_salt, ctx->kdf_salt_sz, 
                               c_ctx->kdf_iter, c_ctx->key_sz, c_ctx->key);
@@ -592,15 +590,15 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
          easy to derive and publically known, is not the same as the salt used 
          to generate the encryption key */ 
       memcpy(ctx->hmac_kdf_salt, ctx->kdf_salt, ctx->kdf_salt_sz);
-      for(i = 0; i < HMAC_FIXED_SALT_SZ && i < ctx->kdf_salt_sz; i++) {
-        ctx->hmac_kdf_salt[i] = ctx->hmac_kdf_salt[i] ^ cipher_hmac_fixed_salt[i];
+      for(i = 0; i < ctx->kdf_salt_sz; i++) {
+        ctx->hmac_kdf_salt[i] ^= HMAC_SALT_MASK;
       } 
 
       CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
-        HMAC_PBKDF2_ITER)); 
+        c_ctx->fast_kdf_iter)); 
       PKCS5_PBKDF2_HMAC_SHA1( (const char*)c_ctx->key, c_ctx->key_sz, 
                               ctx->hmac_kdf_salt, ctx->kdf_salt_sz, 
-                              c_ctx->hmac_kdf_iter, c_ctx->key_sz, c_ctx->hmac_key); 
+                              c_ctx->fast_kdf_iter, c_ctx->key_sz, c_ctx->hmac_key); 
     }
 
     c_ctx->derive_key = 0;
