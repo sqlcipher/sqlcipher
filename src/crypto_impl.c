@@ -568,22 +568,8 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-      unsigned char *key_tmp;
-
-#ifndef OMIT_RAW_PBKDF2
-      CODEC_TRACE(("codec_key_derive: deriving cipher key from raw key with fast PBKDF2 %d iterations\n", c_ctx->fast_kdf_iter));
-      key_tmp = sqlcipher_malloc(c_ctx->key_sz);
-      if(key_tmp == NULL) return SQLITE_NOMEM;
-      cipher_hex2bin(z, n, key_tmp);
-      PKCS5_PBKDF2_HMAC_SHA1( key_tmp, c_ctx->key_sz, 
-                              ctx->kdf_salt, ctx->kdf_salt_sz, 
-                              c_ctx->fast_kdf_iter, c_ctx->key_sz, c_ctx->key);
-      sqlcipher_free(key_tmp, c_ctx->key_sz);
-#else
-      CODEC_TRACE(("codec_key_derive: using raw key from hex as cipher_key\n")); 
+      CODEC_TRACE(("codec_key_derive: deriving key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
-#endif
-
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
       PKCS5_PBKDF2_HMAC_SHA1( c_ctx->pass, c_ctx->pass_sz, 
@@ -608,7 +594,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
         ctx->hmac_kdf_salt[i] ^= HMAC_SALT_MASK;
       } 
 
-      CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using fast PBKDF2 with %d iterations\n", 
+      CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
         c_ctx->fast_kdf_iter)); 
       PKCS5_PBKDF2_HMAC_SHA1( (const char*)c_ctx->key, c_ctx->key_sz, 
                               ctx->hmac_kdf_salt, ctx->kdf_salt_sz, 
