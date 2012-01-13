@@ -975,4 +975,111 @@ do_test custom-hmac-kdf-iter-must-match {
 db close
 file delete -force test.db
 
+# open the database and turn on auto_vacuum
+# then insert a bunch of data, delete it 
+# and verify that the file has become smaller
+# but can still be opened with the proper
+# key
+do_test auto-vacuum {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA auto_vacuum=FULL;
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=10000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  lappend rc [execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+  }]
+
+  # grab current size of file
+  set sz [file size test.db]
+  
+  # delete some records, and verify
+  # autovacuum removes them
+  execsql {
+    DELETE FROM t1 WHERE rowid > 5000;
+  } 
+
+  db close
+
+  # grab new file size, post
+  # autovacuum
+  set sz2 [file size test.db]
+
+  # verify that the new size is 
+  # smaller than the old size
+  if {$sz > $sz2} { lappend rc true }
+
+  sqlite_orig db test.db
+
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }]
+
+} {10000 true 5000}
+db close
+file delete -force test.db
+
+# open the database then insert a bunch of data.
+# then delete it and run a manual vacuum
+# verify that the file has become smaller
+# but can still be opened with the proper
+# key
+do_test vacuum {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=10000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  lappend rc [execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+  }]
+
+  # grab current size of file
+  set sz [file size test.db]
+
+  execsql {
+    DELETE FROM t1 WHERE rowid > 5000;
+    VACUUM;
+  } 
+  db close
+
+  # grab new file size, post
+  # autovacuum
+  set sz2 [file size test.db]
+
+  # verify that the new size is 
+  # smaller than the old size
+  if {$sz > $sz2} { lappend rc true }
+
+  sqlite_orig db test.db
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }]
+
+} {10000 true 5000}
+db close
+
 finish_test
