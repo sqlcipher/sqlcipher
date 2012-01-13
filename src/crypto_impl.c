@@ -568,7 +568,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-      CODEC_TRACE(("codec_key_derive: deriving key from hex\n")); 
+      CODEC_TRACE(("codec_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
