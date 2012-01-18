@@ -70,7 +70,10 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
 
   sqlite3_mutex_enter(db->mutex);
   db->nextPagesize = page_sz; 
-  pDb->pBt->pBt->pageSizeFixed = 0; 
+
+  /* before forcing the page size we need to unset the BTS_PAGESIZE_FIXED flag, else  
+     sqliteBtreeSetPageSize will block the change  */
+  pDb->pBt->pBt->btsFlags &= ~BTS_PAGESIZE_FIXED;
   CODEC_TRACE(("codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize() size=%d reserve=%d\n", page_sz, reserve_sz));
   rc = sqlite3BtreeSetPageSize(pDb->pBt, page_sz, reserve_sz, 0);
   sqlite3_mutex_leave(db->mutex);
@@ -90,8 +93,6 @@ int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
       rc = sqlcipher_codec_ctx_set_use_hmac(ctx, use);
       if(rc != SQLITE_OK) return rc;
       /* since the use of hmac has changed, the page size may also change */
-      /* Note: before forcing the page size we need to force pageSizeFixed to 0, else  
-             sqliteBtreeSetPageSize will block the change  */
       return codec_set_btree_to_codec_pagesize(db, pDb, ctx);
     }
   }
