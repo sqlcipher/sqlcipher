@@ -277,6 +277,7 @@ struct MemPage {
   u8 hasData;          /* True if this page stores data */
   u8 hdrOffset;        /* 100 for page 1.  0 otherwise */
   u8 childPtrSize;     /* 0 if leaf==1.  4 if leaf==0 */
+  u8 max1bytePayload;  /* min(maxLocal,127) */
   u16 maxLocal;        /* Copy of BtShared.maxLocal or BtShared.maxLeaf */
   u16 minLocal;        /* Copy of BtShared.minLocal or BtShared.minLeaf */
   u16 cellOffset;      /* Index in aData of first cell pointer */
@@ -289,6 +290,8 @@ struct MemPage {
   } aOvfl[5];
   BtShared *pBt;       /* Pointer to BtShared that this page is part of */
   u8 *aData;           /* Pointer to disk image of the page data */
+  u8 *aDataEnd;        /* One byte past the end of usable data */
+  u8 *aCellIdx;        /* The cell index area */
   DbPage *pDbPage;     /* Pager page handle */
   Pgno pgno;           /* Page number for this page */
 };
@@ -368,7 +371,7 @@ struct Btree {
 /*
 ** An instance of this object represents a single database file.
 ** 
-** A single database file can be in use as the same time by two
+** A single database file can be in use at the same time by two
 ** or more database connections.  When two or more connections are
 ** sharing the same database file, each connection has it own
 ** private Btree object for the file and each of those Btrees points
@@ -405,17 +408,14 @@ struct BtShared {
   sqlite3 *db;          /* Database connection currently using this Btree */
   BtCursor *pCursor;    /* A list of all open cursors */
   MemPage *pPage1;      /* First page of the database */
-  u8 readOnly;          /* True if the underlying file is readonly */
-  u8 pageSizeFixed;     /* True if the page size can no longer be changed */
-  u8 secureDelete;      /* True if secure_delete is enabled */
-  u8 initiallyEmpty;    /* Database is empty at start of transaction */
   u8 openFlags;         /* Flags to sqlite3BtreeOpen() */
 #ifndef SQLITE_OMIT_AUTOVACUUM
   u8 autoVacuum;        /* True if auto-vacuum is enabled */
   u8 incrVacuum;        /* True if incr-vacuum is enabled */
 #endif
   u8 inTransaction;     /* Transaction state */
-  u8 doNotUseWAL;       /* If true, do not open write-ahead-log file */
+  u8 max1bytePayload;   /* Maximum first byte of cell for a 1-byte payload */
+  u16 btsFlags;         /* Boolean parameters.  See BTS_* macros below */
   u16 maxLocal;         /* Maximum local payload in non-LEAFDATA tables */
   u16 minLocal;         /* Minimum local payload in non-LEAFDATA tables */
   u16 maxLeaf;          /* Maximum local payload in a LEAFDATA table */
@@ -433,11 +433,20 @@ struct BtShared {
   BtShared *pNext;      /* Next on a list of sharable BtShared structs */
   BtLock *pLock;        /* List of locks held on this shared-btree struct */
   Btree *pWriter;       /* Btree with currently open write transaction */
-  u8 isExclusive;       /* True if pWriter has an EXCLUSIVE lock on the db */
-  u8 isPending;         /* If waiting for read-locks to clear */
 #endif
   u8 *pTmpSpace;        /* BtShared.pageSize bytes of space for tmp use */
 };
+
+/*
+** Allowed values for BtShared.btsFlags
+*/
+#define BTS_READ_ONLY        0x0001   /* Underlying file is readonly */
+#define BTS_PAGESIZE_FIXED   0x0002   /* Page size can no longer be changed */
+#define BTS_SECURE_DELETE    0x0004   /* PRAGMA secure_delete is enabled */
+#define BTS_INITIALLY_EMPTY  0x0008   /* Database was empty at trans start */
+#define BTS_NO_WAL           0x0010   /* Do not open write-ahead-log files */
+#define BTS_EXCLUSIVE        0x0020   /* pWriter has an exclusive lock */
+#define BTS_PENDING          0x0040   /* Waiting for read-locks to clear */
 
 /*
 ** An instance of the following structure is used to hold information
@@ -474,7 +483,7 @@ struct CellInfo {
 ** The entry is identified by its MemPage and the index in
 ** MemPage.aCell[] of the entry.
 **
-** A single database file can shared by two more database connections,
+** A single database file can be shared by two more database connections,
 ** but cursors cannot be shared.  Each cursor is associated with a
 ** particular database connection identified BtCursor.pBtree.db.
 **
@@ -635,7 +644,7 @@ struct IntegrityCk {
 };
 
 /*
-** Read or write a two- and four-byte big-endian integer values.
+** Routines to read or write a two- and four-byte big-endian integer values.
 */
 #define get2byte(x)   ((x)[0]<<8 | (x)[1])
 #define put2byte(p,v) ((p)[0] = (u8)((v)>>8), (p)[1] = (u8)(v))

@@ -27,11 +27,18 @@
 ** The following functions are instrumented for malloc() failure 
 ** testing:
 **
-**     sqlite3OsOpen()
 **     sqlite3OsRead()
 **     sqlite3OsWrite()
 **     sqlite3OsSync()
+**     sqlite3OsFileSize()
 **     sqlite3OsLock()
+**     sqlite3OsCheckReservedLock()
+**     sqlite3OsFileControl()
+**     sqlite3OsShmMap()
+**     sqlite3OsOpen()
+**     sqlite3OsDelete()
+**     sqlite3OsAccess()
+**     sqlite3OsFullPathname()
 **
 */
 #if defined(SQLITE_TEST)
@@ -90,9 +97,23 @@ int sqlite3OsCheckReservedLock(sqlite3_file *id, int *pResOut){
   DO_OS_MALLOC_TEST(id);
   return id->pMethods->xCheckReservedLock(id, pResOut);
 }
+
+/*
+** Use sqlite3OsFileControl() when we are doing something that might fail
+** and we need to know about the failures.  Use sqlite3OsFileControlHint()
+** when simply tossing information over the wall to the VFS and we do not
+** really care if the VFS receives and understands the information since it
+** is only a hint and can be safely ignored.  The sqlite3OsFileControlHint()
+** routine has no return value since the return value would be meaningless.
+*/
 int sqlite3OsFileControl(sqlite3_file *id, int op, void *pArg){
+  DO_OS_MALLOC_TEST(id);
   return id->pMethods->xFileControl(id, op, pArg);
 }
+void sqlite3OsFileControlHint(sqlite3_file *id, int op, void *pArg){
+  (void)id->pMethods->xFileControl(id, op, pArg);
+}
+
 int sqlite3OsSectorSize(sqlite3_file *id){
   int (*xSectorSize)(sqlite3_file*) = id->pMethods->xSectorSize;
   return (xSectorSize ? xSectorSize(id) : SQLITE_DEFAULT_SECTOR_SIZE);
@@ -116,6 +137,7 @@ int sqlite3OsShmMap(
   int bExtend,                    /* True to extend file if necessary */
   void volatile **pp              /* OUT: Pointer to mapping */
 ){
+  DO_OS_MALLOC_TEST(id);
   return id->pMethods->xShmMap(id, iPage, pgsz, bExtend, pp);
 }
 
@@ -132,7 +154,7 @@ int sqlite3OsOpen(
 ){
   int rc;
   DO_OS_MALLOC_TEST(0);
-  /* 0x87f3f is a mask of SQLITE_OPEN_ flags that are valid to be passed
+  /* 0x87f7f is a mask of SQLITE_OPEN_ flags that are valid to be passed
   ** down into the VFS layer.  Some SQLITE_OPEN_ flags (for example,
   ** SQLITE_OPEN_FULLMUTEX or SQLITE_OPEN_SHAREDCACHE) are blocked before
   ** reaching the VFS. */
@@ -141,6 +163,8 @@ int sqlite3OsOpen(
   return rc;
 }
 int sqlite3OsDelete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
+  DO_OS_MALLOC_TEST(0);
+  assert( dirSync==0 || dirSync==1 );
   return pVfs->xDelete(pVfs, zPath, dirSync);
 }
 int sqlite3OsAccess(
@@ -158,6 +182,7 @@ int sqlite3OsFullPathname(
   int nPathOut, 
   char *zPathOut
 ){
+  DO_OS_MALLOC_TEST(0);
   zPathOut[0] = 0;
   return pVfs->xFullPathname(pVfs, zPath, nPathOut, zPathOut);
 }
