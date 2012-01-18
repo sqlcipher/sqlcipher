@@ -1115,5 +1115,34 @@ do_test vacuum {
 
 } {10000 true 5000}
 db close
+file delete -force test.db
+
+# test kdf_iter and other pragmas 
+# before a key is set. Verify that they
+# are no-ops
+do_test cipher-options-before-keys {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA kdf_iter = 1000;
+    PRAGMA cipher_page_size = 4096;
+    PRAGMA cipher = 'aes-128-cbc';
+    PRAGMA cipher_use_hmac = OFF;
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES(1,2);
+  }
+  db close
+
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {1}
+db close
+file delete -force test.db
 
 finish_test

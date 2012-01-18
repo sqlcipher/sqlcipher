@@ -45,7 +45,7 @@ int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   if(pDb->pBt) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    return sqlcipher_codec_ctx_set_kdf_iter(ctx, kdf_iter, for_ctx);
+    if(ctx) return sqlcipher_codec_ctx_set_kdf_iter(ctx, kdf_iter, for_ctx);
   }
   return SQLITE_ERROR;
 }
@@ -57,7 +57,7 @@ int codec_set_fast_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   if(pDb->pBt) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    return sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, kdf_iter, for_ctx);
+    if(ctx) return sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, kdf_iter, for_ctx);
   }
   return SQLITE_ERROR;
 }
@@ -86,14 +86,14 @@ int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
     int rc;
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-
-    rc = sqlcipher_codec_ctx_set_use_hmac(ctx, use);
-    if(rc != SQLITE_OK) return rc;
-
-    /* since the use of hmac has changed, the page size may also change */
-    /* Note: before forcing the page size we need to force pageSizeFixed to 0, else  
+    if(ctx) {
+      rc = sqlcipher_codec_ctx_set_use_hmac(ctx, use);
+      if(rc != SQLITE_OK) return rc;
+      /* since the use of hmac has changed, the page size may also change */
+      /* Note: before forcing the page size we need to force pageSizeFixed to 0, else  
              sqliteBtreeSetPageSize will block the change  */
-    return codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+      return codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+    }
   }
   return SQLITE_ERROR;
 }
@@ -107,10 +107,11 @@ int codec_set_page_size(sqlite3* db, int nDb, int size) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
 
-    rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
-    if(rc != SQLITE_OK) return rc;
-
-    return codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+    if(ctx) {
+      rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
+      if(rc != SQLITE_OK) return rc;
+      return codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+    }
   }
   return SQLITE_ERROR;
 }
@@ -128,7 +129,7 @@ int codec_set_cipher_name(sqlite3* db, int nDb, const char *cipher_name, int for
   if(pDb->pBt) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    return sqlcipher_codec_ctx_set_cipher(ctx, cipher_name, for_ctx);
+    if(ctx) return sqlcipher_codec_ctx_set_cipher(ctx, cipher_name, for_ctx);
   }
   return SQLITE_ERROR;
 }
@@ -139,7 +140,7 @@ int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for
   if(pDb->pBt) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
+    if(ctx) return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
   }
   return SQLITE_ERROR;
 } 
