@@ -53,7 +53,7 @@ struct EvalEvent {
 
 static Tcl_ObjCmdProc sqlthread_proc;
 static Tcl_ObjCmdProc clock_seconds_proc;
-#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+#if SQLITE_OS_UNIX && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
 static Tcl_ObjCmdProc blocking_step_proc;
 static Tcl_ObjCmdProc blocking_prepare_v2_proc;
 #endif
@@ -116,7 +116,7 @@ static Tcl_ThreadCreateType tclScriptThread(ClientData pSqlThread){
   interp = Tcl_CreateInterp();
   Tcl_CreateObjCommand(interp, "clock_seconds", clock_seconds_proc, 0, 0);
   Tcl_CreateObjCommand(interp, "sqlthread", sqlthread_proc, pSqlThread, 0);
-#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+#if SQLITE_OS_UNIX && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
   Tcl_CreateObjCommand(interp, "sqlite3_blocking_step", blocking_step_proc,0,0);
   Tcl_CreateObjCommand(interp, 
       "sqlite3_blocking_prepare_v2", blocking_prepare_v2_proc, (void *)1, 0);
@@ -282,6 +282,21 @@ static int sqlthread_open(
 
   zFilename = Tcl_GetString(objv[2]);
   rc = sqlite3_open(zFilename, &db);
+#ifdef SQLITE_HAS_CODEC
+  if( db && objc>=4 ){
+    const char *zKey;
+    int nKey;
+    zKey = Tcl_GetStringFromObj(objv[3], &nKey);
+    rc = sqlite3_key(db, zKey, nKey);
+    if( rc!=SQLITE_OK ){
+      char *zErrMsg = sqlite3_mprintf("error %d: %s", rc, sqlite3_errmsg(db));
+      sqlite3_close(db);
+      Tcl_AppendResult(interp, zErrMsg, (char*)0);
+      sqlite3_free(zErrMsg);
+      return TCL_ERROR;
+    }
+  }
+#endif
   Md5_Register(db);
   sqlite3_busy_handler(db, xBusy, 0);
   
@@ -305,7 +320,7 @@ static int sqlthread_id(
   Tcl_Obj *CONST objv[]
 ){
   Tcl_ThreadId id = Tcl_GetCurrentThread();
-  Tcl_SetObjResult(interp, Tcl_NewIntObj((int)id));
+  Tcl_SetObjResult(interp, Tcl_NewIntObj(SQLITE_PTR_TO_INT(id)));
   UNUSED_PARAMETER(clientData);
   UNUSED_PARAMETER(objc);
   UNUSED_PARAMETER(objv);
@@ -349,7 +364,7 @@ static int sqlthread_proc(
   if( rc!=TCL_OK ) return rc;
   pSub = &aSub[iIndex];
 
-  if( objc!=(pSub->nArg+2) ){
+  if( objc<(pSub->nArg+2) ){
     Tcl_WrongNumArgs(interp, 2, objv, pSub->zUsage);
     return TCL_ERROR;
   }
@@ -392,7 +407,7 @@ static int clock_seconds_proc(
 ** should be considered if these functions are to be extended (i.e. to 
 ** support windows) in the future.
 */ 
-#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+#if SQLITE_OS_UNIX && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
 
 /* BEGIN_SQLITE_BLOCKING_STEP */
 /* This example uses the pthreads API */
@@ -404,9 +419,9 @@ static int clock_seconds_proc(
 */
 typedef struct UnlockNotification UnlockNotification;
 struct UnlockNotification {
-  int fired;                           /* True after unlock event has occured */
-  pthread_cond_t cond;                 /* Condition variable to wait on */
-  pthread_mutex_t mutex;               /* Mutex to protect structure */
+  int fired;                         /* True after unlock event has occurred */
+  pthread_cond_t cond;               /* Condition variable to wait on */
+  pthread_mutex_t mutex;             /* Mutex to protect structure */
 };
 
 /*
@@ -614,7 +629,7 @@ static int blocking_prepare_v2_proc(
 int SqlitetestThread_Init(Tcl_Interp *interp){
   Tcl_CreateObjCommand(interp, "sqlthread", sqlthread_proc, 0, 0);
   Tcl_CreateObjCommand(interp, "clock_seconds", clock_seconds_proc, 0, 0);
-#if defined(SQLITE_OS_UNIX) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
+#if SQLITE_OS_UNIX && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
   Tcl_CreateObjCommand(interp, "sqlite3_blocking_step", blocking_step_proc,0,0);
   Tcl_CreateObjCommand(interp, 
       "sqlite3_blocking_prepare_v2", blocking_prepare_v2_proc, (void *)1, 0);

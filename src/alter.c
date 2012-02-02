@@ -313,6 +313,11 @@ static char *whereTempTriggers(Parse *pParse, Table *pTab){
       }
     }
   }
+  if( zWhere ){
+    char *zNew = sqlite3MPrintf(pParse->db, "type='trigger' AND (%s)", zWhere);
+    sqlite3DbFree(pParse->db, zWhere);
+    zWhere = zNew;
+  }
   return zWhere;
 }
 
@@ -353,16 +358,32 @@ static void reloadTableSchema(Parse *pParse, Table *pTab, const char *zName){
   /* Reload the table, index and permanent trigger schemas. */
   zWhere = sqlite3MPrintf(pParse->db, "tbl_name=%Q", zName);
   if( !zWhere ) return;
-  sqlite3VdbeAddOp4(v, OP_ParseSchema, iDb, 0, 0, zWhere, P4_DYNAMIC);
+  sqlite3VdbeAddParseSchemaOp(v, iDb, zWhere);
 
 #ifndef SQLITE_OMIT_TRIGGER
   /* Now, if the table is not stored in the temp database, reload any temp 
   ** triggers. Don't use IN(...) in case SQLITE_OMIT_SUBQUERY is defined. 
   */
   if( (zWhere=whereTempTriggers(pParse, pTab))!=0 ){
-    sqlite3VdbeAddOp4(v, OP_ParseSchema, 1, 0, 0, zWhere, P4_DYNAMIC);
+    sqlite3VdbeAddParseSchemaOp(v, 1, zWhere);
   }
 #endif
+}
+
+/*
+** Parameter zName is the name of a table that is about to be altered
+** (either with ALTER TABLE ... RENAME TO or ALTER TABLE ... ADD COLUMN).
+** If the table is a system table, this function leaves an error message
+** in pParse->zErr (system tables may not be altered) and returns non-zero.
+**
+** Or, if zName is not a system table, zero is returned.
+*/
+static int isSystemTable(Parse *pParse, const char *zName){
+  if( sqlite3Strlen30(zName)>6 && 0==sqlite3StrNICmp(zName, "sqlite_", 7) ){
+    sqlite3ErrorMsg(pParse, "table %s may not be altered", zName);
+    return 1;
+  }
+  return 0;
 }
 
 /*
@@ -415,14 +436,11 @@ void sqlite3AlterRenameTable(
   /* Make sure it is not a system table being altered, or a reserved name
   ** that the table is being renamed to.
   */
-  if( sqlite3Strlen30(pTab->zName)>6 
-   && 0==sqlite3StrNICmp(pTab->zName, "sqlite_", 7)
-  ){
-    sqlite3ErrorMsg(pParse, "table %s may not be altered", pTab->zName);
+  if( SQLITE_OK!=isSystemTable(pParse, pTab->zName) ){
     goto exit_rename_table;
   }
-  if( SQLITE_OK!=sqlite3CheckObjectName(pParse, zName) ){
-    goto exit_rename_table;
+  if( SQLITE_OK!=sqlite3CheckObjectName(pParse, zName) ){ goto
+    exit_rename_table;
   }
 
 #ifndef SQLITE_OMIT_VIEW
@@ -752,6 +770,9 @@ void sqlite3AlterBeginAddColumn(Parse *pParse, SrcList *pSrc){
   /* Make sure this is not an attempt to ALTER a view. */
   if( pTab->pSelect ){
     sqlite3ErrorMsg(pParse, "Cannot add a column to a view");
+    goto exit_begin_add_column;
+  }
+  if( SQLITE_OK!=isSystemTable(pParse, pTab->zName) ){
     goto exit_begin_add_column;
   }
 

@@ -1628,9 +1628,20 @@ ifcapable attach {
       ATTACH DATABASE ':memory:' AS test1
     }
   } {0 {}}
-  do_test auth-1.252 {
+  do_test auth-1.252a {
     set ::authargs
   } {:memory: {} {} {}}
+  do_test auth-1.252b {
+    db eval {DETACH test1}
+    set ::attachfilename :memory:
+    db eval {ATTACH $::attachfilename AS test1}
+    set ::authargs
+  } {{} {} {} {}}
+  do_test auth-1.252c {
+    db eval {DETACH test1}
+    db eval {ATTACH ':mem' || 'ory:' AS test1}
+    set ::authargs
+  } {{} {} {} {}}
   do_test auth-1.253 {
     catchsql {DETACH DATABASE test1}
     proc auth {code arg1 arg2 arg3 arg4} {
@@ -1976,12 +1987,12 @@ ifcapable analyze {
       ANALYZE;
     }
     set ::authargs
-  } {t4 {} main {}}
+  } {t4 {} main {} t2 {} main {}}
   do_test auth-1.295 {
     execsql {
       SELECT count(*) FROM sqlite_stat1;
     }
-  } 2
+  } 3
   proc auth {code args} {
     if {$code=="SQLITE_ANALYZE"} {
       set ::authargs [concat $::authargs $args]
@@ -1999,7 +2010,7 @@ ifcapable analyze {
     execsql {
       SELECT count(*) FROM sqlite_stat1;
     }
-  } 2
+  } 3
 } ;# ifcapable analyze
 
 
@@ -2310,10 +2321,10 @@ ifcapable compound&&subquery {
       }
     }
   }
-  ifcapable stat2 {
-    set stat2 "sqlite_stat2 "
+  ifcapable stat3 {
+    set stat3 "sqlite_stat3 "
   } else {
-    set stat2 ""
+    set stat3 ""
   }
   do_test auth-5.2 {
     execsql {
@@ -2322,7 +2333,7 @@ ifcapable compound&&subquery {
       WHERE type='table'
       ORDER BY name
     }
-  } "sqlite_stat1 ${stat2}t1 t2 t3 t4"
+  } "sqlite_stat1 ${stat3}t1 t2 t3 t4"
 }
 
 # Ticket #3944

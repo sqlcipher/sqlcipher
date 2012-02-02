@@ -218,7 +218,7 @@
 /* The following value is the maximum cell size assuming a maximum page
 ** size give above.
 */
-#define MX_CELL_SIZE(pBt)  (pBt->pageSize-8)
+#define MX_CELL_SIZE(pBt)  ((int)(pBt->pageSize-8))
 
 /* The maximum number of cells on a single page of the database.  This
 ** assumes a minimum cell size of 6 bytes  (4 bytes for the cell itself
@@ -336,7 +336,7 @@ struct BtLock {
 ** All fields in this structure are accessed under sqlite3.mutex.
 ** The pBt pointer itself may not be changed while there exists cursors 
 ** in the referenced BtShared that point back to this Btree since those
-** cursors have to do go through this Btree to find their BtShared and
+** cursors have to go through this Btree to find their BtShared and
 ** they often do so without holding sqlite3.mutex.
 */
 struct Btree {
@@ -409,23 +409,24 @@ struct BtShared {
   u8 pageSizeFixed;     /* True if the page size can no longer be changed */
   u8 secureDelete;      /* True if secure_delete is enabled */
   u8 initiallyEmpty;    /* Database is empty at start of transaction */
+  u8 openFlags;         /* Flags to sqlite3BtreeOpen() */
 #ifndef SQLITE_OMIT_AUTOVACUUM
   u8 autoVacuum;        /* True if auto-vacuum is enabled */
   u8 incrVacuum;        /* True if incr-vacuum is enabled */
 #endif
+  u8 inTransaction;     /* Transaction state */
+  u8 doNotUseWAL;       /* If true, do not open write-ahead-log file */
   u16 maxLocal;         /* Maximum local payload in non-LEAFDATA tables */
   u16 minLocal;         /* Minimum local payload in non-LEAFDATA tables */
   u16 maxLeaf;          /* Maximum local payload in a LEAFDATA table */
   u16 minLeaf;          /* Minimum local payload in a LEAFDATA table */
-  u8 inTransaction;     /* Transaction state */
-  u8 doNotUseWAL;       /* If true, do not open write-ahead-log file */
   u32 pageSize;         /* Total number of bytes on a page */
   u32 usableSize;       /* Number of usable bytes on each page */
   int nTransaction;     /* Number of open transactions (read + write) */
   u32 nPage;            /* Number of pages in the database */
   void *pSchema;        /* Pointer to space allocated by sqlite3BtreeSchema() */
   void (*xFreeSchema)(void*);  /* Destructor for BtShared.pSchema */
-  sqlite3_mutex *mutex; /* Non-recursive mutex required to access this struct */
+  sqlite3_mutex *mutex; /* Non-recursive mutex required to access this object */
   Bitvec *pHasContent;  /* Set of pages moved to free-list this transaction */
 #ifndef SQLITE_OMIT_SHARED_CACHE
   int nRef;             /* Number of references to this structure */
@@ -445,8 +446,8 @@ struct BtShared {
 */
 typedef struct CellInfo CellInfo;
 struct CellInfo {
-  u8 *pCell;     /* Pointer to the start of cell content */
   i64 nKey;      /* The key for INTKEY tables, or number of bytes in key */
+  u8 *pCell;     /* Pointer to the start of cell content */
   u32 nData;     /* Number of bytes of data */
   u32 nPayload;  /* Total amount of payload */
   u16 nHeader;   /* Size of the cell content header in bytes */
@@ -488,20 +489,20 @@ struct BtCursor {
   Pgno pgnoRoot;            /* The root page of this tree */
   sqlite3_int64 cachedRowid; /* Next rowid cache.  0 means not valid */
   CellInfo info;            /* A parse of the cell we are pointing at */
+  i64 nKey;        /* Size of pKey, or last integer key */
+  void *pKey;      /* Saved key that was cursor's last known position */
+  int skipNext;    /* Prev() is noop if negative. Next() is noop if positive */
   u8 wrFlag;                /* True if writable */
   u8 atLast;                /* Cursor pointing to the last entry */
   u8 validNKey;             /* True if info.nKey is valid */
   u8 eState;                /* One of the CURSOR_XXX constants (see below) */
-  void *pKey;      /* Saved key that was cursor's last known position */
-  i64 nKey;        /* Size of pKey, or last integer key */
-  int skipNext;    /* Prev() is noop if negative. Next() is noop if positive */
 #ifndef SQLITE_OMIT_INCRBLOB
-  u8 isIncrblobHandle;      /* True if this cursor is an incr. io handle */
   Pgno *aOverflow;          /* Cache of overflow page locations */
+  u8 isIncrblobHandle;      /* True if this cursor is an incr. io handle */
 #endif
   i16 iPage;                            /* Index of current page in apPage */
-  MemPage *apPage[BTCURSOR_MAX_DEPTH];  /* Pages from root to current page */
   u16 aiIdx[BTCURSOR_MAX_DEPTH];        /* Current index in apPage[i] */
+  MemPage *apPage[BTCURSOR_MAX_DEPTH];  /* Pages from root to current page */
 };
 
 /*

@@ -15,6 +15,11 @@
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
+# Do not use a codec for tests in this file, as the database file is
+# manipulated directly using tcl scripts (using the [hexio_write] command).
+#
+do_not_use_codec
+
 ifcapable {!pager_pragmas} {
   finish_test
   return
@@ -83,7 +88,7 @@ do_test exclusive2-1.0 {
 # The following tests - exclusive2-1.X - check that:
 #
 # 1-3:   Build a database with connection 1, calculate a signature.
-# 4-9:   Modify the database using a second connection in a way that
+# 4-7:   Modify the database using a second connection in a way that
 #        does not modify the freelist, then reset the pager change-counter
 #        to the value it had before the modifications.
 # 8:     Check that using the first connection, the database signature
@@ -98,6 +103,11 @@ do_test exclusive2-1.0 {
 # the entire database. In the case of 1024 byte pages, this means
 # the cache size must be at least 17. Otherwise, some pages will be
 # loaded from the database file in step 8.
+#
+# For similar reasons, this test does not work with the memsubsys1 permutation.
+# Permutation memsubsys1 configures the pcache subsystem to use a static
+# allocation of 24 pages (shared between all pagers). This is not enough for
+# this test.
 #
 do_test exclusive2-1.1 {
   execsql {
@@ -146,16 +156,19 @@ do_test exclusive2-1.6 {
 do_test exclusive2-1.7 {
   pagerChangeCounter test.db 1
 } {1}
-do_test exclusive2-1.9 {
-  t1sig
-  expr {[t1sig] eq $::sig}
-} {1}
+if {[permutation] != "memsubsys1"} {
+  do_test exclusive2-1.9 {
+    t1sig
+    expr {[t1sig] eq $::sig}
+  } {1}
+}
 do_test exclusive2-1.10 {
   pagerChangeCounter test.db 2
 } {2}
 do_test exclusive2-1.11 {
   expr {[t1sig] eq $::sig}
 } {0}
+db2 close
 
 #--------------------------------------------------------------------
 # These tests - exclusive2-2.X - are similar to exclusive2-1.X, 
@@ -245,57 +258,57 @@ do_test exclusive2-2.8 {
 #
 
 db close
-db2 close
 catch {close $::fd}
-file delete -force test.db
-file delete -force test.db-journal
+forcedelete test.db
+forcedelete test.db-journal
 
 do_test exclusive2-3.0 {
   sqlite3 db test.db
   execsql {
     BEGIN;
     CREATE TABLE t1(a UNIQUE);
-    INSERT INTO t1 VALUES(randstr(10, 400));
-    INSERT INTO t1 VALUES(randstr(10, 400));
+    INSERT INTO t1 VALUES(randstr(200, 200));
+    INSERT INTO t1 VALUES(randstr(200, 200));
     COMMIT;
   }
   readPagerChangeCounter test.db
 } {1}
 do_test exclusive2-3.1 {
   execsql {
-    INSERT INTO t1 VALUES(randstr(10, 400));
+    INSERT INTO t1 VALUES(randstr(200, 200));
   }
   readPagerChangeCounter test.db
 } {2}
 do_test exclusive2-3.2 {
   execsql {
-    INSERT INTO t1 VALUES(randstr(10, 400));
+    INSERT INTO t1 VALUES(randstr(200, 200));
   }
   readPagerChangeCounter test.db
 } {3}
 do_test exclusive2-3.3 {
   execsql {
     PRAGMA locking_mode = exclusive;
-    INSERT INTO t1 VALUES(randstr(10, 400));
+    INSERT INTO t1 VALUES(randstr(200, 200));
   }
   readPagerChangeCounter test.db
 } {4}
 do_test exclusive2-3.4 {
+breakpoint
   execsql {
-    INSERT INTO t1 VALUES(randstr(10, 400));
+    INSERT INTO t1 VALUES(randstr(200, 200));
   }
   readPagerChangeCounter test.db
 } {4}
 do_test exclusive2-3.5 {
   execsql {
     PRAGMA locking_mode = normal;
-    INSERT INTO t1 VALUES(randstr(10, 400));
+    INSERT INTO t1 VALUES(randstr(200, 200));
   }
   readPagerChangeCounter test.db
 } {4}
 do_test exclusive2-3.6 {
   execsql {
-    INSERT INTO t1 VALUES(randstr(10, 400));
+    INSERT INTO t1 VALUES(randstr(200, 200));
   }
   readPagerChangeCounter test.db
 } {5}

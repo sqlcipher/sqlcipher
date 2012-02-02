@@ -163,11 +163,11 @@ static const unsigned char sqlite3Utf8Trans1[] = {
         || (c&0xFFFFF800)==0xD800                          \
         || (c&0xFFFFFFFE)==0xFFFE ){  c = 0xFFFD; }        \
   }
-int sqlite3Utf8Read(
+u32 sqlite3Utf8Read(
   const unsigned char *zIn,       /* First byte of UTF-8 character */
   const unsigned char **pzNext    /* Write first byte past UTF-8 char here */
 ){
-  int c;
+  unsigned int c;
 
   /* Same as READ_UTF8() above but without the zTerm parameter.
   ** For this routine, we assume the UTF8 string is always zero-terminated.
@@ -410,15 +410,15 @@ int sqlite3Utf8CharLen(const char *zIn, int nByte){
 ** This has the effect of making sure that the string is well-formed
 ** UTF-8.  Miscoded characters are removed.
 **
-** The translation is done in-place (since it is impossible for the
-** correct UTF-8 encoding to be longer than a malformed encoding).
+** The translation is done in-place and aborted if the output
+** overruns the input.
 */
 int sqlite3Utf8To8(unsigned char *zIn){
   unsigned char *zOut = zIn;
   unsigned char *zStart = zIn;
   u32 c;
 
-  while( zIn[0] ){
+  while( zIn[0] && zOut<=zIn ){
     c = sqlite3Utf8Read(zIn, (const u8**)&zIn);
     if( c!=0xfffd ){
       WRITE_UTF8(zOut, c);
@@ -464,7 +464,7 @@ char *sqlite3Utf16to8(sqlite3 *db, const void *z, int nByte, u8 enc){
 ** If a malloc failure occurs, NULL is returned and the db.mallocFailed
 ** flag set.
 */
-#ifdef SQLITE_ENABLE_STAT2
+#ifdef SQLITE_ENABLE_STAT3
 char *sqlite3Utf8to16(sqlite3 *db, u8 enc, char *z, int n, int *pnOut){
   Mem m;
   memset(&m, 0, sizeof(m));

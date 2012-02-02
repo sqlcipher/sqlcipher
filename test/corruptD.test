@@ -14,6 +14,11 @@
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
+# Do not use a codec for tests in this file, as the database file is
+# manipulated directly using tcl scripts (using the [hexio_write] command).
+#
+do_not_use_codec
+
 #--------------------------------------------------------------------------
 # OVERVIEW
 #
@@ -80,7 +85,7 @@ do_test corruptD-1.0 {
     DELETE FROM t1 WHERE a = 30;
     DELETE FROM t1 WHERE a = 40;
   }
-  copy_file test.db test.bu
+  forcecopy test.db test.bu
 } {}
 
 proc incr_change_counter {} {
@@ -91,7 +96,7 @@ proc incr_change_counter {} {
 
 proc restore_file {} {
   db close
-  copy_file test.bu test.db
+  forcecopy test.bu test.db
   sqlite3 db test.db
 }
 

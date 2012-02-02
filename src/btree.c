@@ -656,18 +656,21 @@ static int btreeMoveto(
   int rc;                    /* Status code */
   UnpackedRecord *pIdxKey;   /* Unpacked index key */
   char aSpace[150];          /* Temp space for pIdxKey - to avoid a malloc */
+  char *pFree = 0;
 
   if( pKey ){
     assert( nKey==(i64)(int)nKey );
-    pIdxKey = sqlite3VdbeRecordUnpack(pCur->pKeyInfo, (int)nKey, pKey,
-                                      aSpace, sizeof(aSpace));
+    pIdxKey = sqlite3VdbeAllocUnpackedRecord(
+        pCur->pKeyInfo, aSpace, sizeof(aSpace), &pFree
+    );
     if( pIdxKey==0 ) return SQLITE_NOMEM;
+    sqlite3VdbeRecordUnpack(pCur->pKeyInfo, (int)nKey, pKey, pIdxKey);
   }else{
     pIdxKey = 0;
   }
   rc = sqlite3BtreeMovetoUnpacked(pCur, pIdxKey, nKey, bias, pRes);
-  if( pKey ){
-    sqlite3VdbeDeleteUnpackedRecord(pIdxKey);
+  if( pFree ){
+    sqlite3DbFree(pCur->pKeyInfo->db, pFree);
   }
   return rc;
 }
@@ -788,6 +791,7 @@ static void ptrmapPut(BtShared *pBt, Pgno key, u8 eType, Pgno parent, int *pRC){
     *pRC = SQLITE_CORRUPT_BKPT;
     goto ptrmap_exit;
   }
+  assert( offset <= (int)pBt->usableSize-5 );
   pPtrmap = (u8 *)sqlite3PagerGetData(pDbPage);
 
   if( eType!=pPtrmap[offset] || get4byte(&pPtrmap[offset+1])!=parent ){
@@ -827,6 +831,11 @@ static int ptrmapGet(BtShared *pBt, Pgno key, u8 *pEType, Pgno *pPgno){
   pPtrmap = (u8 *)sqlite3PagerGetData(pDbPage);
 
   offset = PTRMAP_PTROFFSET(iPtrmap, key);
+  if( offset<0 ){
+    sqlite3PagerUnref(pDbPage);
+    return SQLITE_CORRUPT_BKPT;
+  }
+  assert( offset <= (int)pBt->usableSize-5 );
   assert( pEType!=0 );
   *pEType = pPtrmap[offset];
   if( pPgno ) *pPgno = get4byte(&pPtrmap[offset+1]);
@@ -851,6 +860,8 @@ static int ptrmapGet(BtShared *pBt, Pgno key, u8 *pEType, Pgno *pPgno){
 */
 #define findCell(P,I) \
   ((P)->aData + ((P)->maskPage & get2byte(&(P)->aData[(P)->cellOffset+2*(I)])))
+#define findCellv2(D,M,O,I) (D+(M&get2byte(D+(O+2*(I)))))
+
 
 /*
 ** This a more complex version of findCell() that works for
@@ -918,14 +929,9 @@ static void btreeParseCellPtr(
     /* This is the (easy) common case where the entire payload fits
     ** on the local page.  No overflow is required.
     */
-    int nSize;          /* Total size of cell content in bytes */
-    nSize = nPayload + n;
+    if( (pInfo->nSize = (u16)(n+nPayload))<4 ) pInfo->nSize = 4;
     pInfo->nLocal = (u16)nPayload;
     pInfo->iOverflow = 0;
-    if( (nSize & ~3)==0 ){
-      nSize = 4;        /* Minimum cell size is 4 */
-    }
-    pInfo->nSize = (u16)nSize;
   }else{
     /* If the payload will not fit completely on the local page, we have
     ** to decide how much to store locally and how much to spill onto
@@ -1233,7 +1239,7 @@ static int allocateSpace(MemPage *pPage, int nByte, int *pIdx){
   */
   top -= nByte;
   put2byte(&data[hdr+5], top);
-  assert( top+nByte <= pPage->pBt->usableSize );
+  assert( top+nByte <= (int)pPage->pBt->usableSize );
   *pIdx = top;
   return SQLITE_OK;
 }
@@ -1254,7 +1260,7 @@ static int freeSpace(MemPage *pPage, int start, int size){
   assert( pPage->pBt!=0 );
   assert( sqlite3PagerIswriteable(pPage->pDbPage) );
   assert( start>=pPage->hdrOffset+6+pPage->childPtrSize );
-  assert( (start + size)<=pPage->pBt->usableSize );
+  assert( (start + size) <= (int)pPage->pBt->usableSize );
   assert( sqlite3_mutex_held(pPage->pBt->mutex) );
   assert( size>=0 );   /* Minimum cell size is 4 */
 
@@ -1297,7 +1303,7 @@ static int freeSpace(MemPage *pPage, int start, int size){
   while( (pbegin = get2byte(&data[addr]))>0 ){
     int pnext, psize, x;
     assert( pbegin>addr );
-    assert( pbegin<=pPage->pBt->usableSize-4 );
+    assert( pbegin <= (int)pPage->pBt->usableSize-4 );
     pnext = get2byte(&data[pbegin]);
     psize = get2byte(&data[pbegin+2]);
     if( pbegin + psize + 3 >= pnext && pnext>0 ){
@@ -1672,10 +1678,19 @@ static int btreeInvokeBusyHandler(void *pArg){
 ** Open a database file.
 ** 
 ** zFilename is the name of the database file.  If zFilename is NULL
-** a new database with a random name is created.  This randomly named
-** database file will be deleted when sqlite3BtreeClose() is called.
+** then an ephemeral database is created.  The ephemeral database might
+** be exclusively in memory, or it might use a disk-based memory cache.
+** Either way, the ephemeral database will be automatically deleted 
+** when sqlite3BtreeClose() is called.
+**
 ** If zFilename is ":memory:" then an in-memory database is created
 ** that is automatically destroyed when it is closed.
+**
+** The "flags" parameter is a bitmask that might contain bits
+** BTREE_OMIT_JOURNAL and/or BTREE_NO_READLOCK.  The BTREE_NO_READLOCK
+** bit is also set if the SQLITE_NoReadlock flags is set in db->flags.
+** These flags are passed through into sqlite3PagerOpen() and must
+** be the same values as PAGER_OMIT_JOURNAL and PAGER_NO_READLOCK.
 **
 ** If the database is already opened in the same database connection
 ** and we are in shared cache mode, then the open will fail with an
@@ -1684,13 +1699,13 @@ static int btreeInvokeBusyHandler(void *pArg){
 ** to problems with locking.
 */
 int sqlite3BtreeOpen(
+  sqlite3_vfs *pVfs,      /* VFS to use for this b-tree */
   const char *zFilename,  /* Name of the file containing the BTree database */
   sqlite3 *db,            /* Associated database handle */
   Btree **ppBtree,        /* Pointer to new Btree object written here */
   int flags,              /* Options */
   int vfsFlags            /* Flags passed through to sqlite3_vfs.xOpen() */
 ){
-  sqlite3_vfs *pVfs;             /* The VFS to use for this btree */
   BtShared *pBt = 0;             /* Shared part of btree structure */
   Btree *p;                      /* Handle to return */
   sqlite3_mutex *mutexOpen = 0;  /* Prevents a race condition. Ticket #3537 */
@@ -1698,23 +1713,39 @@ int sqlite3BtreeOpen(
   u8 nReserve;                   /* Byte of unused space on each page */
   unsigned char zDbHeader[100];  /* Database header content */
 
+  /* True if opening an ephemeral, temporary database */
+  const int isTempDb = zFilename==0 || zFilename[0]==0;
+
   /* Set the variable isMemdb to true for an in-memory database, or 
-  ** false for a file-based database. This symbol is only required if
-  ** either of the shared-data or autovacuum features are compiled 
-  ** into the library.
+  ** false for a file-based database.
   */
-#if !defined(SQLITE_OMIT_SHARED_CACHE) || !defined(SQLITE_OMIT_AUTOVACUUM)
-  #ifdef SQLITE_OMIT_MEMORYDB
-    const int isMemdb = 0;
-  #else
-    const int isMemdb = zFilename && !strcmp(zFilename, ":memory:");
-  #endif
+#ifdef SQLITE_OMIT_MEMORYDB
+  const int isMemdb = 0;
+#else
+  const int isMemdb = (zFilename && strcmp(zFilename, ":memory:")==0)
+                       || (isTempDb && sqlite3TempInMemory(db));
 #endif
 
   assert( db!=0 );
+  assert( pVfs!=0 );
   assert( sqlite3_mutex_held(db->mutex) );
+  assert( (flags&0xff)==flags );   /* flags fit in 8 bits */
 
-  pVfs = db->pVfs;
+  /* Only a BTREE_SINGLE database can be BTREE_UNORDERED */
+  assert( (flags & BTREE_UNORDERED)==0 || (flags & BTREE_SINGLE)!=0 );
+
+  /* A BTREE_SINGLE database is always a temporary and/or ephemeral */
+  assert( (flags & BTREE_SINGLE)==0 || isTempDb );
+
+  if( db->flags & SQLITE_NoReadlock ){
+    flags |= BTREE_NO_READLOCK;
+  }
+  if( isMemdb ){
+    flags |= BTREE_MEMORY;
+  }
+  if( (vfsFlags & SQLITE_OPEN_MAIN_DB)!=0 && (isMemdb || isTempDb) ){
+    vfsFlags = (vfsFlags & ~SQLITE_OPEN_MAIN_DB) | SQLITE_OPEN_TEMP_DB;
+  }
   p = sqlite3MallocZero(sizeof(Btree));
   if( !p ){
     return SQLITE_NOMEM;
@@ -1731,21 +1762,23 @@ int sqlite3BtreeOpen(
   ** If this Btree is a candidate for shared cache, try to find an
   ** existing BtShared object that we can share with
   */
-  if( isMemdb==0 && zFilename && zFilename[0] ){
+  if( isMemdb==0 && isTempDb==0 ){
     if( vfsFlags & SQLITE_OPEN_SHAREDCACHE ){
       int nFullPathname = pVfs->mxPathname+1;
       char *zFullPathname = sqlite3Malloc(nFullPathname);
-      sqlite3_mutex *mutexShared;
+      MUTEX_LOGIC( sqlite3_mutex *mutexShared; )
       p->sharable = 1;
       if( !zFullPathname ){
         sqlite3_free(p);
         return SQLITE_NOMEM;
       }
       sqlite3OsFullPathname(pVfs, zFilename, nFullPathname, zFullPathname);
+#if SQLITE_THREADSAFE
       mutexOpen = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_OPEN);
       sqlite3_mutex_enter(mutexOpen);
       mutexShared = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
       sqlite3_mutex_enter(mutexShared);
+#endif
       for(pBt=GLOBAL(BtShared*,sqlite3SharedCacheList); pBt; pBt=pBt->pNext){
         assert( pBt->nRef>0 );
         if( 0==strcmp(zFullPathname, sqlite3PagerFilename(pBt->pPager))
@@ -1806,6 +1839,7 @@ int sqlite3BtreeOpen(
     if( rc!=SQLITE_OK ){
       goto btree_open_out;
     }
+    pBt->openFlags = (u8)flags;
     pBt->db = db;
     sqlite3PagerSetBusyhandler(pBt->pPager, btreeInvokeBusyHandler, pBt);
     p->pBt = pBt;
@@ -1850,9 +1884,9 @@ int sqlite3BtreeOpen(
     /* Add the new BtShared object to the linked list sharable BtShareds.
     */
     if( p->sharable ){
-      sqlite3_mutex *mutexShared;
+      MUTEX_LOGIC( sqlite3_mutex *mutexShared; )
       pBt->nRef = 1;
-      mutexShared = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
+      MUTEX_LOGIC( mutexShared = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);)
       if( SQLITE_THREADSAFE && sqlite3GlobalConfig.bCoreMutex ){
         pBt->mutex = sqlite3MutexAlloc(SQLITE_MUTEX_FAST);
         if( pBt->mutex==0 ){
@@ -1910,6 +1944,14 @@ btree_open_out:
     sqlite3_free(pBt);
     sqlite3_free(p);
     *ppBtree = 0;
+  }else{
+    /* If the B-Tree was successfully opened, set the pager-cache size to the
+    ** default value. Except, when opening on an existing shared pager-cache,
+    ** do not change the pager-cache size.
+    */
+    if( sqlite3BtreeSchema(p, 0, 0)==0 ){
+      sqlite3PagerSetCachesize(p->pBt->pPager, SQLITE_DEFAULT_CACHE_SIZE);
+    }
   }
   if( mutexOpen ){
     assert( sqlite3_mutex_held(mutexOpen) );
@@ -1926,12 +1968,12 @@ btree_open_out:
 */
 static int removeFromSharingList(BtShared *pBt){
 #ifndef SQLITE_OMIT_SHARED_CACHE
-  sqlite3_mutex *pMaster;
+  MUTEX_LOGIC( sqlite3_mutex *pMaster; )
   BtShared *pList;
   int removed = 0;
 
   assert( sqlite3_mutex_notheld(pBt->mutex) );
-  pMaster = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
+  MUTEX_LOGIC( pMaster = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER); )
   sqlite3_mutex_enter(pMaster);
   pBt->nRef--;
   if( pBt->nRef<=0 ){
@@ -2067,11 +2109,17 @@ int sqlite3BtreeSetCacheSize(Btree *p, int mxPage){
 ** probability of damage to near zero but with a write performance reduction.
 */
 #ifndef SQLITE_OMIT_PAGER_PRAGMAS
-int sqlite3BtreeSetSafetyLevel(Btree *p, int level, int fullSync){
+int sqlite3BtreeSetSafetyLevel(
+  Btree *p,              /* The btree to set the safety level on */
+  int level,             /* PRAGMA synchronous.  1=OFF, 2=NORMAL, 3=FULL */
+  int fullSync,          /* PRAGMA fullfsync. */
+  int ckptFullSync       /* PRAGMA checkpoint_fullfync */
+){
   BtShared *pBt = p->pBt;
   assert( sqlite3_mutex_held(p->db->mutex) );
+  assert( level>=1 && level<=3 );
   sqlite3BtreeEnter(p);
-  sqlite3PagerSetSafetyLevel(pBt->pPager, level, fullSync);
+  sqlite3PagerSetSafetyLevel(pBt->pPager, level, fullSync, ckptFullSync);
   sqlite3BtreeLeave(p);
   return SQLITE_OK;
 }
@@ -2092,7 +2140,6 @@ int sqlite3BtreeSyncDisabled(Btree *p){
   return rc;
 }
 
-#if !defined(SQLITE_OMIT_PAGER_PRAGMAS) || !defined(SQLITE_OMIT_VACUUM)
 /*
 ** Change the default pages size and the number of reserved bytes per page.
 ** Or, if the page size has already been fixed, return SQLITE_READONLY 
@@ -2147,6 +2194,7 @@ int sqlite3BtreeGetPageSize(Btree *p){
   return p->pBt->pageSize;
 }
 
+#if !defined(SQLITE_OMIT_PAGER_PRAGMAS) || !defined(SQLITE_OMIT_VACUUM)
 /*
 ** Return the number of bytes of space at the end of every page that
 ** are intentually left unused.  This is the "reserved" space that is
@@ -2346,7 +2394,7 @@ static int lockBtree(BtShared *pBt){
                                    pageSize-usableSize);
       return rc;
     }
-    if( nPageHeader>nPageFile ){
+    if( (pBt->db->flags & SQLITE_RecoveryMode)==0 && nPage>nPageFile ){
       rc = SQLITE_CORRUPT_BKPT;
       goto page1_init_failed;
     }
@@ -2700,11 +2748,12 @@ static int modifyPagePointer(MemPage *pPage, Pgno iFrom, Pgno iTo, u8 eType){
       if( eType==PTRMAP_OVERFLOW1 ){
         CellInfo info;
         btreeParseCellPtr(pPage, pCell, &info);
-        if( info.iOverflow ){
-          if( iFrom==get4byte(&pCell[info.iOverflow]) ){
-            put4byte(&pCell[info.iOverflow], iTo);
-            break;
-          }
+        if( info.iOverflow
+         && pCell+info.iOverflow+3<=pPage->aData+pPage->maskPage
+         && iFrom==get4byte(&pCell[info.iOverflow])
+        ){
+          put4byte(&pCell[info.iOverflow], iTo);
+          break;
         }
       }else{
         if( get4byte(pCell)==iFrom ){
@@ -3125,12 +3174,23 @@ static void btreeEndTransaction(Btree *p){
 ** the rollback journal (which causes the transaction to commit) and
 ** drop locks.
 **
+** Normally, if an error occurs while the pager layer is attempting to 
+** finalize the underlying journal file, this function returns an error and
+** the upper layer will attempt a rollback. However, if the second argument
+** is non-zero then this b-tree transaction is part of a multi-file 
+** transaction. In this case, the transaction has already been committed 
+** (by deleting a master journal file) and the caller will ignore this 
+** functions return code. So, even if an error occurs in the pager layer,
+** reset the b-tree objects internal state to indicate that the write
+** transaction has been closed. This is quite safe, as the pager will have
+** transitioned to the error state.
+**
 ** This will release the write lock on the database file.  If there
 ** are no active cursors, it also releases the read lock.
 */
-int sqlite3BtreeCommitPhaseTwo(Btree *p){
-  BtShared *pBt = p->pBt;
+int sqlite3BtreeCommitPhaseTwo(Btree *p, int bCleanup){
 
+  if( p->inTrans==TRANS_NONE ) return SQLITE_OK;
   sqlite3BtreeEnter(p);
   btreeIntegrity(p);
 
@@ -3139,10 +3199,11 @@ int sqlite3BtreeCommitPhaseTwo(Btree *p){
   */
   if( p->inTrans==TRANS_WRITE ){
     int rc;
+    BtShared *pBt = p->pBt;
     assert( pBt->inTransaction==TRANS_WRITE );
     assert( pBt->nTransaction>0 );
     rc = sqlite3PagerCommitPhaseTwo(pBt->pPager);
-    if( rc!=SQLITE_OK ){
+    if( rc!=SQLITE_OK && bCleanup==0 ){
       sqlite3BtreeLeave(p);
       return rc;
     }
@@ -3162,7 +3223,7 @@ int sqlite3BtreeCommit(Btree *p){
   sqlite3BtreeEnter(p);
   rc = sqlite3BtreeCommitPhaseOne(p, 0);
   if( rc==SQLITE_OK ){
-    rc = sqlite3BtreeCommitPhaseTwo(p);
+    rc = sqlite3BtreeCommitPhaseTwo(p, 0);
   }
   sqlite3BtreeLeave(p);
   return rc;
@@ -3413,7 +3474,8 @@ static int btreeCursor(
     return SQLITE_READONLY;
   }
   if( iTable==1 && btreePagecount(pBt)==0 ){
-    return SQLITE_EMPTY;
+    assert( wrFlag==0 );
+    iTable = 0;
   }
 
   /* Now that no other errors can occur, finish filling in the BtCursor
@@ -3878,21 +3940,55 @@ static int accessPayload(
         /* Need to read this page properly. It contains some of the
         ** range of data that is being read (eOp==0) or written (eOp!=0).
         */
-        DbPage *pDbPage;
+#ifdef SQLITE_DIRECT_OVERFLOW_READ
+        sqlite3_file *fd;
+#endif
         int a = amt;
-        rc = sqlite3PagerGet(pBt->pPager, nextPage, &pDbPage);
-        if( rc==SQLITE_OK ){
-          aPayload = sqlite3PagerGetData(pDbPage);
-          nextPage = get4byte(aPayload);
-          if( a + offset > ovflSize ){
-            a = ovflSize - offset;
-          }
-          rc = copyPayload(&aPayload[offset+4], pBuf, a, eOp, pDbPage);
-          sqlite3PagerUnref(pDbPage);
-          offset = 0;
-          amt -= a;
-          pBuf += a;
+        if( a + offset > ovflSize ){
+          a = ovflSize - offset;
         }
+
+#ifdef SQLITE_DIRECT_OVERFLOW_READ
+        /* If all the following are true:
+        **
+        **   1) this is a read operation, and 
+        **   2) data is required from the start of this overflow page, and
+        **   3) the database is file-backed, and
+        **   4) there is no open write-transaction, and
+        **   5) the database is not a WAL database,
+        **
+        ** then data can be read directly from the database file into the
+        ** output buffer, bypassing the page-cache altogether. This speeds
+        ** up loading large records that span many overflow pages.
+        */
+        if( eOp==0                                             /* (1) */
+         && offset==0                                          /* (2) */
+         && pBt->inTransaction==TRANS_READ                     /* (4) */
+         && (fd = sqlite3PagerFile(pBt->pPager))->pMethods     /* (3) */
+         && pBt->pPage1->aData[19]==0x01                       /* (5) */
+        ){
+          u8 aSave[4];
+          u8 *aWrite = &pBuf[-4];
+          memcpy(aSave, aWrite, 4);
+          rc = sqlite3OsRead(fd, aWrite, a+4, pBt->pageSize * (nextPage-1));
+          nextPage = get4byte(aWrite);
+          memcpy(aWrite, aSave, 4);
+        }else
+#endif
+
+        {
+          DbPage *pDbPage;
+          rc = sqlite3PagerGet(pBt->pPager, nextPage, &pDbPage);
+          if( rc==SQLITE_OK ){
+            aPayload = sqlite3PagerGetData(pDbPage);
+            nextPage = get4byte(aPayload);
+            rc = copyPayload(&aPayload[offset+4], pBuf, a, eOp, pDbPage);
+            sqlite3PagerUnref(pDbPage);
+            offset = 0;
+          }
+        }
+        amt -= a;
+        pBuf += a;
       }
     }
   }
@@ -4167,6 +4263,9 @@ static int moveToRoot(BtCursor *pCur){
       releasePage(pCur->apPage[i]);
     }
     pCur->iPage = 0;
+  }else if( pCur->pgnoRoot==0 ){
+    pCur->eState = CURSOR_INVALID;
+    return SQLITE_OK;
   }else{
     rc = getAndInitPage(pBt, pCur->pgnoRoot, &pCur->apPage[0]);
     if( rc!=SQLITE_OK ){
@@ -4276,7 +4375,7 @@ int sqlite3BtreeFirst(BtCursor *pCur, int *pRes){
   rc = moveToRoot(pCur);
   if( rc==SQLITE_OK ){
     if( pCur->eState==CURSOR_INVALID ){
-      assert( pCur->apPage[pCur->iPage]->nCell==0 );
+      assert( pCur->pgnoRoot==0 || pCur->apPage[pCur->iPage]->nCell==0 );
       *pRes = 1;
     }else{
       assert( pCur->apPage[pCur->iPage]->nCell>0 );
@@ -4315,7 +4414,7 @@ int sqlite3BtreeLast(BtCursor *pCur, int *pRes){
   rc = moveToRoot(pCur);
   if( rc==SQLITE_OK ){
     if( CURSOR_INVALID==pCur->eState ){
-      assert( pCur->apPage[pCur->iPage]->nCell==0 );
+      assert( pCur->pgnoRoot==0 || pCur->apPage[pCur->iPage]->nCell==0 );
       *pRes = 1;
     }else{
       assert( pCur->eState==CURSOR_VALID );
@@ -4388,17 +4487,17 @@ int sqlite3BtreeMovetoUnpacked(
   if( rc ){
     return rc;
   }
-  assert( pCur->apPage[pCur->iPage] );
-  assert( pCur->apPage[pCur->iPage]->isInit );
-  assert( pCur->apPage[pCur->iPage]->nCell>0 || pCur->eState==CURSOR_INVALID );
+  assert( pCur->pgnoRoot==0 || pCur->apPage[pCur->iPage] );
+  assert( pCur->pgnoRoot==0 || pCur->apPage[pCur->iPage]->isInit );
+  assert( pCur->eState==CURSOR_INVALID || pCur->apPage[pCur->iPage]->nCell>0 );
   if( pCur->eState==CURSOR_INVALID ){
     *pRes = -1;
-    assert( pCur->apPage[pCur->iPage]->nCell==0 );
+    assert( pCur->pgnoRoot==0 || pCur->apPage[pCur->iPage]->nCell==0 );
     return SQLITE_OK;
   }
   assert( pCur->apPage[0]->intKey || pIdxKey );
   for(;;){
-    int lwr, upr;
+    int lwr, upr, idx;
     Pgno chldPg;
     MemPage *pPage = pCur->apPage[pCur->iPage];
     int c;
@@ -4414,14 +4513,14 @@ int sqlite3BtreeMovetoUnpacked(
     lwr = 0;
     upr = pPage->nCell-1;
     if( biasRight ){
-      pCur->aiIdx[pCur->iPage] = (u16)upr;
+      pCur->aiIdx[pCur->iPage] = (u16)(idx = upr);
     }else{
-      pCur->aiIdx[pCur->iPage] = (u16)((upr+lwr)/2);
+      pCur->aiIdx[pCur->iPage] = (u16)(idx = (upr+lwr)/2);
     }
     for(;;){
-      int idx = pCur->aiIdx[pCur->iPage]; /* Index of current cell in pPage */
       u8 *pCell;                          /* Pointer to current cell in pPage */
 
+      assert( idx==pCur->aiIdx[pCur->iPage] );
       pCur->info.nSize = 0;
       pCell = findCell(pPage, idx) + pPage->childPtrSize;
       if( pPage->intKey ){
@@ -4488,7 +4587,6 @@ int sqlite3BtreeMovetoUnpacked(
       if( c==0 ){
         if( pPage->intKey && !pPage->leaf ){
           lwr = idx;
-          upr = lwr - 1;
           break;
         }else{
           *pRes = 0;
@@ -4504,9 +4602,9 @@ int sqlite3BtreeMovetoUnpacked(
       if( lwr>upr ){
         break;
       }
-      pCur->aiIdx[pCur->iPage] = (u16)((lwr+upr)/2);
+      pCur->aiIdx[pCur->iPage] = (u16)(idx = (lwr+upr)/2);
     }
-    assert( lwr==upr+1 );
+    assert( lwr==upr+1 || (pPage->intKey && !pPage->leaf) );
     assert( pPage->isInit );
     if( pPage->leaf ){
       chldPg = 0;
@@ -4771,8 +4869,10 @@ static int allocateBtreePage(
         pTrunk = 0;
         goto end_allocate_page;
       }
+      assert( pTrunk!=0 );
+      assert( pTrunk->aData!=0 );
 
-      k = get4byte(&pTrunk->aData[4]);
+      k = get4byte(&pTrunk->aData[4]); /* # of leaves on this trunk page */
       if( k==0 && !searchList ){
         /* The trunk has no leaves and the list is not being searched. 
         ** So extract the trunk page itself and use it as the newly 
@@ -4857,19 +4957,13 @@ static int allocateBtreePage(
         u32 closest;
         Pgno iPage;
         unsigned char *aData = pTrunk->aData;
-        rc = sqlite3PagerWrite(pTrunk->pDbPage);
-        if( rc ){
-          goto end_allocate_page;
-        }
         if( nearby>0 ){
           u32 i;
           int dist;
           closest = 0;
-          dist = get4byte(&aData[8]) - nearby;
-          if( dist<0 ) dist = -dist;
+          dist = sqlite3AbsInt32(get4byte(&aData[8]) - nearby);
           for(i=1; i<k; i++){
-            int d2 = get4byte(&aData[8+i*4]) - nearby;
-            if( d2<0 ) d2 = -d2;
+            int d2 = sqlite3AbsInt32(get4byte(&aData[8+i*4]) - nearby);
             if( d2<dist ){
               closest = i;
               dist = d2;
@@ -4892,11 +4986,12 @@ static int allocateBtreePage(
           TRACE(("ALLOCATE: %d was leaf %d of %d on trunk %d"
                  ": %d more free pages\n",
                  *pPgno, closest+1, k, pTrunk->pgno, n-1));
+          rc = sqlite3PagerWrite(pTrunk->pDbPage);
+          if( rc ) goto end_allocate_page;
           if( closest<k-1 ){
             memcpy(&aData[8+closest*4], &aData[4+k*4], 4);
           }
           put4byte(&aData[4], k-1);
-          assert( sqlite3PagerIswriteable(pTrunk->pDbPage) );
           noContent = !btreeGetHasContent(pBt, *pPgno);
           rc = btreeGetPage(pBt, *pPgno, ppPage, noContent);
           if( rc==SQLITE_OK ){
@@ -4965,6 +5060,7 @@ end_allocate_page:
   }else{
     *ppPage = 0;
   }
+  assert( rc!=SQLITE_OK || sqlite3PagerIswriteable((*ppPage)->pDbPage) );
   return rc;
 }
 
@@ -5123,6 +5219,9 @@ static int clearCell(MemPage *pPage, unsigned char *pCell){
   btreeParseCellPtr(pPage, pCell, &info);
   if( info.iOverflow==0 ){
     return SQLITE_OK;  /* No overflow pages. Return without doing anything */
+  }
+  if( pCell+info.iOverflow+3 > pPage->aData+pPage->maskPage ){
+    return SQLITE_CORRUPT;  /* Cell extends past end of page */
   }
   ovflPgno = get4byte(&pCell[info.iOverflow]);
   assert( pBt->usableSize > 4 );
@@ -5341,10 +5440,10 @@ static int fillInCell(
 ** "sz" must be the number of bytes in the cell.
 */
 static void dropCell(MemPage *pPage, int idx, int sz, int *pRC){
-  int i;          /* Loop counter */
   u32 pc;         /* Offset to cell content of cell being deleted */
   u8 *data;       /* pPage->aData */
   u8 *ptr;        /* Used to move bytes around within data[] */
+  u8 *endPtr;     /* End of loop */
   int rc;         /* The return code */
   int hdr;        /* Beginning of the header.  0 most pages.  100 page 1 */
 
@@ -5369,9 +5468,11 @@ static void dropCell(MemPage *pPage, int idx, int sz, int *pRC){
     *pRC = rc;
     return;
   }
-  for(i=idx+1; i<pPage->nCell; i++, ptr+=2){
-    ptr[0] = ptr[2];
-    ptr[1] = ptr[3];
+  endPtr = &data[pPage->cellOffset + 2*pPage->nCell - 2];
+  assert( (SQLITE_PTR_TO_INT(ptr)&1)==0 );  /* ptr is always 2-byte aligned */
+  while( ptr<endPtr ){
+    *(u16*)ptr = *(u16*)&ptr[2];
+    ptr += 2;
   }
   pPage->nCell--;
   put2byte(&data[hdr+3], pPage->nCell);
@@ -5411,6 +5512,7 @@ static void insertCell(
   int cellOffset;   /* Address of first cell pointer in data[] */
   u8 *data;         /* The content of the whole page */
   u8 *ptr;          /* Used for moving information around in data[] */
+  u8 *endPtr;       /* End of the loop */
 
   int nSkip = (iChild ? 4 : 0);
 
@@ -5454,16 +5556,19 @@ static void insertCell(
     /* The allocateSpace() routine guarantees the following two properties
     ** if it returns success */
     assert( idx >= end+2 );
-    assert( idx+sz <= pPage->pBt->usableSize );
+    assert( idx+sz <= (int)pPage->pBt->usableSize );
     pPage->nCell++;
     pPage->nFree -= (u16)(2 + sz);
     memcpy(&data[idx+nSkip], pCell+nSkip, sz-nSkip);
     if( iChild ){
       put4byte(&data[idx], iChild);
     }
-    for(j=end, ptr=&data[j]; j>ins; j-=2, ptr-=2){
-      ptr[0] = ptr[-2];
-      ptr[1] = ptr[-1];
+    ptr = &data[end];
+    endPtr = &data[ins];
+    assert( (SQLITE_PTR_TO_INT(ptr)&1)==0 );  /* ptr is always 2-byte aligned */
+    while( ptr>endPtr ){
+      *(u16*)ptr = *(u16*)&ptr[-2];
+      ptr -= 2;
     }
     put2byte(&data[ins], idx);
     put2byte(&data[pPage->hdrOffset+3], pPage->nCell);
@@ -5497,7 +5602,8 @@ static void assemblePage(
 
   assert( pPage->nOverflow==0 );
   assert( sqlite3_mutex_held(pPage->pBt->mutex) );
-  assert( nCell>=0 && nCell<=MX_CELL(pPage->pBt) && MX_CELL(pPage->pBt)<=10921);
+  assert( nCell>=0 && nCell<=(int)MX_CELL(pPage->pBt)
+            && (int)MX_CELL(pPage->pBt)<=10921);
   assert( sqlite3PagerIswriteable(pPage->pDbPage) );
 
   /* Check that the page has just been zeroed by zeroPage() */
@@ -5507,10 +5613,11 @@ static void assemblePage(
   pCellptr = &data[pPage->cellOffset + nCell*2];
   cellbody = nUsable;
   for(i=nCell-1; i>=0; i--){
+    u16 sz = aSize[i];
     pCellptr -= 2;
-    cellbody -= aSize[i];
+    cellbody -= sz;
     put2byte(pCellptr, cellbody);
-    memcpy(&data[cellbody], apCell[i], aSize[i]);
+    memcpy(&data[cellbody], apCell[i], sz);
   }
   put2byte(&data[hdr+3], nCell);
   put2byte(&data[hdr+5], cellbody);
@@ -5711,7 +5818,7 @@ static void copyNodeContent(MemPage *pFrom, MemPage *pTo, int *pRC){
   
     assert( pFrom->isInit );
     assert( pFrom->nFree>=iToHdr );
-    assert( get2byte(&aFrom[iFromHdr+5])<=pBt->usableSize );
+    assert( get2byte(&aFrom[iFromHdr+5]) <= (int)pBt->usableSize );
   
     /* Copy the b-tree node content from page pFrom to page pTo. */
     iData = get2byte(&aFrom[iFromHdr+5]);
@@ -5891,13 +5998,15 @@ static int balance_nonroot(
       ** four bytes of the divider cell. So the pointer is safe to use
       ** later on.  
       **
-      ** Unless SQLite is compiled in secure-delete mode. In this case,
+      ** But not if we are in secure-delete mode. In secure-delete mode,
       ** the dropCell() routine will overwrite the entire cell with zeroes.
       ** In this case, temporarily copy the cell into the aOvflSpace[]
       ** buffer. It will be copied out again as soon as the aSpace[] buffer
       ** is allocated.  */
       if( pBt->secureDelete ){
-        int iOff = SQLITE_PTR_TO_INT(apDiv[i]) - SQLITE_PTR_TO_INT(pParent->aData);
+        int iOff;
+
+        iOff = SQLITE_PTR_TO_INT(apDiv[i]) - SQLITE_PTR_TO_INT(pParent->aData);
         if( (iOff+szNew[i])>(int)pBt->usableSize ){
           rc = SQLITE_CORRUPT_BKPT;
           memset(apOld, 0, (i+1)*sizeof(MemPage*));
@@ -5964,12 +6073,24 @@ static int balance_nonroot(
     memcpy(pOld->aData, apOld[i]->aData, pBt->pageSize);
 
     limit = pOld->nCell+pOld->nOverflow;
-    for(j=0; j<limit; j++){
-      assert( nCell<nMaxCells );
-      apCell[nCell] = findOverflowCell(pOld, j);
-      szCell[nCell] = cellSizePtr(pOld, apCell[nCell]);
-      nCell++;
-    }
+    if( pOld->nOverflow>0 ){
+      for(j=0; j<limit; j++){
+        assert( nCell<nMaxCells );
+        apCell[nCell] = findOverflowCell(pOld, j);
+        szCell[nCell] = cellSizePtr(pOld, apCell[nCell]);
+        nCell++;
+      }
+    }else{
+      u8 *aData = pOld->aData;
+      u16 maskPage = pOld->maskPage;
+      u16 cellOffset = pOld->cellOffset;
+      for(j=0; j<limit; j++){
+        assert( nCell<nMaxCells );
+        apCell[nCell] = findCellv2(aData, maskPage, cellOffset, j);
+        szCell[nCell] = cellSizePtr(pOld, apCell[nCell]);
+        nCell++;
+      }
+    }       
     if( i<nOld-1 && !leafData){
       u16 sz = (u16)szNew[i];
       u8 *pTemp;
@@ -5978,7 +6099,7 @@ static int balance_nonroot(
       pTemp = &aSpace1[iSpace1];
       iSpace1 += sz;
       assert( sz<=pBt->maxLocal+23 );
-      assert( iSpace1<=pBt->pageSize );
+      assert( iSpace1 <= (int)pBt->pageSize );
       memcpy(pTemp, apDiv[i], sz);
       apCell[nCell] = pTemp+leafCorrection;
       assert( leafCorrection==0 || leafCorrection==4 );
@@ -6143,9 +6264,7 @@ static int balance_nonroot(
       }
     }
     if( minI>i ){
-      int t;
       MemPage *pT;
-      t = apNew[i]->pgno;
       pT = apNew[i];
       apNew[i] = apNew[minI];
       apNew[minI] = pT;
@@ -6224,7 +6343,7 @@ static int balance_nonroot(
       }
       iOvflSpace += sz;
       assert( sz<=pBt->maxLocal+23 );
-      assert( iOvflSpace<=pBt->pageSize );
+      assert( iOvflSpace <= (int)pBt->pageSize );
       insertCell(pParent, nxDiv, pCell, sz, pTemp, pNew->pgno, &rc);
       if( rc!=SQLITE_OK ) goto balance_cleanup;
       assert( sqlite3PagerIswriteable(pParent->pDbPage) );
@@ -6307,6 +6426,7 @@ static int balance_nonroot(
         /* Cell i is the cell immediately following the last cell on old
         ** sibling page j. If the siblings are not leaf pages of an
         ** intkey b-tree, then cell i was a divider cell. */
+        assert( j+1 < ArraySize(apCopy) );
         pOld = apCopy[++j];
         iNextOld = i + !leafData + pOld->nCell + pOld->nOverflow;
         if( pOld->nOverflow ){
@@ -6669,7 +6789,7 @@ int sqlite3BtreeInsert(
   rc = fillInCell(pPage, newCell, pKey, nKey, pData, nData, nZero, &szNew);
   if( rc ) goto end_insert;
   assert( szNew==cellSizePtr(pPage, newCell) );
-  assert( szNew<=MX_CELL_SIZE(pBt) );
+  assert( szNew <= MX_CELL_SIZE(pBt) );
   idx = pCur->aiIdx[pCur->iPage];
   if( loc==0 ){
     u16 szOld;
@@ -6809,7 +6929,7 @@ int sqlite3BtreeDelete(BtCursor *pCur){
 
     pCell = findCell(pLeaf, pLeaf->nCell-1);
     nCell = cellSizePtr(pLeaf, pCell);
-    assert( MX_CELL_SIZE(pBt)>=nCell );
+    assert( MX_CELL_SIZE(pBt) >= nCell );
 
     allocateTempSpace(pBt);
     pTmp = pBt->pTmpSpace;
@@ -6860,11 +6980,12 @@ int sqlite3BtreeDelete(BtCursor *pCur){
 **     BTREE_INTKEY|BTREE_LEAFDATA     Used for SQL tables with rowid keys
 **     BTREE_ZERODATA                  Used for SQL indices
 */
-static int btreeCreateTable(Btree *p, int *piTable, int flags){
+static int btreeCreateTable(Btree *p, int *piTable, int createTabFlags){
   BtShared *pBt = p->pBt;
   MemPage *pRoot;
   Pgno pgnoRoot;
   int rc;
+  int ptfFlags;          /* Page-type flage for the root page of new table */
 
   assert( sqlite3BtreeHoldsMutex(p) );
   assert( pBt->inTransaction==TRANS_WRITE );
@@ -6983,8 +7104,14 @@ static int btreeCreateTable(Btree *p, int *piTable, int flags){
   }
 #endif
   assert( sqlite3PagerIswriteable(pRoot->pDbPage) );
-  zeroPage(pRoot, flags | PTF_LEAF);
+  if( createTabFlags & BTREE_INTKEY ){
+    ptfFlags = PTF_INTKEY | PTF_LEAFDATA | PTF_LEAF;
+  }else{
+    ptfFlags = PTF_ZERODATA | PTF_LEAF;
+  }
+  zeroPage(pRoot, ptfFlags);
   sqlite3PagerUnref(pRoot->pDbPage);
+  assert( (pBt->openFlags & BTREE_SINGLE)==0 || pgnoRoot==2 );
   *piTable = (int)pgnoRoot;
   return SQLITE_OK;
 }
@@ -7282,6 +7409,11 @@ int sqlite3BtreeUpdateMeta(Btree *p, int idx, u32 iMeta){
 int sqlite3BtreeCount(BtCursor *pCur, i64 *pnEntry){
   i64 nEntry = 0;                      /* Value to return in *pnEntry */
   int rc;                              /* Return code */
+
+  if( pCur->pgnoRoot==0 ){
+    *pnEntry = 0;
+    return SQLITE_OK;
+  }
   rc = moveToRoot(pCur);
 
   /* Unless an error occurs, the following loop runs one iteration for each
@@ -7889,8 +8021,10 @@ int sqlite3BtreeIsInTrans(Btree *p){
 **
 ** Return SQLITE_LOCKED if this or any other connection has an open 
 ** transaction on the shared-cache the argument Btree is connected to.
+**
+** Parameter eMode is one of SQLITE_CHECKPOINT_PASSIVE, FULL or RESTART.
 */
-int sqlite3BtreeCheckpoint(Btree *p){
+int sqlite3BtreeCheckpoint(Btree *p, int eMode, int *pnLog, int *pnCkpt){
   int rc = SQLITE_OK;
   if( p ){
     BtShared *pBt = p->pBt;
@@ -7898,7 +8032,7 @@ int sqlite3BtreeCheckpoint(Btree *p){
     if( pBt->inTransaction!=TRANS_NONE ){
       rc = SQLITE_LOCKED;
     }else{
-      rc = sqlite3PagerCheckpoint(pBt->pPager);
+      rc = sqlite3PagerCheckpoint(pBt->pPager, eMode, pnLog, pnCkpt);
     }
     sqlite3BtreeLeave(p);
   }
@@ -7938,7 +8072,7 @@ int sqlite3BtreeIsInBackup(Btree *p){
 **
 ** Just before the shared-btree is closed, the function passed as the 
 ** xFree argument when the memory allocation was made is invoked on the 
-** blob of allocated memory. This function should not call sqlite3_free()
+** blob of allocated memory. The xFree function should not call sqlite3_free()
 ** on the memory, the btree layer does that.
 */
 void *sqlite3BtreeSchema(Btree *p, int nBytes, void(*xFree)(void *)){
@@ -8050,8 +8184,7 @@ int sqlite3BtreePutData(BtCursor *pCsr, u32 offset, u32 amt, void *z){
 void sqlite3BtreeCacheOverflow(BtCursor *pCur){
   assert( cursorHoldsMutex(pCur) );
   assert( sqlite3_mutex_held(pCur->pBtree->db->mutex) );
-  assert(!pCur->isIncrblobHandle);
-  assert(!pCur->aOverflow);
+  invalidateOverflowCache(pCur);
   pCur->isIncrblobHandle = 1;
 }
 #endif
@@ -8065,7 +8198,6 @@ int sqlite3BtreeSetVersion(Btree *pBtree, int iVersion){
   BtShared *pBt = pBtree->pBt;
   int rc;                         /* Return code */
  
-  assert( pBtree->inTrans==TRANS_NONE );
   assert( iVersion==1 || iVersion==2 );
 
   /* If setting the version fields to 1, do not automatically open the

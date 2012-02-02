@@ -31,6 +31,11 @@ if {[lsearch $argv --nostatic]>=0} {
 } else {
   set addstatic 1
 }
+if {[lsearch $argv --linemacros]>=0} {
+  set linemacros 1
+} else {
+  set linemacros 0
+}
 set in [open tsrc/sqlite3.h]
 set cnt 0
 set VERSION ?????
@@ -46,15 +51,17 @@ close $in
 # of the file.
 #
 set out [open sqlite3.c w]
+# Force the output to use unix line endings, even on Windows.
+fconfigure $out -translation lf
 set today [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S UTC" -gmt 1]
 puts $out [subst \
 {/******************************************************************************
 ** This file is an amalgamation of many separate C source files from SQLite
 ** version $VERSION.  By combining all the individual C code files into this 
-** single large file, the entire code can be compiled as a one translation
+** single large file, the entire code can be compiled as a single translation
 ** unit.  This allows many compilers to do optimizations that would not be
 ** possible if the files were compiled separately.  Performance improvements
-** of 5% are more are commonly seen when SQLite is compiled as a single
+** of 5% or more are commonly seen when SQLite is compiled as a single
 ** translation unit.
 **
 ** This file is all you need to compile SQLite.  To use SQLite in other
@@ -135,9 +142,11 @@ proc section_comment {text} {
 # process them approprately.
 #
 proc copy_file {filename} {
-  global seen_hdr available_hdr out addstatic
+  global seen_hdr available_hdr out addstatic linemacros
+  set ln 0
   set tail [file tail $filename]
   section_comment "Begin file $tail"
+  if {$linemacros} {puts $out "#line 1 \"$filename\""}
   set in [open $filename r]
   set varpattern {^[a-zA-Z][a-zA-Z_0-9 *]+(sqlite3[_a-zA-Z0-9]+)(\[|;| =)}
   set declpattern {[a-zA-Z][a-zA-Z_0-9 ]+ \**(sqlite3[_a-zA-Z0-9]+)\(}
@@ -147,6 +156,7 @@ proc copy_file {filename} {
   set declpattern ^$declpattern
   while {![eof $in]} {
     set line [gets $in]
+    incr ln
     if {[regexp {^\s*#\s*include\s+["<]([^">]+)[">]} $line all hdr]} {
       if {[info exists available_hdr($hdr)]} {
         if {$available_hdr($hdr)} {
@@ -156,14 +166,17 @@ proc copy_file {filename} {
           section_comment "Include $hdr in the middle of $tail"
           copy_file tsrc/$hdr
           section_comment "Continuing where we left off in $tail"
+          if {$linemacros} {puts $out "#line [expr {$ln+1}] \"$filename\""}
         }
       } elseif {![info exists seen_hdr($hdr)]} {
         set seen_hdr($hdr) 1
         puts $out $line
+      } else {
+        puts $out "/* $line */"
       }
     } elseif {[regexp {^#ifdef __cplusplus} $line]} {
       puts $out "#if 0"
-    } elseif {[regexp {^#line} $line]} {
+    } elseif {!$linemacros && [regexp {^#line} $line]} {
       # Skip #line directives.
     } elseif {$addstatic && ![regexp {^(static|typedef)} $line]} {
       regsub {^SQLITE_API } $line {} line
@@ -213,6 +226,7 @@ foreach file {
    sqliteInt.h
 
    crypto.c
+   crypto_impl.c
 
    global.c
    ctime.c
@@ -260,6 +274,7 @@ foreach file {
    vdbetrace.c
    vdbe.c
    vdbeblob.c
+   vdbesort.c
    journal.c
    memjournal.c
 
@@ -297,6 +312,7 @@ foreach file {
    notify.c
 
    fts3.c
+   fts3_aux.c
    fts3_expr.c
    fts3_hash.c
    fts3_porter.c

@@ -54,6 +54,7 @@ Trigger *sqlite3TriggerList(Parse *pParse, Table *pTab){
 
   if( pTmpSchema!=pTab->pSchema ){
     HashElem *p;
+    assert( sqlite3SchemaMutexHeld(pParse->db, 0, pTmpSchema) );
     for(p=sqliteHashFirst(&pTmpSchema->trigHash); p; p=sqliteHashNext(p)){
       Trigger *pTrig = (Trigger *)sqliteHashData(p);
       if( pTrig->pTabSchema==pTab->pSchema
@@ -116,15 +117,28 @@ void sqlite3BeginTrigger(
       goto trigger_cleanup;
     }
   }
+  if( !pTableName || db->mallocFailed ){
+    goto trigger_cleanup;
+  }
+
+  /* A long-standing parser bug is that this syntax was allowed:
+  **
+  **    CREATE TRIGGER attached.demo AFTER INSERT ON attached.tab ....
+  **                                                 ^^^^^^^^
+  **
+  ** To maintain backwards compatibility, ignore the database
+  ** name on pTableName if we are reparsing our of SQLITE_MASTER.
+  */
+  if( db->init.busy && iDb!=1 ){
+    sqlite3DbFree(db, pTableName->a[0].zDatabase);
+    pTableName->a[0].zDatabase = 0;
+  }
 
   /* If the trigger name was unqualified, and the table is a temp table,
   ** then set iDb to 1 to create the trigger in the temporary database.
   ** If sqlite3SrcListLookup() returns 0, indicating the table does not
   ** exist, the error is caught by the block below.
   */
-  if( !pTableName || db->mallocFailed ){
-    goto trigger_cleanup;
-  }
   pTab = sqlite3SrcListLookup(pParse, pTableName);
   if( db->init.busy==0 && pName2->n==0 && pTab
         && pTab->pSchema==db->aDb[1].pSchema ){
@@ -165,10 +179,14 @@ void sqlite3BeginTrigger(
   if( !zName || SQLITE_OK!=sqlite3CheckObjectName(pParse, zName) ){
     goto trigger_cleanup;
   }
+  assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
   if( sqlite3HashFind(&(db->aDb[iDb].pSchema->trigHash),
                       zName, sqlite3Strlen30(zName)) ){
     if( !noErr ){
       sqlite3ErrorMsg(pParse, "trigger %T already exists", pName);
+    }else{
+      assert( !db->init.busy );
+      sqlite3CodeVerifySchema(pParse, iDb);
     }
     goto trigger_cleanup;
   }
@@ -262,7 +280,6 @@ void sqlite3FinishTrigger(
   int iDb;                                /* Database containing the trigger */
   Token nameToken;                        /* Trigger name for error reporting */
 
-  pTrig = pParse->pNewTrigger;
   pParse->pNewTrigger = 0;
   if( NEVER(pParse->nErr) || !pTrig ) goto triggerfinish_cleanup;
   zName = pTrig->zName;
@@ -297,14 +314,14 @@ void sqlite3FinishTrigger(
        pTrig->table, z);
     sqlite3DbFree(db, z);
     sqlite3ChangeCookie(pParse, iDb);
-    sqlite3VdbeAddOp4(v, OP_ParseSchema, iDb, 0, 0, sqlite3MPrintf(
-        db, "type='trigger' AND name='%q'", zName), P4_DYNAMIC
-    );
+    sqlite3VdbeAddParseSchemaOp(v, iDb,
+        sqlite3MPrintf(db, "type='trigger' AND name='%q'", zName));
   }
 
   if( db->init.busy ){
     Trigger *pLink = pTrig;
     Hash *pHash = &db->aDb[iDb].pSchema->trigHash;
+    assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
     pTrig = sqlite3HashInsert(pHash, zName, sqlite3Strlen30(zName), pTrig);
     if( pTrig ){
       db->mallocFailed = 1;
@@ -486,15 +503,19 @@ void sqlite3DropTrigger(Parse *pParse, SrcList *pName, int noErr){
   zDb = pName->a[0].zDatabase;
   zName = pName->a[0].zName;
   nName = sqlite3Strlen30(zName);
+  assert( zDb!=0 || sqlite3BtreeHoldsAllMutexes(db) );
   for(i=OMIT_TEMPDB; i<db->nDb; i++){
     int j = (i<2) ? i^1 : i;  /* Search TEMP before MAIN */
     if( zDb && sqlite3StrICmp(db->aDb[j].zName, zDb) ) continue;
+    assert( sqlite3SchemaMutexHeld(db, j, 0) );
     pTrigger = sqlite3HashFind(&(db->aDb[j].pSchema->trigHash), zName, nName);
     if( pTrigger ) break;
   }
   if( !pTrigger ){
     if( !noErr ){
       sqlite3ErrorMsg(pParse, "no such trigger: %S", pName, 0);
+    }else{
+      sqlite3CodeVerifyNamedSchema(pParse, zDb);
     }
     pParse->checkSchema = 1;
     goto drop_trigger_cleanup;
@@ -562,7 +583,7 @@ void sqlite3DropTriggerPtr(Parse *pParse, Trigger *pTrigger){
     sqlite3BeginWriteOperation(pParse, 0, iDb);
     sqlite3OpenMasterTable(pParse, iDb);
     base = sqlite3VdbeAddOpList(v,  ArraySize(dropTrigger), dropTrigger);
-    sqlite3VdbeChangeP4(v, base+1, pTrigger->zName, 0);
+    sqlite3VdbeChangeP4(v, base+1, pTrigger->zName, P4_TRANSIENT);
     sqlite3VdbeChangeP4(v, base+4, "trigger", P4_STATIC);
     sqlite3ChangeCookie(pParse, iDb);
     sqlite3VdbeAddOp2(v, OP_Close, 0, 0);
@@ -577,8 +598,11 @@ void sqlite3DropTriggerPtr(Parse *pParse, Trigger *pTrigger){
 ** Remove a trigger from the hash tables of the sqlite* pointer.
 */
 void sqlite3UnlinkAndDeleteTrigger(sqlite3 *db, int iDb, const char *zName){
-  Hash *pHash = &(db->aDb[iDb].pSchema->trigHash);
   Trigger *pTrigger;
+  Hash *pHash;
+
+  assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
+  pHash = &(db->aDb[iDb].pSchema->trigHash);
   pTrigger = sqlite3HashInsert(pHash, zName, sqlite3Strlen30(zName), 0);
   if( ALWAYS(pTrigger) ){
     if( pTrigger->pSchema==pTrigger->pTabSchema ){
@@ -624,8 +648,12 @@ Trigger *sqlite3TriggersExist(
   int *pMask              /* OUT: Mask of TRIGGER_BEFORE|TRIGGER_AFTER */
 ){
   int mask = 0;
-  Trigger *pList = sqlite3TriggerList(pParse, pTab);
+  Trigger *pList = 0;
   Trigger *p;
+
+  if( (pParse->db->flags & SQLITE_EnableTrigger)!=0 ){
+    pList = sqlite3TriggerList(pParse, pTab);
+  }
   assert( pList==0 || IsVirtual(pTab)==0 );
   for(p=pList; p; p=p->pNext){
     if( p->op==op && checkColumnOverlap(p->pColumns, pChanges) ){

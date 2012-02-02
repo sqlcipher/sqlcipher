@@ -195,6 +195,7 @@
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
+					"-mno-thumb",
 					"-DSQLITE_HAS_CODEC",
 					"-DNDEBUG",
 					"-DSQLITE_TEMP_STORE=2",
@@ -218,6 +219,7 @@
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
+					"-mno-thumb",
 					"-DSQLITE_HAS_CODEC",
 					"-DNDEBUG",
 					"-DSQLITE_OS_UNIX=1",

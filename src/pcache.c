@@ -142,12 +142,16 @@ static void pcacheUnpin(PgHdr *p){
 */
 int sqlite3PcacheInitialize(void){
   if( sqlite3GlobalConfig.pcache.xInit==0 ){
+    /* IMPLEMENTATION-OF: R-26801-64137 If the xInit() method is NULL, then the
+    ** built-in default page cache is used instead of the application defined
+    ** page cache. */
     sqlite3PCacheSetDefault();
   }
   return sqlite3GlobalConfig.pcache.xInit(sqlite3GlobalConfig.pcache.pArg);
 }
 void sqlite3PcacheShutdown(void){
   if( sqlite3GlobalConfig.pcache.xShutdown ){
+    /* IMPLEMENTATION-OF: R-26000-56589 The xShutdown() method may be NULL. */
     sqlite3GlobalConfig.pcache.xShutdown(sqlite3GlobalConfig.pcache.pArg);
   }
 }
@@ -249,6 +253,13 @@ int sqlite3PcacheFetch(
     }
     if( pPg ){
       int rc;
+#ifdef SQLITE_LOG_CACHE_SPILL
+      sqlite3_log(SQLITE_FULL, 
+                  "spill page %d making room for %d - cache used: %d/%d",
+                  pPg->pgno, pgno,
+                  sqlite3GlobalConfig.pcache.xPagecount(pCache->pCache),
+                  pCache->nMax);
+#endif
       rc = pCache->xStress(pCache->pStress, pPg);
       if( rc!=SQLITE_OK && rc!=SQLITE_BUSY ){
         return rc;

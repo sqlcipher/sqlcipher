@@ -724,8 +724,8 @@ do_test vtab1-6-8.4 {
 } {}
 execsql {PRAGMA count_changes=OFF}
 
-file delete -force test2.db
-file delete -force test2.db-journal
+forcedelete test2.db
+forcedelete test2.db-journal
 sqlite3 db2 test2.db
 execsql {
   CREATE TABLE techo(a PRIMARY KEY, b, c);
@@ -1162,6 +1162,36 @@ ifcapable altertable {
   unset echo_module_fail(xRename,t2)
   incr tn
 }
+
+# The following test case exposes an instance in sqlite3_declare_vtab()
+# an error message was set using a call similar to sqlite3_mprintf(zErr),
+# where zErr is an arbitrary string. This is no good if the string contains
+# characters that can be mistaken for printf() formatting directives.
+#
+do_test vtab1-17.1 {
+  execsql { 
+    PRAGMA writable_schema = 1;
+    INSERT INTO sqlite_master VALUES(
+      'table', 't3', 't3', 0, 'INSERT INTO "%s%s" VALUES(1)'
+    );
+  }
+  catchsql { CREATE VIRTUAL TABLE t4 USING echo(t3); }
+} {1 {vtable constructor failed: t4}}
+
+# This test verifies that ticket 48f29963 is fixed.
+#
+do_test vtab1-17.1 {
+  execsql { 
+    CREATE TABLE t5(a, b);
+    CREATE VIRTUAL TABLE e5 USING echo_v2(t5);
+    BEGIN;
+      INSERT INTO e5 VALUES(1, 2);
+      DROP TABLE e5;
+      SAVEPOINT one;
+      ROLLBACK TO one;
+    COMMIT;
+  }
+} {}
 
 unset -nocomplain echo_module_begin_fail
 finish_test

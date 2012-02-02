@@ -127,7 +127,7 @@ AC_CHECK_HEADERS([sys/types.h stdlib.h stdint.h inttypes.h])
 #########
 # Figure out whether or not we have these functions
 #
-AC_CHECK_FUNCS([usleep fdatasync localtime_r gmtime_r localtime_s])
+AC_CHECK_FUNCS([usleep fdatasync localtime_r gmtime_r localtime_s utime])
 
 #########
 # By default, we use the amalgamation (this may be changed below...)
@@ -267,24 +267,6 @@ else
   AC_MSG_RESULT([yes])
 fi
 AC_SUBST(XTHREADCONNECT)
-
-##########
-# Do we want to set threadsOverrideEachOthersLocks variable to be 1 (true) by
-# default. Normally, a test at runtime is performed to determine the
-# appropriate value of this variable. Use this option only if you're sure that
-# threads can safely override each others locks in all runtime situations.
-#
-AC_ARG_ENABLE(threads-override-locks, 
-AC_HELP_STRING([--enable-threads-override-locks],[Threads can override each others locks]),,enable_threads_override_locks=no)
-AC_MSG_CHECKING([whether threads can override each others locks])
-if test "$enable_threads_override_locks" = "no"; then
-  THREADSOVERRIDELOCKS='-1'
-  AC_MSG_RESULT([no])
-else
-  THREADSOVERRIDELOCKS='1'
-  AC_MSG_RESULT([yes])
-fi
-AC_SUBST(THREADSOVERRIDELOCKS)
 
 ##########
 # Do we want to support release
@@ -637,6 +619,7 @@ AC_ARG_ENABLE(load-extension, AC_HELP_STRING([--enable-load-extension],
       [use_loadextension=$enableval],[use_loadextension=no])
 if test "${use_loadextension}" = "yes" ; then
   OPT_FEATURE_FLAGS=""
+  AC_SEARCH_LIBS(dlopen, dl)
 else
   OPT_FEATURE_FLAGS="-DSQLITE_OMIT_LOAD_EXTENSION=1"
 fi

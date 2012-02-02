@@ -441,6 +441,8 @@ do_test pager1.4.2.1 {
   db close
   tstvfs delete
 } {}
+
+if {$::tcl_platform(platform)!="windows"} {
 do_test pager1.4.2.2 {
   faultsim_restore_and_reopen
   execsql {
@@ -450,7 +452,7 @@ do_test pager1.4.2.2 {
 } {4 ok}
 do_test pager1.4.2.3 {
   faultsim_restore_and_reopen
-  foreach f [glob test.db-mj*] { file delete -force $f }
+  foreach f [glob test.db-mj*] { forcedelete $f }
   execsql {
     SELECT count(*) FROM t1;
     PRAGMA integrity_check;
@@ -467,12 +469,13 @@ do_test pager1.4.2.4 {
 do_test pager1.4.2.5 {
   faultsim_restore_and_reopen
   hexio_write test.db-journal [expr [file size test.db-journal]-20] 123456
-  foreach f [glob test.db-mj*] { file delete -force $f }
+  foreach f [glob test.db-mj*] { forcedelete $f }
   execsql {
     SELECT count(*) FROM t1;
     PRAGMA integrity_check;
   }
 } {4 ok}
+}
 
 do_test pager1.4.3.1 {
   testvfs tstvfs -default 1
@@ -646,7 +649,7 @@ foreach {tn1 tcl} {
     #
     do_test pager1-4.4.$tn.7 {
       faultsim_restore_and_reopen $prefix
-      foreach f [glob ${prefix}-mj*] { file delete -force $f }
+      foreach f [glob ${prefix}-mj*] { forcedelete $f }
       execsql "ATTACH '${prefix}2' AS aux"
     } {}
     do_execsql_test pager1-4.4.$tn.8 {
@@ -661,7 +664,7 @@ foreach {tn1 tcl} {
 }
 db close
 tv delete
-file delete -force $dirname
+forcedelete $dirname
 
 
 # Set up a VFS to make a copy of the file-system just before deleting a
@@ -879,7 +882,7 @@ do_test pager1.4.7.3 {
   db close
   catch {file attributes test.db-journal -permissions rw-rw-rw-}
   catch {file attributes test.db-journal -readonly 0}
-  file delete test.db-journal
+  delete_file test.db-journal
   file exists test.db-journal
 } {0}
 
@@ -1062,7 +1065,7 @@ do_execsql_test pager1-6.8 {
 } {11}
 do_execsql_test pager1-6.9 { COMMIT } {}
 
-do_execsql_test pager1-6.10 { PRAGMA max_page_count = 10 } {10}
+do_execsql_test pager1-6.10 { PRAGMA max_page_count = 10 } {11}
 do_execsql_test pager1-6.11 { SELECT * FROM t11 }          {1 2 3 4}
 do_execsql_test pager1-6.12 { PRAGMA max_page_count }      {11}
 
@@ -1107,10 +1110,10 @@ ifcapable wal {
       COMMIT;
     } {1 2} 0 -1
   
-    4  { PRAGMA journal_mode = WAL }    wal    -1 -1
-    5  { INSERT INTO t1 VALUES(3, 4) }  {}     -1 [wal_file_size 1 1024]
-    6  { PRAGMA locking_mode = NORMAL } normal -1 [wal_file_size 1 1024]
-    7  { INSERT INTO t1 VALUES(5, 6); } {}     -1 [wal_file_size 2 1024]
+    4  { PRAGMA journal_mode = WAL }    wal       -1 -1
+    5  { INSERT INTO t1 VALUES(3, 4) }  {}        -1 [wal_file_size 1 1024]
+    6  { PRAGMA locking_mode = NORMAL } exclusive -1 [wal_file_size 1 1024]
+    7  { INSERT INTO t1 VALUES(5, 6); } {}        -1 [wal_file_size 2 1024]
   
     8  { PRAGMA journal_mode = TRUNCATE } truncate          0 -1
     9  { INSERT INTO t1 VALUES(7, 8) }    {}                0 -1
@@ -1548,6 +1551,7 @@ do_execsql_test pager1-13.1.1 {
   UPDATE t1 SET b = a_string(400);
 } {persist}
 
+if {$::tcl_platform(platform)!="windows"} {
 # Run transactions of increasing sizes. Eventually, one (or more than one)
 # of these will write just enough content that one of the old headers created 
 # by the transaction in the block above lies immediately after the content
@@ -1570,7 +1574,9 @@ for {set nUp 1} {$nUp<64} {incr nUp} {
   } {ok}
   db2 close
 }
+}
 
+if {$::tcl_platform(platform)!="windows"} {
 # Same test as above. But this time with an index on the table.
 #
 do_execsql_test pager1-13.2.1 {
@@ -1590,6 +1596,7 @@ for {set nUp 1} {$nUp<64} {incr nUp} {
     execsql { PRAGMA integrity_check } db2
   } {ok}
   db2 close
+}
 }
 
 db close
@@ -1614,7 +1621,7 @@ do_catchsql_test pager1-14.1.2 {
 } {0 {}}
 do_execsql_test pager1-14.1.3 {
   SELECT * FROM t1;
-} {1 2 3 4}
+} {1 2}
 do_catchsql_test pager1-14.1.4 {
   BEGIN;
     INSERT INTO t1(rowid, a, b) SELECT a+3, b, b FROM t1;
@@ -1623,7 +1630,7 @@ do_catchsql_test pager1-14.1.4 {
 do_execsql_test pager1-14.1.5 {
   COMMIT;
   SELECT * FROM t1;
-} {1 2 3 4 2 2 4 4}
+} {1 2 2 2}
 
 #-------------------------------------------------------------------------
 # Test opening and closing the pager sub-system with different values
@@ -1653,7 +1660,7 @@ for {set i 0} {$i<513} {incr i 3} {
 testvfs tv -default 1
 tv script xOpenCb
 tv filter xOpen
-proc xOpenCb {method filename} {
+proc xOpenCb {method filename args} {
   set ::file_len [string length $filename]
 }
 sqlite3 db test.db
@@ -1759,6 +1766,10 @@ do_multiclient_test tn {
 #   + Page 0,
 #   + A page with a page number greater than (2^31-1).
 #
+# These tests will not work if SQLITE_DIRECT_OVERFLOW_READ is defined. In
+# that case IO errors are sometimes reported instead of SQLITE_CORRUPT.
+#
+ifcapable !direct_read {
 do_test pager1-18.1 {
   faultsim_delete_and_reopen
   db func a_string a_string
@@ -1834,6 +1845,7 @@ do_test pager1-18.6 {
   sqlite3 db test.db
   catchsql { SELECT length(x) FROM t1 }
 } {1 {database disk image is malformed}}
+}
 
 do_test pager1-19.1 {
   sqlite3 db ""
@@ -1919,32 +1931,34 @@ do_test pager1-20.2.2 {
   }
 } {}
 
-do_test pager1-20.3.1 {
-  faultsim_delete_and_reopen
-  db func a_string a_string
-  execsql {
-    PRAGMA cache_size = 10;
-    PRAGMA journal_mode = wal;
-    BEGIN;
-      CREATE TABLE t1(x);
-      CREATE TABLE t2(y);
-      INSERT INTO t1 VALUES(a_string(800));
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   2 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   4 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   8 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  16 */
-      INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  32 */
-    COMMIT;
-  }
-} {wal}
-do_test pager1-20.3.2 {
-  execsql {
-    BEGIN;
-    INSERT INTO t2 VALUES('xxxx');
-  }
-  recursive_select 32 t1
-  execsql COMMIT
-} {}
+ifcapable wal {
+  do_test pager1-20.3.1 {
+    faultsim_delete_and_reopen
+    db func a_string a_string
+    execsql {
+      PRAGMA cache_size = 10;
+      PRAGMA journal_mode = wal;
+      BEGIN;
+        CREATE TABLE t1(x);
+        CREATE TABLE t2(y);
+        INSERT INTO t1 VALUES(a_string(800));
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   2 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   4 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*   8 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  16 */
+        INSERT INTO t1 SELECT a_string(800) FROM t1;         /*  32 */
+      COMMIT;
+    }
+  } {wal}
+  do_test pager1-20.3.2 {
+    execsql {
+      BEGIN;
+      INSERT INTO t2 VALUES('xxxx');
+    }
+    recursive_select 32 t1
+    execsql COMMIT
+  } {}
+}
 
 #-------------------------------------------------------------------------
 # Test that a WAL database may not be opened if:
@@ -1952,28 +1966,30 @@ do_test pager1-20.3.2 {
 #   pager1-21.1.*: The VFS has an iVersion less than 2, or
 #   pager1-21.2.*: The VFS does not provide xShmXXX() methods.
 #
-do_test pager1-21.0 {
-  faultsim_delete_and_reopen
-  execsql {
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
-    INSERT INTO ko DEFAULT VALUES;
-  }
-} {wal}
-do_test pager1-21.1 {
-  testvfs tv -noshm 1
-  sqlite3 db2 test.db -vfs tv
-  catchsql { SELECT * FROM ko } db2
-} {1 {unable to open database file}}
-db2 close
-tv delete
-do_test pager1-21.2 {
-  testvfs tv -iversion 1
-  sqlite3 db2 test.db -vfs tv
-  catchsql { SELECT * FROM ko } db2
-} {1 {unable to open database file}}
-db2 close
-tv delete
+ifcapable wal {
+  do_test pager1-21.0 {
+    faultsim_delete_and_reopen
+    execsql {
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
+      INSERT INTO ko DEFAULT VALUES;
+    }
+  } {wal}
+  do_test pager1-21.1 {
+    testvfs tv -noshm 1
+    sqlite3 db2 test.db -vfs tv
+    catchsql { SELECT * FROM ko } db2
+  } {1 {unable to open database file}}
+  db2 close
+  tv delete
+  do_test pager1-21.2 {
+    testvfs tv -iversion 1
+    sqlite3 db2 test.db -vfs tv
+    catchsql { SELECT * FROM ko } db2
+  } {1 {unable to open database file}}
+  db2 close
+  tv delete
+}
 
 #-------------------------------------------------------------------------
 # Test that a "PRAGMA wal_checkpoint":
@@ -1981,31 +1997,33 @@ tv delete
 #   pager1-22.1.*: is a no-op on a non-WAL db, and
 #   pager1-22.2.*: does not cause xSync calls with a synchronous=off db.
 #
-do_test pager1-22.1.1 {
-  faultsim_delete_and_reopen
-  execsql {
-    CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
-    INSERT INTO ko DEFAULT VALUES;
-  }
-  execsql { PRAGMA wal_checkpoint }
-} {}
-do_test pager1-22.2.1 {
-  testvfs tv -default 1
-  tv filter xSync
-  tv script xSyncCb
-  proc xSyncCb {args} {incr ::synccount}
-  set ::synccount 0
-  sqlite3 db test.db
-  execsql {
-    PRAGMA synchronous = off;
-    PRAGMA journal_mode = WAL;
-    INSERT INTO ko DEFAULT VALUES;
-  }
-  execsql { PRAGMA wal_checkpoint }
-  set synccount
-} {0}
-db close
-tv delete
+ifcapable wal {
+  do_test pager1-22.1.1 {
+    faultsim_delete_and_reopen
+    execsql {
+      CREATE TABLE ko(c DEFAULT 'abc', b DEFAULT 'def');
+      INSERT INTO ko DEFAULT VALUES;
+    }
+    execsql { PRAGMA wal_checkpoint }
+  } {0 -1 -1}
+  do_test pager1-22.2.1 {
+    testvfs tv -default 1
+    tv filter xSync
+    tv script xSyncCb
+    proc xSyncCb {args} {incr ::synccount}
+    set ::synccount 0
+    sqlite3 db test.db
+    execsql {
+      PRAGMA synchronous = off;
+      PRAGMA journal_mode = WAL;
+      INSERT INTO ko DEFAULT VALUES;
+    }
+    execsql { PRAGMA wal_checkpoint }
+    set synccount
+  } {0}
+  db close
+  tv delete
+}
 
 #-------------------------------------------------------------------------
 # Tests for changing journal mode.
@@ -2254,24 +2272,26 @@ do_test pager1.27.1 {
 # the same database.
 #
 catch { db close }
-do_multiclient_test tn {
-  do_test pager1-28.$tn.1 {
-    sql1 { 
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE t1(a, b);
-      INSERT INTO t1 VALUES('a', 'b');
-    }
-  } {wal}
-  do_test pager1-28.$tn.2 { sql2 { SELECT * FROM t1 } } {a b}
+ifcapable wal {
+  do_multiclient_test tn {
+    do_test pager1-28.$tn.1 {
+      sql1 { 
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE t1(a, b);
+        INSERT INTO t1 VALUES('a', 'b');
+      }
+    } {wal}
+    do_test pager1-28.$tn.2 { sql2 { SELECT * FROM t1 } } {a b}
 
-  do_test pager1-28.$tn.3 { sql1 { PRAGMA locking_mode=exclusive } } {exclusive}
-  do_test pager1-28.$tn.4 { 
-    csql1 { BEGIN; INSERT INTO t1 VALUES('c', 'd'); }
-  } {1 {database is locked}}
-  code2 { db2 close ; sqlite3 db2 test.db }
-  do_test pager1-28.$tn.4 { 
-    sql1 { INSERT INTO t1 VALUES('c', 'd'); COMMIT }
-  } {}
+    do_test pager1-28.$tn.3 { sql1 { PRAGMA locking_mode=exclusive } } {exclusive}
+    do_test pager1-28.$tn.4 { 
+      csql1 { BEGIN; INSERT INTO t1 VALUES('c', 'd'); }
+    } {1 {database is locked}}
+    code2 { db2 close ; sqlite3 db2 test.db }
+    do_test pager1-28.$tn.4 { 
+      sql1 { INSERT INTO t1 VALUES('c', 'd'); COMMIT }
+    } {}
+  }
 }
 
 #-------------------------------------------------------------------------
@@ -2347,5 +2367,101 @@ do_test pager1-29.2 {
   file size test.db
 } [expr 4096*3]
 
+#-------------------------------------------------------------------------
+# Test that if an empty database file (size 0 bytes) is opened in 
+# exclusive-locking mode, any journal file is deleted from the file-system
+# without being rolled back. And that the RESERVED lock obtained while
+# doing this is not released.
+#
+do_test pager1-30.1 {
+  db close
+  delete_file test.db
+  delete_file test.db-journal
+  set fd [open test.db-journal w]
+  seek $fd [expr 512+1032*2]
+  puts -nonewline $fd x
+  close $fd
+
+  sqlite3 db test.db
+  execsql {
+    PRAGMA locking_mode=EXCLUSIVE;
+    SELECT count(*) FROM sqlite_master;
+    PRAGMA lock_status;
+  }
+} {exclusive 0 main reserved temp closed}
+
+#-------------------------------------------------------------------------
+# Test that if the "page-size" field in a journal-header is 0, the journal
+# file can still be rolled back. This is required for backward compatibility -
+# versions of SQLite prior to 3.5.8 always set this field to zero.
+#
+if {$tcl_platform(platform)=="unix"} {
+do_test pager1-31.1 {
+  faultsim_delete_and_reopen
+  execsql {
+    PRAGMA cache_size = 10;
+    PRAGMA page_size = 1024;
+    CREATE TABLE t1(x, y, UNIQUE(x, y));
+    INSERT INTO t1 VALUES(randomblob(1500), randomblob(1500));
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    INSERT INTO t1 SELECT randomblob(1500), randomblob(1500) FROM t1;
+    BEGIN;
+      UPDATE t1 SET y = randomblob(1499);
+  }
+  copy_file test.db test.db2
+  copy_file test.db-journal test.db2-journal
+  
+  hexio_write test.db2-journal 24 00000000
+  sqlite3 db2 test.db2
+  execsql { PRAGMA integrity_check } db2
+} {ok}
+}
+
+#-------------------------------------------------------------------------
+# Test that a database file can be "pre-hinted" to a certain size and that
+# subsequent spilling of the pager cache does not result in the database
+# file being shrunk.
+#
+catch {db close}
+forcedelete test.db
+
+do_test pager1-32.1 {
+  sqlite3 db test.db
+  execsql {
+    CREATE TABLE t1(x, y);
+  }
+  db close
+  sqlite3 db test.db
+  execsql {
+    BEGIN;
+    INSERT INTO t1 VALUES(1, randomblob(10000));
+  }
+  file_control_chunksize_test db main 1024
+  file_control_sizehint_test db main 20971520; # 20MB
+  execsql {
+    PRAGMA cache_size = 10;
+    INSERT INTO t1 VALUES(1, randomblob(10000));
+    INSERT INTO t1 VALUES(2, randomblob(10000));
+    INSERT INTO t1 SELECT x+2, randomblob(10000) from t1;
+    INSERT INTO t1 SELECT x+4, randomblob(10000) from t1;
+    INSERT INTO t1 SELECT x+8, randomblob(10000) from t1;
+    INSERT INTO t1 SELECT x+16, randomblob(10000) from t1;
+    SELECT count(*) FROM t1;
+    COMMIT;
+  }
+  db close
+  file size test.db
+} {20971520}
+
+# Cleanup 20MB file left by the previous test.
+forcedelete test.db
 
 finish_test
