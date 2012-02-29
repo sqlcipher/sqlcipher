@@ -1515,13 +1515,13 @@ void sqlite3Pragma(
     extern int codec_set_page_size(sqlite3*, int, int); 
     codec_set_page_size(db, iDb, atoi(zRight)); // change page size
   }else
+  if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
+    extern void codec_set_default_use_hmac(int);
+    codec_set_default_use_hmac(sqlite3GetBoolean(zRight));
+  }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
     extern int codec_set_use_hmac(sqlite3*, int, int);
-    if(sqlite3GetBoolean(zRight)) {
-      codec_set_use_hmac(db, iDb, 1);
-    } else {
-      codec_set_use_hmac(db, iDb, 0);
-    }
+    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight));
   }else
 /** END CRYPTO **/
 #endif

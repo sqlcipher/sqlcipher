@@ -77,6 +77,10 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
   return rc;
 }
 
+void codec_set_default_use_hmac(int use) {
+  sqlcipher_set_default_use_hmac(use);
+}
+
 int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
   struct Db *pDb = &db->aDb[nDb];
 
