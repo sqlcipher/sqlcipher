@@ -195,6 +195,12 @@
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
+					"-DSQLITE_HAS_CODEC",
+					"-DNDEBUG",
+					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
+				);
+				"OTHER_CFLAGS[arch=armv6]" = (
 					"-mno-thumb",
 					"-DSQLITE_HAS_CODEC",
 					"-DNDEBUG",
@@ -219,6 +225,13 @@
 				);
 				INSTALL_PATH = /usr/local/lib;
 				OTHER_CFLAGS = (
+					"-DSQLITE_HAS_CODEC",
+					"-DNDEBUG",
+					"-DSQLITE_OS_UNIX=1",
+					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
+				);
+				"OTHER_CFLAGS[arch=armv6]" = (
 					"-mno-thumb",
 					"-DSQLITE_HAS_CODEC",
 					"-DNDEBUG",

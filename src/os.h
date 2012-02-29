@@ -66,17 +66,6 @@
 #endif
 
 /*
-** Determine if we are dealing with WindowsCE - which has a much
-** reduced API.
-*/
-#if defined(_WIN32_WCE)
-# define SQLITE_OS_WINCE 1
-#else
-# define SQLITE_OS_WINCE 0
-#endif
-
-
-/*
 ** Define the maximum size of a temporary filename
 */
 #if SQLITE_OS_WIN
@@ -100,6 +89,25 @@
 # define SQLITE_TEMPNAME_SIZE 200
 #endif
 
+/*
+** Determine if we are dealing with Windows NT.
+*/
+#if defined(_WIN32_WINNT)
+# define SQLITE_OS_WINNT 1
+#else
+# define SQLITE_OS_WINNT 0
+#endif
+
+/*
+** Determine if we are dealing with WindowsCE - which has a much
+** reduced API.
+*/
+#if defined(_WIN32_WCE)
+# define SQLITE_OS_WINCE 1
+#else
+# define SQLITE_OS_WINCE 0
+#endif
+
 /* If the SET_FULLSYNC macro is not defined above, then make it
 ** a no-op
 */
@@ -111,7 +119,7 @@
 ** The default size of a disk sector
 */
 #ifndef SQLITE_DEFAULT_SECTOR_SIZE
-# define SQLITE_DEFAULT_SECTOR_SIZE 512
+# define SQLITE_DEFAULT_SECTOR_SIZE 4096
 #endif
 
 /*
@@ -244,6 +252,7 @@ int sqlite3OsLock(sqlite3_file*, int);
 int sqlite3OsUnlock(sqlite3_file*, int);
 int sqlite3OsCheckReservedLock(sqlite3_file *id, int *pResOut);
 int sqlite3OsFileControl(sqlite3_file*,int,void*);
+void sqlite3OsFileControlHint(sqlite3_file*,int,void*);
 #define SQLITE_FCNTL_DB_UNCHANGED 0xca093fa0
 int sqlite3OsSectorSize(sqlite3_file *id);
 int sqlite3OsDeviceCharacteristics(sqlite3_file *id);
@@ -251,6 +260,7 @@ int sqlite3OsShmMap(sqlite3_file *,int,int,int,void volatile **);
 int sqlite3OsShmLock(sqlite3_file *id, int, int, int);
 void sqlite3OsShmBarrier(sqlite3_file *id);
 int sqlite3OsShmUnmap(sqlite3_file *id, int);
+
 
 /* 
 ** Functions for accessing sqlite3_vfs methods 

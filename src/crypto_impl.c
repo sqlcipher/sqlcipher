@@ -79,6 +79,8 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *, cipher_ctx *);
 /* prototype for pager HMAC function */
 int sqlcipher_page_hmac(cipher_ctx *, Pgno, unsigned char *, int, unsigned char *);
 
+static int default_use_hmac = DEFAULT_USE_HMAC;
+
 struct codec_ctx {
   int kdf_salt_sz;
   int page_sz;
@@ -325,7 +327,12 @@ int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int
   return SQLITE_OK;
 }
 
+/* set the global default flag for HMAC */
+void sqlcipher_set_default_use_hmac(int use) {
+  default_use_hmac = use;
+}
 
+/* set the codec flag for whether this individual database should be using hmac */
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   int reserve = EVP_MAX_IV_LENGTH; /* base reserve size will be IV only */ 
 
@@ -432,7 +439,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   /* Use HMAC signatures by default. Note that codec_set_use_hmac will implicity call
      codec_set_page_size to set the default */
-  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, DEFAULT_USE_HMAC)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_use_hmac)) != SQLITE_OK) return rc;
 
   if((rc = sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) return rc;
 

@@ -1145,4 +1145,64 @@ do_test cipher-options-before-keys {
 db close
 file delete -force test.db
 
+# open a 1.1.8 database (no HMAC), then 
+# try to open another 1.1.8 database. The
+# attached database should have the same hmac
+# setting as the original 
+do_test default-use-hmac-attach {
+  file copy -force sqlcipher-1.1.8-testkey.db test.db
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA cipher_default_use_hmac = OFF;
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+    ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2;
+    SELECT count(*) from db2.t1;
+    PRAGMA cipher_default_use_hmac = ON;
+  } 
+} {4 4}
+db close
+file delete -force test.db
+
+# open a 2.0 database (with HMAC), then 
+# try to a 1.1.8 database. this should 
+# fail because the hmac setting for the 
+# attached database is not compatible
+do_test attach-1.1.8-database-from-2.0-fails {
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2;
+  } 
+} {1 {file is encrypted or is not a database}}
+db close
+file delete -force test.db
+
+# open a 2.0 database (with HMAC), then 
+# set the default hmac setting to OFF.
+# try to a 1.1.8 database. this should 
+# succeed now that hmac is off by default
+# before the attach
+do_test change-default-use-hmac-attach {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  db close
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+    PRAGMA cipher_default_use_hmac = OFF;
+    ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2;
+    SELECT count(*) from db2.t1;
+    PRAGMA cipher_default_use_hmac = ON;
+  } 
+} {1 4}
+db close
+file delete -force test.db
+
 finish_test
