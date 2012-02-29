@@ -14,6 +14,16 @@ set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 source $testdir/malloc_common.tcl
 
+# The tests in this file assume that SQLite is compiled without
+# ENABLE_8_3_NAMES.
+#
+ifcapable 8_3_names {
+  puts -nonewline "SQLite compiled with SQLITE_ENABLE_8_3_NAMES. "
+  puts            "Skipping tests multiplex-*."
+  finish_test
+  return
+}
+
 set g_chunk_size [ expr ($::SQLITE_MAX_PAGE_SIZE*16384) ]
 set g_max_chunks 32
 
@@ -24,7 +34,7 @@ set g_max_chunks 32
 # file name with the chunk number.
 proc multiplex_name {name chunk} {
   if {$chunk==0} { return $name }
-  set num [format "%02d" $chunk]
+  set num [format "%03d" $chunk]
   ifcapable {multiplex_ext_overwrite} {
     set name [string range $name 0 [expr [string length $name]-2-1]]
   }
@@ -146,6 +156,9 @@ sqlite3_multiplex_initialize "" 1
 multiplex_set db main 32768 16
 
 forcedelete test.x
+foreach f [glob -nocomplain {test.x*[0-9][0-9][0-9]}] {
+  forcedelete $f
+}
 do_test multiplex-2.1.2 {
   sqlite3 db test.x
   execsql {
@@ -182,11 +195,16 @@ do_test multiplex-2.4.2 {
   execsql { INSERT INTO t1 VALUES(3, randomblob(1100)) }
 } {}
 do_test multiplex-2.4.4 { file size [multiplex_name test.x 0] } {7168}
-do_test multiplex-2.4.99 {
+do_test multiplex-2.4.5 {
   db close
+  sqlite3 db test.x
+  db eval vacuum
+  db close
+  glob test.x*
+} {test.x}
+do_test multiplex-2.4.99 {
   sqlite3_multiplex_shutdown
 } {SQLITE_OK}
-
 
 do_test multiplex-2.5.1 {
   multiplex_delete test.x

@@ -110,8 +110,8 @@ set allquicktests [test_set $alltests -exclude {
   speed4p.test sqllimits1.test tkt2686.test thread001.test thread002.test
   thread003.test thread004.test thread005.test trans2.test vacuum3.test 
   incrvacuum_ioerr.test autovacuum_crash.test btree8.test shared_err.test
-  vtab_err.test walslow.test walcrash.test 
-  walthread.test rtree3.test indexfault.test
+  vtab_err.test walslow.test walcrash.test walcrash3.test
+  walthread.test rtree3.test indexfault.test 
 }]
 if {[info exists ::env(QUICKTEST_INCLUDE)]} {
   set allquicktests [concat $allquicktests $::env(QUICKTEST_INCLUDE)]
@@ -142,7 +142,7 @@ test_suite "valgrind" -prefix "" -description {
   Run the "veryquick" test suite with a couple of multi-process tests (that
   fail under valgrind) omitted.
 } -files [
-  test_set $allquicktests -exclude *malloc* *ioerr* *fault*
+  test_set $allquicktests -exclude *malloc* *ioerr* *fault* wal.test
 ] -initialize {
   set ::G(valgrind) 1
 } -shutdown {
@@ -529,6 +529,8 @@ test_suite "inmemory_journal" -description {
 
   # Exclude stmt.test, which expects sub-journals to use temporary files.
   stmt.test
+
+  zerodamage.test
 
   # WAL mode is different.
   wal* tkt-2d1a5c67d.test backcompat.test

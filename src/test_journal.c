@@ -391,7 +391,7 @@ static int openTransaction(jt_file *pMain, jt_file *pJournal){
     while( rc==SQLITE_OK && iTrunk>0 ){
       u32 nLeaf;
       u32 iLeaf;
-      sqlite3_int64 iOff = (iTrunk-1)*pMain->nPagesize;
+      sqlite3_int64 iOff = (i64)(iTrunk-1)*pMain->nPagesize;
       rc = sqlite3OsRead(p, aData, pMain->nPagesize, iOff);
       nLeaf = decodeUint32(&aData[4]);
       for(iLeaf=0; rc==SQLITE_OK && iLeaf<nLeaf; iLeaf++){
@@ -409,6 +409,7 @@ static int openTransaction(jt_file *pMain, jt_file *pJournal){
         if( iOff==PENDING_BYTE ) continue;
         rc = sqlite3OsRead(pMain->pReal, aData, pMain->nPagesize, iOff);
         pMain->aCksum[ii] = genCksum(aData, pMain->nPagesize);
+        if( ii+1==pMain->nPage && rc==SQLITE_IOERR_SHORT_READ ) rc = SQLITE_OK;
       }
     }
 
@@ -662,7 +663,7 @@ static int jtCheckReservedLock(sqlite3_file *pFile, int *pResOut){
 */
 static int jtFileControl(sqlite3_file *pFile, int op, void *pArg){
   jt_file *p = (jt_file *)pFile;
-  return sqlite3OsFileControl(p->pReal, op, pArg);
+  return p->pReal->pMethods->xFileControl(p->pReal, op, pArg);
 }
 
 /*
