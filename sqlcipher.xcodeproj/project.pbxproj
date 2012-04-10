@@ -199,6 +199,7 @@
 					"-DNDEBUG",
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
+					"-DPBKDF2_ITER=10000",
 				);
 				"OTHER_CFLAGS[arch=armv6]" = (
 					"-mno-thumb",
@@ -206,6 +207,7 @@
 					"-DNDEBUG",
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
+					"-DPBKDF2_ITER=10000",
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
@@ -230,6 +232,7 @@
 					"-DSQLITE_OS_UNIX=1",
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
+					"-DPBKDF2_ITER=10000",
 				);
 				"OTHER_CFLAGS[arch=armv6]" = (
 					"-mno-thumb",
@@ -238,6 +241,7 @@
 					"-DSQLITE_OS_UNIX=1",
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
+					"-DPBKDF2_ITER=10000",
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
