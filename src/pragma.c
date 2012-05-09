@@ -157,6 +157,18 @@ static void returnSingleInt(Parse *pParse, const char *zLabel, i64 value){
   sqlite3VdbeAddOp2(v, OP_ResultRow, mem, 1);
 }
 
+/*
+** Generate code to return a string value.
+ */
+static void returnString(Parse *pParse, const char *zLabel, const char *value){
+  Vdbe *v = sqlite3GetVdbe(pParse);
+  int mem = ++pParse->nMem;
+  sqlite3VdbeAddOp4(v, OP_String, 0, mem, 0, (char*)value, P4_STATIC);
+  sqlite3VdbeSetNumCols(v, 1);
+  sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLabel, SQLITE_STATIC);
+  sqlite3VdbeAddOp2(v, OP_ResultRow, mem, 1);
+}
+
 #ifndef SQLITE_OMIT_FLAG_PRAGMAS
 /*
 ** Check to see if zRight and zLeft refer to a pragma that queries
@@ -1505,6 +1517,9 @@ void sqlite3Pragma(
     }
   }else
 /** BEGIN CRYPTO **/
+  if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
+    returnString(pParse, "cipher_version", CIPHER_VERSION);
+  } else
   if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
     extern int codec_set_cipher_name(sqlite3*, int, const char *, int);
     codec_set_cipher_name(db, iDb, zRight, 2); // change cipher for both

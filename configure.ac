@@ -180,6 +180,10 @@ VERSION_NUMBER=[`cat $srcdir/VERSION \
 AC_MSG_NOTICE(Version number set to $VERSION_NUMBER)
 AC_SUBST(VERSION_NUMBER)
 
+CIPHER_VERSION=`cat $srcdir/CIPHER_VERSION`
+AC_MSG_NOTICE(Cipher version set to $CIPHER_VERSION)
+AC_SUBST(CIPHER_VERSION)
+
 #########
 # Check to see if the --with-hints=FILE option is used.  If there is none,
 # then check for a files named "$host.hints" and ../$hosts.hints where
