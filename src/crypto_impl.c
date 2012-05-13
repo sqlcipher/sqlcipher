@@ -92,6 +92,16 @@ struct codec_ctx {
   cipher_ctx *write_ctx;
 };
 
+/* Generate code to return a string value */
+extern void returnString(Parse *pParse, const char *zLabel, const char *value){
+  Vdbe *v = sqlite3GetVdbe(pParse);
+  int mem = ++pParse->nMem;
+  sqlite3VdbeAddOp4(v, OP_String, 0, mem, 0, (char*)value, P4_STATIC);
+  sqlite3VdbeSetNumCols(v, 1);
+  sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLabel, SQLITE_STATIC);
+  sqlite3VdbeAddOp2(v, OP_ResultRow, mem, 1);
+}
+
 void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   if(EVP_get_cipherbyname(CIPHER) == NULL) {
