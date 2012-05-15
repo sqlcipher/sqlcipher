@@ -1561,11 +1561,11 @@ void sqlite3Pragma(
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
     extern void codec_set_default_use_hmac(int);
-    codec_set_default_use_hmac(sqlite3GetBoolean(zRight));
+    codec_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
     extern int codec_set_use_hmac(sqlite3*, int, int);
-    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight));
+    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight,1));
   }else
 /** END CRYPTO **/
 #endif
