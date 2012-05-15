@@ -537,7 +537,7 @@ void sqlite3DeleteTable(sqlite3 *db, Table *pTable){
   sqlite3DbFree(db, pTable->zColAff);
   sqlite3SelectDelete(db, pTable->pSelect);
 #ifndef SQLITE_OMIT_CHECK
-  sqlite3ExprDelete(db, pTable->pCheck);
+  sqlite3ExprListDelete(db, pTable->pCheck);
 #endif
 #ifndef SQLITE_OMIT_VIRTUALTABLE
   sqlite3VtabClear(db, pTable);
@@ -1200,15 +1200,17 @@ void sqlite3AddCheckConstraint(
   Parse *pParse,    /* Parsing context */
   Expr *pCheckExpr  /* The check expression */
 ){
-  sqlite3 *db = pParse->db;
 #ifndef SQLITE_OMIT_CHECK
   Table *pTab = pParse->pNewTable;
   if( pTab && !IN_DECLARE_VTAB ){
-    pTab->pCheck = sqlite3ExprAnd(db, pTab->pCheck, pCheckExpr);
+    pTab->pCheck = sqlite3ExprListAppend(pParse, pTab->pCheck, pCheckExpr);
+    if( pParse->constraintName.n ){
+      sqlite3ExprListSetName(pParse, pTab->pCheck, &pParse->constraintName, 1);
+    }
   }else
 #endif
   {
-    sqlite3ExprDelete(db, pCheckExpr);
+    sqlite3ExprDelete(pParse->db, pCheckExpr);
   }
 }
 
@@ -1478,6 +1480,8 @@ void sqlite3EndTable(
   if( p->pCheck ){
     SrcList sSrc;                   /* Fake SrcList for pParse->pNewTable */
     NameContext sNC;                /* Name context for pParse->pNewTable */
+    ExprList *pList;                /* List of all CHECK constraints */
+    int i;                          /* Loop counter */
 
     memset(&sNC, 0, sizeof(sNC));
     memset(&sSrc, 0, sizeof(sSrc));
@@ -1488,8 +1492,11 @@ void sqlite3EndTable(
     sNC.pParse = pParse;
     sNC.pSrcList = &sSrc;
     sNC.isCheck = 1;
-    if( sqlite3ResolveExprNames(&sNC, p->pCheck) ){
-      return;
+    pList = p->pCheck;
+    for(i=0; i<pList->nExpr; i++){
+      if( sqlite3ResolveExprNames(&sNC, pList->a[i].pExpr) ){
+        return;
+      }
     }
   }
 #endif /* !defined(SQLITE_OMIT_CHECK) */
@@ -1638,7 +1645,6 @@ void sqlite3EndTable(
       return;
     }
     pParse->pNewTable = 0;
-    db->nTable++;
     db->flags |= SQLITE_InternChanges;
 
 #ifndef SQLITE_OMIT_ALTERTABLE
@@ -3041,45 +3047,43 @@ exit_drop_index:
 }
 
 /*
-** pArray is a pointer to an array of objects.  Each object in the
-** array is szEntry bytes in size.  This routine allocates a new
-** object on the end of the array.
+** pArray is a pointer to an array of objects. Each object in the
+** array is szEntry bytes in size. This routine uses sqlite3DbRealloc()
+** to extend the array so that there is space for a new object at the end.
 **
-** *pnEntry is the number of entries already in use.  *pnAlloc is
-** the previously allocated size of the array.  initSize is the
-** suggested initial array size allocation.
+** When this function is called, *pnEntry contains the current size of
+** the array (in entries - so the allocation is ((*pnEntry) * szEntry) bytes
+** in total).
 **
-** The index of the new entry is returned in *pIdx.
+** If the realloc() is successful (i.e. if no OOM condition occurs), the
+** space allocated for the new object is zeroed, *pnEntry updated to
+** reflect the new size of the array and a pointer to the new allocation
+** returned. *pIdx is set to the index of the new array entry in this case.
 **
-** This routine returns a pointer to the array of objects.  This
-** might be the same as the pArray parameter or it might be a different
-** pointer if the array was resized.
+** Otherwise, if the realloc() fails, *pIdx is set to -1, *pnEntry remains
+** unchanged and a copy of pArray returned.
 */
 void *sqlite3ArrayAllocate(
   sqlite3 *db,      /* Connection to notify of malloc failures */
   void *pArray,     /* Array of objects.  Might be reallocated */
   int szEntry,      /* Size of each object in the array */
-  int initSize,     /* Suggested initial allocation, in elements */
   int *pnEntry,     /* Number of objects currently in use */
-  int *pnAlloc,     /* Current size of the allocation, in elements */
   int *pIdx         /* Write the index of a new slot here */
 ){
   char *z;
-  if( *pnEntry >= *pnAlloc ){
-    void *pNew;
-    int newSize;
-    newSize = (*pnAlloc)*2 + initSize;
-    pNew = sqlite3DbRealloc(db, pArray, newSize*szEntry);
+  int n = *pnEntry;
+  if( (n & (n-1))==0 ){
+    int sz = (n==0) ? 1 : 2*n;
+    void *pNew = sqlite3DbRealloc(db, pArray, sz*szEntry);
     if( pNew==0 ){
       *pIdx = -1;
       return pArray;
     }
-    *pnAlloc = sqlite3DbMallocSize(db, pNew)/szEntry;
     pArray = pNew;
   }
   z = (char*)pArray;
-  memset(&z[*pnEntry * szEntry], 0, szEntry);
-  *pIdx = *pnEntry;
+  memset(&z[n * szEntry], 0, szEntry);
+  *pIdx = n;
   ++*pnEntry;
   return pArray;
 }
@@ -3095,15 +3099,12 @@ IdList *sqlite3IdListAppend(sqlite3 *db, IdList *pList, Token *pToken){
   if( pList==0 ){
     pList = sqlite3DbMallocZero(db, sizeof(IdList) );
     if( pList==0 ) return 0;
-    pList->nAlloc = 0;
   }
   pList->a = sqlite3ArrayAllocate(
       db,
       pList->a,
       sizeof(pList->a[0]),
-      5,
       &pList->nId,
-      &pList->nAlloc,
       &i
   );
   if( i<0 ){

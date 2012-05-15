@@ -46,6 +46,7 @@ proc set_tvfs_hdr {file args} {
   }
 
   set blob [tvfs shm $file]
+  if {$::tcl_platform(byteOrder)=="bigEndian"} {set fmt I} {set fmt i}
 
   if {[llength $args]} {
     set ia [lindex $args 0]
@@ -54,11 +55,11 @@ proc set_tvfs_hdr {file args} {
       set ib [lindex $args 1]
     }
     binary scan $blob a[expr $nHdr*2]a* dummy tail
-    set blob [binary format i${nInt}i${nInt}a* $ia $ib $tail]
+    set blob [binary format ${fmt}${nInt}${fmt}${nInt}a* $ia $ib $tail]
     tvfs shm $file $blob
   }
 
-  binary scan $blob i${nInt} ints
+  binary scan $blob ${fmt}${nInt} ints
   return $ints
 }
 
@@ -1042,7 +1043,10 @@ tvfs delete
 #
 if {$::tcl_platform(platform) == "unix"} {
   faultsim_delete_and_reopen
-  set umask [exec /bin/sh -c umask]
+  # Changed on 2012-02-13: umask is deliberately ignored for -wal files.
+  #set umask [exec /bin/sh -c umask]
+  set umask 0
+  
 
   do_test wal2-12.1 {
     sqlite3 db test.db
