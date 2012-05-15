@@ -290,9 +290,9 @@ static jt_file *locateDatabaseHandle(const char *zJournal){
   jt_file *pMain = 0;
   enterJtMutex();
   for(pMain=g.pList; pMain; pMain=pMain->pNext){
-    int nName = strlen(zJournal) - strlen("-journal");
+    int nName = (int)(strlen(zJournal) - strlen("-journal"));
     if( (pMain->flags&SQLITE_OPEN_MAIN_DB)
-     && (strlen(pMain->zName)==nName)
+     && ((int)strlen(pMain->zName)==nName)
      && 0==memcmp(pMain->zName, zJournal, nName)
      && (pMain->eLock>=SQLITE_LOCK_RESERVED)
     ){
@@ -404,7 +404,7 @@ static int openTransaction(jt_file *pMain, jt_file *pJournal){
     /* Calculate and store a checksum for each page in the database file. */
     if( rc==SQLITE_OK ){
       int ii;
-      for(ii=0; rc==SQLITE_OK && ii<pMain->nPage; ii++){
+      for(ii=0; rc==SQLITE_OK && ii<(int)pMain->nPage; ii++){
         i64 iOff = (i64)(pMain->nPagesize) * (i64)ii;
         if( iOff==PENDING_BYTE ) continue;
         rc = sqlite3OsRead(pMain->pReal, aData, pMain->nPagesize, iOff);
@@ -466,7 +466,7 @@ static int readJournalFile(jt_file *p, jt_file *pMain){
           continue;
         }
       }
-      nRec = (iSize-iOff) / (pMain->nPagesize+8);
+      nRec = (u32)((iSize-iOff) / (pMain->nPagesize+8));
     }
 
     /* Read all the records that follow the journal-header just read. */
@@ -538,7 +538,7 @@ static int jtWrite(
   }
 
   if( p->flags&SQLITE_OPEN_MAIN_DB && p->pWritable ){
-    if( iAmt<p->nPagesize 
+    if( iAmt<(int)p->nPagesize 
      && p->nPagesize%iAmt==0 
      && iOfst>=(PENDING_BYTE+512) 
      && iOfst+iAmt<=PENDING_BYTE+p->nPagesize
@@ -549,7 +549,7 @@ static int jtWrite(
       ** pending-byte page.
       */
     }else{
-      u32 pgno = iOfst/p->nPagesize + 1;
+      u32 pgno = (u32)(iOfst/p->nPagesize + 1);
       assert( (iAmt==1||iAmt==p->nPagesize) && ((iOfst+iAmt)%p->nPagesize)==0 );
       assert( pgno<=p->nPage || p->nSync>0 );
       assert( pgno>p->nPage || sqlite3BitvecTest(p->pWritable, pgno) );
@@ -578,7 +578,7 @@ static int jtTruncate(sqlite3_file *pFile, sqlite_int64 size){
   if( p->flags&SQLITE_OPEN_MAIN_DB && p->pWritable ){
     u32 pgno;
     u32 locking_page = (u32)(PENDING_BYTE/p->nPagesize+1);
-    for(pgno=size/p->nPagesize+1; pgno<=p->nPage; pgno++){
+    for(pgno=(u32)(size/p->nPagesize+1); pgno<=p->nPage; pgno++){
       assert( pgno==locking_page || sqlite3BitvecTest(p->pWritable, pgno) );
     }
   }
@@ -723,7 +723,7 @@ static int jtOpen(
 ** returning.
 */
 static int jtDelete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
-  int nPath = strlen(zPath);
+  int nPath = (int)strlen(zPath);
   if( nPath>8 && 0==strcmp("-journal", &zPath[nPath-8]) ){
     /* Deleting a journal file. The end of a transaction. */
     jt_file *pMain = locateDatabaseHandle(zPath);

@@ -990,7 +990,7 @@ do_test pragma-9.4 {
 } {}
 ifcapable wsd {
   do_test pragma-9.5 {
-    set pwd [string map {' ''} [file nativename [pwd]]]
+    set pwd [string map {' ''} [file nativename [get_pwd]]]
     execsql "
       PRAGMA temp_store_directory='$pwd';
     "
@@ -999,7 +999,7 @@ ifcapable wsd {
     execsql { 
       PRAGMA temp_store_directory;
     }
-  } [list [file nativename [pwd]]]
+  } [list [file nativename [get_pwd]]]
   do_test pragma-9.7 {
     catchsql { 
       PRAGMA temp_store_directory='/NON/EXISTENT/PATH/FOOBAR';
@@ -1488,5 +1488,27 @@ foreach {temp_setting val} {
     "
   } $val
 }
+
+# The SQLITE_FCNTL_PRAGMA logic, with error handling.
+#
+db close
+testvfs tvfs
+sqlite3 db test.db -vfs tvfs
+do_test pragma-19.1 {
+  catchsql {PRAGMA error}
+} {1 {SQL logic error or missing database}}
+do_test pragma-19.2 {
+  catchsql {PRAGMA error='This is the error message'}
+} {1 {This is the error message}}
+do_test pragma-19.3 {
+  catchsql {PRAGMA error='7 This is the error message'}
+} {1 {This is the error message}}
+do_test pragma-19.4 {
+  catchsql {PRAGMA error=7}
+} {1 {out of memory}}
+do_test pragma-19.5 {
+  file tail [lindex [execsql {PRAGMA filename}] 0]
+} {test.db}
+
 
 finish_test

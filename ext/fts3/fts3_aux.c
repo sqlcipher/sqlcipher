@@ -79,9 +79,9 @@ static int fts3auxConnectMethod(
   }
 
   zDb = argv[1]; 
-  nDb = strlen(zDb);
+  nDb = (int)strlen(zDb);
   zFts3 = argv[3];
-  nFts3 = strlen(zFts3);
+  nFts3 = (int)strlen(zFts3);
 
   rc = sqlite3_declare_vtab(db, FTS3_TERMS_SCHEMA);
   if( rc!=SQLITE_OK ) return rc;
@@ -376,7 +376,7 @@ static int fts3auxFilterMethod(
     if( pCsr->zStop==0 ) return SQLITE_NOMEM;
   }
 
-  rc = sqlite3Fts3SegReaderCursor(pFts3, 0, FTS3_SEGCURSOR_ALL,
+  rc = sqlite3Fts3SegReaderCursor(pFts3, 0, 0, FTS3_SEGCURSOR_ALL,
       pCsr->filter.zTerm, pCsr->filter.nTerm, 0, isScan, &pCsr->csr
   );
   if( rc==SQLITE_OK ){

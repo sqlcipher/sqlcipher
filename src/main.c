@@ -849,19 +849,23 @@ int sqlite3_close(sqlite3 *db){
 }
 
 /*
-** Rollback all database files.
+** Rollback all database files.  If tripCode is not SQLITE_OK, then
+** any open cursors are invalidated ("tripped" - as in "tripping a circuit
+** breaker") and made to return tripCode if there are any further
+** attempts to use that cursor.
 */
-void sqlite3RollbackAll(sqlite3 *db){
+void sqlite3RollbackAll(sqlite3 *db, int tripCode){
   int i;
   int inTrans = 0;
   assert( sqlite3_mutex_held(db->mutex) );
   sqlite3BeginBenignMalloc();
   for(i=0; i<db->nDb; i++){
-    if( db->aDb[i].pBt ){
-      if( sqlite3BtreeIsInTrans(db->aDb[i].pBt) ){
+    Btree *p = db->aDb[i].pBt;
+    if( p ){
+      if( sqlite3BtreeIsInTrans(p) ){
         inTrans = 1;
       }
-      sqlite3BtreeRollback(db->aDb[i].pBt);
+      sqlite3BtreeRollback(p, tripCode);
       db->aDb[i].inTrans = 0;
     }
   }
@@ -916,12 +920,21 @@ const char *sqlite3ErrStr(int rc){
     /* SQLITE_RANGE       */ "bind or column index out of range",
     /* SQLITE_NOTADB      */ "file is encrypted or is not a database",
   };
-  rc &= 0xff;
-  if( ALWAYS(rc>=0) && rc<(int)(sizeof(aMsg)/sizeof(aMsg[0])) && aMsg[rc]!=0 ){
-    return aMsg[rc];
-  }else{
-    return "unknown error";
+  const char *zErr = "unknown error";
+  switch( rc ){
+    case SQLITE_ABORT_ROLLBACK: {
+      zErr = "abort due to ROLLBACK";
+      break;
+    }
+    default: {
+      rc &= 0xff;
+      if( ALWAYS(rc>=0) && rc<ArraySize(aMsg) && aMsg[rc]!=0 ){
+        zErr = aMsg[rc];
+      }
+      break;
+    }
   }
+  return zErr;
 }
 
 /*
@@ -1299,9 +1312,8 @@ void *sqlite3_profile(
 }
 #endif /* SQLITE_OMIT_TRACE */
 
-/*** EXPERIMENTAL ***
-**
-** Register a function to be invoked when a transaction comments.
+/*
+** Register a function to be invoked when a transaction commits.
 ** If the invoked function returns non-zero, then the commit becomes a
 ** rollback.
 */
@@ -2692,35 +2704,27 @@ int sqlite3_extended_result_codes(sqlite3 *db, int onoff){
 */
 int sqlite3_file_control(sqlite3 *db, const char *zDbName, int op, void *pArg){
   int rc = SQLITE_ERROR;
-  int iDb;
+  Btree *pBtree;
+
   sqlite3_mutex_enter(db->mutex);
-  if( zDbName==0 ){
-    iDb = 0;
-  }else{
-    for(iDb=0; iDb<db->nDb; iDb++){
-      if( strcmp(db->aDb[iDb].zName, zDbName)==0 ) break;
+  pBtree = sqlite3DbNameToBtree(db, zDbName);
+  if( pBtree ){
+    Pager *pPager;
+    sqlite3_file *fd;
+    sqlite3BtreeEnter(pBtree);
+    pPager = sqlite3BtreePager(pBtree);
+    assert( pPager!=0 );
+    fd = sqlite3PagerFile(pPager);
+    assert( fd!=0 );
+    if( op==SQLITE_FCNTL_FILE_POINTER ){
+      *(sqlite3_file**)pArg = fd;
+      rc = SQLITE_OK;
+    }else if( fd->pMethods ){
+      rc = sqlite3OsFileControl(fd, op, pArg);
+    }else{
+      rc = SQLITE_NOTFOUND;
     }
-  }
-  if( iDb<db->nDb ){
-    Btree *pBtree = db->aDb[iDb].pBt;
-    if( pBtree ){
-      Pager *pPager;
-      sqlite3_file *fd;
-      sqlite3BtreeEnter(pBtree);
-      pPager = sqlite3BtreePager(pBtree);
-      assert( pPager!=0 );
-      fd = sqlite3PagerFile(pPager);
-      assert( fd!=0 );
-      if( op==SQLITE_FCNTL_FILE_POINTER ){
-        *(sqlite3_file**)pArg = fd;
-        rc = SQLITE_OK;
-      }else if( fd->pMethods ){
-        rc = sqlite3OsFileControl(fd, op, pArg);
-      }else{
-        rc = SQLITE_NOTFOUND;
-      }
-      sqlite3BtreeLeave(pBtree);
-    }
+    sqlite3BtreeLeave(pBtree);
   }
   sqlite3_mutex_leave(db->mutex);
   return rc;   
@@ -2995,7 +2999,8 @@ const char *sqlite3_uri_parameter(const char *zFilename, const char *zParam){
 */
 int sqlite3_uri_boolean(const char *zFilename, const char *zParam, int bDflt){
   const char *z = sqlite3_uri_parameter(zFilename, zParam);
-  return z ? sqlite3GetBoolean(z) : (bDflt!=0);
+  bDflt = bDflt!=0;
+  return z ? sqlite3GetBoolean(z, bDflt) : bDflt;
 }
 
 /*
@@ -3015,15 +3020,34 @@ sqlite3_int64 sqlite3_uri_int64(
 }
 
 /*
+** Return the Btree pointer identified by zDbName.  Return NULL if not found.
+*/
+Btree *sqlite3DbNameToBtree(sqlite3 *db, const char *zDbName){
+  int i;
+  for(i=0; i<db->nDb; i++){
+    if( db->aDb[i].pBt
+     && (zDbName==0 || sqlite3StrICmp(zDbName, db->aDb[i].zName)==0)
+    ){
+      return db->aDb[i].pBt;
+    }
+  }
+  return 0;
+}
+
+/*
 ** Return the filename of the database associated with a database
 ** connection.
 */
 const char *sqlite3_db_filename(sqlite3 *db, const char *zDbName){
-  int i;
-  for(i=0; i<db->nDb; i++){
-    if( db->aDb[i].pBt && sqlite3StrICmp(zDbName, db->aDb[i].zName)==0 ){
-      return sqlite3BtreeGetFilename(db->aDb[i].pBt);
-    }
-  }
-  return 0;
+  Btree *pBt = sqlite3DbNameToBtree(db, zDbName);
+  return pBt ? sqlite3BtreeGetFilename(pBt) : 0;
+}
+
+/*
+** Return 1 if database is read-only or 0 if read/write.  Return -1 if
+** no such database exists.
+*/
+int sqlite3_db_readonly(sqlite3 *db, const char *zDbName){
+  Btree *pBt = sqlite3DbNameToBtree(db, zDbName);
+  return pBt ? sqlite3PagerIsreadonly(sqlite3BtreePager(pBt)) : -1;
 }
