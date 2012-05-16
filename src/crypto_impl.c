@@ -185,7 +185,7 @@ int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   */
 void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   cipher_ctx *ctx = *iCtx;
-  CODEC_TRACE(("cipher_ctx_free: entered iCtx=%d\n", iCtx));
+  CODEC_TRACE(("cipher_ctx_free: entered iCtx=%p\n", iCtx));
   sqlcipher_free(ctx->key, ctx->key_sz);
   sqlcipher_free(ctx->hmac_key, ctx->key_sz);
   sqlcipher_free(ctx->pass, ctx->pass_sz);
@@ -199,7 +199,7 @@ void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   * returns 1 otherwise
   */
 int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
-  CODEC_TRACE(("sqlcipher_cipher_ctx_cmp: entered c1=%d c2=%d\n", c1, c2));
+  CODEC_TRACE(("sqlcipher_cipher_ctx_cmp: entered c1=%p c2=%p\n", c1, c2));
 
   if(
     c1->evp_cipher == c2->evp_cipher
@@ -230,7 +230,7 @@ int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   void *key = target->key; 
   void *hmac_key = target->hmac_key; 
 
-  CODEC_TRACE(("sqlcipher_cipher_ctx_copy: entered target=%d, source=%d\n", target, source));
+  CODEC_TRACE(("sqlcipher_cipher_ctx_copy: entered target=%p, source=%p\n", target, source));
   sqlcipher_free(target->pass, target->pass_sz); 
   memcpy(target, source, sizeof(cipher_ctx));
   
@@ -452,7 +452,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   */
 void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   codec_ctx *ctx = *iCtx;
-  CODEC_TRACE(("codec_ctx_free: entered iCtx=%d\n", iCtx));
+  CODEC_TRACE(("codec_ctx_free: entered iCtx=%p\n", iCtx));
   sqlcipher_free(ctx->kdf_salt, ctx->kdf_salt_sz);
   sqlcipher_free(ctx->hmac_kdf_salt, ctx->kdf_salt_sz);
   sqlcipher_free(ctx->buffer, 0);
@@ -523,7 +523,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
       return SQLITE_ERROR;
     }
 
-    CODEC_TRACE(("codec_cipher: comparing hmac on in=%d out=%d hmac_sz=%d\n", hmac_in, hmac_out, c_ctx->hmac_sz));
+    CODEC_TRACE(("codec_cipher: comparing hmac on in=%p out=%p hmac_sz=%d\n", hmac_in, hmac_out, c_ctx->hmac_sz));
     if(sqlcipher_memcmp(hmac_in, hmac_out, c_ctx->hmac_sz) != 0) {
       /* the hmac check failed, which means the data was tampered with or
          corrupted in some way. we will return an error, and zero out the page data
@@ -565,8 +565,8 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   */
 int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
-                ctx->kdf_salt=%d ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
-                ctx->hmac_kdf_salt=%d, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 
+                ctx->kdf_salt=%p ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
+                ctx->hmac_kdf_salt=%p, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 
                 c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, 
                 ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, c_ctx->key_sz)); 
                 

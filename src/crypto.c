@@ -40,7 +40,7 @@
 
 int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_kdf_iter: entered db=%d nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
+  CODEC_TRACE(("codec_set_kdf_iter: entered db=%p nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
 
   if(pDb->pBt) {
     codec_ctx *ctx;
@@ -52,7 +52,7 @@ int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
 
 int codec_set_fast_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_kdf_iter: entered db=%d nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
+  CODEC_TRACE(("codec_set_kdf_iter: entered db=%p nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
 
   if(pDb->pBt) {
     codec_ctx *ctx;
@@ -87,7 +87,7 @@ void codec_set_default_use_hmac(int use) {
 int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
   struct Db *pDb = &db->aDb[nDb];
 
-  CODEC_TRACE(("codec_set_use_hmac: entered db=%d nDb=%d use=%d\n", db, nDb, use));
+  CODEC_TRACE(("codec_set_use_hmac: entered db=%p nDb=%d use=%d\n", db, nDb, use));
 
   if(pDb->pBt) {
     int rc;
@@ -105,7 +105,7 @@ int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
 
 int codec_set_page_size(sqlite3* db, int nDb, int size) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_page_size: entered db=%d nDb=%d size=%d\n", db, nDb, size));
+  CODEC_TRACE(("codec_set_page_size: entered db=%p nDb=%d size=%d\n", db, nDb, size));
 
   if(pDb->pBt) {
     int rc;
@@ -129,7 +129,7 @@ int codec_set_page_size(sqlite3* db, int nDb, int size) {
   */
 int codec_set_cipher_name(sqlite3* db, int nDb, const char *cipher_name, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_cipher_name: entered db=%d nDb=%d cipher_name=%s for_ctx=%d\n", db, nDb, cipher_name, for_ctx));
+  CODEC_TRACE(("codec_set_cipher_name: entered db=%p nDb=%d cipher_name=%s for_ctx=%d\n", db, nDb, cipher_name, for_ctx));
 
   if(pDb->pBt) {
     codec_ctx *ctx;
@@ -141,7 +141,7 @@ int codec_set_cipher_name(sqlite3* db, int nDb, const char *cipher_name, int for
 
 int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_pass_key: entered db=%d nDb=%d cipher_name=%s nKey=%d for_ctx=%d\n", db, nDb, zKey, nKey, for_ctx));
+  CODEC_TRACE(("codec_set_pass_key: entered db=%p nDb=%d zKey=%s nKey=%d for_ctx=%d\n", db, nDb, (char *)zKey, nKey, for_ctx));
   if(pDb->pBt) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
@@ -212,7 +212,7 @@ void sqlite3FreeCodecArg(void *pCodecArg) {
 int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   struct Db *pDb = &db->aDb[nDb];
 
-  CODEC_TRACE(("sqlite3CodecAttach: entered nDb=%d zKey=%s, nKey=%d\n", nDb, zKey, nKey));
+  CODEC_TRACE(("sqlite3CodecAttach: entered nDb=%d zKey=%s, nKey=%d\n", nDb, (char *)zKey, nKey));
 
   sqlcipher_activate();
 
@@ -246,7 +246,7 @@ void sqlite3_activate_see(const char* in) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_key: entered db=%d pKey=%s nKey=%d\n", db, pKey, nKey));
+  CODEC_TRACE(("sqlite3_key: entered db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     sqlite3CodecAttach(db, 0, pKey, nKey); // operate only on the main db 
@@ -266,11 +266,11 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_rekey: entered db=%d pKey=%s, nKey=%d\n", db, pKey, nKey));
+  CODEC_TRACE(("sqlite3_rekey: entered db=%p pKey=%s, nKey=%d\n", db, (char *)pKey, nKey));
   sqlcipher_activate();
   if(db && pKey && nKey) {
     struct Db *pDb = &db->aDb[0];
-    CODEC_TRACE(("sqlite3_rekey: database pDb=%d\n", pDb));
+    CODEC_TRACE(("sqlite3_rekey: database pDb=%p\n", pDb));
     if(pDb->pBt) {
       codec_ctx *ctx;
       int rc, page_count;
@@ -330,7 +330,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 
 void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("sqlite3CodecGetKey: entered db=%d, nDb=%d\n", db, nDb));
+  CODEC_TRACE(("sqlite3CodecGetKey: entered db=%p, nDb=%d\n", db, nDb));
   
   if( pDb->pBt ) {
     codec_ctx *ctx;
