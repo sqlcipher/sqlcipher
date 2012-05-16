@@ -240,14 +240,11 @@ int sqlite3VdbeAddOp4Int(
 ** Zero is returned if a malloc() fails.
 */
 int sqlite3VdbeMakeLabel(Vdbe *p){
-  int i;
-  i = p->nLabel++;
+  int i = p->nLabel++;
   assert( p->magic==VDBE_MAGIC_INIT );
-  if( i>=p->nLabelAlloc ){
-    int n = p->nLabelAlloc*2 + 5;
-    p->aLabel = sqlite3DbReallocOrFree(p->db, p->aLabel,
-                                       n*sizeof(p->aLabel[0]));
-    p->nLabelAlloc = sqlite3DbMallocSize(p->db, p->aLabel)/sizeof(p->aLabel[0]);
+  if( (i & (i-1))==0 ){
+    p->aLabel = sqlite3DbReallocOrFree(p->db, p->aLabel, 
+                                       (i*2+1)*sizeof(p->aLabel[0]));
   }
   if( p->aLabel ){
     p->aLabel[i] = -1;
@@ -1242,7 +1239,7 @@ int sqlite3VdbeList(
         for(j=0; j<nSub; j++){
           if( apSub[j]==pOp->p4.pProgram ) break;
         }
-        if( j==nSub && SQLITE_OK==sqlite3VdbeMemGrow(pSub, nByte, 1) ){
+        if( j==nSub && SQLITE_OK==sqlite3VdbeMemGrow(pSub, nByte, nSub!=0) ){
           apSub = (SubProgram **)pSub->z;
           apSub[nSub++] = pOp->p4.pProgram;
           pSub->flags |= MEM_Blob;
@@ -2006,32 +2003,6 @@ static void checkActiveVdbeCnt(sqlite3 *db){
 #endif
 
 /*
-** For every Btree that in database connection db which 
-** has been modified, "trip" or invalidate each cursor in
-** that Btree might have been modified so that the cursor
-** can never be used again.  This happens when a rollback
-*** occurs.  We have to trip all the other cursors, even
-** cursor from other VMs in different database connections,
-** so that none of them try to use the data at which they
-** were pointing and which now may have been changed due
-** to the rollback.
-**
-** Remember that a rollback can delete tables complete and
-** reorder rootpages.  So it is not sufficient just to save
-** the state of the cursor.  We have to invalidate the cursor
-** so that it is never used again.
-*/
-static void invalidateCursorsOnModifiedBtrees(sqlite3 *db){
-  int i;
-  for(i=0; i<db->nDb; i++){
-    Btree *p = db->aDb[i].pBt;
-    if( p && sqlite3BtreeIsInTrans(p) ){
-      sqlite3BtreeTripAllCursors(p, SQLITE_ABORT);
-    }
-  }
-}
-
-/*
 ** If the Vdbe passed as the first argument opened a statement-transaction,
 ** close it now. Argument eOp must be either SAVEPOINT_ROLLBACK or
 ** SAVEPOINT_RELEASE. If it is SAVEPOINT_ROLLBACK, then the statement
@@ -2195,8 +2166,7 @@ int sqlite3VdbeHalt(Vdbe *p){
           /* We are forced to roll back the active transaction. Before doing
           ** so, abort any other statements this handle currently has active.
           */
-          invalidateCursorsOnModifiedBtrees(db);
-          sqlite3RollbackAll(db);
+          sqlite3RollbackAll(db, SQLITE_ABORT_ROLLBACK);
           sqlite3CloseSavepoints(db);
           db->autoCommit = 1;
         }
@@ -2238,13 +2208,13 @@ int sqlite3VdbeHalt(Vdbe *p){
           return SQLITE_BUSY;
         }else if( rc!=SQLITE_OK ){
           p->rc = rc;
-          sqlite3RollbackAll(db);
+          sqlite3RollbackAll(db, SQLITE_OK);
         }else{
           db->nDeferredCons = 0;
           sqlite3CommitInternalChanges(db);
         }
       }else{
-        sqlite3RollbackAll(db);
+        sqlite3RollbackAll(db, SQLITE_OK);
       }
       db->nStatement = 0;
     }else if( eStatementOp==0 ){
@@ -2253,8 +2223,7 @@ int sqlite3VdbeHalt(Vdbe *p){
       }else if( p->errorAction==OE_Abort ){
         eStatementOp = SAVEPOINT_ROLLBACK;
       }else{
-        invalidateCursorsOnModifiedBtrees(db);
-        sqlite3RollbackAll(db);
+        sqlite3RollbackAll(db, SQLITE_ABORT_ROLLBACK);
         sqlite3CloseSavepoints(db);
         db->autoCommit = 1;
       }
@@ -2274,8 +2243,7 @@ int sqlite3VdbeHalt(Vdbe *p){
           sqlite3DbFree(db, p->zErrMsg);
           p->zErrMsg = 0;
         }
-        invalidateCursorsOnModifiedBtrees(db);
-        sqlite3RollbackAll(db);
+        sqlite3RollbackAll(db, SQLITE_ABORT_ROLLBACK);
         sqlite3CloseSavepoints(db);
         db->autoCommit = 1;
       }
@@ -2291,12 +2259,6 @@ int sqlite3VdbeHalt(Vdbe *p){
         sqlite3VdbeSetChanges(db, 0);
       }
       p->nChange = 0;
-    }
-  
-    /* Rollback or commit any schema changes that occurred. */
-    if( p->rc!=SQLITE_OK && db->flags&SQLITE_InternChanges ){
-      sqlite3ResetInternalSchema(db, -1);
-      db->flags = (db->flags | SQLITE_InternChanges);
     }
 
     /* Release the locks */

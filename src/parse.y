@@ -75,7 +75,7 @@ struct LimitVal {
 */
 struct LikeOp {
   Token eOperator;  /* "like" or "glob" or "regexp" */
-  int not;         /* True if the NOT keyword is present */
+  int bNot;         /* True if the NOT keyword is present */
 };
 
 /*
@@ -93,6 +93,14 @@ struct TrigEvent { int a; IdList * b; };
 ** An instance of this structure holds the ATTACH key and the key type.
 */
 struct AttachKey { int type;  Token key; };
+
+/*
+** One or more VALUES claues
+*/
+struct ValueList {
+  ExprList *pList;
+  Select *pSelect;
+};
 
 } // end %include
 
@@ -177,6 +185,7 @@ column(A) ::= columnid(X) type carglist. {
 columnid(A) ::= nm(X). {
   sqlite3AddColumn(pParse,&X);
   A = X;
+  pParse->constraintName.n = 0;
 }
 
 
@@ -265,10 +274,9 @@ signed ::= minus_num.
 // "carglist" is a list of additional constraints that come after the
 // column name and column type in a CREATE TABLE statement.
 //
-carglist ::= carglist carg.
+carglist ::= carglist ccons.
 carglist ::= .
-carg ::= CONSTRAINT nm ccons.
-carg ::= ccons.
+ccons ::= CONSTRAINT nm(X).           {pParse->constraintName = X;}
 ccons ::= DEFAULT term(X).            {sqlite3AddDefaultValue(pParse,&X);}
 ccons ::= DEFAULT LP expr(X) RP.      {sqlite3AddDefaultValue(pParse,&X);}
 ccons ::= DEFAULT PLUS term(X).       {sqlite3AddDefaultValue(pParse,&X);}
@@ -331,15 +339,13 @@ init_deferred_pred_opt(A) ::= .                       {A = 0;}
 init_deferred_pred_opt(A) ::= INITIALLY DEFERRED.     {A = 1;}
 init_deferred_pred_opt(A) ::= INITIALLY IMMEDIATE.    {A = 0;}
 
-// For the time being, the only constraint we care about is the primary
-// key and UNIQUE.  Both create indices.
-//
-conslist_opt(A) ::= .                   {A.n = 0; A.z = 0;}
-conslist_opt(A) ::= COMMA(X) conslist.  {A = X;}
-conslist ::= conslist COMMA tcons.
-conslist ::= conslist tcons.
+conslist_opt(A) ::= .                         {A.n = 0; A.z = 0;}
+conslist_opt(A) ::= COMMA(X) conslist.        {A = X;}
+conslist ::= conslist tconscomma tcons.
 conslist ::= tcons.
-tcons ::= CONSTRAINT nm.
+tconscomma ::= COMMA.            {pParse->constraintName.n = 0;}
+tconscomma ::= .
+tcons ::= CONSTRAINT nm(X).      {pParse->constraintName = X;}
 tcons ::= PRIMARY KEY LP idxlist(X) autoinc(I) RP onconf(R).
                                  {sqlite3AddPrimaryKey(pParse,X,R,I,0);}
 tcons ::= UNIQUE LP idxlist(X) RP onconf(R).
@@ -573,20 +579,17 @@ using_opt(U) ::= .                        {U = 0;}
 %destructor orderby_opt {sqlite3ExprListDelete(pParse->db, $$);}
 %type sortlist {ExprList*}
 %destructor sortlist {sqlite3ExprListDelete(pParse->db, $$);}
-%type sortitem {Expr*}
-%destructor sortitem {sqlite3ExprDelete(pParse->db, $$);}
 
 orderby_opt(A) ::= .                          {A = 0;}
 orderby_opt(A) ::= ORDER BY sortlist(X).      {A = X;}
-sortlist(A) ::= sortlist(X) COMMA sortitem(Y) sortorder(Z). {
-  A = sqlite3ExprListAppend(pParse,X,Y);
+sortlist(A) ::= sortlist(X) COMMA expr(Y) sortorder(Z). {
+  A = sqlite3ExprListAppend(pParse,X,Y.pExpr);
   if( A ) A->a[A->nExpr-1].sortOrder = (u8)Z;
 }
-sortlist(A) ::= sortitem(Y) sortorder(Z). {
-  A = sqlite3ExprListAppend(pParse,0,Y);
+sortlist(A) ::= expr(Y) sortorder(Z). {
+  A = sqlite3ExprListAppend(pParse,0,Y.pExpr);
   if( A && ALWAYS(A->a) ) A->a[0].sortOrder = (u8)Z;
 }
-sortitem(A) ::= expr(X).   {A = X.pExpr;}
 
 %type sortorder {int}
 
@@ -679,9 +682,8 @@ setlist(A) ::= nm(X) EQ expr(Y). {
 
 ////////////////////////// The INSERT command /////////////////////////////////
 //
-cmd ::= insert_cmd(R) INTO fullname(X) inscollist_opt(F) 
-        VALUES LP itemlist(Y) RP.
-            {sqlite3Insert(pParse, X, Y, 0, F, R);}
+cmd ::= insert_cmd(R) INTO fullname(X) inscollist_opt(F) valuelist(Y).
+            {sqlite3Insert(pParse, X, Y.pList, Y.pSelect, F, R);}
 cmd ::= insert_cmd(R) INTO fullname(X) inscollist_opt(F) select(S).
             {sqlite3Insert(pParse, X, 0, S, F, R);}
 cmd ::= insert_cmd(R) INTO fullname(X) inscollist_opt(F) DEFAULT VALUES.
@@ -691,14 +693,46 @@ cmd ::= insert_cmd(R) INTO fullname(X) inscollist_opt(F) DEFAULT VALUES.
 insert_cmd(A) ::= INSERT orconf(R).   {A = R;}
 insert_cmd(A) ::= REPLACE.            {A = OE_Replace;}
 
+// A ValueList is either a single VALUES clause or a comma-separated list
+// of VALUES clauses.  If it is a single VALUES clause then the
+// ValueList.pList field points to the expression list of that clause.
+// If it is a list of VALUES clauses, then those clauses are transformed
+// into a set of SELECT statements without FROM clauses and connected by
+// UNION ALL and the ValueList.pSelect points to the right-most SELECT in
+// that compound.
+%type valuelist {struct ValueList}
+%destructor valuelist {
+  sqlite3ExprListDelete(pParse->db, $$.pList);
+  sqlite3SelectDelete(pParse->db, $$.pSelect);
+}
+valuelist(A) ::= VALUES LP nexprlist(X) RP. {
+  A.pList = X;
+  A.pSelect = 0;
+}
 
-%type itemlist {ExprList*}
-%destructor itemlist {sqlite3ExprListDelete(pParse->db, $$);}
-
-itemlist(A) ::= itemlist(X) COMMA expr(Y).
-    {A = sqlite3ExprListAppend(pParse,X,Y.pExpr);}
-itemlist(A) ::= expr(X).
-    {A = sqlite3ExprListAppend(pParse,0,X.pExpr);}
+// Since a list of VALUEs is inplemented as a compound SELECT, we have
+// to disable the value list option if compound SELECTs are disabled.
+%ifndef SQLITE_OMIT_COMPOUND_SELECT
+valuelist(A) ::= valuelist(X) COMMA LP exprlist(Y) RP. {
+  Select *pRight = sqlite3SelectNew(pParse, Y, 0, 0, 0, 0, 0, 0, 0, 0);
+  if( X.pList ){
+    X.pSelect = sqlite3SelectNew(pParse, X.pList, 0, 0, 0, 0, 0, 0, 0, 0);
+    X.pList = 0;
+  }
+  A.pList = 0;
+  if( X.pSelect==0 || pRight==0 ){
+    sqlite3SelectDelete(pParse->db, pRight);
+    sqlite3SelectDelete(pParse->db, X.pSelect);
+    A.pSelect = 0;
+  }else{
+    pRight->op = TK_ALL;
+    pRight->pPrior = X.pSelect;
+    pRight->selFlags |= SF_Values;
+    pRight->pPrior->selFlags |= SF_Values;
+    A.pSelect = pRight;
+  }
+}
+%endif SQLITE_OMIT_COMPOUND_SELECT
 
 %type inscollist_opt {IdList*}
 %destructor inscollist_opt {sqlite3IdListDelete(pParse->db, $$);}
@@ -845,16 +879,16 @@ expr(A) ::= expr(X) STAR|SLASH|REM(OP) expr(Y).
                                         {spanBinaryExpr(&A,pParse,@OP,&X,&Y);}
 expr(A) ::= expr(X) CONCAT(OP) expr(Y). {spanBinaryExpr(&A,pParse,@OP,&X,&Y);}
 %type likeop {struct LikeOp}
-likeop(A) ::= LIKE_KW(X).     {A.eOperator = X; A.not = 0;}
-likeop(A) ::= NOT LIKE_KW(X). {A.eOperator = X; A.not = 1;}
-likeop(A) ::= MATCH(X).       {A.eOperator = X; A.not = 0;}
-likeop(A) ::= NOT MATCH(X).   {A.eOperator = X; A.not = 1;}
+likeop(A) ::= LIKE_KW(X).     {A.eOperator = X; A.bNot = 0;}
+likeop(A) ::= NOT LIKE_KW(X). {A.eOperator = X; A.bNot = 1;}
+likeop(A) ::= MATCH(X).       {A.eOperator = X; A.bNot = 0;}
+likeop(A) ::= NOT MATCH(X).   {A.eOperator = X; A.bNot = 1;}
 expr(A) ::= expr(X) likeop(OP) expr(Y).  [LIKE_KW]  {
   ExprList *pList;
   pList = sqlite3ExprListAppend(pParse,0, Y.pExpr);
   pList = sqlite3ExprListAppend(pParse,pList, X.pExpr);
   A.pExpr = sqlite3ExprFunction(pParse, pList, &OP.eOperator);
-  if( OP.not ) A.pExpr = sqlite3PExpr(pParse, TK_NOT, A.pExpr, 0, 0);
+  if( OP.bNot ) A.pExpr = sqlite3PExpr(pParse, TK_NOT, A.pExpr, 0, 0);
   A.zStart = X.zStart;
   A.zEnd = Y.zEnd;
   if( A.pExpr ) A.pExpr->flags |= EP_InfixFunc;
@@ -865,7 +899,7 @@ expr(A) ::= expr(X) likeop(OP) expr(Y) ESCAPE expr(E).  [LIKE_KW]  {
   pList = sqlite3ExprListAppend(pParse,pList, X.pExpr);
   pList = sqlite3ExprListAppend(pParse,pList, E.pExpr);
   A.pExpr = sqlite3ExprFunction(pParse, pList, &OP.eOperator);
-  if( OP.not ) A.pExpr = sqlite3PExpr(pParse, TK_NOT, A.pExpr, 0, 0);
+  if( OP.bNot ) A.pExpr = sqlite3PExpr(pParse, TK_NOT, A.pExpr, 0, 0);
   A.zStart = X.zStart;
   A.zEnd = E.zEnd;
   if( A.pExpr ) A.pExpr->flags |= EP_InfixFunc;
@@ -1163,11 +1197,10 @@ nmnum(A) ::= ON(X).                   {A = X;}
 nmnum(A) ::= DELETE(X).               {A = X;}
 nmnum(A) ::= DEFAULT(X).              {A = X;}
 %endif SQLITE_OMIT_PRAGMA
-plus_num(A) ::= plus_opt number(X).   {A = X;}
+plus_num(A) ::= PLUS number(X).       {A = X;}
+plus_num(A) ::= number(X).            {A = X;}
 minus_num(A) ::= MINUS number(X).     {A = X;}
 number(A) ::= INTEGER|FLOAT(X).       {A = X;}
-plus_opt ::= PLUS.
-plus_opt ::= .
 
 //////////////////////////// The CREATE TRIGGER command /////////////////////
 
@@ -1261,8 +1294,8 @@ trigger_cmd(A) ::=
 
 // INSERT
 trigger_cmd(A) ::=
-   insert_cmd(R) INTO trnm(X) inscollist_opt(F) VALUES LP itemlist(Y) RP.  
-   {A = sqlite3TriggerInsertStep(pParse->db, &X, F, Y, 0, R);}
+   insert_cmd(R) INTO trnm(X) inscollist_opt(F) valuelist(Y).
+   {A = sqlite3TriggerInsertStep(pParse->db, &X, F, Y.pList, Y.pSelect, R);}
 
 trigger_cmd(A) ::= insert_cmd(R) INTO trnm(X) inscollist_opt(F) select(S).
                {A = sqlite3TriggerInsertStep(pParse->db, &X, F, 0, S, R);}
@@ -1356,8 +1389,9 @@ kwcolumn_opt ::= COLUMNKW.
 %ifndef SQLITE_OMIT_VIRTUALTABLE
 cmd ::= create_vtab.                       {sqlite3VtabFinishParse(pParse,0);}
 cmd ::= create_vtab LP vtabarglist RP(X).  {sqlite3VtabFinishParse(pParse,&X);}
-create_vtab ::= createkw VIRTUAL TABLE nm(X) dbnm(Y) USING nm(Z). {
-    sqlite3VtabBeginParse(pParse, &X, &Y, &Z);
+create_vtab ::= createkw VIRTUAL TABLE ifnotexists(E)
+                nm(X) dbnm(Y) USING nm(Z). {
+    sqlite3VtabBeginParse(pParse, &X, &Y, &Z, E);
 }
 vtabarglist ::= vtabarg.
 vtabarglist ::= vtabarglist COMMA vtabarg.

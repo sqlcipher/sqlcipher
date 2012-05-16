@@ -81,8 +81,12 @@
 #define sqlite3_mutex_notheld(X)  ((void)(X),1)
 #endif /* SQLITE_THREADSAFE==0 */
 
+/* Maximum chunk number */
+#define MX_CHUNK_NUMBER 299
+
 /* First chunk for rollback journal files */
 #define SQLITE_MULTIPLEX_JOURNAL_8_3_OFFSET 400
+#define SQLITE_MULTIPLEX_WAL_8_3_OFFSET 700
 
 
 /************************ Shim Definitions ******************************/
@@ -251,17 +255,22 @@ static void multiplexFilename(
 ){
   int n = nBase;
   memcpy(zOut, zBase, n+1);
-  if( iChunk!=0 && iChunk!=SQLITE_MULTIPLEX_JOURNAL_8_3_OFFSET ){
+  if( iChunk!=0 && iChunk<=MX_CHUNK_NUMBER ){
 #ifdef SQLITE_ENABLE_8_3_NAMES
     int i;
     for(i=n-1; i>0 && i>=n-4 && zOut[i]!='.'; i--){}
     if( i>=n-4 ) n = i+1;
     if( flags & SQLITE_OPEN_MAIN_JOURNAL ){
       /* The extensions on overflow files for main databases are 001, 002,
-       ** 003 and so forth.  To avoid name collisions, add 400 to the 
-       ** extensions of journal files so that they are 401, 402, 403, ....
-       */
+      ** 003 and so forth.  To avoid name collisions, add 400 to the 
+      ** extensions of journal files so that they are 401, 402, 403, ....
+      */
       iChunk += SQLITE_MULTIPLEX_JOURNAL_8_3_OFFSET;
+    }else if( flags & SQLITE_OPEN_WAL ){
+      /* To avoid name collisions, add 700 to the 
+      ** extensions of WAL files so that they are 701, 702, 703, ....
+      */
+      iChunk += SQLITE_MULTIPLEX_WAL_8_3_OFFSET;
     }
 #endif
     sqlite3_snprintf(4,&zOut[n],"%03d",iChunk);
@@ -320,6 +329,7 @@ static sqlite3_file *multiplexSubOpen(
   ** database may therefore not grow to larger than 400 chunks. Attempting
   ** to open chunk 401 indicates the database is full. */
   if( iChunk>=SQLITE_MULTIPLEX_JOURNAL_8_3_OFFSET ){
+    sqlite3_log(SQLITE_FULL, "multiplexed chunk overflow: %s", pGroup->zName);
     *rc = SQLITE_FULL;
     return 0;
   }
@@ -338,7 +348,13 @@ static sqlite3_file *multiplexSubOpen(
     }else{
       *rc = pOrigVfs->xAccess(pOrigVfs, pGroup->aReal[iChunk].z,
                               SQLITE_ACCESS_EXISTS, &bExists);
-      if( *rc || !bExists ) return 0;
+     if( *rc || !bExists ){
+        if( *rc ){
+          sqlite3_log(*rc, "multiplexor.xAccess failure on %s",
+                      pGroup->aReal[iChunk].z);
+        }
+        return 0;
+      }
       flags &= ~SQLITE_OPEN_CREATE;
     }
     pSubOpen = sqlite3_malloc( pOrigVfs->szOsFile );
@@ -350,6 +366,8 @@ static sqlite3_file *multiplexSubOpen(
     *rc = pOrigVfs->xOpen(pOrigVfs, pGroup->aReal[iChunk].z, pSubOpen,
                           flags, pOutFlags);
     if( (*rc)!=SQLITE_OK ){
+      sqlite3_log(*rc, "multiplexor.xOpen failure on %s",
+                  pGroup->aReal[iChunk].z);
       sqlite3_free(pSubOpen);
       pGroup->aReal[iChunk].p = 0;
       return 0;
@@ -520,7 +538,7 @@ static int multiplexOpen(
     pGroup->bEnabled = -1;
     pGroup->bTruncate = sqlite3_uri_boolean(zUri, "truncate", 
                                    (flags & SQLITE_OPEN_MAIN_DB)==0);
-    pGroup->szChunk = sqlite3_uri_int64(zUri, "chunksize",
+    pGroup->szChunk = (int)sqlite3_uri_int64(zUri, "chunksize",
                                         SQLITE_MULTIPLEX_CHUNK_SIZE);
     pGroup->szChunk = (pGroup->szChunk+0xffff)&~0xffff;
     if( zName ){
@@ -588,7 +606,7 @@ static int multiplexOpen(
           bExists = multiplexSubSize(pGroup, 1, &rc)>0;
           if( rc==SQLITE_OK && bExists  && sz==(sz&0xffff0000) && sz>0
               && sz!=pGroup->szChunk ){
-            pGroup->szChunk = sz;
+            pGroup->szChunk = (int)sz;
           }else if( rc==SQLITE_OK && !bExists && sz>pGroup->szChunk ){
             pGroup->bEnabled = 0;
           }
@@ -632,7 +650,7 @@ static int multiplexDelete(
     /* If the main chunk was deleted successfully, also delete any subsequent
     ** chunks - starting with the last (highest numbered). 
     */
-    int nName = strlen(zName);
+    int nName = (int)strlen(zName);
     char *z;
     z = sqlite3_malloc(nName + 5);
     if( z==0 ){
@@ -647,6 +665,17 @@ static int multiplexDelete(
       while( rc==SQLITE_OK && iChunk>1 ){
         multiplexFilename(zName, nName, SQLITE_OPEN_MAIN_JOURNAL, --iChunk, z);
         rc = pOrigVfs->xDelete(pOrigVfs, z, syncDir);
+      }
+      if( rc==SQLITE_OK ){
+        iChunk = 0;
+        do{
+          multiplexFilename(zName, nName, SQLITE_OPEN_WAL, ++iChunk, z);
+          rc = pOrigVfs->xAccess(pOrigVfs, z, SQLITE_ACCESS_EXISTS, &bExists);
+        }while( rc==SQLITE_OK && bExists );
+        while( rc==SQLITE_OK && iChunk>1 ){
+          multiplexFilename(zName, nName, SQLITE_OPEN_WAL, --iChunk, z);
+          rc = pOrigVfs->xDelete(pOrigVfs, z, syncDir);
+        }
       }
     }
     sqlite3_free(z);

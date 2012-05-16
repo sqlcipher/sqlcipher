@@ -16,14 +16,15 @@
 /*
 ** Interpret the given string as a safety level.  Return 0 for OFF,
 ** 1 for ON or NORMAL and 2 for FULL.  Return 1 for an empty or 
-** unrecognized string argument.
+** unrecognized string argument.  The FULL option is disallowed
+** if the omitFull parameter it 1.
 **
 ** Note that the values returned are one less that the values that
 ** should be passed into sqlite3BtreeSetSafetyLevel().  The is done
 ** to support legacy SQL code.  The safety level used to be boolean
 ** and older scripts may have used numbers 0 for OFF and 1 for ON.
 */
-static u8 getSafetyLevel(const char *z){
+static u8 getSafetyLevel(const char *z, int omitFull, int dflt){
                              /* 123456789 123456789 */
   static const char zText[] = "onoffalseyestruefull";
   static const u8 iOffset[] = {0, 1, 2, 4, 9, 12, 16};
@@ -34,19 +35,19 @@ static u8 getSafetyLevel(const char *z){
     return (u8)sqlite3Atoi(z);
   }
   n = sqlite3Strlen30(z);
-  for(i=0; i<ArraySize(iLength); i++){
+  for(i=0; i<ArraySize(iLength)-omitFull; i++){
     if( iLength[i]==n && sqlite3StrNICmp(&zText[iOffset[i]],z,n)==0 ){
       return iValue[i];
     }
   }
-  return 1;
+  return dflt;
 }
 
 /*
 ** Interpret the given string as a boolean value.
 */
-u8 sqlite3GetBoolean(const char *z){
-  return getSafetyLevel(z)&1;
+u8 sqlite3GetBoolean(const char *z, int dflt){
+  return getSafetyLevel(z,1,dflt)!=0;
 }
 
 /* The sqlite3GetBoolean() function is used by other modules but the
@@ -189,7 +190,6 @@ static int flagPragma(Parse *pParse, const char *zLeft, const char *zRight){
 #endif
     /* The following is VERY experimental */
     { "writable_schema",          SQLITE_WriteSchema|SQLITE_RecoveryMode },
-    { "omit_readlock",            SQLITE_NoReadlock    },
 
     /* TODO: Maybe it shouldn't be possible to change the ReadUncommitted
     ** flag if there are any active statements. */
@@ -221,7 +221,7 @@ static int flagPragma(Parse *pParse, const char *zLeft, const char *zRight){
             mask &= ~(SQLITE_ForeignKeys);
           }
 
-          if( sqlite3GetBoolean(zRight) ){
+          if( sqlite3GetBoolean(zRight, 0) ){
             db->flags |= mask;
           }else{
             db->flags &= ~mask;
@@ -312,9 +312,12 @@ void sqlite3Pragma(
   const char *zDb = 0;   /* The database name */
   Token *pId;            /* Pointer to <id> token */
   int iDb;               /* Database index for <database> */
-  sqlite3 *db = pParse->db;
-  Db *pDb;
-  Vdbe *v = pParse->pVdbe = sqlite3VdbeCreate(db);
+  char *aFcntl[4];       /* Argument to SQLITE_FCNTL_PRAGMA */
+  int rc;                      /* return value form SQLITE_FCNTL_PRAGMA */
+  sqlite3 *db = pParse->db;    /* The database connection */
+  Db *pDb;                     /* The specific database being pragmaed */
+  Vdbe *v = pParse->pVdbe = sqlite3VdbeCreate(db);  /* Prepared statement */
+
   if( v==0 ) return;
   sqlite3VdbeRunOnlyOnce(v);
   pParse->nMem = 2;
@@ -345,6 +348,34 @@ void sqlite3Pragma(
   if( sqlite3AuthCheck(pParse, SQLITE_PRAGMA, zLeft, zRight, zDb) ){
     goto pragma_out;
   }
+
+  /* Send an SQLITE_FCNTL_PRAGMA file-control to the underlying VFS
+  ** connection.  If it returns SQLITE_OK, then assume that the VFS
+  ** handled the pragma and generate a no-op prepared statement.
+  */
+  aFcntl[0] = 0;
+  aFcntl[1] = zLeft;
+  aFcntl[2] = zRight;
+  aFcntl[3] = 0;
+  rc = sqlite3_file_control(db, zDb, SQLITE_FCNTL_PRAGMA, (void*)aFcntl);
+  if( rc==SQLITE_OK ){
+    if( aFcntl[0] ){
+      int mem = ++pParse->nMem;
+      sqlite3VdbeAddOp4(v, OP_String8, 0, mem, 0, aFcntl[0], 0);
+      sqlite3VdbeSetNumCols(v, 1);
+      sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "result", SQLITE_STATIC);
+      sqlite3VdbeAddOp2(v, OP_ResultRow, mem, 1);
+      sqlite3_free(aFcntl[0]);
+    }
+  }else if( rc!=SQLITE_NOTFOUND ){
+    if( aFcntl[0] ){
+      sqlite3ErrorMsg(pParse, "%s", aFcntl[0]);
+      sqlite3_free(aFcntl[0]);
+    }
+    pParse->nErr++;
+    pParse->rc = rc;
+  }else
+                            
  
 #if !defined(SQLITE_OMIT_PAGER_PRAGMAS) && !defined(SQLITE_OMIT_DEPRECATED)
   /*
@@ -437,7 +468,7 @@ void sqlite3Pragma(
     int b = -1;
     assert( pBt!=0 );
     if( zRight ){
-      b = sqlite3GetBoolean(zRight);
+      b = sqlite3GetBoolean(zRight, 0);
     }
     if( pId2->n==0 && b>=0 ){
       int ii;
@@ -632,7 +663,7 @@ void sqlite3Pragma(
         ** creates the database file. It is important that it is created
         ** as an auto-vacuum capable db.
         */
-        int rc = sqlite3BtreeSetAutoVacuum(pBt, eAuto);
+        rc = sqlite3BtreeSetAutoVacuum(pBt, eAuto);
         if( rc==SQLITE_OK && (eAuto==1 || eAuto==2) ){
           /* When setting the auto_vacuum mode to either "full" or 
           ** "incremental", write the value of meta[6] in the database
@@ -750,7 +781,6 @@ void sqlite3Pragma(
     }else{
 #ifndef SQLITE_OMIT_WSD
       if( zRight[0] ){
-        int rc;
         int res;
         rc = sqlite3OsAccess(db->pVfs, zRight, SQLITE_ACCESS_READWRITE, &res);
         if( rc!=SQLITE_OK || res==0 ){
@@ -842,7 +872,7 @@ void sqlite3Pragma(
         sqlite3ErrorMsg(pParse, 
             "Safety level may not be changed inside a transaction");
       }else{
-        pDb->safety_level = getSafetyLevel(zRight)+1;
+        pDb->safety_level = getSafetyLevel(zRight,0,1)+1;
       }
     }
   }else
@@ -1041,7 +1071,7 @@ void sqlite3Pragma(
 #ifndef NDEBUG
   if( sqlite3StrICmp(zLeft, "parser_trace")==0 ){
     if( zRight ){
-      if( sqlite3GetBoolean(zRight) ){
+      if( sqlite3GetBoolean(zRight, 0) ){
         sqlite3ParserTrace(stderr, "parser: ");
       }else{
         sqlite3ParserTrace(0, 0);
@@ -1055,7 +1085,7 @@ void sqlite3Pragma(
   */
   if( sqlite3StrICmp(zLeft, "case_sensitive_like")==0 ){
     if( zRight ){
-      sqlite3RegisterLikeFunctions(db, sqlite3GetBoolean(zRight));
+      sqlite3RegisterLikeFunctions(db, sqlite3GetBoolean(zRight, 0));
     }
   }else
 
@@ -1531,11 +1561,11 @@ void sqlite3Pragma(
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
     extern void codec_set_default_use_hmac(int);
-    codec_set_default_use_hmac(sqlite3GetBoolean(zRight));
+    codec_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
     extern int codec_set_use_hmac(sqlite3*, int, int);
-    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight));
+    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight,1));
   }else
 /** END CRYPTO **/
 #endif
