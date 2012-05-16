@@ -6920,6 +6920,9 @@ void sqlite3pager_sqlite3PagerSetCodec(
   sqlite3PagerSetCodec(pPager, xCodec, xCodecSizeChng, xCodecFree, pCodec); 
 }
 
+void sqlite3pager_sqlite3PagerSetError( Pager *pPager, int error) {
+  pPager->errCode = error;
+}
 
 #endif
 /* END CRYPTO */

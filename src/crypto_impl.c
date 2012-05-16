@@ -353,7 +353,9 @@ int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
 }
 
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
-  ctx->pBt->db->errCode = error;
+  CODEC_TRACE(("sqlcipher_codec_ctx_set_error: ctx=%p, error=%d\n", ctx, error));
+  sqlite3pager_sqlite3PagerSetError(ctx->pBt->pBt->pPager, error);
+  ctx->pBt->pBt->db->errCode = error;
 }
 
 int sqlcipher_codec_ctx_get_pagesize(codec_ctx *ctx) {
@@ -502,11 +504,11 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
 
   CODEC_TRACE(("codec_cipher:entered pgno=%d, mode=%d, size=%d\n", pgno, mode, size));
 
-  /* just copy raw data from in to out when key size is 0
-   * i.e. during a rekey of a plaintext database */ 
+  /* the key size should never be zero. If it is, error out. */
   if(c_ctx->key_sz == 0) {
-    memcpy(out, in, size);
-    return SQLITE_OK;
+    CODEC_TRACE(("codec_cipher: error possible context corruption, key_sz is zero for pgno=%d\n", pgno));
+    memset(out, 0, page_sz); 
+    return SQLITE_ERROR;
   } 
 
   if(mode == CIPHER_ENCRYPT) {
