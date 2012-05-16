@@ -108,6 +108,3 @@
 
 /* Define for large files, on AIX-style hosts. */
 #undef _LARGE_FILES
-
-/* Define to the version of sqlcipher. */
-#undef CIPHER_VERSION
