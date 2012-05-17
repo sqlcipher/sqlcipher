@@ -928,7 +928,7 @@ sqlite3_analyzer$(TEXE): sqlite3_analyzer.c
 lib_install:	libsqlite3.la
 	$(INSTALL) -d $(DESTDIR)$(libdir)
 	$(LTINSTALL) libsqlite3.la $(DESTDIR)$(libdir)
-	
+
 install:	sqlite3$(BEXE) lib_install sqlite3.h sqlite3.pc ${HAVE_TCL:1=tcl_install}
 	$(INSTALL) -d $(DESTDIR)$(bindir)
 	$(LTINSTALL) sqlite3$(BEXE) $(DESTDIR)$(bindir)

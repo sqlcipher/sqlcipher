@@ -790,6 +790,7 @@ PACKAGE_TARNAME
 PACKAGE_VERSION
 PACKAGE_STRING
 PACKAGE_BUGREPORT
+CIPHER_VERSION
 exec_prefix
 prefix
 program_transform_name
@@ -1915,6 +1916,9 @@ cat >>confdefs.h <<_ACEOF
 #define PACKAGE_BUGREPORT "$PACKAGE_BUGREPORT"
 _ACEOF
 
+cat >>confdefs.h <<_ACEOF
+#define CIPHER_VERSION "$CIPHER_VERSION"
+_ACEOF
 
 # Let the site file select an alternate cache file if it wants to.
 # Prefer an explicitly selected file to automatically selected ones.

@@ -1205,4 +1205,17 @@ do_test change-default-use-hmac-attach {
 db close
 file delete -force test.db
 
+# verify the pragma cipher_version
+# returns the currently configured
+# sqlcipher version
+do_test verify_pragma_cipher_version {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_version;
+    }
+} {2.0.5}
+db close
+file delete -force test.db
+
+
 finish_test

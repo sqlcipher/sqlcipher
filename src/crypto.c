@@ -38,6 +38,16 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
+/* Generate code to return a string value */
+void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value){
+  Vdbe *v = sqlite3GetVdbe(pParse);
+  int mem = ++pParse->nMem;
+  sqlite3VdbeAddOp4(v, OP_String, 0, mem, 0, (char*)value, P4_STATIC);
+  sqlite3VdbeSetNumCols(v, 1);
+  sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLabel, SQLITE_STATIC);
+  sqlite3VdbeAddOp2(v, OP_ResultRow, mem, 1);
+}
+
 int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE(("codec_set_kdf_iter: entered db=%d nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
