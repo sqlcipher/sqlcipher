@@ -201,6 +201,113 @@ do_test rekey-as-first-operation {
 db close
 file delete -force test.db
 
+# create a new database, insert some data
+# then rekey it with the same password
+do_test rekey-same-passkey {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+    PRAGMA rekey = 'test123';
+    SELECT count(*) FROM t1;
+  }
+} {1000 1000}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# then rekey it. Make sure it is immediately
+# readable. Then close it and make sure it can be
+# read back 
+do_test rekey-and-query-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+    PRAGMA rekey = 'test321';
+    SELECT count(*) FROM t1;
+  }
+} {1000 1000}
+
+db close
+
+do_test rekey-and-query-2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test321';
+    SELECT count(*) FROM t1;
+  }
+} {1000}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# delete about 50% of the data
+# write some new data
+# delete another 50%
+# then rekey it. Make sure it is immediately
+# readable. Then close it and make sure it can be
+# read back 
+do_test rekey-delete-and-query-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    CREATE INDEX ta_a ON t1(a);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<10000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+    DELETE FROM t1 WHERE a > 5000;
+    BEGIN;
+  }  
+
+  for {set i 10000} {$i<12500} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    PRAGMA rekey = 'test321';
+    SELECT count(*) FROM t1;
+  }
+} {7500}
+
+db close
+file delete -force test.db
+
+
 # attach an encrypted database
 # where both database have the same
 # key
