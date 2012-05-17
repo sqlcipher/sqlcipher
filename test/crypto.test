@@ -282,31 +282,38 @@ do_test rekey-delete-and-query-1 {
     BEGIN;
   }
 
-  for {set i 1} {$i<10000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  for {set i 1} {$i<1000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
   }
+  set r [expr {int(rand()*32767)}]
+  set r1 [expr {int(rand()*32767)}]
+  execsql "UPDATE t1 SET b = $r WHERE a < $r1;"
+
+  set r [expr {int(rand()*32767)}]
+
+  execsql "DELETE FROM t1 WHERE a < $r;"
 
   execsql {
     COMMIT;
-    DELETE FROM t1 WHERE a > 5000;
-    BEGIN;
-  }  
-
-  for {set i 10000} {$i<12500} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+    SELECT (count(*) > 0) FROM t1;
   }
-
-  execsql {
-    PRAGMA rekey = 'test321';
-    SELECT count(*) FROM t1;
-  }
-} {7500}
+} {1}
 
 db close
-file delete -force test.db
+file copy -force test.db test-rekey.db
 
+do_test rekey-delete-and-query-1 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA rekey = 'test321';
+    SELECT count(*) > 1 FROM t1;
+  }
+} {}
+db close
+file delete -force test.db
 
 # attach an encrypted database
 # where both database have the same
