@@ -208,6 +208,8 @@ int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
     && c1->fast_kdf_iter == c2->fast_kdf_iter
     && c1->key_sz == c2->key_sz
     && c1->pass_sz == c2->pass_sz
+    && c1->use_hmac == c2->use_hmac
+    && c1->hmac_sz == c2->hmac_sz
     && (
       c1->pass == c2->pass
       || !sqlcipher_memcmp((const unsigned char*)c1->pass,

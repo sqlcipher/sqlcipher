@@ -313,11 +313,14 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
           rc = sqlite3PagerGet(pPager, pgno, &page);
           if(rc == SQLITE_OK) { /* write page see pager_incr_changecounter for example */
             rc = sqlite3PagerWrite(page);
-            //printf("sqlite3PagerWrite(%d)\n", pgno);
             if(rc == SQLITE_OK) {
               sqlite3PagerUnref(page);
-            } 
-          } 
+            } else {
+             CODEC_TRACE(("sqlite3_rekey: error %d occurred writing page %d\n", rc, pgno));  
+            }
+          } else {
+             CODEC_TRACE(("sqlite3_rekey: error %d occurred getting page %d\n", rc, pgno));  
+          }
         } 
       }
 
