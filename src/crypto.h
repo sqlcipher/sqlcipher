@@ -37,6 +37,10 @@
 
 #define FILE_HEADER_SZ 16
 
+#ifndef CIPHER_VERSION
+#define CIPHER_VERSION "2.0.5"
+#endif
+
 #ifndef CIPHER
 #define CIPHER "aes-256-cbc"
 #endif
