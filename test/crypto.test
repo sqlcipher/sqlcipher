@@ -271,7 +271,9 @@ file delete -force test.db
 # delete another 50%
 # then rekey it. Make sure it is immediately
 # readable. Then close it and make sure it can be
-# read back 
+# read back. This test will ensure that Secure Delete
+# is enabled and all pages are being written and are not
+# being optimized out by sqlite3PagerDontWrite
 do_test rekey-delete-and-query-1 {
   sqlite_orig db test.db
 
@@ -311,7 +313,7 @@ do_test rekey-delete-and-query-1 {
     PRAGMA rekey = 'test321';
     SELECT count(*) > 1 FROM t1;
   }
-} {}
+} {1}
 db close
 file delete -force test.db
 

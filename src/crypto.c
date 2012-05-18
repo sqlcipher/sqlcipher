@@ -239,6 +239,11 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     codec_set_btree_to_codec_pagesize(db, pDb, ctx);
 
+    /* force secure delete. This has the benefit of wiping internal data when deleted
+       and also ensures that all pages are written to disk (i.e. not skipped by
+       sqlite3PagerDontWrite optimizations) */ 
+    sqlite3BtreeSecureDelete(pDb->pBt, 1); 
+
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
        if not null, then set to the default */
