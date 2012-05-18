@@ -310,8 +310,9 @@ do_test rekey-delete-and-query-2 {
     PRAGMA key = 'test123';
     PRAGMA rekey = 'test321';
     SELECT count(*) > 1 FROM t1;
+    PRAGMA integrity_check;
   }
-} {1}
+} {1 ok}
 db close
 
 do_test rekey-delete-and-query-3 {
@@ -364,8 +365,9 @@ do_test rekey-delete-and-query-wal-2 {
     PRAGMA journal_mode = WAL;
     PRAGMA rekey = 'test321';
     SELECT count(*) > 1 FROM t1;
+    PRAGMA integrity_check;
   }
-} {wal 1}
+} {wal 1 ok}
 db close
 
 do_test rekey-delete-and-query-wal-3 {
@@ -1394,5 +1396,71 @@ do_test verify-pragma-cipher-version {
 } {2.0.5}
 db close
 file delete -force test.db
+
+# create a new database, insert some data
+# and delete some data with 
+# auto_vacuum on
+do_test auto-vacuum-full {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA auto_vacuum = FULL;
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<10000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    PRAGMA integrity_check;
+    PRAGMA freelist_count;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {ok 0 1}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# and delete some data with 
+# auto_vacuum incremental 
+do_test auto-vacuum-incremental {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA auto_vacuum = INCREMENTAL;
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<10000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    PRAGMA incremental_vacuum;
+    PRAGMA freelist_count; 
+    PRAGMA integrity_check;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {0 ok 1}
+db close
+file delete -force test.db
+
+
+
 
 finish_test
