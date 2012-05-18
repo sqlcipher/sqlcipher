@@ -41,11 +41,10 @@
 /* Generate code to return a string value */
 void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value){
   Vdbe *v = sqlite3GetVdbe(pParse);
-  int mem = ++pParse->nMem;
-  sqlite3VdbeAddOp4(v, OP_String, 0, mem, 0, (char*)value, P4_STATIC);
   sqlite3VdbeSetNumCols(v, 1);
   sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLabel, SQLITE_STATIC);
-  sqlite3VdbeAddOp2(v, OP_ResultRow, mem, 1);
+  sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, value, 0);
+  sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
 }
 
 int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
