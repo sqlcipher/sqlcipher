@@ -238,6 +238,11 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     codec_set_btree_to_codec_pagesize(db, pDb, ctx);
 
+    /* force secure delete. This has the benefit of wiping internal data when deleted
+       and also ensures that all pages are written to disk (i.e. not skipped by
+       sqlite3PagerDontWrite optimizations) */ 
+    sqlite3BtreeSecureDelete(pDb->pBt, 1); 
+
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
        if not null, then set to the default */
@@ -312,11 +317,14 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
           rc = sqlite3PagerGet(pPager, pgno, &page);
           if(rc == SQLITE_OK) { /* write page see pager_incr_changecounter for example */
             rc = sqlite3PagerWrite(page);
-            //printf("sqlite3PagerWrite(%d)\n", pgno);
             if(rc == SQLITE_OK) {
               sqlite3PagerUnref(page);
-            } 
-          } 
+            } else {
+             CODEC_TRACE(("sqlite3_rekey: error %d occurred writing page %d\n", rc, pgno));  
+            }
+          } else {
+             CODEC_TRACE(("sqlite3_rekey: error %d occurred getting page %d\n", rc, pgno));  
+          }
         } 
       }
 

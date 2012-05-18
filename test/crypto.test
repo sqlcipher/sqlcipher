@@ -201,6 +201,186 @@ do_test rekey-as-first-operation {
 db close
 file delete -force test.db
 
+# create a new database, insert some data
+# then rekey it with the same password
+do_test rekey-same-passkey {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+    PRAGMA rekey = 'test123';
+    SELECT count(*) FROM t1;
+  }
+} {1000 1000}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# then rekey it. Make sure it is immediately
+# readable. Then close it and make sure it can be
+# read back 
+do_test rekey-and-query-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+    PRAGMA rekey = 'test321';
+    SELECT count(*) FROM t1;
+  }
+} {1000 1000}
+
+db close
+
+do_test rekey-and-query-2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test321';
+    SELECT count(*) FROM t1;
+  }
+} {1000}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# delete about 50% of the data
+# write some new data
+# delete another 50%
+# then rekey it. Make sure it is immediately
+# readable. Then close it and make sure it can be
+# read back. This test will ensure that Secure Delete
+# is enabled and all pages are being written and are not
+# being optimized out by sqlite3PagerDontWrite
+do_test rekey-delete-and-query-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    CREATE INDEX ta_a ON t1(a);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<1000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  set r1 [expr {int(rand()*32767)}]
+  execsql "UPDATE t1 SET b = $r WHERE a < $r1;"
+
+  set r [expr {int(rand()*32767)}]
+
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {1}
+db close
+
+do_test rekey-delete-and-query-2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA rekey = 'test321';
+    SELECT count(*) > 1 FROM t1;
+    PRAGMA integrity_check;
+  }
+} {1 ok}
+db close
+
+do_test rekey-delete-and-query-3 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test321';
+    SELECT count(*) > 1 FROM t1;
+  }
+} {1}
+db close
+file delete -force test.db
+
+
+# same as previous test, but use WAL
+do_test rekey-delete-and-query-wal-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE t1(a,b);
+    CREATE INDEX ta_a ON t1(a);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<1000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  set r1 [expr {int(rand()*32767)}]
+  execsql "UPDATE t1 SET b = $r WHERE a < $r1;"
+
+  set r [expr {int(rand()*32767)}]
+
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {1}
+db close
+
+do_test rekey-delete-and-query-wal-2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA journal_mode = WAL;
+    PRAGMA rekey = 'test321';
+    SELECT count(*) > 1 FROM t1;
+    PRAGMA integrity_check;
+  }
+} {wal 1 ok}
+db close
+
+do_test rekey-delete-and-query-wal-3 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test321';
+    PRAGMA journal_mode = WAL;
+    SELECT count(*) > 1 FROM t1;
+  }
+} {wal 1}
+db close
+file delete -force test.db
+
 # attach an encrypted database
 # where both database have the same
 # key
@@ -1216,5 +1396,71 @@ do_test verify-pragma-cipher-version {
 } {2.0.5}
 db close
 file delete -force test.db
+
+# create a new database, insert some data
+# and delete some data with 
+# auto_vacuum on
+do_test auto-vacuum-full {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA auto_vacuum = FULL;
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<10000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    PRAGMA integrity_check;
+    PRAGMA freelist_count;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {ok 0 1}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# and delete some data with 
+# auto_vacuum incremental 
+do_test auto-vacuum-incremental {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA auto_vacuum = INCREMENTAL;
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<10000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    PRAGMA incremental_vacuum;
+    PRAGMA freelist_count; 
+    PRAGMA integrity_check;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {0 ok 1}
+db close
+file delete -force test.db
+
+
+
 
 finish_test
