@@ -37,6 +37,10 @@
 
 #define FILE_HEADER_SZ 16
 
+#ifndef CIPHER_VERSION
+#define CIPHER_VERSION "2.0.5"
+#endif
+
 #ifndef CIPHER
 #define CIPHER "aes-256-cbc"
 #endif
@@ -79,8 +83,7 @@
 #endif
 
 
-/* extensions defined in pragma.c */ 
-   
+/* extensions defined in pager.c */ 
 void sqlite3pager_get_codec(Pager *pPager, void **ctx);
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
 sqlite3_file *sqlite3Pager_get_fd(Pager *pPager);
@@ -91,7 +94,8 @@ void sqlite3pager_sqlite3PagerSetCodec(
   void (*xCodecFree)(void*),
   void *pCodec
 );
-/* end extensions defined in pragma.c */
+void sqlite3pager_sqlite3PagerSetError(Pager *pPager, int error);
+/* end extensions defined in pager.c */
  
 /*
 **  Simple shared routines for converting hex char strings to binary data

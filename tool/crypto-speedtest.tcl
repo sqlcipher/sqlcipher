@@ -95,8 +95,6 @@ catch {exec /bin/sh -c {rm -f perftest*.db}}
 
 set fd [open perftest0.sql w]
 puts $fd {
-PRAGMA key='xyzzy';
-PRAGMA cipher_use_hmac=OFF;
 }
 close $fd
 

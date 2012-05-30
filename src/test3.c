@@ -80,7 +80,7 @@ static int btree_open(
     sDb.mutex = sqlite3MutexAlloc(SQLITE_MUTEX_RECURSIVE);
     sqlite3_mutex_enter(sDb.mutex);
   }
-  n = strlen(argv[1]);
+  n = (int)strlen(argv[1]);
   zFilename = sqlite3_malloc( n+2 );
   if( zFilename==0 ) return TCL_ERROR;
   memcpy(zFilename, argv[1], n+1);
@@ -465,7 +465,7 @@ static int btree_varint_test(
   if( Tcl_GetInt(interp, argv[4], (int*)&incr) ) return TCL_ERROR;
   in = start;
   in *= mult;
-  for(i=0; i<count; i++){
+  for(i=0; i<(int)count; i++){
     char zErr[200];
     n1 = putVarint(zBuf, in);
     if( n1>9 || n1<1 ){

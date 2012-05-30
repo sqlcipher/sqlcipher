@@ -29,6 +29,14 @@ static CollSeq *sqlite3GetFuncCollSeq(sqlite3_context *context){
 }
 
 /*
+** Indicate that the accumulator load should be skipped on this
+** iteration of the aggregate loop.
+*/
+static void sqlite3SkipAccumulatorLoad(sqlite3_context *context){
+  context->skipFlag = 1;
+}
+
+/*
 ** Implementation of the non-aggregate min() and max() functions
 */
 static void minmaxFunc(
@@ -408,7 +416,7 @@ static void randomFunc(
     ** 2s complement of that positive value.  The end result can
     ** therefore be no less than -9223372036854775807.
     */
-    r = -(r ^ (((sqlite3_int64)1)<<63));
+    r = -(r & LARGEST_INT64);
   }
   sqlite3_result_int64(context, r);
 }
@@ -1334,11 +1342,12 @@ static void minmaxStep(
   Mem *pBest;
   UNUSED_PARAMETER(NotUsed);
 
-  if( sqlite3_value_type(argv[0])==SQLITE_NULL ) return;
   pBest = (Mem *)sqlite3_aggregate_context(context, sizeof(*pBest));
   if( !pBest ) return;
 
-  if( pBest->flags ){
+  if( sqlite3_value_type(argv[0])==SQLITE_NULL ){
+    if( pBest->flags ) sqlite3SkipAccumulatorLoad(context);
+  }else if( pBest->flags ){
     int max;
     int cmp;
     CollSeq *pColl = sqlite3GetFuncCollSeq(context);
@@ -1354,6 +1363,8 @@ static void minmaxStep(
     cmp = sqlite3MemCompare(pBest, pArg, pColl);
     if( (max && cmp<0) || (!max && cmp>0) ){
       sqlite3VdbeMemCopy(pBest, pArg);
+    }else{
+      sqlite3SkipAccumulatorLoad(context);
     }
   }else{
     sqlite3VdbeMemCopy(pBest, pArg);
@@ -1363,7 +1374,7 @@ static void minMaxFinalize(sqlite3_context *context){
   sqlite3_value *pRes;
   pRes = (sqlite3_value *)sqlite3_aggregate_context(context, 0);
   if( pRes ){
-    if( ALWAYS(pRes->flags) ){
+    if( pRes->flags ){
       sqlite3_result_value(context, pRes);
     }
     sqlite3VdbeMemRelease(pRes);
@@ -1539,8 +1550,8 @@ void sqlite3RegisterGlobalFunctions(void){
     FUNCTION(max,               -1, 1, 1, minmaxFunc       ),
     FUNCTION(max,                0, 1, 1, 0                ),
     AGGREGATE(max,               1, 1, 1, minmaxStep,      minMaxFinalize ),
-    FUNCTION(typeof,             1, 0, 0, typeofFunc       ),
-    FUNCTION(length,             1, 0, 0, lengthFunc       ),
+    FUNCTION2(typeof,            1, 0, 0, typeofFunc,  SQLITE_FUNC_TYPEOF),
+    FUNCTION2(length,            1, 0, 0, lengthFunc,  SQLITE_FUNC_LENGTH),
     FUNCTION(substr,             2, 0, 0, substrFunc       ),
     FUNCTION(substr,             3, 0, 0, substrFunc       ),
     FUNCTION(abs,                1, 0, 0, absFunc          ),
@@ -1552,11 +1563,9 @@ void sqlite3RegisterGlobalFunctions(void){
     FUNCTION(lower,              1, 0, 0, lowerFunc        ),
     FUNCTION(coalesce,           1, 0, 0, 0                ),
     FUNCTION(coalesce,           0, 0, 0, 0                ),
-/*  FUNCTION(coalesce,          -1, 0, 0, ifnullFunc       ), */
-    {-1,SQLITE_UTF8,SQLITE_FUNC_COALESCE,0,0,ifnullFunc,0,0,"coalesce",0,0},
+    FUNCTION2(coalesce,         -1, 0, 0, ifnullFunc,  SQLITE_FUNC_COALESCE),
     FUNCTION(hex,                1, 0, 0, hexFunc          ),
-/*  FUNCTION(ifnull,             2, 0, 0, ifnullFunc       ), */
-    {2,SQLITE_UTF8,SQLITE_FUNC_COALESCE,0,0,ifnullFunc,0,0,"ifnull",0,0},
+    FUNCTION2(ifnull,            2, 0, 0, ifnullFunc,  SQLITE_FUNC_COALESCE),
     FUNCTION(random,             0, 0, 0, randomFunc       ),
     FUNCTION(randomblob,         1, 0, 0, randomBlob       ),
     FUNCTION(nullif,             2, 0, 1, nullifFunc       ),

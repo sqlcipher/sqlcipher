@@ -668,6 +668,7 @@ static int test_key(
   int argc,              /* Number of arguments */
   char **argv            /* Text of each argument */
 ){
+#ifdef SQLITE_HAS_CODEC
   sqlite3 *db;
   const char *zKey;
   int nKey;
@@ -679,7 +680,6 @@ static int test_key(
   if( getDbPointer(interp, argv[1], &db) ) return TCL_ERROR;
   zKey = argv[2];
   nKey = strlen(zKey);
-#ifdef SQLITE_HAS_CODEC
   sqlite3_key(db, zKey, nKey);
 #endif
   return TCL_OK;
@@ -696,6 +696,7 @@ static int test_rekey(
   int argc,              /* Number of arguments */
   char **argv            /* Text of each argument */
 ){
+#ifdef SQLITE_HAS_CODEC
   sqlite3 *db;
   const char *zKey;
   int nKey;
@@ -707,7 +708,6 @@ static int test_rekey(
   if( getDbPointer(interp, argv[1], &db) ) return TCL_ERROR;
   zKey = argv[2];
   nKey = strlen(zKey);
-#ifdef SQLITE_HAS_CODEC
   sqlite3_rekey(db, zKey, nKey);
 #endif
   return TCL_OK;
@@ -800,7 +800,7 @@ struct dstr {
 ** Append text to a dstr
 */
 static void dstrAppend(struct dstr *p, const char *z, int divider){
-  int n = strlen(z);
+  int n = (int)strlen(z);
   if( p->nUsed + n + 2 > p->nAlloc ){
     char *zNew;
     p->nAlloc = p->nAlloc*2 + n + 200;
@@ -2369,7 +2369,6 @@ static int uses_stmt_journal(
   Tcl_Obj *CONST objv[]
 ){
   sqlite3_stmt *pStmt;
-  int rc;
 
   if( objc!=2 ){
     Tcl_AppendResult(interp, "wrong # args: should be \"",
@@ -2378,7 +2377,7 @@ static int uses_stmt_journal(
   }
 
   if( getStmtPointer(interp, Tcl_GetString(objv[1]), &pStmt) ) return TCL_ERROR;
-  rc = sqlite3_stmt_readonly(pStmt);
+  sqlite3_stmt_readonly(pStmt);
   Tcl_SetObjResult(interp, Tcl_NewBooleanObj(((Vdbe *)pStmt)->usesStmtJournal));
   return TCL_OK;
 }
@@ -3264,7 +3263,7 @@ static int test_bind_text16(
   char *value;
   int rc;
 
-  void (*xDel)() = (objc==6?SQLITE_STATIC:SQLITE_TRANSIENT);
+  void (*xDel)(void*) = (objc==6?SQLITE_STATIC:SQLITE_TRANSIENT);
   Tcl_Obj *oStmt    = objv[objc-4];
   Tcl_Obj *oN       = objv[objc-3];
   Tcl_Obj *oString  = objv[objc-2];
@@ -3610,10 +3609,10 @@ static int test_prepare(
   if( sqlite3TestErrCode(interp, db, rc) ) return TCL_ERROR;
   if( zTail && objc>=5 ){
     if( bytes>=0 ){
-      bytes = bytes - (zTail-zSql);
+      bytes = bytes - (int)(zTail-zSql);
     }
-    if( strlen(zTail)<bytes ){
-      bytes = strlen(zTail);
+    if( (int)strlen(zTail)<bytes ){
+      bytes = (int)strlen(zTail);
     }
     Tcl_ObjSetVar2(interp, objv[4], 0, Tcl_NewStringObj(zTail, bytes), 0);
   }
@@ -3668,7 +3667,7 @@ static int test_prepare_v2(
   if( sqlite3TestErrCode(interp, db, rc) ) return TCL_ERROR;
   if( zTail && objc>=5 ){
     if( bytes>=0 ){
-      bytes = bytes - (zTail-zSql);
+      bytes = bytes - (int)(zTail-zSql);
     }
     Tcl_ObjSetVar2(interp, objv[4], 0, Tcl_NewStringObj(zTail, bytes), 0);
   }
@@ -3769,7 +3768,7 @@ static int test_prepare16(
 
   if( objc>=5 ){
     if( zTail ){
-      objlen = objlen - ((u8 *)zTail-(u8 *)zSql);
+      objlen = objlen - (int)((u8 *)zTail-(u8 *)zSql);
     }else{
       objlen = 0;
     }
@@ -3829,7 +3828,7 @@ static int test_prepare16_v2(
 
   if( objc>=5 ){
     if( zTail ){
-      objlen = objlen - ((u8 *)zTail-(u8 *)zSql);
+      objlen = objlen - (int)((u8 *)zTail-(u8 *)zSql);
     }else{
       objlen = 0;
     }
@@ -3858,7 +3857,6 @@ static int test_open(
 ){
   const char *zFilename;
   sqlite3 *db;
-  int rc;
   char zBuf[100];
 
   if( objc!=3 && objc!=2 && objc!=1 ){
@@ -3868,7 +3866,7 @@ static int test_open(
   }
 
   zFilename = objc>1 ? Tcl_GetString(objv[1]) : 0;
-  rc = sqlite3_open(zFilename, &db);
+  sqlite3_open(zFilename, &db);
   
   if( sqlite3TestMakePointerStr(interp, zBuf, db) ) return TCL_ERROR;
   Tcl_AppendResult(interp, zBuf, 0);
@@ -3957,7 +3955,6 @@ static int test_open16(
 #ifndef SQLITE_OMIT_UTF16
   const void *zFilename;
   sqlite3 *db;
-  int rc;
   char zBuf[100];
 
   if( objc!=3 ){
@@ -3967,7 +3964,7 @@ static int test_open16(
   }
 
   zFilename = Tcl_GetByteArrayFromObj(objv[1], 0);
-  rc = sqlite3_open16(zFilename, &db);
+  sqlite3_open16(zFilename, &db);
   
   if( sqlite3TestMakePointerStr(interp, zBuf, db) ) return TCL_ERROR;
   Tcl_AppendResult(interp, zBuf, 0);
@@ -4669,6 +4666,30 @@ static int test_db_filename(
 }
 
 /*
+** Usage:  sqlite3_db_readonly DB DBNAME
+**
+** Return 1 or 0 if DBNAME is readonly or not.  Return -1 if DBNAME does
+** not exist.
+*/
+static int test_db_readonly(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  sqlite3 *db;
+  const char *zDbName;
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB DBNAME");
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
+  zDbName = Tcl_GetString(objv[2]);
+  Tcl_SetObjResult(interp, Tcl_NewIntObj(sqlite3_db_readonly(db, zDbName)));
+  return TCL_OK;
+}
+
+/*
 ** Usage:  sqlite3_soft_heap_limit ?N?
 **
 ** Query or set the soft heap limit for the current thread.  The
@@ -5114,8 +5135,6 @@ static int file_control_lockproxy_test(
   Tcl_Obj *CONST objv[]  /* Command arguments */
 ){
   sqlite3 *db;
-  const char *zPwd;
-  int nPwd;
   
   if( objc!=3 ){
     Tcl_AppendResult(interp, "wrong # args: should be \"",
@@ -5125,7 +5144,6 @@ static int file_control_lockproxy_test(
   if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
    return TCL_ERROR;
   }
-  zPwd = Tcl_GetStringFromObj(objv[2], &nPwd);
   
 #if !defined(SQLITE_ENABLE_LOCKING_STYLE)
 #  if defined(__APPLE__)
@@ -5138,8 +5156,11 @@ static int file_control_lockproxy_test(
   {
     char *testPath;
     int rc;
+    int nPwd;
+    const char *zPwd;
     char proxyPath[400];
     
+    zPwd = Tcl_GetStringFromObj(objv[2], &nPwd);
     if( sizeof(proxyPath)<nPwd+20 ){
       Tcl_AppendResult(interp, "PWD too big", (void*)0);
       return TCL_ERROR;
@@ -5795,6 +5816,7 @@ struct win32FileLocker {
 
 
 #if SQLITE_OS_WIN
+#include <process.h>
 /*
 ** The background thread that does file locking.
 */
@@ -6058,6 +6080,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "sqlite3_release_memory",        test_release_memory,     0},
      { "sqlite3_db_release_memory",     test_db_release_memory,  0},
      { "sqlite3_db_filename",           test_db_filename,        0},
+     { "sqlite3_db_readonly",           test_db_readonly,        0},
      { "sqlite3_soft_heap_limit",       test_soft_heap_limit,    0},
      { "sqlite3_thread_cleanup",        test_thread_cleanup,     0},
      { "sqlite3_pager_refcounts",       test_pager_refcounts,    0},
@@ -6106,7 +6129,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
 #endif
 #ifdef SQLITE_ENABLE_COLUMN_METADATA
 {"sqlite3_column_database_name16",
-  test_stmt_utf16, sqlite3_column_database_name16},
+  test_stmt_utf16, (void*)sqlite3_column_database_name16},
 {"sqlite3_column_table_name16", test_stmt_utf16, (void*)sqlite3_column_table_name16},
 {"sqlite3_column_origin_name16", test_stmt_utf16, (void*)sqlite3_column_origin_name16},
 #endif

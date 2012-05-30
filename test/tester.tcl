@@ -19,6 +19,7 @@
 #
 # Commands to manipulate the db and the file-system at a high level:
 #
+#      get_pwd
 #      copy_file              FROM TO
 #      delete_file            FILENAME
 #      drop_all_tables        ?DB?
@@ -146,6 +147,24 @@ proc getFileRetryDelay {} {
     return 100; # TODO: Good default?
   }
   return $::G(file-retry-delay)
+}
+
+# Return the string representing the name of the current directory.  On
+# Windows, the result is "normalized" to whatever our parent command shell
+# is using to prevent case-mismatch issues.
+#
+proc get_pwd {} {
+  if {$::tcl_platform(platform) eq "windows"} {
+    #
+    # NOTE: Cannot use [file normalize] here because it would alter the
+    #       case of the result to what Tcl considers canonical, which would
+    #       defeat the purpose of this procedure.
+    #
+    return [string map [list \\ /] \
+        [string trim [exec -- $::env(ComSpec) /c echo %CD%]]]
+  } else {
+    return [pwd]
+  }
 }
 
 # Copy file $from into $to. This is used because some versions of
@@ -455,7 +474,6 @@ proc incr_ntest {} {
 # Invoke the do_test procedure to run a single test 
 #
 proc do_test {name cmd expected} {
-
   global argv cmdlinearg
 
   fix_testname name
@@ -486,17 +504,40 @@ proc do_test {name cmd expected} {
     if {[catch {uplevel #0 "$cmd;\n"} result]} {
       puts "\nError: $result"
       fail_test $name
-    } elseif {[string compare $result $expected]} {
-      puts "\nExpected: \[$expected\]\n     Got: \[$result\]"
-      fail_test $name
     } else {
-      puts " Ok"
+      if {[regexp {^~?/.*/$} $expected]} {
+        if {[string index $expected 0]=="~"} {
+          set re [string range $expected 2 end-1]
+          set ok [expr {![regexp $re $result]}]
+        } else {
+          set re [string range $expected 1 end-1]
+          set ok [regexp $re $result]
+        }
+      } else {
+        set ok [expr {[string compare $result $expected]==0}]
+      }
+      if {!$ok} {
+        puts "\nExpected: \[$expected\]\n     Got: \[$result\]"
+        fail_test $name
+      } else {
+        puts " Ok"
+      }
     }
   } else {
     puts " Omitted"
     omit_test $name "pattern mismatch" 0
   }
   flush stdout
+}
+
+proc catchcmd {db {cmd ""}} {
+  global CLI
+  set out [open cmds.txt w]
+  puts $out $cmd
+  close $out
+  set line "exec $CLI $db < cmds.txt"
+  set rc [catch { eval $line } msg]
+  list $rc $msg
 }
 
 proc filepath_normalize {p} {
@@ -984,7 +1025,7 @@ proc crashsql {args} {
   # $crashfile gets compared to the native filename in 
   # cfSync(), which can be different then what TCL uses by
   # default, so here we force it to the "nativename" format.
-  set cfile [string map {\\ \\\\} [file nativename [file join [pwd] $crashfile]]]
+  set cfile [string map {\\ \\\\} [file nativename [file join [get_pwd] $crashfile]]]
 
   set f [open crash.tcl w]
   puts $f "sqlite3_crash_enable 1"
@@ -1572,6 +1613,9 @@ proc db_delete_and_reopen {{file test.db}} {
 # If the library is compiled with the SQLITE_DEFAULT_AUTOVACUUM macro set
 # to non-zero, then set the global variable $AUTOVACUUM to 1.
 set AUTOVACUUM $sqlite_options(default_autovacuum)
+
+# Make sure the FTS enhanced query syntax is disabled.
+set sqlite_fts3_enable_parentheses 0
 
 source $testdir/thread_common.tcl
 source $testdir/malloc_common.tcl

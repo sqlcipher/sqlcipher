@@ -59,10 +59,10 @@ int sqlite3VdbeChangeEncoding(Mem *pMem, int desiredEnc){
 ** Make sure pMem->z points to a writable allocation of at least 
 ** n bytes.
 **
-** If the memory cell currently contains string or blob data
-** and the third argument passed to this function is true, the 
-** current content of the cell is preserved. Otherwise, it may
-** be discarded.  
+** If the third argument passed to this function is true, then memory
+** cell pMem must contain a string or blob. In this case the content is
+** preserved. Otherwise, if the third parameter to this function is false,
+** any current string or blob value may be discarded.
 **
 ** This function sets the MEM_Dyn flag and clears any xDel callback.
 ** It also clears MEM_Ephem and MEM_Static. If the preserve flag is 
@@ -76,6 +76,10 @@ int sqlite3VdbeMemGrow(Mem *pMem, int n, int preserve){
     ((pMem->flags&MEM_Static) ? 1 : 0)
   );
   assert( (pMem->flags&MEM_RowSet)==0 );
+
+  /* If the preserve flag is set to true, then the memory cell must already
+  ** contain a valid string or blob value.  */
+  assert( preserve==0 || pMem->flags&(MEM_Blob|MEM_Str) );
 
   if( n<32 ) n = 32;
   if( sqlite3DbMallocSize(pMem->db, pMem->zMalloc)<n ){
@@ -92,6 +96,7 @@ int sqlite3VdbeMemGrow(Mem *pMem, int n, int preserve){
     memcpy(pMem->zMalloc, pMem->z, pMem->n);
   }
   if( pMem->flags&MEM_Dyn && pMem->xDel ){
+    assert( pMem->xDel!=SQLITE_DYNAMIC );
     pMem->xDel((void *)(pMem->z));
   }
 
@@ -271,6 +276,7 @@ void sqlite3VdbeMemReleaseExternal(Mem *p){
     sqlite3VdbeMemRelease(p);
   }else if( p->flags&MEM_Dyn && p->xDel ){
     assert( (p->flags&MEM_RowSet)==0 );
+    assert( p->xDel!=SQLITE_DYNAMIC );
     p->xDel((void *)p->z);
     p->xDel = 0;
   }else if( p->flags&MEM_RowSet ){
@@ -413,8 +419,14 @@ void sqlite3VdbeIntegerAffinity(Mem *pMem){
   ** true and could be omitted.  But we leave it in because other
   ** architectures might behave differently.
   */
-  if( pMem->r==(double)pMem->u.i && pMem->u.i>SMALLEST_INT64
-      && ALWAYS(pMem->u.i<LARGEST_INT64) ){
+  if( pMem->r==(double)pMem->u.i
+   && pMem->u.i>SMALLEST_INT64
+#if defined(__i486__) || defined(__x86_64__)
+   && ALWAYS(pMem->u.i<LARGEST_INT64)
+#else
+   && pMem->u.i<LARGEST_INT64
+#endif
+  ){
     pMem->flags |= MEM_Int;
   }
 }
