@@ -82,6 +82,21 @@
 #define CODEC_TRACE(X)
 #endif
 
+#ifdef CODEC_DEBUG_PAGEDATA
+#define CODEC_HEXDUMP(DESC,BUFFER,LEN)  \
+  { \
+    int __pctr; \
+    printf(DESC); \
+    for(__pctr=0; __pctr < LEN; __pctr++) { \
+      if(__pctr % 16 == 0) printf("\n%05x: ",__pctr); \
+      printf("%02x ",((unsigned char*) BUFFER)[__pctr]); \
+    } \
+    printf("\n"); \
+    fflush(stdout); \
+  }
+#else
+#define CODEC_HEXDUMP(DESC,BUFFER,LEN)
+#endif
 
 /* extensions defined in pager.c */ 
 void sqlite3pager_get_codec(Pager *pPager, void **ctx);
@@ -118,6 +133,7 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
 typedef struct codec_ctx codec_ctx;
 
 /* utility functions */
+int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len);
 int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len);
 int sqlcipher_pseudorandom(void *, int);
 void sqlcipher_free(void *, int);
