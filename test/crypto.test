@@ -791,8 +791,9 @@ do_test hmac-tamper-resistence {
 
   db close
 
-  # write some junk into the middle of the page
-  hexio_write test.db 2560 00
+  # write some junk into the hmac segment, leaving
+  # the page data valid but with an invalid signature
+  hexio_write test.db 1000 0000
 
   sqlite_orig db test.db
 
@@ -801,7 +802,7 @@ do_test hmac-tamper-resistence {
     SELECT count(*) FROM t1;
   }
 
-} {1 {database disk image is malformed}}
+} {1 {file is encrypted or is not a database}}
 db close
 file delete -force test.db
 
@@ -1461,6 +1462,98 @@ db close
 file delete -force test.db
 
 
+# create a database with many hundred tables such that the schema
+# will overflow the first several pages of the database. verify the schema
+# is intact on open.
+do_test multipage-schema {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    BEGIN EXCLUSIVE;
+  } db
+  
+  for {set i 1} {$i<=300} {incr i} {
+    execsql "CREATE TABLE tab$i (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f TEXT, g TEXT, h TEXT, i TEXT, j TEXT, k, TEXT, l, m TEXT, n TEXT, o TEXT, p TEXT);" db
+  }
 
+  execsql {
+    COMMIT;
+  } db
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_master where type = 'table';
+  } db
+
+} {300}
+db close
+file delete -force test.db
+
+# create a database with many hundred tables such that the schema
+# will overflow the first several pages of the database. this time, enable
+# autovacuum on the database, which will cause sqlite to do some "short reads"
+# after the end of the main database file. verify that there are no HMAC errors
+# resulting from the short reads, and that the schema is intact when 
+# the database is reopened
+do_test multipage-schema-autovacuum-shortread {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA auto_vacuum = FULL;
+    BEGIN EXCLUSIVE;
+  } db
+  
+  for {set i 1} {$i<=300} {incr i} {
+    execsql "CREATE TABLE tab$i (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f TEXT, g TEXT, h TEXT, i TEXT, j TEXT, k, TEXT, l, m TEXT, n TEXT, o TEXT, p TEXT);" db
+  }
+
+  execsql {
+    COMMIT;
+  } db
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_master where type = 'table';
+  } db
+
+} {300}
+db close
+file delete -force test.db
+
+# same as multi-page-schema-autovacuum-shortread, except
+# using write ahead log mode
+do_test multipage-schema-autovacuum-shortread-wal {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA auto_vacuum = FULL;
+    PRAGMA journal_mode = WAL;
+    BEGIN EXCLUSIVE;
+  } db
+  
+  for {set i 1} {$i<=300} {incr i} {
+    execsql "CREATE TABLE tab$i (a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f TEXT, g TEXT, h TEXT, i TEXT, j TEXT, k, TEXT, l, m TEXT, n TEXT, o TEXT, p TEXT);" db
+  }
+
+  execsql {
+    COMMIT;
+  } db
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_master where type = 'table';
+  } db
+} {300}
+db close
+file delete -force test.db
 
 finish_test
