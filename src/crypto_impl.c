@@ -100,6 +100,14 @@ void sqlcipher_activate() {
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
+/* fixed time zero memory check tests every position of a memory segement
+   matches a single value (i.e. the memory is all zeros)*/
+int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len) {
+  int i = 0, noMatch = 0;
+  for(i = 0; i < len; i++) noMatch = (noMatch || (a0[i] != value)); 
+  return noMatch;
+}
+
 /* fixed time memory comparison routine */
 int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len) {
   int i = 0, noMatch = 0;
@@ -505,6 +513,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   out_start = out; /* note the original position of the output buffer pointer, as out will be rewritten during encryption */
 
   CODEC_TRACE(("codec_cipher:entered pgno=%d, mode=%d, size=%d\n", pgno, mode, size));
+  CODEC_HEXDUMP("codec_cipher: input page data", in, page_sz);
 
   /* the key size should never be zero. If it is, error out. */
   if(c_ctx->key_sz == 0) {
@@ -528,13 +537,23 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     }
 
     CODEC_TRACE(("codec_cipher: comparing hmac on in=%p out=%p hmac_sz=%d\n", hmac_in, hmac_out, c_ctx->hmac_sz));
-    if(sqlcipher_memcmp(hmac_in, hmac_out, c_ctx->hmac_sz) != 0) {
-      /* the hmac check failed, which means the data was tampered with or
-         corrupted in some way. we will return an error, and zero out the page data
-         to force an error */
-      memset(out, 0, page_sz); 
-      CODEC_TRACE(("codec_cipher: hmac check failed for pgno=%d\n", pgno));
-      return SQLITE_ERROR;
+    if(sqlcipher_memcmp(hmac_in, hmac_out, c_ctx->hmac_sz) != 0) { /* the hmac check failed */ 
+      if(sqlcipher_ismemset(in, 0, page_sz) == 0) {
+        /* first check if the entire contents of the page is zeros. If so, this page 
+           resulted from a short read (i.e. sqlite attempted to pull a page after the end of the file. these 
+           short read failures must be ignored for autovaccum mode to work so wipe the output buffer 
+           and return SQLITE_OK to skip the decryption step. */
+        CODEC_TRACE(("codec_cipher: zeroed page (short read) for pgno %d, encryption but returning SQLITE_OK\n", pgno));
+        memset(out, 0, page_sz); 
+  	return SQLITE_OK;
+      } else {
+	/* if the page memory is not all zeros, it means the there was data and a hmac on the page. 
+           since the check failed, the page was either tampered with or corrupted. wipe the output buffer,
+           and return SQLITE_ERROR to the caller */
+      	CODEC_TRACE(("codec_cipher: hmac check failed for pgno=%d returning SQLITE_ERROR\n", pgno));
+        memset(out, 0, page_sz); 
+      	return SQLITE_ERROR;
+      }
     }
   } 
 
@@ -552,6 +571,8 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   if(c_ctx->use_hmac && (mode == CIPHER_ENCRYPT)) {
     sqlcipher_page_hmac(c_ctx, pgno, out_start, size + c_ctx->iv_sz, hmac_out); 
   }
+
+  CODEC_HEXDUMP("codec_cipher: output page data", out_start, page_sz);
 
   return SQLITE_OK;
 }
