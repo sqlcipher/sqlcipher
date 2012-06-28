@@ -1,0 +1,3 @@
+[submodule "ditto"]
+	path = ditto
+	url = ssh://git@git.zetetic.net/ditto
