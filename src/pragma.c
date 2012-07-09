@@ -1537,7 +1537,8 @@ void sqlite3Pragma(
 /** BEGIN CRYPTO **/
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     extern void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value);
-    codec_vdbe_return_static_string(pParse, "cipher_version", CIPHER_VERSION);
+    extern const char* codec_get_cipher_version();
+    codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else
   if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
     extern int codec_set_cipher_name(sqlite3*, int, const char *, int);

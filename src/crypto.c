@@ -38,6 +38,10 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
+const char* codec_get_cipher_version() {
+  return CIPHER_VERSION;
+}
+
 /* Generate code to return a string value */
 void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value){
   Vdbe *v = sqlite3GetVdbe(pParse);
