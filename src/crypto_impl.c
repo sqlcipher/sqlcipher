@@ -473,7 +473,23 @@ void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   sqlcipher_free(ctx, sizeof(codec_ctx)); 
 }
 
+static inline void sqlcipher_put4byte_le(unsigned char *p, u32 v) { 
+  p[0] = (u8)v;
+  p[1] = (u8)(v>>8);
+  p[2] = (u8)(v>>16);
+  p[3] = (u8)(v>>24);
+}
+
 int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
+  unsigned char pgno_le[4];
+  /* convert page number to consistent representation before calculating MAC for
+     compatibility across big-endian and little-endian platforms. 
+
+     Note: The public release of sqlcipher 2.0.0 to 2.0.6 had a bug where the bytes of pgno 
+     were used directly in the MAC. So, we convert to little endian instead of big endian, to 
+     preserve backwards compatibility on the most popular platform */
+  sqlcipher_put4byte_le(pgno_le, pgno);
+
   HMAC_CTX_init(&ctx->hctx);
   
   HMAC_Init_ex(&ctx->hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL);
@@ -482,7 +498,8 @@ int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
   HMAC_Update(&ctx->hctx, in, in_sz);
-  HMAC_Update(&ctx->hctx, (const unsigned char*) &pgno, sizeof(Pgno));
+  
+  HMAC_Update(&ctx->hctx, (const unsigned char*) pgno_le, sizeof(pgno_le));
   HMAC_Final(&ctx->hctx, out, NULL);
   HMAC_CTX_cleanup(&ctx->hctx);
   return SQLITE_OK; 
