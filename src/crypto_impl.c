@@ -63,7 +63,7 @@ typedef struct {
   int pass_sz;
   int reserve_sz;
   int hmac_sz;
-  int use_hmac;
+  unsigned int flags;
   unsigned char *key;
   unsigned char *hmac_key;
   char *pass;
@@ -79,7 +79,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *, cipher_ctx *);
 /* prototype for pager HMAC function */
 int sqlcipher_page_hmac(cipher_ctx *, Pgno, unsigned char *, int, unsigned char *);
 
-static int default_use_hmac = DEFAULT_USE_HMAC;
+static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 
 struct codec_ctx {
   int kdf_salt_sz;
@@ -185,6 +185,10 @@ int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   ctx->hmac_key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
   if(ctx->hmac_key == NULL) return SQLITE_NOMEM;
+
+  /* setup default flags */
+  ctx->flags = default_flags;
+
   return SQLITE_OK;
 }
 
@@ -216,7 +220,7 @@ int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
     && c1->fast_kdf_iter == c2->fast_kdf_iter
     && c1->key_sz == c2->key_sz
     && c1->pass_sz == c2->pass_sz
-    && c1->use_hmac == c2->use_hmac
+    && c1->flags == c2->flags
     && c1->hmac_sz == c2->hmac_sz
     && (
       c1->pass == c2->pass
@@ -339,7 +343,8 @@ int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int
 
 /* set the global default flag for HMAC */
 void sqlcipher_set_default_use_hmac(int use) {
-  default_use_hmac = use;
+  if(use) default_flags |= CIPHER_FLAG_HMAC; 
+  else default_flags &= ~CIPHER_FLAG_HMAC; 
 }
 
 /* set the codec flag for whether this individual database should be using hmac */
@@ -356,7 +361,15 @@ int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   CODEC_TRACE(("sqlcipher_codec_ctx_set_use_hmac: use=%d block_sz=%d md_size=%d reserve=%d\n", 
                 use, ctx->read_ctx->block_sz, ctx->read_ctx->hmac_sz, reserve)); 
 
-  ctx->write_ctx->use_hmac = ctx->read_ctx->use_hmac = use;
+  
+  if(use) {
+    ctx->write_ctx->flags |= CIPHER_FLAG_HMAC;
+    ctx->read_ctx->flags |= CIPHER_FLAG_HMAC;
+  } else {
+    ctx->write_ctx->flags &= ~CIPHER_FLAG_HMAC;
+    ctx->read_ctx->flags &= ~CIPHER_FLAG_HMAC;
+  } 
+  
   ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
 
   return SQLITE_OK;
@@ -449,9 +462,9 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   if((rc = sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, FAST_PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
   if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) return rc;
 
-  /* Use HMAC signatures by default. Note that codec_set_use_hmac will implicity call
-     codec_set_page_size to set the default */
-  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_use_hmac)) != SQLITE_OK) return rc;
+  /* Note that use_hmac is a special case that requires recalculation of page size
+     so we call set_use_hmac to perform setup */
+  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_flags & CIPHER_FLAG_HMAC)) != SQLITE_OK) return rc;
 
   if((rc = sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) return rc;
 
@@ -524,7 +537,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   iv_in = in + size;
 
   /* hmac will be written immediately after the initialization vector. the remainder of the page reserve will contain
-     random bytes. note, these pointers are only valid when use_hmac is true */
+     random bytes. note, these pointers are only valid when using hmac */
   hmac_in = in + size + c_ctx->iv_sz; 
   hmac_out = out + size + c_ctx->iv_sz;
   out_start = out; /* note the original position of the output buffer pointer, as out will be rewritten during encryption */
@@ -546,7 +559,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     memcpy(iv_out, iv_in, c_ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
 
-  if(c_ctx->use_hmac && (mode == CIPHER_DECRYPT)) {
+  if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
     if(sqlcipher_page_hmac(c_ctx, pgno, in, size + c_ctx->iv_sz, hmac_out) != SQLITE_OK) {
       memset(out, 0, page_sz); 
       CODEC_TRACE(("codec_cipher: hmac operations failed for pgno=%d\n", pgno));
@@ -585,7 +598,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   EVP_CIPHER_CTX_cleanup(&c_ctx->ectx);
   assert(size == csz);
 
-  if(c_ctx->use_hmac && (mode == CIPHER_ENCRYPT)) {
+  if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
     sqlcipher_page_hmac(c_ctx, pgno, out_start, size + c_ctx->iv_sz, hmac_out); 
   }
 
@@ -630,7 +643,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     /* if this context is setup to use hmac checks, generate a seperate and different 
        key for HMAC. In this case, we use the output of the previous KDF as the input to 
        this KDF run. This ensures a distinct but predictable HMAC key. */
-    if(c_ctx->use_hmac) {
+    if(c_ctx->flags & CIPHER_FLAG_HMAC) {
       int i;
 
       /* start by copying the kdf key into the hmac salt slot

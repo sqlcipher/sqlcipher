@@ -56,9 +56,13 @@
 #define PBKDF2_ITER 4000
 #endif
 
-#ifndef DEFAULT_USE_HMAC
-#define DEFAULT_USE_HMAC 1
+/* possible flags for cipher_ctx->flags */
+#define CIPHER_FLAG_HMAC 0x01
+
+#ifndef DEFAULT_CIPHER_FLAGS
+#define DEFAULT_CIPHER_FLAGS CIPHER_FLAG_HMAC
 #endif
+
 
 /* by default, sqlcipher will use a reduced number of iterations to generate
    the HMAC key / or transform a raw cipher key 
