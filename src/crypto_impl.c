@@ -512,7 +512,11 @@ int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz
      valid pages out of order in a database */ 
   HMAC_Update(&ctx->hctx, in, in_sz);
   
-  HMAC_Update(&ctx->hctx, (const unsigned char*) pgno_le, sizeof(pgno_le));
+  if(ctx->flags & CIPHER_FLAG_LE_PGNO) /* default compute hmac using little endian */
+    HMAC_Update(&ctx->hctx, (const unsigned char*) pgno_le, sizeof(pgno_le)); 
+  else /* legacy setting - compute using native byte ordering */
+    HMAC_Update(&ctx->hctx, (const unsigned char*) &pgno, sizeof(pgno)); 
+  
   HMAC_Final(&ctx->hctx, out, NULL);
   HMAC_CTX_cleanup(&ctx->hctx);
   return SQLITE_OK; 

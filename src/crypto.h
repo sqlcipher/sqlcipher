@@ -57,10 +57,11 @@
 #endif
 
 /* possible flags for cipher_ctx->flags */
-#define CIPHER_FLAG_HMAC 0x01
+#define CIPHER_FLAG_HMAC          0x01
+#define CIPHER_FLAG_LE_PGNO       0x02
 
 #ifndef DEFAULT_CIPHER_FLAGS
-#define DEFAULT_CIPHER_FLAGS CIPHER_FLAG_HMAC
+#define DEFAULT_CIPHER_FLAGS CIPHER_FLAG_HMAC | CIPHER_FLAG_LE_PGNO
 #endif
 
 
