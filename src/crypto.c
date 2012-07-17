@@ -163,6 +163,39 @@ int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for
   return SQLITE_ERROR;
 } 
 
+int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
+  if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
+    codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
+  }else
+  if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
+    codec_set_cipher_name(db, iDb, zRight, 2); // change cipher for both
+  }else
+  if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
+    codec_set_cipher_name(db, iDb, zRight, 1); // change write cipher only
+  }else
+  if( sqlite3StrICmp(zLeft, "kdf_iter")==0 && zRight ){
+    codec_set_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
+  }else
+  if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0 && zRight ){
+    codec_set_fast_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
+  }else
+  if( sqlite3StrICmp(zLeft, "rekey_kdf_iter")==0 && zRight ){
+    codec_set_kdf_iter(db, iDb, atoi(zRight), 1); // change # if W iterations
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
+    codec_set_page_size(db, iDb, atoi(zRight)); // change page size
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
+    codec_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
+    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight,1));
+  }else {
+    return 0;
+  }
+  return 1;
+}
+
 /*
  * sqlite3Codec can be called in multiple modes.
  * encrypt mode - expected to return a pointer to the 

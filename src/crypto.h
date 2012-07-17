@@ -159,6 +159,8 @@ void sqlcipher_codec_ctx_set_error(codec_ctx *, int);
 int sqlcipher_codec_ctx_set_pass(codec_ctx *, const void *, int, int);
 void sqlcipher_codec_get_pass(codec_ctx *, void **zKey, int *nKey);
 
+int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight);
+
 int sqlcipher_codec_ctx_set_pagesize(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_pagesize(codec_ctx *);
 int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);

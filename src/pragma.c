@@ -317,6 +317,12 @@ void sqlite3Pragma(
   sqlite3 *db = pParse->db;    /* The database connection */
   Db *pDb;                     /* The specific database being pragmaed */
   Vdbe *v = pParse->pVdbe = sqlite3VdbeCreate(db);  /* Prepared statement */
+/** BEGIN CRYPTO **/
+#ifdef SQLITE_HAS_CODEC
+  extern int codec_pragma(sqlite3*, int, Parse *, const char *, const char *);
+#endif
+/** END CRYPTO **/
+
 
   if( v==0 ) return;
   sqlite3VdbeRunOnlyOnce(v);
@@ -376,6 +382,13 @@ void sqlite3Pragma(
     pParse->rc = rc;
   }else
                             
+/** BEGIN CRYPTO **/
+#ifdef SQLITE_HAS_CODEC
+  if(codec_pragma(db, iDb, pParse, zLeft, zRight)) { 
+    /* codec_pragma executes internal */
+  }else
+  #endif
+/** END CRYPTO **/
  
 #if !defined(SQLITE_OMIT_PAGER_PRAGMAS) && !defined(SQLITE_OMIT_DEPRECATED)
   /*
@@ -1534,45 +1547,6 @@ void sqlite3Pragma(
       sqlite3_rekey(db, zKey, i/2);
     }
   }else
-/** BEGIN CRYPTO **/
-  if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
-    extern void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value);
-    extern const char* codec_get_cipher_version();
-    codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
-  }else
-  if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
-    extern int codec_set_cipher_name(sqlite3*, int, const char *, int);
-    codec_set_cipher_name(db, iDb, zRight, 2); // change cipher for both
-  }else
-  if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
-    extern int codec_set_cipher_name(sqlite3*, int, const char *, int); 
-    codec_set_cipher_name(db, iDb, zRight, 1); // change write cipher only
-  }else
-  if( sqlite3StrICmp(zLeft, "kdf_iter")==0 && zRight ){
-    extern int codec_set_kdf_iter(sqlite3*, int, int, int);
-    codec_set_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
-  }else
-  if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0 && zRight ){
-    extern int codec_set_fast_kdf_iter(sqlite3*, int, int, int);
-    codec_set_fast_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
-  }else
-  if( sqlite3StrICmp(zLeft, "rekey_kdf_iter")==0 && zRight ){
-    extern int codec_set_kdf_iter(sqlite3*, int, int, int); 
-    codec_set_kdf_iter(db, iDb, atoi(zRight), 1); // change # if W iterations
-  }else
-  if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
-    extern int codec_set_page_size(sqlite3*, int, int); 
-    codec_set_page_size(db, iDb, atoi(zRight)); // change page size
-  }else
-  if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
-    extern void codec_set_default_use_hmac(int);
-    codec_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
-  }else
-  if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
-    extern int codec_set_use_hmac(sqlite3*, int, int);
-    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight,1));
-  }else
-/** END CRYPTO **/
 #endif
 #if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
   if( sqlite3StrICmp(zLeft, "activate_extensions")==0 ){
