@@ -1007,8 +1007,6 @@ do_test export-database {
   }
 } {1000 1000 1 1000 1001 1001 1000000}
 db close
-file copy -force test.db test-debug.db
-file copy -force test2.db test2-debug.db
 file delete -force test.db
 file delete -force test2.db
 
