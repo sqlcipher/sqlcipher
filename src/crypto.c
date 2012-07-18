@@ -51,30 +51,6 @@ void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const ch
   sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
 }
 
-int codec_set_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
-  struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_kdf_iter: entered db=%p nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
-
-  if(pDb->pBt) {
-    codec_ctx *ctx;
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    if(ctx) return sqlcipher_codec_ctx_set_kdf_iter(ctx, kdf_iter, for_ctx);
-  }
-  return SQLITE_ERROR;
-}
-
-int codec_set_fast_kdf_iter(sqlite3* db, int nDb, int kdf_iter, int for_ctx) {
-  struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_kdf_iter: entered db=%p nDb=%d kdf_iter=%d for_ctx=%d\n", db, nDb, kdf_iter, for_ctx));
-
-  if(pDb->pBt) {
-    codec_ctx *ctx;
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    if(ctx) return sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, kdf_iter, for_ctx);
-  }
-  return SQLITE_ERROR;
-}
-
 static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ctx) {
   int rc, page_sz, reserve_sz; 
 
@@ -93,65 +69,6 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
   return rc;
 }
 
-void codec_set_default_use_hmac(int use) {
-  sqlcipher_set_default_use_hmac(use);
-}
-
-int codec_set_use_hmac(sqlite3* db, int nDb, int use) {
-  struct Db *pDb = &db->aDb[nDb];
-
-  CODEC_TRACE(("codec_set_use_hmac: entered db=%p nDb=%d use=%d\n", db, nDb, use));
-
-  if(pDb->pBt) {
-    int rc;
-    codec_ctx *ctx;
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    if(ctx) {
-      rc = sqlcipher_codec_ctx_set_use_hmac(ctx, use);
-      if(rc != SQLITE_OK) return rc;
-      /* since the use of hmac has changed, the page size may also change */
-      return codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-    }
-  }
-  return SQLITE_ERROR;
-}
-
-int codec_set_page_size(sqlite3* db, int nDb, int size) {
-  struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_page_size: entered db=%p nDb=%d size=%d\n", db, nDb, size));
-
-  if(pDb->pBt) {
-    int rc;
-    codec_ctx *ctx;
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-
-    if(ctx) {
-      rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
-      if(rc != SQLITE_OK) return rc;
-      return codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-    }
-  }
-  return SQLITE_ERROR;
-}
-
-/**
-  * 
-  * when for_ctx == 0 then it will change for read
-  * when for_ctx == 1 then it will change for write
-  * when for_ctx == 2 then it will change for both
-  */
-int codec_set_cipher_name(sqlite3* db, int nDb, const char *cipher_name, int for_ctx) {
-  struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_cipher_name: entered db=%p nDb=%d cipher_name=%s for_ctx=%d\n", db, nDb, cipher_name, for_ctx));
-
-  if(pDb->pBt) {
-    codec_ctx *ctx;
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-    if(ctx) return sqlcipher_codec_ctx_set_cipher(ctx, cipher_name, for_ctx);
-  }
-  return SQLITE_ERROR;
-}
-
 int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE(("codec_set_pass_key: entered db=%p nDb=%d zKey=%s nKey=%d for_ctx=%d\n", db, nDb, (char *)zKey, nKey, for_ctx));
@@ -164,32 +81,54 @@ int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for
 } 
 
 int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
+  struct Db *pDb = &db->aDb[iDb];
+  codec_ctx *ctx = NULL;
+  int rc;
+
+  if(pDb->pBt) {
+    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+  }
+
+  CODEC_TRACE(("codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
+
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else
   if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
-    codec_set_cipher_name(db, iDb, zRight, 2); // change cipher for both
+    if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
   }else
   if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
-    codec_set_cipher_name(db, iDb, zRight, 1); // change write cipher only
+    if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 1); // change write cipher only 
   }else
   if( sqlite3StrICmp(zLeft, "kdf_iter")==0 && zRight ){
-    codec_set_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
+    if(ctx) sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
   }else
   if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0 && zRight ){
-    codec_set_fast_kdf_iter(db, iDb, atoi(zRight), 2); // change of RW PBKDF2 iteration
+    if(ctx) sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
   }else
   if( sqlite3StrICmp(zLeft, "rekey_kdf_iter")==0 && zRight ){
-    codec_set_kdf_iter(db, iDb, atoi(zRight), 1); // change # if W iterations
+    if(ctx) sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 1); // write iterations only
   }else
   if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
-    codec_set_page_size(db, iDb, atoi(zRight)); // change page size
+    if(ctx) {
+      int size = atoi(zRight);
+      rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
+      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+    }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
-    codec_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
+    sqlcipher_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
-    codec_set_use_hmac(db, iDb, sqlite3GetBoolean(zRight,1));
+    if(ctx) {
+      rc = sqlcipher_codec_ctx_set_use_hmac(ctx, sqlite3GetBoolean(zRight,1));
+      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      /* since the use of hmac has changed, the page size may also change */
+      rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+    }
   }else {
     return 0;
   }

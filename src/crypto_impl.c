@@ -363,17 +363,28 @@ int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
 
   
   if(use) {
-    ctx->write_ctx->flags |= CIPHER_FLAG_HMAC;
-    ctx->read_ctx->flags |= CIPHER_FLAG_HMAC;
+    sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HMAC);
   } else {
-    ctx->write_ctx->flags &= ~CIPHER_FLAG_HMAC;
-    ctx->read_ctx->flags &= ~CIPHER_FLAG_HMAC;
+    sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_HMAC);
   } 
   
   ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
 
   return SQLITE_OK;
 }
+
+int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag) {
+  ctx->write_ctx->flags |= flag;
+  ctx->read_ctx->flags |= flag;
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag) {
+  ctx->write_ctx->flags &= ~flag;
+  ctx->read_ctx->flags &= ~flag;
+  return SQLITE_OK;
+}
+
 
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   CODEC_TRACE(("sqlcipher_codec_ctx_set_error: ctx=%p, error=%d\n", ctx, error));
