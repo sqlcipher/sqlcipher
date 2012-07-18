@@ -1222,6 +1222,10 @@ do_test vtab1-17.1 {
   }
 } {}
 
+do_test vtab1-17.2 {
+  execsql { DELETE FROM sqlite_master WHERE sql LIKE 'insert%' }
+} {}
+
 #-------------------------------------------------------------------------
 # The following tests - vtab1-18.* - test that the optimization of LIKE
 # constraints in where.c plays well with virtual tables.
@@ -1274,5 +1278,19 @@ foreach {tn sql res filter} {
   do_test         18.$tn.2 { lrange $::echo_module 2 end } $filter
 }
 do_execsql_test 18.2.x {  PRAGMA case_sensitive_like = OFF }
+
+#-------------------------------------------------------------------------
+# Test that an existing module may not be overridden.
+#
+do_test 19.1 {
+  sqlite3 db2 test.db
+  register_echo_module [sqlite3_connection_pointer db2]
+} SQLITE_OK
+do_test 19.2 {
+  register_echo_module [sqlite3_connection_pointer db2]
+} SQLITE_MISUSE
+do_test 19.3 {
+  db2 close
+} {}
 
 finish_test
