@@ -497,6 +497,7 @@ void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   sqlcipher_free(ctx, sizeof(codec_ctx)); 
 }
 
+/** convert a 32bit unsigned integer to little endian byte ordering */
 static inline void sqlcipher_put4byte_le(unsigned char *p, u32 v) { 
   p[0] = (u8)v;
   p[1] = (u8)(v>>8);
@@ -505,29 +506,31 @@ static inline void sqlcipher_put4byte_le(unsigned char *p, u32 v) {
 }
 
 int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
-  unsigned char pgno_le[4];
-  /* convert page number to consistent representation before calculating MAC for
+  unsigned char pgno_raw[sizeof(pgno)];
+  /* we may convert page number to consistent representation before calculating MAC for
      compatibility across big-endian and little-endian platforms. 
 
      Note: The public release of sqlcipher 2.0.0 to 2.0.6 had a bug where the bytes of pgno 
-     were used directly in the MAC. So, we convert to little endian instead of big endian, to 
-     preserve backwards compatibility on the most popular platform */
-  sqlcipher_put4byte_le(pgno_le, pgno);
+     were used directly in the MAC. SQLCipher convert's to little endian by default to preserve
+     backwards compatibility on the most popular platforms, but can optionally be configured
+     to use either big endian or native byte ordering via pragma. */
+
+  if(ctx->flags & CIPHER_FLAG_LE_PGNO) { /* compute hmac using little endian pgno*/
+    sqlcipher_put4byte_le(pgno_raw, pgno);
+  } else if(ctx->flags & CIPHER_FLAG_BE_PGNO) { /* compute hmac using big endian pgno */
+    sqlite3Put4byte(pgno_raw, pgno); /* sqlite3Put4byte converts 32bit uint to big endian  */
+  } else { /* use native byte ordering */
+    memcpy(pgno_raw, &pgno, sizeof(pgno));
+  }
 
   HMAC_CTX_init(&ctx->hctx);
-  
   HMAC_Init_ex(&ctx->hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL);
 
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
   HMAC_Update(&ctx->hctx, in, in_sz);
-  
-  if(ctx->flags & CIPHER_FLAG_LE_PGNO) /* default compute hmac using little endian */
-    HMAC_Update(&ctx->hctx, (const unsigned char*) pgno_le, sizeof(pgno_le)); 
-  else /* legacy setting - compute using native byte ordering */
-    HMAC_Update(&ctx->hctx, (const unsigned char*) &pgno, sizeof(pgno)); 
-  
+  HMAC_Update(&ctx->hctx, (const unsigned char*) pgno_raw, sizeof(pgno)); 
   HMAC_Final(&ctx->hctx, out, NULL);
   HMAC_CTX_cleanup(&ctx->hctx);
   return SQLITE_OK; 

@@ -1556,9 +1556,10 @@ do_test multipage-schema-autovacuum-shortread-wal {
 db close
 file delete -force test.db
 
-# open a 2.0 database verify it can be opened
-do_test open-2.0-database {
-  sqlite_orig db sqlcipher-2.0-testkey.db
+# open a 2.0 database with little endian hmac page numbers (default)
+# verify it can be opened
+do_test open-2.0-le-database {
+  sqlite_orig db sqlcipher-2.0-le-testkey.db
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
@@ -1566,5 +1567,45 @@ do_test open-2.0-database {
   } 
 } {4 1 1 one one 1 2 one two}
 db close
+
+# open a 2.0 database with big-endian hmac page numbers
+# verify it can be opened
+do_test open-2.0-be-database {
+  sqlite_orig db sqlcipher-2.0-be-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_hmac_pgno = be;
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  } 
+} {4 1 1 one one 1 2 one two}
+db close
+
+# open a 2.0 database with big-endian hmac page numbers
+# attach a new database with little endian page numbers (default)
+# copy schema between the two, and verify the latter 
+# can be opened
+do_test be-to-le-migration {
+  sqlite_orig db sqlcipher-2.0-be-testkey.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_hmac_pgno = be;
+    ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
+    CREATE TABLE db2.t1(a,b);
+    INSERT INTO db2.t1 SELECT * FROM main.t1;
+    DETACH DATABASE db2;
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  }
+} {4 1 1 one one 1 2 one two}
+db close
+file delete -force test.db
 
 finish_test

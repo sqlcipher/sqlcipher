@@ -129,6 +129,19 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
       rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
     }
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_hmac_pgno")==0 ){
+    // clear both pgno endian flags
+    if(sqlite3StrICmp(zRight, "le") == 0) {
+      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
+      sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_LE_PGNO);
+    } else if(sqlite3StrICmp(zRight, "be") == 0) {
+      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
+      sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_BE_PGNO);
+    } else if(sqlite3StrICmp(zRight, "native") == 0) {
+      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
+      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
+    }
   }else {
     return 0;
   }
