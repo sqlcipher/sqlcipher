@@ -223,6 +223,10 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* point the internal codec argument against the contet to be prepared */
     rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey); 
 
+    if(rc != SQLITE_OK) return rc; /* initialization failed, do not attach potentially corrupted context */
+
+    sqlite3_mutex_enter(db->mutex);
+
     sqlite3pager_sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 
     codec_set_btree_to_codec_pagesize(db, pDb, ctx);
@@ -235,7 +239,6 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
        if not null, then set to the default */
-    sqlite3_mutex_enter(db->mutex);
     if(fd != NULL) { 
       sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
     }
@@ -252,8 +255,7 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_key: entered db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
-    sqlite3CodecAttach(db, 0, pKey, nKey); // operate only on the main db 
-    return SQLITE_OK;
+    return sqlite3CodecAttach(db, 0, pKey, nKey); // operate only on the main db 
   }
   return SQLITE_ERROR;
 }
