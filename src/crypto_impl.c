@@ -81,6 +81,9 @@ int sqlcipher_page_hmac(cipher_ctx *, Pgno, unsigned char *, int, unsigned char 
 
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 
+static unsigned int openssl_external_init = 0;
+static unsigned int openssl_init_count = 0;
+
 struct codec_ctx {
   int kdf_salt_sz;
   int page_sz;
@@ -94,9 +97,37 @@ struct codec_ctx {
 
 void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-  if(EVP_get_cipherbyname(CIPHER) == NULL) {
-    OpenSSL_add_all_algorithms();
+
+  /* we'll initialize openssl and increment the internal init counter
+     but only if it hasn't been initalized outside of SQLCipher by this program 
+     e.g. on startup */
+  if(openssl_init_count == 0 && EVP_get_cipherbyname(CIPHER) != NULL) {
+    openssl_external_init = 1;
+  }
+
+  if(openssl_external_init == 0) {
+    if(openssl_init_count == 0)  {
+      OpenSSL_add_all_algorithms();
+    }
+    openssl_init_count++; 
   } 
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+}
+
+void sqlcipher_deactivate() {
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  /* If it is initialized externally, then the init counter should never be greater than zero.
+     This should prevent SQLCipher from "cleaning up" openssl 
+     when something else in the program might be using it. */
+  if(openssl_external_init == 0) {
+    openssl_init_count--;
+    /* if the counter reaches zero after it's decremented release EVP memory
+       Note: this code will only be reached if OpensSSL_add_all_algorithms()
+       is called by SQLCipher internally. */
+    if(openssl_init_count == 0) {
+      EVP_cleanup();
+    }
+  }
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
