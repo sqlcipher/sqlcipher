@@ -139,15 +139,15 @@ int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len) {
   return noMatch;
 }
 
-/* fixed time memory comparison routine */
+/* constant time memory comparison routine. returns 0 if match, 1 if no match */
 int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len) {
-  int i = 0, noMatch = 0;
+  int i = 0, result = 0;
 
   for(i = 0; i < len; i++) {
-    noMatch = (noMatch || (a0[i] != a1[i]));
+    result |= a0[i] ^ a1[i];
   }
   
-  return noMatch;
+  return (result != 0);
 }
 
 /* generate a defined number of pseudorandom bytes */
