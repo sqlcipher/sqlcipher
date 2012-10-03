@@ -186,6 +186,7 @@ void sqlcipher_free(void *ptr, int sz) {
   */
 void* sqlcipher_malloc(int sz) {
   void *ptr = sqlite3Malloc(sz);
+  memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
   if(ptr) {
 #if defined(__unix__) || defined(__APPLE__) 
