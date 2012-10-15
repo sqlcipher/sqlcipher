@@ -94,8 +94,12 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else
-  if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
-    if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+  if( sqlite3StrICmp(zLeft, "cipher")==0 ){
+    if( zRight ) {
+      if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+    }else {
+      if(ctx) sqlcipher_codec_ctx_get_cipher(pParse, ctx, 2);
+    }
   }else
   if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
     if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 1); // change write cipher only 

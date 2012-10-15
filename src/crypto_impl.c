@@ -344,6 +344,15 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_cipher(Parse *pParse, codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  EVP_CIPHER *evp_cipher = c_ctx->evp_cipher;
+  char* name = EVP_CIPHER_name(evp_cipher);
+  codec_vdbe_return_static_string(pParse, "cipher", name);
+
+  return SQLITE_OK;
+}
+
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
