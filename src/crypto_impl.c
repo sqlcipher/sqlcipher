@@ -396,6 +396,15 @@ void sqlcipher_set_default_use_hmac(int use) {
   else default_flags &= ~CIPHER_FLAG_HMAC; 
 }
 
+int sqlcipher_get_default_use_hmac(Parse *pParse) {
+  int default_use_hmac_set = default_flags & CIPHER_FLAG_HMAC > 0;
+  char *default_use_hmac = sqlite3_mprintf("%d", default_use_hmac_set);
+  codec_vdbe_return_static_string(pParse, "cipher_default_use_hmac", default_use_hmac);
+  sqlite3_free(default_use_hmac);
+  
+  return SQLITE_OK;
+}
+
 /* set the codec flag for whether this individual database should be using hmac */
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   int reserve = EVP_MAX_IV_LENGTH; /* base reserve size will be IV only */ 

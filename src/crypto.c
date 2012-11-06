@@ -127,7 +127,11 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
-    sqlcipher_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
+    if( zRight ) {
+      sqlcipher_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
+    } else {
+      sqlcipher_get_default_use_hmac(pParse);
+    }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
 
