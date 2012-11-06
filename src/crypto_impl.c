@@ -495,6 +495,15 @@ int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_cipher_pagesize(Parse *pParse, codec_ctx *ctx) {
+  int page_size_value = ctx->page_sz;
+  char *page_size = sqlite3_mprintf("%d", page_size_value);
+  codec_vdbe_return_static_string(pParse, "cipher_page_size", page_size);
+  sqlite3_free(page_size);
+
+  return SQLITE_OK;
+}
+
 int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
   int rc;
   codec_ctx *ctx;

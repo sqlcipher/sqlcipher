@@ -119,11 +119,15 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
   }else
   if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
     if(ctx) {
-      int size = atoi(zRight);
-      rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
-      rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      if( zRight ) {
+        int size = atoi(zRight);
+        rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+        rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      } else {
+        sqlcipher_codec_ctx_get_cipher_pagesize(pParse, ctx);
+      }
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
