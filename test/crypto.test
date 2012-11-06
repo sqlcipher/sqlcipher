@@ -1704,4 +1704,29 @@ do_test verify-pragma-cipher-page-size-changed {
 db close
 file delete -force test.db
 
+# verify the pragma cipher
+# reports the default value
+do_test verify-pragma-cipher-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
+# verify the pragma cipher
+# reports a change in value
+do_test verify-pragma-cipher-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher = 'AES-256-ECB';
+        PRAGMA cipher;
+    }
+} {AES-256-ECB}
+db close
+file delete -force test.db
+
 finish_test
