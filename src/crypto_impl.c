@@ -367,6 +367,15 @@ int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) 
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_kdf_iter(Parse *pParse, codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  char *kdf_iter = sqlite3_mprintf("%d", c_ctx->kdf_iter);
+  codec_vdbe_return_static_string(pParse, "kdf_iter", kdf_iter);
+  sqlite3_free(kdf_iter);
+  
+  return SQLITE_OK;
+}
+
 int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
