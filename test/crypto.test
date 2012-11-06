@@ -1606,4 +1606,102 @@ do_test be-to-le-migration {
 db close
 file delete -force test.db
 
+# verify the pragma cipher_use_hmac
+# is set to true be default
+do_test verify-pragma-cipher-use-hmac-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_use_hmac;
+    }
+} {1}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_use_hmac
+# reports the flag turned off
+do_test verify-pragma-cipher-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_use_hmac = off;
+        PRAGMA cipher_use_hmac;
+    }
+} {0}
+db close
+file delete -force test.db
+
+# verify the pragma default_cipher_use_hmac
+# is set to true by default
+do_test verify-pragma-cipher-default-use-hmac-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_use_hmac;
+    }
+} {1}
+db close
+file delete -force test.db
+
+# verify the pragma default_cipher_use_hmac
+# reports the flag turned off
+do_test verify-pragma-cipher-default-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_use_hmac = off;
+        PRAGMA cipher_default_use_hmac;
+    }
+} {0}
+db close
+file delete -force test.db
+
+# verify the pragma kdf_iter
+# reports the default value
+do_test verify-pragma-kdf-iter-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA kdf_iter;
+    }
+} {4000}
+db close
+file delete -force test.db
+
+# verify the pragma kdf_iter
+# reports value changed
+do_test verify-pragma-kdf-iter-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA kdf_iter = 8000;
+        PRAGMA kdf_iter;
+    }
+} {8000}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_page_size
+# reports default value
+do_test verify-pragma-cipher-page-size-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size;
+    }
+} {1024}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_page_size
+# reports change in value
+do_test verify-pragma-cipher-page-size-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size = 4096;
+        PRAGMA cipher_page_size;
+    }
+} {4096}
+db close
+file delete -force test.db
+
 finish_test
