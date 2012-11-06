@@ -130,12 +130,17 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
     sqlcipher_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
-    if(ctx) {
-      rc = sqlcipher_codec_ctx_set_use_hmac(ctx, sqlite3GetBoolean(zRight,1));
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
-      /* since the use of hmac has changed, the page size may also change */
-      rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+
+    if( zRight ) {
+      if(ctx) {
+        rc = sqlcipher_codec_ctx_set_use_hmac(ctx, sqlite3GetBoolean(zRight,1));
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+        /* since the use of hmac has changed, the page size may also change */
+        rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      }
+    } else {
+      if(ctx) sqlcipher_codec_ctx_get_use_hmac(pParse, ctx, 2);
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_hmac_pgno")==0 ){

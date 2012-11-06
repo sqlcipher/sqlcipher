@@ -422,6 +422,16 @@ int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_use_hmac(Parse *pParse, codec_ctx *ctx, int for_ctx) {
+  cipher_ctx * c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  int hmac_flag_set = c_ctx->flags & CIPHER_FLAG_HMAC > 0;
+  char *hmac_flag = sqlite3_mprintf("%d", hmac_flag_set);
+  codec_vdbe_return_static_string(pParse, "cipher_use_hmac", hmac_flag);
+  sqlite3_free(hmac_flag);
+  
+  return SQLITE_OK;
+}
+
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag) {
   ctx->write_ctx->flags |= flag;
   ctx->read_ctx->flags |= flag;
