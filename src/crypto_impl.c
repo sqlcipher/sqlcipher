@@ -345,6 +345,15 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_cipher(Parse *pParse, codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  EVP_CIPHER *evp_cipher = c_ctx->evp_cipher;
+  char* name = EVP_CIPHER_name(evp_cipher);
+  codec_vdbe_return_static_string(pParse, "cipher", name);
+
+  return SQLITE_OK;
+}
+
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
@@ -356,6 +365,15 @@ int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) 
     if((rc = sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK)
       return rc; 
 
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_get_kdf_iter(Parse *pParse, codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  char *kdf_iter = sqlite3_mprintf("%d", c_ctx->kdf_iter);
+  codec_vdbe_return_static_string(pParse, "kdf_iter", kdf_iter);
+  sqlite3_free(kdf_iter);
+  
   return SQLITE_OK;
 }
 
@@ -377,6 +395,15 @@ int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int
 void sqlcipher_set_default_use_hmac(int use) {
   if(use) default_flags |= CIPHER_FLAG_HMAC; 
   else default_flags &= ~CIPHER_FLAG_HMAC; 
+}
+
+int sqlcipher_get_default_use_hmac(Parse *pParse) {
+  int default_use_hmac_set = default_flags & CIPHER_FLAG_HMAC > 0;
+  char *default_use_hmac = sqlite3_mprintf("%d", default_use_hmac_set);
+  codec_vdbe_return_static_string(pParse, "cipher_default_use_hmac", default_use_hmac);
+  sqlite3_free(default_use_hmac);
+  
+  return SQLITE_OK;
 }
 
 /* set the codec flag for whether this individual database should be using hmac */
@@ -402,6 +429,16 @@ int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   
   ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
 
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_get_use_hmac(Parse *pParse, codec_ctx *ctx, int for_ctx) {
+  cipher_ctx * c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  int hmac_flag_set = c_ctx->flags & CIPHER_FLAG_HMAC > 0;
+  char *hmac_flag = sqlite3_mprintf("%d", hmac_flag_set);
+  codec_vdbe_return_static_string(pParse, "cipher_use_hmac", hmac_flag);
+  sqlite3_free(hmac_flag);
+  
   return SQLITE_OK;
 }
 
@@ -455,6 +492,15 @@ int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
      operations to avoid overhead of multiple memory allocations*/
   ctx->buffer = sqlcipher_malloc(size);
   if(ctx->buffer == NULL) return SQLITE_NOMEM;
+
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_get_cipher_pagesize(Parse *pParse, codec_ctx *ctx) {
+  int page_size_value = ctx->page_sz;
+  char *page_size = sqlite3_mprintf("%d", page_size_value);
+  codec_vdbe_return_static_string(pParse, "cipher_page_size", page_size);
+  sqlite3_free(page_size);
 
   return SQLITE_OK;
 }
