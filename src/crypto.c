@@ -94,14 +94,22 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else
-  if( sqlite3StrICmp(zLeft, "cipher")==0 && zRight ){
-    if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+  if( sqlite3StrICmp(zLeft, "cipher")==0 ){
+    if( zRight ) {
+      if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+    }else {
+      if(ctx) sqlcipher_codec_ctx_get_cipher(pParse, ctx, 2);
+    }
   }else
   if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
     if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 1); // change write cipher only 
   }else
-  if( sqlite3StrICmp(zLeft, "kdf_iter")==0 && zRight ){
-    if(ctx) sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
+  if( sqlite3StrICmp(zLeft, "kdf_iter")==0 ){
+    if( zRight ) {
+      if(ctx) sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
+    } else {
+      if(ctx) sqlcipher_codec_ctx_get_kdf_iter(pParse, ctx, 2);
+    }
   }else
   if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0 && zRight ){
     if(ctx) sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
@@ -111,23 +119,36 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
   }else
   if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
     if(ctx) {
-      int size = atoi(zRight);
-      rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
-      rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      if( zRight ) {
+        int size = atoi(zRight);
+        rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+        rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      } else {
+        sqlcipher_codec_ctx_get_cipher_pagesize(pParse, ctx);
+      }
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
-    sqlcipher_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
+    if( zRight ) {
+      sqlcipher_set_default_use_hmac(sqlite3GetBoolean(zRight,1));
+    } else {
+      sqlcipher_get_default_use_hmac(pParse);
+    }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
-    if(ctx) {
-      rc = sqlcipher_codec_ctx_set_use_hmac(ctx, sqlite3GetBoolean(zRight,1));
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
-      /* since the use of hmac has changed, the page size may also change */
-      rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+
+    if( zRight ) {
+      if(ctx) {
+        rc = sqlcipher_codec_ctx_set_use_hmac(ctx, sqlite3GetBoolean(zRight,1));
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+        /* since the use of hmac has changed, the page size may also change */
+        rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+        if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      }
+    } else {
+      if(ctx) sqlcipher_codec_ctx_get_use_hmac(pParse, ctx, 2);
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_hmac_pgno")==0 ){
