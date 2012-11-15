@@ -774,7 +774,7 @@ void sqlite3VdbeChangeP4(Vdbe *p, int addr, const char *zP4, int n){
 
 #ifndef NDEBUG
 /*
-** Change the comment on the the most recently coded instruction.  Or
+** Change the comment on the most recently coded instruction.  Or
 ** insert a No-op and add the comment to that new instruction.  This
 ** makes the code easier to read during debugging.  None of this happens
 ** in a production build.
@@ -2469,6 +2469,7 @@ void sqlite3VdbeDelete(Vdbe *p){
 
   if( NEVER(p==0) ) return;
   db = p->db;
+  assert( sqlite3_mutex_held(db->mutex) );
   if( p->pPrev ){
     p->pPrev->pNext = p->pNext;
   }else{
