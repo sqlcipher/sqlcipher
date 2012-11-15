@@ -656,7 +656,7 @@ int sqlite3VdbeExec(
     }
 #endif
 
-    /* On any opcode with the "out2-prerelase" tag, free any
+    /* On any opcode with the "out2-prerelease" tag, free any
     ** external allocations out of mem[p2] and set mem[p2] to be
     ** an undefined integer.  Opcodes will either fill in the integer
     ** value or convert mem[p2] to a different type.
@@ -3120,6 +3120,9 @@ case OP_OpenWrite: {
   VdbeCursor *pCur;
   Db *pDb;
 
+  assert( (pOp->p5&(OPFLAG_P2ISREG|OPFLAG_BULKCSR))==pOp->p5 );
+  assert( pOp->opcode==OP_OpenWrite || pOp->p5==0 );
+
   if( p->expired ){
     rc = SQLITE_ABORT;
     break;
@@ -3143,7 +3146,7 @@ case OP_OpenWrite: {
   }else{
     wrFlag = 0;
   }
-  if( pOp->p5 ){
+  if( pOp->p5 & OPFLAG_P2ISREG ){
     assert( p2>0 );
     assert( p2<=p->nMem );
     pIn2 = &aMem[p2];
@@ -3174,6 +3177,8 @@ case OP_OpenWrite: {
   pCur->isOrdered = 1;
   rc = sqlite3BtreeCursor(pX, p2, wrFlag, pKeyInfo, pCur->pCursor);
   pCur->pKeyInfo = pKeyInfo;
+  assert( OPFLAG_BULKCSR==BTREE_BULKLOAD );
+  sqlite3BtreeCursorHints(pCur->pCursor, (pOp->p5 & OPFLAG_BULKCSR));
 
   /* Since it performs no memory allocation or IO, the only value that
   ** sqlite3BtreeCursor() may return is SQLITE_OK. */
