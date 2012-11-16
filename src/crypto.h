@@ -166,20 +166,26 @@ int sqlcipher_codec_ctx_get_pagesize(codec_ctx *);
 int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);
 
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int, int);
+int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx, int);
+
 void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
 
 int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *, int, int);
 
 int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *, int);
+const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx, int for_ctx);
 
 void* sqlcipher_codec_ctx_get_data(codec_ctx *);
 
 void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 
 void sqlcipher_set_default_use_hmac(int use);
+int sqlcipher_get_default_use_hmac();
+
 void sqlcipher_set_hmac_salt_mask(unsigned char mask);
 
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use);
+int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx);
 
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag);
 int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag);
