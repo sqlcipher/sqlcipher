@@ -132,15 +132,21 @@ void sqlcipher_deactivate() {
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
-/* fixed time zero memory check tests every position of a memory segement
-   matches a single value (i.e. the memory is all zeros)*/
+/* constant time memory check tests every position of a memory segement
+   matches a single value (i.e. the memory is all zeros)
+   returns 0 if match, 1 of no match */
 int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len) {
-  int i = 0, noMatch = 0;
-  for(i = 0; i < len; i++) noMatch = (noMatch || (a0[i] != value)); 
-  return noMatch;
+  int i = 0, result = 0;
+
+  for(i = 0; i < len; i++) {
+    result |= a0[i] ^ value;
+  }
+
+  return (result != 0);
 }
 
-/* constant time memory comparison routine. returns 0 if match, 1 if no match */
+/* constant time memory comparison routine. 
+   returns 0 if match, 1 if no match */
 int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len) {
   int i = 0, result = 0;
 
