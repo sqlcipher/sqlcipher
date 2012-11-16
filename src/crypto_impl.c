@@ -431,7 +431,7 @@ void sqlcipher_set_default_use_hmac(int use) {
 }
 
 int sqlcipher_get_default_use_hmac() {
-  return default_flags & CIPHER_FLAG_HMAC > 0;
+  return (default_flags & CIPHER_FLAG_HMAC) != 0;
 }
 
 void sqlcipher_set_hmac_salt_mask(unsigned char mask) {
@@ -470,7 +470,7 @@ int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
 
 int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx) {
   cipher_ctx * c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
-  return c_ctx->flags & CIPHER_FLAG_HMAC > 0;
+  return (c_ctx->flags & CIPHER_FLAG_HMAC) != 0;
 }
 
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag) {
@@ -487,7 +487,7 @@ int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag) {
 
 int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx) {
   cipher_ctx * c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
-  return (c_ctx->flags & flag) > 0;
+  return (c_ctx->flags & flag) != 0;
 }
 
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
