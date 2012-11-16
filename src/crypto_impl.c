@@ -80,6 +80,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *, cipher_ctx *);
 int sqlcipher_page_hmac(cipher_ctx *, Pgno, unsigned char *, int, unsigned char *);
 
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
+static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 
 static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
@@ -395,6 +396,10 @@ int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int
 void sqlcipher_set_default_use_hmac(int use) {
   if(use) default_flags |= CIPHER_FLAG_HMAC; 
   else default_flags &= ~CIPHER_FLAG_HMAC; 
+}
+
+void sqlcipher_set_hmac_salt_mask(unsigned char mask) {
+  hmac_salt_mask = mask;
 }
 
 int sqlcipher_get_default_use_hmac(Parse *pParse) {
@@ -749,7 +754,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
          to generate the encryption key */ 
       memcpy(ctx->hmac_kdf_salt, ctx->kdf_salt, ctx->kdf_salt_sz);
       for(i = 0; i < ctx->kdf_salt_sz; i++) {
-        ctx->hmac_kdf_salt[i] ^= HMAC_SALT_MASK;
+        ctx->hmac_kdf_salt[i] ^= hmac_salt_mask;
       } 
 
       CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 

@@ -177,6 +177,7 @@ void* sqlcipher_codec_ctx_get_data(codec_ctx *);
 void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 
 void sqlcipher_set_default_use_hmac(int use);
+void sqlcipher_set_hmac_salt_mask(unsigned char mask);
 
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use);
 

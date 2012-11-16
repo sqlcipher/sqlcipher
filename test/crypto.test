@@ -1649,6 +1649,10 @@ do_test verify-pragma-cipher-default-use-hmac-off {
     execsql {
         PRAGMA cipher_default_use_hmac = off;
         PRAGMA cipher_default_use_hmac;
+        -- Be sure to turn cipher_default_use_hmac
+        -- back on or it will break later tests 
+        -- (it's a global flag)
+        PRAGMA cipher_default_use_hmac = ON;
     }
 } {0}
 db close
@@ -1726,6 +1730,52 @@ do_test verify-pragma-cipher-changed {
         PRAGMA cipher;
     }
 } {AES-256-ECB}
+db close
+file delete -force test.db
+
+# open a 2.0 beta database with 4000 round hmac kdf and 0x00 
+# hmac salt mask 
+# verify it can be opened
+do_test open-2.0-beta-database {
+  sqlite_orig db sqlcipher-2.0-beta-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA fast_kdf_iter = 4000;
+    PRAGMA cipher_hmac_salt_mask = "x'00'";
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  } 
+} {2 test-0-0 test-0-1 test-1-0 test-1-1}
+db close
+
+# open a 2.0 beta database 
+# attach a new standard database
+# copy schema between the two, and verify the latter 
+# can be opened
+do_test 2.0-beta-to-2.0-migration {
+  sqlite_orig db sqlcipher-2.0-beta-testkey.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_hmac_salt_mask = "x'00'";
+    PRAGMA fast_kdf_iter = 4000;
+    SELECT count(*) FROM sqlite_master;
+
+    PRAGMA cipher_hmac_salt_mask = "x'3a'";
+    ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
+    
+    CREATE TABLE db2.t1(a,b);
+    INSERT INTO db2.t1 SELECT * FROM main.t1;
+    DETACH DATABASE db2;
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT * FROM t1;
+  }
+} {test-0-0 test-0-1 test-1-0 test-1-1}
 db close
 file delete -force test.db
 

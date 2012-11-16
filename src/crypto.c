@@ -163,6 +163,16 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
       sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
       sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
     }
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_hmac_salt_mask")==0 ){
+    if(zRight) {
+      if (sqlite3StrNICmp(zRight ,"x'", 2) == 0 && sqlite3Strlen30(zRight) == 5) {
+        unsigned char mask = 0;
+        const char *hex = zRight+2;
+        cipher_hex2bin(hex,2,&mask);
+        sqlcipher_set_hmac_salt_mask(mask);
+      }
+    }
   }else {
     return 0;
   }
