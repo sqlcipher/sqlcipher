@@ -96,6 +96,12 @@ struct codec_ctx {
   cipher_ctx *write_ctx;
 };
 
+/* activate and initialize sqlcipher. Most importantly, this will automatically
+   intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
+   this function may be called multiple times as new codecs are intiialized. 
+   Thus it performs some basic counting to ensure that only the last and final
+   sqlcipher_deactivate() will free the EVP structures. 
+*/
 void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 
@@ -115,6 +121,9 @@ void sqlcipher_activate() {
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
+/* deactivate SQLCipher, most imporantly decremeting the activation count and
+   freeing the EVP structures on the final deactivation to ensure that 
+   OpenSSL memory is cleaned up */
 void sqlcipher_deactivate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   /* If it is initialized externally, then the init counter should never be greater than zero.
@@ -132,6 +141,10 @@ void sqlcipher_deactivate() {
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
+/* constant time memset using volitile to avoid having the memset
+   optimized out by the compiler. 
+   Note: As suggested by Joachim Schipper (joachim.schipper@fox-it.com)
+*/
 void* sqlcipher_memset(void *v, unsigned char value, int len) {
   int i = 0;
   volatile unsigned char *a = v;
@@ -179,7 +192,7 @@ int sqlcipher_random (void *buffer, int length) {
 
 /**
   * Free and wipe memory. Uses SQLites internal sqlite3_free so that memory
-  * can be countend and memory leak detection works in the tet suite. 
+  * can be countend and memory leak detection works in the test suite. 
   * If ptr is not null memory will be freed. 
   * If sz is greater than zero, the memory will be overwritten with zero before it is freed
   * If sz is > 0, and not compiled with OMIT_MEMLOCK, system will attempt to unlock the
@@ -223,7 +236,7 @@ void* sqlcipher_malloc(int sz) {
 
 
 /**
-  * Initialize a a new cipher_ctx struct. This function will allocate memory
+  * Initialize new cipher_ctx struct. This function will allocate memory
   * for the cipher context and for the key
   * 
   * returns SQLITE_OK if initialization was successful
