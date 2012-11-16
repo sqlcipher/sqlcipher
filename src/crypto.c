@@ -95,10 +95,10 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else
   if( sqlite3StrICmp(zLeft, "cipher")==0 ){
-    if( zRight ) {
-      if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
-    }else {
-      if(ctx) {
+    if(ctx) {
+      if( zRight ) {
+        sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+      }else {
         codec_vdbe_return_static_string(pParse, "cipher",
           sqlcipher_codec_ctx_get_cipher(ctx, 2));
       }
