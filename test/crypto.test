@@ -1683,6 +1683,31 @@ do_test verify-pragma-kdf-iter-reports-value-changed {
 db close
 file delete -force test.db
 
+# verify the pragma fast_kdf_iter
+# reports the default value
+do_test verify-pragma-fast-kdf-iter-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA fast_kdf_iter;
+    }
+} {2}
+db close
+file delete -force test.db
+
+# verify the pragma fast_kdf_iter
+# reports value changed
+do_test verify-pragma-kdf-iter-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA fast_kdf_iter = 4000;
+        PRAGMA fast_kdf_iter;
+    }
+} {4000}
+db close
+file delete -force test.db
+
 # verify the pragma cipher_page_size
 # reports default value
 do_test verify-pragma-cipher-page-size-default {

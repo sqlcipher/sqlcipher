@@ -385,6 +385,11 @@ int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  return c_ctx->fast_kdf_iter;
+}
+
 /* set the global default flag for HMAC */
 void sqlcipher_set_default_use_hmac(int use) {
   if(use) default_flags |= CIPHER_FLAG_HMAC; 
