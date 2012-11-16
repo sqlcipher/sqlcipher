@@ -247,7 +247,7 @@ int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   *iCtx = (cipher_ctx *) sqlcipher_malloc(sizeof(cipher_ctx));
   ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
-  sqlcipher_memset(ctx, 0, sizeof(cipher_ctx)); 
+
   ctx->key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   ctx->hmac_key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
@@ -534,7 +534,6 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(ctx == NULL) return SQLITE_NOMEM;
 
-  sqlcipher_memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
   ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
 
   /* allocate space for salt data. Then read the first 16 bytes 
