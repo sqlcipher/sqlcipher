@@ -404,6 +404,10 @@ void sqlcipher_set_hmac_salt_mask(unsigned char mask) {
   hmac_salt_mask = mask;
 }
 
+unsigned char sqlcipher_get_hmac_salt_mask() {
+  return hmac_salt_mask;
+}
+
 /* set the codec flag for whether this individual database should be using hmac */
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   int reserve = EVP_MAX_IV_LENGTH; /* base reserve size will be IV only */ 

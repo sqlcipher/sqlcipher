@@ -184,6 +184,7 @@ void sqlcipher_set_default_use_hmac(int use);
 int sqlcipher_get_default_use_hmac();
 
 void sqlcipher_set_hmac_salt_mask(unsigned char mask);
+unsigned char sqlcipher_get_hmac_salt_mask();
 
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use);
 int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx);

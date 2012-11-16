@@ -188,12 +188,18 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_hmac_salt_mask")==0 ){
-    if(zRight) {
-      if (sqlite3StrNICmp(zRight ,"x'", 2) == 0 && sqlite3Strlen30(zRight) == 5) {
-        unsigned char mask = 0;
-        const char *hex = zRight+2;
-        cipher_hex2bin(hex,2,&mask);
-        sqlcipher_set_hmac_salt_mask(mask);
+    if(ctx) {
+      if(zRight) {
+        if (sqlite3StrNICmp(zRight ,"x'", 2) == 0 && sqlite3Strlen30(zRight) == 5) {
+          unsigned char mask = 0;
+          const char *hex = zRight+2;
+          cipher_hex2bin(hex,2,&mask);
+          sqlcipher_set_hmac_salt_mask(mask);
+        }
+      } else {
+          char *hmac_salt_mask = sqlite3_mprintf("%02x", sqlcipher_get_hmac_salt_mask());
+          codec_vdbe_return_static_string(pParse, "cipher_hmac_salt_mask", hmac_salt_mask);
+          sqlite3_free(hmac_salt_mask);
       }
     }
   }else {
