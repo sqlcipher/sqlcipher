@@ -157,17 +157,14 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_use_hmac")==0 ){
-
-    if( zRight ) {
-      if(ctx) {
+    if(ctx) {
+      if( zRight ) {
         rc = sqlcipher_codec_ctx_set_use_hmac(ctx, sqlite3GetBoolean(zRight,1));
         if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
         /* since the use of hmac has changed, the page size may also change */
         rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
         if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
-      }
-    } else {
-      if(ctx) {
+      } else {
         char *hmac_flag = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_use_hmac(ctx, 2));
         codec_vdbe_return_static_string(pParse, "cipher_use_hmac", hmac_flag);
         sqlite3_free(hmac_flag);
@@ -175,16 +172,28 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_hmac_pgno")==0 ){
-    // clear both pgno endian flags
-    if(sqlite3StrICmp(zRight, "le") == 0) {
-      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
-      sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_LE_PGNO);
-    } else if(sqlite3StrICmp(zRight, "be") == 0) {
-      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
-      sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_BE_PGNO);
-    } else if(sqlite3StrICmp(zRight, "native") == 0) {
-      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
-      sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
+    if(ctx) {
+      if(zRight) {
+        // clear both pgno endian flags
+        if(sqlite3StrICmp(zRight, "le") == 0) {
+          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
+          sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_LE_PGNO);
+        } else if(sqlite3StrICmp(zRight, "be") == 0) {
+          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
+          sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_BE_PGNO);
+        } else if(sqlite3StrICmp(zRight, "native") == 0) {
+          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
+          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
+        }
+      } else {
+        if(sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_LE_PGNO, 2)) {
+          codec_vdbe_return_static_string(pParse, "cipher_hmac_pgno", "le");
+        } else if(sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_BE_PGNO, 2)) {
+          codec_vdbe_return_static_string(pParse, "cipher_hmac_pgno", "be");
+        } else {
+          codec_vdbe_return_static_string(pParse, "cipher_hmac_pgno", "native");
+        }
+      }
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_hmac_salt_mask")==0 ){

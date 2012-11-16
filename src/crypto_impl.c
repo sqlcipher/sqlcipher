@@ -485,6 +485,11 @@ int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag) {
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx) {
+  cipher_ctx * c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  return (c_ctx->flags & flag) > 0;
+}
+
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   CODEC_TRACE(("sqlcipher_codec_ctx_set_error: ctx=%p, error=%d\n", ctx, error));
   sqlite3pager_sqlite3PagerSetError(ctx->pBt->pBt->pPager, error);

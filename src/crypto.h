@@ -192,6 +192,7 @@ int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx);
 
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag);
 int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag);
+int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx);
 
 /* end extensions defined in crypto_impl.c */
 

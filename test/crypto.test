@@ -1782,6 +1782,34 @@ do_test verify-pragma-hmac-salt-mask-reports-value-changed {
 db close
 file delete -force test.db
 
+# verify the pragma cipher_hmac_pgno reports default
+do_test verify-pragma-hmac-pgno-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_pgno;
+    }
+} {le}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_pgno 
+# reports value changed
+do_test verify-pragma-hmac-pgno-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_pgno = be;
+        PRAGMA cipher_hmac_pgno;
+        PRAGMA cipher_hmac_pgno = native;
+        PRAGMA cipher_hmac_pgno;
+        PRAGMA cipher_hmac_pgno = le;
+        PRAGMA cipher_hmac_pgno;
+    }
+} {be native le}
+db close
+file delete -force test.db
+
 # open a 2.0 beta database with 4000 round hmac kdf and 0x00 
 # hmac salt mask 
 # verify it can be opened
