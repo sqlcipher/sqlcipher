@@ -139,8 +139,9 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
 typedef struct codec_ctx codec_ctx;
 
 /* utility functions */
-int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len);
-int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len);
+void* sqlcipher_memset(void *v, unsigned char value, int len);
+int sqlcipher_ismemset(const void *v, unsigned char value, int len);
+int sqlcipher_memcmp(const void *v0, const void *v1, int len);
 int sqlcipher_pseudorandom(void *, int);
 void sqlcipher_free(void *, int);
 

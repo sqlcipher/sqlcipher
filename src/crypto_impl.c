@@ -132,14 +132,28 @@ void sqlcipher_deactivate() {
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
+void* sqlcipher_memset(void *v, unsigned char value, int len) {
+  int i = 0;
+  volatile unsigned char *a = v;
+
+  if (v == NULL) return v;
+
+  for(i = 0; i < len; i++) {
+    a[i] = value;
+  }
+
+  return v;
+}
+
 /* constant time memory check tests every position of a memory segement
    matches a single value (i.e. the memory is all zeros)
    returns 0 if match, 1 of no match */
-int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len) {
+int sqlcipher_ismemset(const void *v, unsigned char value, int len) {
+  const unsigned char *a = v;
   int i = 0, result = 0;
 
   for(i = 0; i < len; i++) {
-    result |= a0[i] ^ value;
+    result |= a[i] ^ value;
   }
 
   return (result != 0);
@@ -147,7 +161,8 @@ int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len) {
 
 /* constant time memory comparison routine. 
    returns 0 if match, 1 if no match */
-int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len) {
+int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
+  const unsigned char *a0 = v0, *a1 = v1;
   int i = 0, result = 0;
 
   for(i = 0; i < len; i++) {
@@ -173,7 +188,7 @@ int sqlcipher_random (void *buffer, int length) {
 void sqlcipher_free(void *ptr, int sz) {
   if(ptr) {
     if(sz > 0) {
-      memset(ptr, 0, sz);
+      sqlcipher_memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
       munlock(ptr, sz);
@@ -193,7 +208,7 @@ void sqlcipher_free(void *ptr, int sz) {
   */
 void* sqlcipher_malloc(int sz) {
   void *ptr = sqlite3Malloc(sz);
-  memset(ptr, 0, sz);
+  sqlcipher_memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
   if(ptr) {
 #if defined(__unix__) || defined(__APPLE__) 
@@ -219,7 +234,7 @@ int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   *iCtx = (cipher_ctx *) sqlcipher_malloc(sizeof(cipher_ctx));
   ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
-  memset(ctx, 0, sizeof(cipher_ctx)); 
+  sqlcipher_memset(ctx, 0, sizeof(cipher_ctx)); 
   ctx->key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   ctx->hmac_key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
@@ -506,7 +521,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(ctx == NULL) return SQLITE_NOMEM;
 
-  memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
+  sqlcipher_memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
   ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
 
   /* allocate space for salt data. Then read the first 16 bytes 
@@ -637,7 +652,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   /* the key size should never be zero. If it is, error out. */
   if(c_ctx->key_sz == 0) {
     CODEC_TRACE(("codec_cipher: error possible context corruption, key_sz is zero for pgno=%d\n", pgno));
-    memset(out, 0, page_sz); 
+    sqlcipher_memset(out, 0, page_sz); 
     return SQLITE_ERROR;
   } 
 
@@ -650,7 +665,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
 
   if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
     if(sqlcipher_page_hmac(c_ctx, pgno, in, size + c_ctx->iv_sz, hmac_out) != SQLITE_OK) {
-      memset(out, 0, page_sz); 
+      sqlcipher_memset(out, 0, page_sz); 
       CODEC_TRACE(("codec_cipher: hmac operations failed for pgno=%d\n", pgno));
       return SQLITE_ERROR;
     }
@@ -663,14 +678,14 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
            short read failures must be ignored for autovaccum mode to work so wipe the output buffer 
            and return SQLITE_OK to skip the decryption step. */
         CODEC_TRACE(("codec_cipher: zeroed page (short read) for pgno %d, encryption but returning SQLITE_OK\n", pgno));
-        memset(out, 0, page_sz); 
+        sqlcipher_memset(out, 0, page_sz); 
   	return SQLITE_OK;
       } else {
 	/* if the page memory is not all zeros, it means the there was data and a hmac on the page. 
            since the check failed, the page was either tampered with or corrupted. wipe the output buffer,
            and return SQLITE_ERROR to the caller */
       	CODEC_TRACE(("codec_cipher: hmac check failed for pgno=%d returning SQLITE_ERROR\n", pgno));
-        memset(out, 0, page_sz); 
+        sqlcipher_memset(out, 0, page_sz); 
       	return SQLITE_ERROR;
       }
     }
