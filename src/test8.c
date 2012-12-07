@@ -1300,6 +1300,7 @@ static sqlite3_module echoModuleV2 = {
 ** Decode a pointer to an sqlite3 object.
 */
 extern int getDbPointer(Tcl_Interp *interp, const char *zA, sqlite3 **ppDb);
+extern const char *sqlite3TestErrorName(int rc);
 
 static void moduleDestroy(void *p){
   sqlite3_free(p);
@@ -1314,6 +1315,7 @@ static int register_echo_module(
   int objc,              /* Number of arguments */
   Tcl_Obj *CONST objv[]  /* Command arguments */
 ){
+  int rc;
   sqlite3 *db;
   EchoModule *pMod;
   if( objc!=2 ){
@@ -1325,14 +1327,20 @@ static int register_echo_module(
   /* Virtual table module "echo" */
   pMod = sqlite3_malloc(sizeof(EchoModule));
   pMod->interp = interp;
-  sqlite3_create_module_v2(db, "echo", &echoModule, (void*)pMod, moduleDestroy);
+  rc = sqlite3_create_module_v2(
+      db, "echo", &echoModule, (void*)pMod, moduleDestroy
+  );
 
   /* Virtual table module "echo_v2" */
-  pMod = sqlite3_malloc(sizeof(EchoModule));
-  pMod->interp = interp;
-  sqlite3_create_module_v2(db, "echo_v2", 
-      &echoModuleV2, (void*)pMod, moduleDestroy
-  );
+  if( rc==SQLITE_OK ){
+    pMod = sqlite3_malloc(sizeof(EchoModule));
+    pMod->interp = interp;
+    rc = sqlite3_create_module_v2(db, "echo_v2", 
+        &echoModuleV2, (void*)pMod, moduleDestroy
+    );
+  }
+
+  Tcl_SetResult(interp, (char *)sqlite3TestErrorName(rc), TCL_STATIC);
   return TCL_OK;
 }
 
@@ -1362,6 +1370,29 @@ static int declare_vtab(
   return TCL_OK;
 }
 
+#include "test_spellfix.c"
+
+/*
+** Register the spellfix virtual table module.
+*/
+static int register_spellfix_module(
+  ClientData clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  sqlite3 *db;
+
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB");
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
+
+  sqlite3Spellfix1Register(db);
+  return TCL_OK;
+}
+
 #endif /* ifndef SQLITE_OMIT_VIRTUALTABLE */
 
 /*
@@ -1374,8 +1405,9 @@ int Sqlitetest8_Init(Tcl_Interp *interp){
      Tcl_ObjCmdProc *xProc;
      void *clientData;
   } aObjCmd[] = {
-     { "register_echo_module",   register_echo_module, 0 },
-     { "sqlite3_declare_vtab",   declare_vtab, 0 },
+     { "register_echo_module",       register_echo_module, 0 },
+     { "register_spellfix_module",   register_spellfix_module, 0 },
+     { "sqlite3_declare_vtab",       declare_vtab, 0 },
   };
   int i;
   for(i=0; i<sizeof(aObjCmd)/sizeof(aObjCmd[0]); i++){

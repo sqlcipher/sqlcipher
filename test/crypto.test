@@ -1007,8 +1007,6 @@ do_test export-database {
   }
 } {1000 1000 1 1000 1001 1001 1000000}
 db close
-file copy -force test.db test-debug.db
-file copy -force test2.db test2-debug.db
 file delete -force test.db
 file delete -force test2.db
 
@@ -1394,7 +1392,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {2.0.6}
+} {2.1.0}
 db close
 file delete -force test.db
 
@@ -1553,6 +1551,308 @@ do_test multipage-schema-autovacuum-shortread-wal {
     SELECT count(*) FROM sqlite_master where type = 'table';
   } db
 } {300}
+db close
+file delete -force test.db
+
+# open a 2.0 database with little endian hmac page numbers (default)
+# verify it can be opened
+do_test open-2.0-le-database {
+  sqlite_orig db sqlcipher-2.0-le-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  } 
+} {4 1 1 one one 1 2 one two}
+db close
+
+# open a 2.0 database with big-endian hmac page numbers
+# verify it can be opened
+do_test open-2.0-be-database {
+  sqlite_orig db sqlcipher-2.0-be-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_hmac_pgno = be;
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  } 
+} {4 1 1 one one 1 2 one two}
+db close
+
+# open a 2.0 database with big-endian hmac page numbers
+# attach a new database with little endian page numbers (default)
+# copy schema between the two, and verify the latter 
+# can be opened
+do_test be-to-le-migration {
+  sqlite_orig db sqlcipher-2.0-be-testkey.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_hmac_pgno = be;
+    ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
+    CREATE TABLE db2.t1(a,b);
+    INSERT INTO db2.t1 SELECT * FROM main.t1;
+    DETACH DATABASE db2;
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  }
+} {4 1 1 one one 1 2 one two}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_use_hmac
+# is set to true be default
+do_test verify-pragma-cipher-use-hmac-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_use_hmac;
+    }
+} {1}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_use_hmac
+# reports the flag turned off
+do_test verify-pragma-cipher-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_use_hmac = off;
+        PRAGMA cipher_use_hmac;
+    }
+} {0}
+db close
+file delete -force test.db
+
+# verify the pragma default_cipher_use_hmac
+# is set to true by default
+do_test verify-pragma-cipher-default-use-hmac-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_use_hmac;
+    }
+} {1}
+db close
+file delete -force test.db
+
+# verify the pragma default_cipher_use_hmac
+# reports the flag turned off
+do_test verify-pragma-cipher-default-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_use_hmac = off;
+        PRAGMA cipher_default_use_hmac;
+        -- Be sure to turn cipher_default_use_hmac
+        -- back on or it will break later tests 
+        -- (it's a global flag)
+        PRAGMA cipher_default_use_hmac = ON;
+    }
+} {0}
+db close
+file delete -force test.db
+
+# verify the pragma kdf_iter
+# reports the default value
+do_test verify-pragma-kdf-iter-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA kdf_iter;
+    }
+} {4000}
+db close
+file delete -force test.db
+
+# verify the pragma kdf_iter
+# reports value changed
+do_test verify-pragma-kdf-iter-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA kdf_iter = 8000;
+        PRAGMA kdf_iter;
+    }
+} {8000}
+db close
+file delete -force test.db
+
+# verify the pragma fast_kdf_iter
+# reports the default value
+do_test verify-pragma-fast-kdf-iter-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA fast_kdf_iter;
+    }
+} {2}
+db close
+file delete -force test.db
+
+# verify the pragma fast_kdf_iter
+# reports value changed
+do_test verify-pragma-kdf-iter-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA fast_kdf_iter = 4000;
+        PRAGMA fast_kdf_iter;
+    }
+} {4000}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_page_size
+# reports default value
+do_test verify-pragma-cipher-page-size-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size;
+    }
+} {1024}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_page_size
+# reports change in value
+do_test verify-pragma-cipher-page-size-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size = 4096;
+        PRAGMA cipher_page_size;
+    }
+} {4096}
+db close
+file delete -force test.db
+
+# verify the pragma cipher
+# reports the default value
+do_test verify-pragma-cipher-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
+# verify the pragma cipher
+# reports a change in value
+do_test verify-pragma-cipher-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher = 'AES-256-ECB';
+        PRAGMA cipher;
+    }
+} {AES-256-ECB}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_salt_mask reports default
+do_test verify-pragma-hmac-salt-mask-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_salt_mask;
+    }
+} {3a}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_salt_mask reports
+# reports value changed
+do_test verify-pragma-hmac-salt-mask-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_salt_mask = "x'11'";
+        PRAGMA cipher_hmac_salt_mask;
+    }
+} {11}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_pgno reports default
+do_test verify-pragma-hmac-pgno-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_pgno;
+    }
+} {le}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_pgno 
+# reports value changed
+do_test verify-pragma-hmac-pgno-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_pgno = be;
+        PRAGMA cipher_hmac_pgno;
+        PRAGMA cipher_hmac_pgno = native;
+        PRAGMA cipher_hmac_pgno;
+        PRAGMA cipher_hmac_pgno = le;
+        PRAGMA cipher_hmac_pgno;
+    }
+} {be native le}
+db close
+file delete -force test.db
+
+# open a 2.0 beta database with 4000 round hmac kdf and 0x00 
+# hmac salt mask 
+# verify it can be opened
+do_test open-2.0-beta-database {
+  sqlite_orig db sqlcipher-2.0-beta-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA fast_kdf_iter = 4000;
+    PRAGMA cipher_hmac_salt_mask = "x'00'";
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  } 
+} {2 test-0-0 test-0-1 test-1-0 test-1-1}
+db close
+
+# open a 2.0 beta database 
+# attach a new standard database
+# copy schema between the two, and verify the latter 
+# can be opened
+do_test 2.0-beta-to-2.0-migration {
+  sqlite_orig db sqlcipher-2.0-beta-testkey.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_hmac_salt_mask = "x'00'";
+    PRAGMA fast_kdf_iter = 4000;
+    SELECT count(*) FROM sqlite_master;
+
+    PRAGMA cipher_hmac_salt_mask = "x'3a'";
+    ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
+    
+    CREATE TABLE db2.t1(a,b);
+    INSERT INTO db2.t1 SELECT * FROM main.t1;
+    DETACH DATABASE db2;
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT * FROM t1;
+  }
+} {test-0-0 test-0-1 test-1-0 test-1-1}
 db close
 file delete -force test.db
 

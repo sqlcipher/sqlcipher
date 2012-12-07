@@ -149,6 +149,7 @@
 **
 **     SQLITE_SYSTEM_MALLOC          // Use normal system malloc()
 **     SQLITE_WIN32_MALLOC           // Use Win32 native heap API
+**     SQLITE_ZERO_MALLOC            // Use a stub allocator that always fails
 **     SQLITE_MEMDEBUG               // Debugging version of system malloc()
 **
 ** On Windows, if the SQLITE_WIN32_MALLOC_VALIDATE macro is defined and the
@@ -162,11 +163,19 @@
 ** If none of the above are defined, then set SQLITE_SYSTEM_MALLOC as
 ** the default.
 */
-#if defined(SQLITE_SYSTEM_MALLOC)+defined(SQLITE_WIN32_MALLOC)+defined(SQLITE_MEMDEBUG)>1
-# error "At most one of the following compile-time configuration options\
- is allows: SQLITE_SYSTEM_MALLOC, SQLITE_WIN32_MALLOC, SQLITE_MEMDEBUG"
+#if defined(SQLITE_SYSTEM_MALLOC) \
+  + defined(SQLITE_WIN32_MALLOC) \
+  + defined(SQLITE_ZERO_MALLOC) \
+  + defined(SQLITE_MEMDEBUG)>1
+# error "Two or more of the following compile-time configuration options\
+ are defined but at most one is allowed:\
+ SQLITE_SYSTEM_MALLOC, SQLITE_WIN32_MALLOC, SQLITE_MEMDEBUG,\
+ SQLITE_ZERO_MALLOC"
 #endif
-#if defined(SQLITE_SYSTEM_MALLOC)+defined(SQLITE_WIN32_MALLOC)+defined(SQLITE_MEMDEBUG)==0
+#if defined(SQLITE_SYSTEM_MALLOC) \
+  + defined(SQLITE_WIN32_MALLOC) \
+  + defined(SQLITE_ZERO_MALLOC) \
+  + defined(SQLITE_MEMDEBUG)==0
 # define SQLITE_SYSTEM_MALLOC 1
 #endif
 
@@ -203,14 +212,21 @@
 #endif
 
 /*
-** Many people are failing to set -DNDEBUG=1 when compiling SQLite.
-** Setting NDEBUG makes the code smaller and run faster.  So the following
-** lines are added to automatically set NDEBUG unless the -DSQLITE_DEBUG=1
-** option is set.  Thus NDEBUG becomes an opt-in rather than an opt-out
+** NDEBUG and SQLITE_DEBUG are opposites.  It should always be true that
+** defined(NDEBUG)==!defined(SQLITE_DEBUG).  If this is not currently true,
+** make it true by defining or undefining NDEBUG.
+**
+** Setting NDEBUG makes the code smaller and run faster by disabling the
+** number assert() statements in the code.  So we want the default action
+** to be for NDEBUG to be set and NDEBUG to be undefined only if SQLITE_DEBUG
+** is set.  Thus NDEBUG becomes an opt-in rather than an opt-out
 ** feature.
 */
 #if !defined(NDEBUG) && !defined(SQLITE_DEBUG) 
 # define NDEBUG 1
+#endif
+#if defined(NDEBUG) && defined(SQLITE_DEBUG)
+# undef NDEBUG
 #endif
 
 /*
@@ -967,6 +983,7 @@ struct sqlite3 {
 #define SQLITE_MAGIC_SICK     0x4b771290  /* Error and awaiting close */
 #define SQLITE_MAGIC_BUSY     0xf03b7906  /* Database currently in use */
 #define SQLITE_MAGIC_ERROR    0xb5357930  /* An SQLITE_MISUSE error occurred */
+#define SQLITE_MAGIC_ZOMBIE   0x64cffc7f  /* Close with last statement close */
 
 /*
 ** Each SQL function is defined by an instance of the following
@@ -1673,8 +1690,9 @@ struct Expr {
   i16 iAgg;              /* Which entry in pAggInfo->aCol[] or ->aFunc[] */
   i16 iRightJoinTable;   /* If EP_FromJoin, the right table of the join */
   u8 flags2;             /* Second set of flags.  EP2_... */
-  u8 op2;                /* If a TK_REGISTER, the original value of Expr.op */
-                         /* If TK_COLUMN, the value of p5 for OP_Column */
+  u8 op2;                /* TK_REGISTER: original value of Expr.op
+                         ** TK_COLUMN: the value of p5 for OP_Column
+                         ** TK_AGG_FUNCTION: nesting depth */
   AggInfo *pAggInfo;     /* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
   Table *pTab;           /* Table for TK_COLUMN expressions. */
 #if SQLITE_MAX_EXPR_DEPTH>0
@@ -1899,7 +1917,7 @@ struct WherePlan {
 /*
 ** For each nested loop in a WHERE clause implementation, the WhereInfo
 ** structure contains a single instance of this structure.  This structure
-** is intended to be private the the where.c module and should not be
+** is intended to be private to the where.c module and should not be
 ** access or modified by other modules.
 **
 ** The pIdxInfo field is used to help pick the best index on a
@@ -1929,6 +1947,7 @@ struct WhereLevel {
         int addrInTop;         /* Top of the IN loop */
       } *aInLoop;           /* Information about each nested IN operator */
     } in;                 /* Used when plan.wsFlags&WHERE_IN_ABLE */
+    Index *pCovidx;       /* Possible covering index for WHERE_MULTI_OR */
   } u;
 
   /* The following field is really not part of the current level.  But
@@ -2101,10 +2120,10 @@ struct Select {
 typedef struct SelectDest SelectDest;
 struct SelectDest {
   u8 eDest;         /* How to dispose of the results */
-  u8 affinity;      /* Affinity used when eDest==SRT_Set */
-  int iParm;        /* A parameter used by the eDest disposal method */
-  int iMem;         /* Base register where results are written */
-  int nMem;         /* Number of registers allocated */
+  u8 affSdst;       /* Affinity used when eDest==SRT_Set */
+  int iSDParm;      /* A parameter used by the eDest disposal method */
+  int iSdst;        /* Base register where results are written */
+  int nSdst;        /* Number of registers allocated */
 };
 
 /*
@@ -2300,6 +2319,8 @@ struct AuthContext {
 #define OPFLAG_CLEARCACHE    0x20    /* Clear pseudo-table cache in OP_Column */
 #define OPFLAG_LENGTHARG     0x40    /* OP_Column only used for length() */
 #define OPFLAG_TYPEOFARG     0x80    /* OP_Column only used for typeof() */
+#define OPFLAG_BULKCSR       0x01    /* OP_Open** used to open bulk cursor */
+#define OPFLAG_P2ISREG       0x02    /* P2 to OP_Open** is a register number */
 
 /*
  * Each trigger present in the database schema is stored as an instance of
@@ -2479,10 +2500,12 @@ struct Walker {
   int (*xExprCallback)(Walker*, Expr*);     /* Callback for expressions */
   int (*xSelectCallback)(Walker*,Select*);  /* Callback for SELECTs */
   Parse *pParse;                            /* Parser context.  */
+  int walkerDepth;                          /* Number of subqueries */
   union {                                   /* Extra data for callback */
     NameContext *pNC;                          /* Naming context */
     int i;                                     /* Integer value */
     SrcList *pSrcList;                         /* FROM clause */
+    struct SrcCount *pSrcCount;                /* Counting column references */
   } u;
 };
 
@@ -2702,7 +2725,9 @@ void sqlite3ExprListDelete(sqlite3*, ExprList*);
 int sqlite3Init(sqlite3*, char**);
 int sqlite3InitCallback(void*, int, char**, char**);
 void sqlite3Pragma(Parse*,Token*,Token*,Token*,int);
-void sqlite3ResetInternalSchema(sqlite3*, int);
+void sqlite3ResetAllSchemasOfConnection(sqlite3*);
+void sqlite3ResetOneSchema(sqlite3*,int);
+void sqlite3CollapseDatabaseArray(sqlite3*);
 void sqlite3BeginParse(Parse*,int);
 void sqlite3CommitInternalChanges(sqlite3*);
 Table *sqlite3ResultSetOfSelect(Parse*,Select*);
@@ -2782,7 +2807,8 @@ Expr *sqlite3LimitWhere(Parse *, SrcList *, Expr *, ExprList *, Expr *, Expr *, 
 #endif
 void sqlite3DeleteFrom(Parse*, SrcList*, Expr*);
 void sqlite3Update(Parse*, SrcList*, ExprList*, Expr*, int);
-WhereInfo *sqlite3WhereBegin(Parse*, SrcList*, Expr*, ExprList**,ExprList*,u16);
+WhereInfo *sqlite3WhereBegin(
+    Parse*,SrcList*,Expr*,ExprList**,ExprList*,u16,int);
 void sqlite3WhereEnd(WhereInfo*);
 int sqlite3ExprCodeGetColumn(Parse*, Table*, int, int, int, u8);
 void sqlite3ExprCodeGetColumnOfTable(Vdbe*, Table*, int, int, int);
@@ -2814,6 +2840,7 @@ int sqlite3ExprCompare(Expr*, Expr*);
 int sqlite3ExprListCompare(ExprList*, ExprList*);
 void sqlite3ExprAnalyzeAggregates(NameContext*, Expr*);
 void sqlite3ExprAnalyzeAggList(NameContext*,ExprList*);
+int sqlite3FunctionUsesThisSrc(Expr*, SrcList*);
 Vdbe *sqlite3GetVdbe(Parse*);
 void sqlite3PrngSaveState(void);
 void sqlite3PrngRestoreState(void);
@@ -2826,6 +2853,7 @@ void sqlite3CommitTransaction(Parse*);
 void sqlite3RollbackTransaction(Parse*);
 void sqlite3Savepoint(Parse*, int, Token*);
 void sqlite3CloseSavepoints(sqlite3 *);
+void sqlite3LeaveMutexAndCloseZombie(sqlite3*);
 int sqlite3ExprIsConstant(Expr*);
 int sqlite3ExprIsConstantNotJoin(Expr*);
 int sqlite3ExprIsConstantOrFunction(Expr*);
@@ -3107,6 +3135,7 @@ void sqlite3AutoLoadExtensions(sqlite3*);
 #  define sqlite3GetVTable(X,Y)  ((VTable*)0)
 #else
    void sqlite3VtabClear(sqlite3 *db, Table*);
+   void sqlite3VtabDisconnect(sqlite3 *db, Table *p);
    int sqlite3VtabSync(sqlite3 *db, char **);
    int sqlite3VtabRollback(sqlite3 *db);
    int sqlite3VtabCommit(sqlite3 *db);
