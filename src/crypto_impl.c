@@ -601,7 +601,7 @@ void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
 }
 
 /** convert a 32bit unsigned integer to little endian byte ordering */
-static inline void sqlcipher_put4byte_le(unsigned char *p, u32 v) { 
+static void sqlcipher_put4byte_le(unsigned char *p, u32 v) { 
   p[0] = (u8)v;
   p[1] = (u8)(v>>8);
   p[2] = (u8)(v>>16);
