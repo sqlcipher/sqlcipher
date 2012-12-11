@@ -136,7 +136,8 @@ struct Fts3DeferredToken {
 */
 struct Fts3SegReader {
   int iIdx;                       /* Index within level, or 0x7FFFFFFF for PT */
-  int bLookup;                    /* True for a lookup only */
+  u8 bLookup;                     /* True for a lookup only */
+  u8 rootOnly;                    /* True for a root-only reader */
 
   sqlite3_int64 iStartBlock;      /* Rowid of first leaf block to traverse */
   sqlite3_int64 iLeafEndBlock;    /* Rowid of final leaf block to traverse */
@@ -170,7 +171,7 @@ struct Fts3SegReader {
 };
 
 #define fts3SegReaderIsPending(p) ((p)->ppNextElem!=0)
-#define fts3SegReaderIsRootOnly(p) ((p)->aNode==(char *)&(p)[1])
+#define fts3SegReaderIsRootOnly(p) ((p)->rootOnly!=0)
 
 /*
 ** An instance of this structure is used to create a segment b-tree in the
@@ -1581,7 +1582,7 @@ int sqlite3Fts3SegReaderNew(
   }
   memset(pReader, 0, sizeof(Fts3SegReader));
   pReader->iIdx = iAge;
-  pReader->bLookup = bLookup;
+  pReader->bLookup = bLookup!=0;
   pReader->iStartBlock = iStartLeaf;
   pReader->iLeafEndBlock = iEndLeaf;
   pReader->iEndBlock = iEndBlock;
@@ -1589,6 +1590,7 @@ int sqlite3Fts3SegReaderNew(
   if( nExtra ){
     /* The entire segment is stored in the root node. */
     pReader->aNode = (char *)&pReader[1];
+    pReader->rootOnly = 1;
     pReader->nNode = nRoot;
     memcpy(pReader->aNode, zRoot, nRoot);
     memset(&pReader->aNode[nRoot], 0, FTS3_NODE_PADDING);
@@ -2967,7 +2969,7 @@ static int fts3SegmentMerge(
 
   if( iLevel==FTS3_SEGCURSOR_ALL ){
     /* This call is to merge all segments in the database to a single
-    ** segment. The level of the new segment is equal to the the numerically 
+    ** segment. The level of the new segment is equal to the numerically
     ** greatest segment level currently present in the database for this
     ** index. The idx of the new segment is always 0.  */
     if( csr.nSegment==1 ){
@@ -3174,7 +3176,12 @@ static void fts3UpdateDocTotals(
   }else{
     memset(a, 0, sizeof(u32)*(nStat) );
   }
-  sqlite3_reset(pStmt);
+  rc = sqlite3_reset(pStmt);
+  if( rc!=SQLITE_OK ){
+    sqlite3_free(a);
+    *pRC = rc;
+    return;
+  }
   if( nChng<0 && a[0]<(u32)(-nChng) ){
     a[0] = 0;
   }else{
@@ -3592,7 +3599,7 @@ static int fts3IncrmergePush(
         pNode->key.n = nTerm;
       }
     }else{
-      /* Otherwise, flush the the current node of layer iLayer to disk.
+      /* Otherwise, flush the current node of layer iLayer to disk.
       ** Then allocate a new, empty sibling node. The key will be written
       ** into the parent of this node. */
       rc = fts3WriteSegment(p, pNode->iBlock, pNode->block.a, pNode->block.n);
@@ -5039,6 +5046,7 @@ static int fts3SpecialInsert(Fts3Table *p, sqlite3_value *pVal){
   return rc;
 }
 
+#ifndef SQLITE_DISABLE_FTS4_DEFERRED
 /*
 ** Delete all cached deferred doclists. Deferred doclists are cached
 ** (allocated) by the sqlite3Fts3CacheDeferredDoclists() function.
@@ -5176,6 +5184,7 @@ int sqlite3Fts3DeferToken(
 
   return SQLITE_OK;
 }
+#endif
 
 /*
 ** SQLite value pRowid contains the rowid of a row that may or may not be

@@ -3554,6 +3554,9 @@ static void hashDestroy(void *p){
 */
 void sqlite3Fts3SimpleTokenizerModule(sqlite3_tokenizer_module const**ppModule);
 void sqlite3Fts3PorterTokenizerModule(sqlite3_tokenizer_module const**ppModule);
+#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+void sqlite3Fts3UnicodeTokenizer(sqlite3_tokenizer_module const**ppModule);
+#endif
 #ifdef SQLITE_ENABLE_ICU
 void sqlite3Fts3IcuTokenizerModule(sqlite3_tokenizer_module const**ppModule);
 #endif
@@ -3569,10 +3572,17 @@ int sqlite3Fts3Init(sqlite3 *db){
   Fts3Hash *pHash = 0;
   const sqlite3_tokenizer_module *pSimple = 0;
   const sqlite3_tokenizer_module *pPorter = 0;
+#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+  const sqlite3_tokenizer_module *pUnicode = 0;
+#endif
 
 #ifdef SQLITE_ENABLE_ICU
   const sqlite3_tokenizer_module *pIcu = 0;
   sqlite3Fts3IcuTokenizerModule(&pIcu);
+#endif
+
+#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+  sqlite3Fts3UnicodeTokenizer(&pUnicode);
 #endif
 
 #ifdef SQLITE_TEST
@@ -3598,6 +3608,10 @@ int sqlite3Fts3Init(sqlite3 *db){
   if( rc==SQLITE_OK ){
     if( sqlite3Fts3HashInsert(pHash, "simple", 7, (void *)pSimple)
      || sqlite3Fts3HashInsert(pHash, "porter", 7, (void *)pPorter) 
+
+#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+     || sqlite3Fts3HashInsert(pHash, "unicode61", 10, (void *)pUnicode) 
+#endif
 #ifdef SQLITE_ENABLE_ICU
      || (pIcu && sqlite3Fts3HashInsert(pHash, "icu", 4, (void *)pIcu))
 #endif
@@ -4422,6 +4436,7 @@ static int fts3EvalStart(Fts3Cursor *pCsr){
   fts3EvalAllocateReaders(pCsr, pCsr->pExpr, &nToken, &nOr, &rc);
 
   /* Determine which, if any, tokens in the expression should be deferred. */
+#ifndef SQLITE_DISABLE_FTS4_DEFERRED
   if( rc==SQLITE_OK && nToken>1 && pTab->bFts4 ){
     Fts3TokenAndCost *aTC;
     Fts3Expr **apOr;
@@ -4452,6 +4467,7 @@ static int fts3EvalStart(Fts3Cursor *pCsr){
       sqlite3_free(aTC);
     }
   }
+#endif
 
   fts3EvalStartReaders(pCsr, pCsr->pExpr, 1, &rc);
   return rc;
@@ -4835,6 +4851,7 @@ static int fts3EvalTestExpr(
         break;
 
       default: {
+#ifndef SQLITE_DISABLE_FTS4_DEFERRED
         if( pCsr->pDeferred 
          && (pExpr->iDocid==pCsr->iPrevId || pExpr->bDeferred)
         ){
@@ -4846,7 +4863,9 @@ static int fts3EvalTestExpr(
           *pRc = fts3EvalDeferredPhrase(pCsr, pPhrase);
           bHit = (pPhrase->doclist.pList!=0);
           pExpr->iDocid = pCsr->iPrevId;
-        }else{
+        }else
+#endif
+        {
           bHit = (pExpr->bEof==0 && pExpr->iDocid==pCsr->iPrevId);
         }
         break;

@@ -63,7 +63,7 @@ typedef struct {
   int pass_sz;
   int reserve_sz;
   int hmac_sz;
-  int use_hmac;
+  unsigned int flags;
   unsigned char *key;
   unsigned char *hmac_key;
   char *pass;
@@ -79,7 +79,11 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *, cipher_ctx *);
 /* prototype for pager HMAC function */
 int sqlcipher_page_hmac(cipher_ctx *, Pgno, unsigned char *, int, unsigned char *);
 
-static int default_use_hmac = DEFAULT_USE_HMAC;
+static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
+static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
+
+static unsigned int openssl_external_init = 0;
+static unsigned int openssl_init_count = 0;
 
 struct codec_ctx {
   int kdf_salt_sz;
@@ -92,31 +96,93 @@ struct codec_ctx {
   cipher_ctx *write_ctx;
 };
 
+/* activate and initialize sqlcipher. Most importantly, this will automatically
+   intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
+   this function may be called multiple times as new codecs are intiialized. 
+   Thus it performs some basic counting to ensure that only the last and final
+   sqlcipher_deactivate() will free the EVP structures. 
+*/
 void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-  if(EVP_get_cipherbyname(CIPHER) == NULL) {
-    OpenSSL_add_all_algorithms();
+
+  /* we'll initialize openssl and increment the internal init counter
+     but only if it hasn't been initalized outside of SQLCipher by this program 
+     e.g. on startup */
+  if(openssl_init_count == 0 && EVP_get_cipherbyname(CIPHER) != NULL) {
+    openssl_external_init = 1;
+  }
+
+  if(openssl_external_init == 0) {
+    if(openssl_init_count == 0)  {
+      OpenSSL_add_all_algorithms();
+    }
+    openssl_init_count++; 
   } 
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
-/* fixed time zero memory check tests every position of a memory segement
-   matches a single value (i.e. the memory is all zeros)*/
-int sqlcipher_ismemset(const unsigned char *a0, unsigned char value, int len) {
-  int i = 0, noMatch = 0;
-  for(i = 0; i < len; i++) noMatch = (noMatch || (a0[i] != value)); 
-  return noMatch;
+/* deactivate SQLCipher, most imporantly decremeting the activation count and
+   freeing the EVP structures on the final deactivation to ensure that 
+   OpenSSL memory is cleaned up */
+void sqlcipher_deactivate() {
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  /* If it is initialized externally, then the init counter should never be greater than zero.
+     This should prevent SQLCipher from "cleaning up" openssl 
+     when something else in the program might be using it. */
+  if(openssl_external_init == 0) {
+    openssl_init_count--;
+    /* if the counter reaches zero after it's decremented release EVP memory
+       Note: this code will only be reached if OpensSSL_add_all_algorithms()
+       is called by SQLCipher internally. */
+    if(openssl_init_count == 0) {
+      EVP_cleanup();
+    }
+  }
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
-/* fixed time memory comparison routine */
-int sqlcipher_memcmp(const unsigned char *a0, const unsigned char *a1, int len) {
-  int i = 0, noMatch = 0;
+/* constant time memset using volitile to avoid having the memset
+   optimized out by the compiler. 
+   Note: As suggested by Joachim Schipper (joachim.schipper@fox-it.com)
+*/
+void* sqlcipher_memset(void *v, unsigned char value, int len) {
+  int i = 0;
+  volatile unsigned char *a = v;
+
+  if (v == NULL) return v;
 
   for(i = 0; i < len; i++) {
-    noMatch = (noMatch || (a0[i] != a1[i]));
+    a[i] = value;
+  }
+
+  return v;
+}
+
+/* constant time memory check tests every position of a memory segement
+   matches a single value (i.e. the memory is all zeros)
+   returns 0 if match, 1 of no match */
+int sqlcipher_ismemset(const void *v, unsigned char value, int len) {
+  const unsigned char *a = v;
+  int i = 0, result = 0;
+
+  for(i = 0; i < len; i++) {
+    result |= a[i] ^ value;
+  }
+
+  return (result != 0);
+}
+
+/* constant time memory comparison routine. 
+   returns 0 if match, 1 if no match */
+int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
+  const unsigned char *a0 = v0, *a1 = v1;
+  int i = 0, result = 0;
+
+  for(i = 0; i < len; i++) {
+    result |= a0[i] ^ a1[i];
   }
   
-  return noMatch;
+  return (result != 0);
 }
 
 /* generate a defined number of pseudorandom bytes */
@@ -126,7 +192,7 @@ int sqlcipher_random (void *buffer, int length) {
 
 /**
   * Free and wipe memory. Uses SQLites internal sqlite3_free so that memory
-  * can be countend and memory leak detection works in the tet suite. 
+  * can be countend and memory leak detection works in the test suite. 
   * If ptr is not null memory will be freed. 
   * If sz is greater than zero, the memory will be overwritten with zero before it is freed
   * If sz is > 0, and not compiled with OMIT_MEMLOCK, system will attempt to unlock the
@@ -135,7 +201,7 @@ int sqlcipher_random (void *buffer, int length) {
 void sqlcipher_free(void *ptr, int sz) {
   if(ptr) {
     if(sz > 0) {
-      memset(ptr, 0, sz);
+      sqlcipher_memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
       munlock(ptr, sz);
@@ -155,6 +221,7 @@ void sqlcipher_free(void *ptr, int sz) {
   */
 void* sqlcipher_malloc(int sz) {
   void *ptr = sqlite3Malloc(sz);
+  sqlcipher_memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
   if(ptr) {
 #if defined(__unix__) || defined(__APPLE__) 
@@ -169,7 +236,7 @@ void* sqlcipher_malloc(int sz) {
 
 
 /**
-  * Initialize a a new cipher_ctx struct. This function will allocate memory
+  * Initialize new cipher_ctx struct. This function will allocate memory
   * for the cipher context and for the key
   * 
   * returns SQLITE_OK if initialization was successful
@@ -180,11 +247,15 @@ int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   *iCtx = (cipher_ctx *) sqlcipher_malloc(sizeof(cipher_ctx));
   ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
-  memset(ctx, 0, sizeof(cipher_ctx)); 
+
   ctx->key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   ctx->hmac_key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
   if(ctx->key == NULL) return SQLITE_NOMEM;
   if(ctx->hmac_key == NULL) return SQLITE_NOMEM;
+
+  /* setup default flags */
+  ctx->flags = default_flags;
+
   return SQLITE_OK;
 }
 
@@ -216,7 +287,7 @@ int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
     && c1->fast_kdf_iter == c2->fast_kdf_iter
     && c1->key_sz == c2->key_sz
     && c1->pass_sz == c2->pass_sz
-    && c1->use_hmac == c2->use_hmac
+    && c1->flags == c2->flags
     && c1->hmac_sz == c2->hmac_sz
     && (
       c1->pass == c2->pass
@@ -309,6 +380,12 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   return SQLITE_OK;
 }
 
+const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  EVP_CIPHER *evp_cipher = c_ctx->evp_cipher;
+  return EVP_CIPHER_name(evp_cipher);
+}
+
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
@@ -321,6 +398,11 @@ int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) 
       return rc; 
 
   return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  return c_ctx->kdf_iter;
 }
 
 int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int for_ctx) {
@@ -337,9 +419,27 @@ int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter, int
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  return c_ctx->fast_kdf_iter;
+}
+
 /* set the global default flag for HMAC */
 void sqlcipher_set_default_use_hmac(int use) {
-  default_use_hmac = use;
+  if(use) default_flags |= CIPHER_FLAG_HMAC; 
+  else default_flags &= ~CIPHER_FLAG_HMAC; 
+}
+
+int sqlcipher_get_default_use_hmac() {
+  return (default_flags & CIPHER_FLAG_HMAC) != 0;
+}
+
+void sqlcipher_set_hmac_salt_mask(unsigned char mask) {
+  hmac_salt_mask = mask;
+}
+
+unsigned char sqlcipher_get_hmac_salt_mask() {
+  return hmac_salt_mask;
 }
 
 /* set the codec flag for whether this individual database should be using hmac */
@@ -356,20 +456,44 @@ int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   CODEC_TRACE(("sqlcipher_codec_ctx_set_use_hmac: use=%d block_sz=%d md_size=%d reserve=%d\n", 
                 use, ctx->read_ctx->block_sz, ctx->read_ctx->hmac_sz, reserve)); 
 
-  ctx->write_ctx->use_hmac = ctx->read_ctx->use_hmac = use;
+  
+  if(use) {
+    sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HMAC);
+  } else {
+    sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_HMAC);
+  } 
+  
   ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
 
   return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx) {
+  cipher_ctx * c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  return (c_ctx->flags & CIPHER_FLAG_HMAC) != 0;
+}
+
+int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag) {
+  ctx->write_ctx->flags |= flag;
+  ctx->read_ctx->flags |= flag;
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag) {
+  ctx->write_ctx->flags &= ~flag;
+  ctx->read_ctx->flags &= ~flag;
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx) {
+  cipher_ctx * c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  return (c_ctx->flags & flag) != 0;
 }
 
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   CODEC_TRACE(("sqlcipher_codec_ctx_set_error: ctx=%p, error=%d\n", ctx, error));
   sqlite3pager_sqlite3PagerSetError(ctx->pBt->pBt->pPager, error);
   ctx->pBt->pBt->db->errCode = error;
-}
-
-int sqlcipher_codec_ctx_get_pagesize(codec_ctx *ctx) {
-  return ctx->page_sz;
 }
 
 int sqlcipher_codec_ctx_get_reservesize(codec_ctx *ctx) {
@@ -403,6 +527,10 @@ int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
   return SQLITE_OK;
 }
 
+int sqlcipher_codec_ctx_get_pagesize(codec_ctx *ctx) {
+  return ctx->page_sz;
+}
+
 int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
   int rc;
   codec_ctx *ctx;
@@ -411,7 +539,6 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(ctx == NULL) return SQLITE_NOMEM;
 
-  memset(ctx, 0, sizeof(codec_ctx)); /* initialize all pointers and values to 0 */
   ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
 
   /* allocate space for salt data. Then read the first 16 bytes 
@@ -449,9 +576,9 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   if((rc = sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, FAST_PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
   if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) return rc;
 
-  /* Use HMAC signatures by default. Note that codec_set_use_hmac will implicity call
-     codec_set_page_size to set the default */
-  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_use_hmac)) != SQLITE_OK) return rc;
+  /* Note that use_hmac is a special case that requires recalculation of page size
+     so we call set_use_hmac to perform setup */
+  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_flags & CIPHER_FLAG_HMAC)) != SQLITE_OK) return rc;
 
   if((rc = sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) return rc;
 
@@ -473,16 +600,40 @@ void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   sqlcipher_free(ctx, sizeof(codec_ctx)); 
 }
 
+/** convert a 32bit unsigned integer to little endian byte ordering */
+static void sqlcipher_put4byte_le(unsigned char *p, u32 v) { 
+  p[0] = (u8)v;
+  p[1] = (u8)(v>>8);
+  p[2] = (u8)(v>>16);
+  p[3] = (u8)(v>>24);
+}
+
 int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
+  unsigned char pgno_raw[sizeof(pgno)];
+  /* we may convert page number to consistent representation before calculating MAC for
+     compatibility across big-endian and little-endian platforms. 
+
+     Note: The public release of sqlcipher 2.0.0 to 2.0.6 had a bug where the bytes of pgno 
+     were used directly in the MAC. SQLCipher convert's to little endian by default to preserve
+     backwards compatibility on the most popular platforms, but can optionally be configured
+     to use either big endian or native byte ordering via pragma. */
+
+  if(ctx->flags & CIPHER_FLAG_LE_PGNO) { /* compute hmac using little endian pgno*/
+    sqlcipher_put4byte_le(pgno_raw, pgno);
+  } else if(ctx->flags & CIPHER_FLAG_BE_PGNO) { /* compute hmac using big endian pgno */
+    sqlite3Put4byte(pgno_raw, pgno); /* sqlite3Put4byte converts 32bit uint to big endian  */
+  } else { /* use native byte ordering */
+    memcpy(pgno_raw, &pgno, sizeof(pgno));
+  }
+
   HMAC_CTX_init(&ctx->hctx);
-  
   HMAC_Init_ex(&ctx->hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL);
 
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
   HMAC_Update(&ctx->hctx, in, in_sz);
-  HMAC_Update(&ctx->hctx, (const unsigned char*) &pgno, sizeof(Pgno));
+  HMAC_Update(&ctx->hctx, (const unsigned char*) pgno_raw, sizeof(pgno)); 
   HMAC_Final(&ctx->hctx, out, NULL);
   HMAC_CTX_cleanup(&ctx->hctx);
   return SQLITE_OK; 
@@ -507,7 +658,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   iv_in = in + size;
 
   /* hmac will be written immediately after the initialization vector. the remainder of the page reserve will contain
-     random bytes. note, these pointers are only valid when use_hmac is true */
+     random bytes. note, these pointers are only valid when using hmac */
   hmac_in = in + size + c_ctx->iv_sz; 
   hmac_out = out + size + c_ctx->iv_sz;
   out_start = out; /* note the original position of the output buffer pointer, as out will be rewritten during encryption */
@@ -518,7 +669,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   /* the key size should never be zero. If it is, error out. */
   if(c_ctx->key_sz == 0) {
     CODEC_TRACE(("codec_cipher: error possible context corruption, key_sz is zero for pgno=%d\n", pgno));
-    memset(out, 0, page_sz); 
+    sqlcipher_memset(out, 0, page_sz); 
     return SQLITE_ERROR;
   } 
 
@@ -529,9 +680,9 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     memcpy(iv_out, iv_in, c_ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
 
-  if(c_ctx->use_hmac && (mode == CIPHER_DECRYPT)) {
+  if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
     if(sqlcipher_page_hmac(c_ctx, pgno, in, size + c_ctx->iv_sz, hmac_out) != SQLITE_OK) {
-      memset(out, 0, page_sz); 
+      sqlcipher_memset(out, 0, page_sz); 
       CODEC_TRACE(("codec_cipher: hmac operations failed for pgno=%d\n", pgno));
       return SQLITE_ERROR;
     }
@@ -544,14 +695,14 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
            short read failures must be ignored for autovaccum mode to work so wipe the output buffer 
            and return SQLITE_OK to skip the decryption step. */
         CODEC_TRACE(("codec_cipher: zeroed page (short read) for pgno %d, encryption but returning SQLITE_OK\n", pgno));
-        memset(out, 0, page_sz); 
+        sqlcipher_memset(out, 0, page_sz); 
   	return SQLITE_OK;
       } else {
 	/* if the page memory is not all zeros, it means the there was data and a hmac on the page. 
            since the check failed, the page was either tampered with or corrupted. wipe the output buffer,
            and return SQLITE_ERROR to the caller */
       	CODEC_TRACE(("codec_cipher: hmac check failed for pgno=%d returning SQLITE_ERROR\n", pgno));
-        memset(out, 0, page_sz); 
+        sqlcipher_memset(out, 0, page_sz); 
       	return SQLITE_ERROR;
       }
     }
@@ -568,7 +719,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   EVP_CIPHER_CTX_cleanup(&c_ctx->ectx);
   assert(size == csz);
 
-  if(c_ctx->use_hmac && (mode == CIPHER_ENCRYPT)) {
+  if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
     sqlcipher_page_hmac(c_ctx, pgno, out_start, size + c_ctx->iv_sz, hmac_out); 
   }
 
@@ -613,7 +764,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     /* if this context is setup to use hmac checks, generate a seperate and different 
        key for HMAC. In this case, we use the output of the previous KDF as the input to 
        this KDF run. This ensures a distinct but predictable HMAC key. */
-    if(c_ctx->use_hmac) {
+    if(c_ctx->flags & CIPHER_FLAG_HMAC) {
       int i;
 
       /* start by copying the kdf key into the hmac salt slot
@@ -623,7 +774,7 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
          to generate the encryption key */ 
       memcpy(ctx->hmac_kdf_salt, ctx->kdf_salt, ctx->kdf_salt_sz);
       for(i = 0; i < ctx->kdf_salt_sz; i++) {
-        ctx->hmac_kdf_salt[i] ^= HMAC_SALT_MASK;
+        ctx->hmac_kdf_salt[i] ^= hmac_salt_mask;
       } 
 
       CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
