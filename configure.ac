@@ -130,9 +130,9 @@ AC_CHECK_HEADERS([sys/types.h stdlib.h stdint.h inttypes.h malloc.h])
 AC_CHECK_FUNCS([usleep fdatasync localtime_r gmtime_r localtime_s utime malloc_usable_size])
 
 #########
-# By default, we use the amalgamation (this may be changed below...)
+# By default, we do not use the amalgamation (this may be changed below...)
 #
-USE_AMALGAMATION=1
+USE_AMALGAMATION=0
 
 #########
 # See whether we can run specific tclsh versions known to work well;
@@ -287,7 +287,7 @@ AC_SUBST(ALLOWRELEASE)
 # Do we want temporary databases in memory
 #
 AC_ARG_ENABLE(tempstore, 
-AC_HELP_STRING([--enable-tempstore],[Use an in-ram database for temporary tables (never,no,yes,always)]),,enable_tempstore=no)
+AC_HELP_STRING([--enable-tempstore],[Use an in-ram database for temporary tables (never,no,yes,always)]),,enable_tempstore=yes)
 AC_MSG_CHECKING([whether to use an in-ram database for temporary tables])
 case "$enable_tempstore" in
   never ) 
@@ -689,6 +689,7 @@ else
 fi
 AC_SUBST(USE_GCOV)
 
+CFLAGS="$CFLAGS -DSQLITE_HAS_CODEC"
 
 #########
 # Output the config header
@@ -700,5 +701,5 @@ AC_CONFIG_HEADERS(config.h)
 AC_SUBST(BUILD_CFLAGS)
 AC_OUTPUT([
 Makefile
-sqlite3.pc
+sqlite3-cipher.pc
 ])
