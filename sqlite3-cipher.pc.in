@@ -8,6 +8,6 @@ includedir=@includedir@
 Name: SQLite
 Description: SQL database engine
 Version: @RELEASE@
-Libs: -L${libdir} -lsqlite3
+Libs: -L${libdir} -lsqlite3-cipher
 Libs.private: @LIBS@
-Cflags: -I${includedir}
+Cflags: -I${includedir} -DSQLITE_HAS_CODEC
