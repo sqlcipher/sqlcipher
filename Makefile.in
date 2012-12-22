@@ -813,6 +813,8 @@ parse.c:	$(TOP)/src/parse.y lemon$(BEXE) $(TOP)/addopcodes.awk
 
 sqlite3-cipher.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest.uuid $(TOP)/VERSION
 	$(TCLSH_CMD) $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3-cipher.h
+	ln -s sqlite3-cipher.h sqlite3.h
+	ln -s $(TOP)/src/sqlite3ext-cipher.h sqlite3ext.h
 
 keywordhash.h:	$(TOP)/tool/mkkeywordhash.c
 	$(BCC) -o mkkeywordhash$(BEXE) $(OPT_FEATURE_FLAGS) $(OPTS) $(TOP)/tool/mkkeywordhash.c
@@ -948,7 +950,7 @@ tcl_install:	lib_install libtclsqlite3-cipher.la pkgIndex.tcl
 
 clean:	
 	rm -f *.lo *.la *.o sqlite3-cipher$(TEXE) libsqlite3-cipher.la
-	rm -f sqlite3-cipher.h opcodes.*
+	rm -f sqlite3-cipher.h sqlite3.h opcodes.*
 	rm -rf .libs .deps
 	rm -f lemon$(BEXE) lempar.c parse.* sqlite*.tar.gz
 	rm -f mkkeywordhash$(BEXE) keywordhash.h
@@ -962,6 +964,7 @@ clean:
 	rm -f sqlite3.c
 	rm -f sqlite3_analyzer-cipher$(TEXE) sqlite3_analyzer.c
 	rm -f sqlite-output.vsix
+	rm -f $(TOP)/src/sqlite3ext.h
 
 distclean:	clean
 	rm -f config.log config.status libtool Makefile sqlite3-cipher.pc
