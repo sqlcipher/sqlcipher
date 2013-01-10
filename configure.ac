@@ -87,7 +87,7 @@
 # you don't need (for example BLT) by erasing or commenting out
 # the corresponding code.
 #
-AC_INIT(sqlite, m4_esyscmd([cat VERSION | tr -d '\n']))
+AC_INIT(sqlcipher, 2.0.6)
 
 dnl Make sure the local VERSION file matches this configure script
 sqlite_version_sanity_check=`cat $srcdir/VERSION | tr -d '\n'`
@@ -159,6 +159,8 @@ if test "x${TCLLIBDIR+set}" != "xset" ; then
   TCLLIBDIR="${TCLLIBDIR}/sqlite3"
 fi
 
+AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
 
 #########
 # Set up an appropriate program prefix
@@ -700,5 +702,5 @@ AC_CONFIG_HEADERS(config.h)
 AC_SUBST(BUILD_CFLAGS)
 AC_OUTPUT([
 Makefile
-sqlite3.pc
+sqlcipher.pc
 ])

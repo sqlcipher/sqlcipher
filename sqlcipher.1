@@ -2,7 +2,7 @@
 .\" First parameter, NAME, should be all caps
 .\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
 .\" other parameters are allowed: see man(7), man(1)
-.TH SQLITE3 1 "Mon Apr 15 23:49:17 2002"
+.TH SQLCIPHER 1 "Mon Apr 15 23:49:17 2002"
 .\" Please adjust this date whenever revising the manpage.
 .\"
 .\" Some roff macros, for reference:
@@ -16,29 +16,29 @@
 .\" .sp <n>    insert n+1 empty lines
 .\" for manpage-specific macros, see man(7)
 .SH NAME
-.B sqlite3 
-\- A command line interface for SQLite version 3
+.B sqlcipher 
+\- A command line interface for SQLCipher version 2
 
 .SH SYNOPSIS
-.B sqlite3
+.B sqlcipher
 .RI [ options ]
 .RI [ databasefile ]
 .RI [ SQL ]
 
 .SH SUMMARY
 .PP
-.B sqlite3
-is a terminal-based front-end to the SQLite library that can evaluate
+.B sqlcipher
+is a terminal-based front-end to the SQLCipher library that can evaluate
 queries interactively and display the results in multiple formats.
-.B sqlite3
+.B sqlcipher
 can also be used within shell scripts and other applications to provide
 batch processing features.
 
 .SH DESCRIPTION
 To start a
-.B sqlite3
+.B sqlcipher
 interactive session, invoke the
-.B sqlite3
+.B sqlcipher
 command and optionally provide the name of a database file.  If the
 database file does not exist, it will be created.  If the database file
 does exist, it will be opened.
@@ -47,9 +47,9 @@ For example, to create a new database file named "mydata.db", create
 a table named "memos" and insert a couple of records into that table:
 .sp
 $ 
-.B sqlite3 mydata.db
+.B sqlcipher mydata.db
 .br
-SQLite version 3.1.3
+SQLite version 2.0.3
 .br
 Enter ".help" for instructions
 .br
@@ -85,7 +85,7 @@ semi-colons.
 For example:
 .sp
 $ 
-.B sqlite3 -line mydata.db 'select * from memos where priority > 20;'
+.B sqlcipher -line mydata.db 'select * from memos where priority > 20;'
 .br
     text = lunch with Christine
 .br
@@ -144,7 +144,7 @@ sqlite>
 .fi
 
 .SH OPTIONS
-.B sqlite3
+.B sqlcipher
 has the following options:
 .TP
 .BI \-init\ file
@@ -190,7 +190,7 @@ Show help on options and exit.
 
 
 .SH INIT FILE
-.B sqlite3
+.B sqlcipher
 reads an initialization file to set the configuration of the
 interactive environment.  Throughout initialization, any previously
 specified setting can be overridden.  The sequence of initialization is
@@ -220,7 +220,7 @@ o If the -init option is present, the specified file is processed.
 o All other command line options are processed.
 
 .SH SEE ALSO
-http://www.sqlite.org/
+http://www.sqlcipher.net/
 .br
 The sqlite-doc package
 .SH AUTHOR
