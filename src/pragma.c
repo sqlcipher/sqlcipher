@@ -357,6 +357,7 @@ void sqlite3Pragma(
   aFcntl[1] = zLeft;
   aFcntl[2] = zRight;
   aFcntl[3] = 0;
+  db->busyHandler.nBusy = 0;
   rc = sqlite3_file_control(db, zDb, SQLITE_FCNTL_PRAGMA, (void*)aFcntl);
   if( rc==SQLITE_OK ){
     if( aFcntl[0] ){
@@ -974,7 +975,8 @@ void sqlite3Pragma(
         }else{
           sqlite3VdbeAddOp2(v, OP_Null, 0, 5);
         }
-        sqlite3VdbeAddOp2(v, OP_Integer, pCol->isPrimKey, 6);
+        sqlite3VdbeAddOp2(v, OP_Integer,
+                            (pCol->colFlags&COLFLAG_PRIMKEY)!=0, 6);
         sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 6);
       }
     }
@@ -1233,7 +1235,7 @@ void sqlite3Pragma(
       sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0,
          sqlite3MPrintf(db, "*** in database %s ***\n", db->aDb[i].zName),
          P4_DYNAMIC);
-      sqlite3VdbeAddOp3(v, OP_Move, 2, 4, 1);
+      sqlite3VdbeAddOp2(v, OP_Move, 2, 4);
       sqlite3VdbeAddOp3(v, OP_Concat, 4, 3, 2);
       sqlite3VdbeAddOp2(v, OP_ResultRow, 2, 1);
       sqlite3VdbeJumpHere(v, addr);
@@ -1536,6 +1538,22 @@ void sqlite3Pragma(
     sqlite3_db_release_memory(db);
   }else
 
+  /*
+  **   PRAGMA busy_timeout
+  **   PRAGMA busy_timeout = N
+  **
+  ** Call sqlite3_busy_timeout(db, N).  Return the current timeout value
+  ** if one is set.  If no busy handler or a different busy handler is set
+  ** then 0 is returned.  Setting the busy_timeout to 0 or negative
+  ** disables the timeout.
+  */
+  if( sqlite3StrICmp(zLeft, "busy_timeout")==0 ){
+    if( zRight ){
+      sqlite3_busy_timeout(db, sqlite3Atoi(zRight));
+    }
+    returnSingleInt(pParse, "timeout",  db->busyTimeout);
+  }else
+
 #if defined(SQLITE_DEBUG) || defined(SQLITE_TEST)
   /*
   ** Report the current state of file logs for all databases
@@ -1551,13 +1569,12 @@ void sqlite3Pragma(
     sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "status", SQLITE_STATIC);
     for(i=0; i<db->nDb; i++){
       Btree *pBt;
-      Pager *pPager;
       const char *zState = "unknown";
       int j;
       if( db->aDb[i].zName==0 ) continue;
       sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, db->aDb[i].zName, P4_STATIC);
       pBt = db->aDb[i].pBt;
-      if( pBt==0 || (pPager = sqlite3BtreePager(pBt))==0 ){
+      if( pBt==0 || sqlite3BtreePager(pBt)==0 ){
         zState = "closed";
       }else if( sqlite3_file_control(db, i ? db->aDb[i].zName : 0, 
                                      SQLITE_FCNTL_LOCKSTATE, &j)==SQLITE_OK ){
