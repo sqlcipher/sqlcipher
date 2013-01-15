@@ -1489,7 +1489,7 @@ static Tcl_Obj *dbEvalColumnValue(DbEvalContext *p, int iCol){
     }
   }
 
-  return Tcl_NewStringObj(sqlite3_column_text(pStmt, iCol), -1);
+  return Tcl_NewStringObj((char*)sqlite3_column_text(pStmt, iCol), -1);
 }
 
 /*
@@ -2343,7 +2343,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     const char *zDb = "main";
     const char *zTable;
     const char *zColumn;
-    sqlite_int64 iRow;
+    Tcl_WideInt iRow;
 
     /* Check for the -readonly option */
     if( objc>3 && strcmp(Tcl_GetString(objv[2]), "-readonly")==0 ){
@@ -2534,7 +2534,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     pKey = Tcl_GetByteArrayFromObj(objv[2], &nKey);
     rc = sqlite3_rekey(pDb->db, pKey, nKey);
     if( rc ){
-      Tcl_AppendResult(interp, sqlite3ErrStr(rc), 0);
+      Tcl_AppendResult(interp, sqlite3_errstr(rc), 0);
       rc = TCL_ERROR;
     }
 #endif
@@ -2905,6 +2905,7 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
   void *pKey = 0;
   int nKey = 0;
 #endif
+  int rc;
 
   /* In normal use, each TCL interpreter runs in a single thread.  So
   ** by default, we can turn of mutexing on SQLite database connections.
@@ -3009,12 +3010,16 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
   memset(p, 0, sizeof(*p));
   zFile = Tcl_GetStringFromObj(objv[2], 0);
   zFile = Tcl_TranslateFileName(interp, zFile, &translatedFilename);
-  sqlite3_open_v2(zFile, &p->db, flags, zVfs);
+  rc = sqlite3_open_v2(zFile, &p->db, flags, zVfs);
   Tcl_DStringFree(&translatedFilename);
-  if( SQLITE_OK!=sqlite3_errcode(p->db) ){
-    zErrMsg = sqlite3_mprintf("%s", sqlite3_errmsg(p->db));
-    sqlite3_close(p->db);
-    p->db = 0;
+  if( p->db ){
+    if( SQLITE_OK!=sqlite3_errcode(p->db) ){
+      zErrMsg = sqlite3_mprintf("%s", sqlite3_errmsg(p->db));
+      sqlite3_close(p->db);
+      p->db = 0;
+    }
+  }else{
+    zErrMsg = sqlite3_mprintf("%s", sqlite3_errstr(rc));
   }
 #ifdef SQLITE_HAS_CODEC
   if( p->db ){

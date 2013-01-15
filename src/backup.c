@@ -219,13 +219,16 @@ static int backupOnePage(sqlite3_backup *p, Pgno iSrcPg, const u8 *zSrcData){
   const int nCopy = MIN(nSrcPgsz, nDestPgsz);
   const i64 iEnd = (i64)iSrcPg*(i64)nSrcPgsz;
 #ifdef SQLITE_HAS_CODEC
-  int nSrcReserve = sqlite3BtreeGetReserve(p->pSrc);
+  /* Use BtreeGetReserveNoMutex() for the source b-tree, as although it is
+  ** guaranteed that the shared-mutex is held by this thread, handle
+  ** p->pSrc may not actually be the owner.  */
+  int nSrcReserve = sqlite3BtreeGetReserveNoMutex(p->pSrc);
   int nDestReserve = sqlite3BtreeGetReserve(p->pDest);
 #endif
-
   int rc = SQLITE_OK;
   i64 iOff;
 
+  assert( sqlite3BtreeGetReserveNoMutex(p->pSrc)>=0 );
   assert( p->bDestLocked );
   assert( !isFatalError(p->rc) );
   assert( iSrcPg!=PENDING_BYTE_PAGE(p->pSrc->pBt) );
@@ -410,7 +413,13 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
     ** same schema version.
     */
     if( rc==SQLITE_DONE ){
-      rc = sqlite3BtreeUpdateMeta(p->pDest,1,p->iDestSchema+1);
+      if( nSrcPage==0 ){
+        rc = sqlite3BtreeNewDb(p->pDest);
+        nSrcPage = 1;
+      }
+      if( rc==SQLITE_OK || rc==SQLITE_DONE ){
+        rc = sqlite3BtreeUpdateMeta(p->pDest,1,p->iDestSchema+1);
+      }
       if( rc==SQLITE_OK ){
         if( p->pDestDb ){
           sqlite3ResetAllSchemasOfConnection(p->pDestDb);
@@ -444,6 +453,7 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
         }else{
           nDestTruncate = nSrcPage * (pgszSrc/pgszDest);
         }
+        assert( nDestTruncate>0 );
         sqlite3PagerTruncateImage(pDestPager, nDestTruncate);
 
         if( pgszSrc<pgszDest ){
@@ -462,7 +472,8 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
           i64 iEnd;
 
           assert( pFile );
-          assert( (i64)nDestTruncate*(i64)pgszDest >= iSize || (
+          assert( nDestTruncate==0 
+              || (i64)nDestTruncate*(i64)pgszDest >= iSize || (
                 nDestTruncate==(int)(PENDING_BYTE_PAGE(p->pDest->pBt)-1)
              && iSize>=PENDING_BYTE && iSize<=PENDING_BYTE+pgszDest
           ));

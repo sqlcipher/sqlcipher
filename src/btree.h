@@ -71,6 +71,9 @@ int sqlite3BtreeMaxPageCount(Btree*,int);
 u32 sqlite3BtreeLastPage(Btree*);
 int sqlite3BtreeSecureDelete(Btree*,int);
 int sqlite3BtreeGetReserve(Btree*);
+#if defined(SQLITE_HAS_CODEC) || defined(SQLITE_DEBUG)
+int sqlite3BtreeGetReserveNoMutex(Btree *p);
+#endif
 int sqlite3BtreeSetAutoVacuum(Btree *, int);
 int sqlite3BtreeGetAutoVacuum(Btree *);
 int sqlite3BtreeBeginTrans(Btree*,int);
@@ -113,6 +116,8 @@ void sqlite3BtreeTripAllCursors(Btree*, int);
 
 void sqlite3BtreeGetMeta(Btree *pBtree, int idx, u32 *pValue);
 int sqlite3BtreeUpdateMeta(Btree*, int idx, u32 value);
+
+int sqlite3BtreeNewDb(Btree *p);
 
 /*
 ** The second parameter to sqlite3BtreeGetMeta or sqlite3BtreeUpdateMeta

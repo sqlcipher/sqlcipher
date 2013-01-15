@@ -2518,7 +2518,7 @@ int sqlite3WalUndo(Wal *pWal, int (*xUndo)(void *, Pgno), void *pUndoCtx){
       assert( walFramePgno(pWal, iFrame)!=1 );
       rc = xUndo(pUndoCtx, walFramePgno(pWal, iFrame));
     }
-    walCleanupHash(pWal);
+    if( iMax!=pWal->hdr.mxFrame ) walCleanupHash(pWal);
   }
   assert( rc==SQLITE_OK );
   return rc;
@@ -2828,7 +2828,7 @@ int sqlite3WalFrames(
   */
   if( isCommit && (sync_flags & WAL_SYNC_TRANSACTIONS)!=0 ){
     if( pWal->padToSectorBoundary ){
-      int sectorSize = sqlite3OsSectorSize(pWal->pWalFd);
+      int sectorSize = sqlite3SectorSize(pWal->pWalFd);
       w.iSyncPoint = ((iOffset+sectorSize-1)/sectorSize)*sectorSize;
       while( iOffset<w.iSyncPoint ){
         rc = walWriteOneFrame(&w, pLast, nTruncate, iOffset);

@@ -511,12 +511,15 @@ static void fkScanChildren(
       ** expression to the parent key column defaults.  */
       if( pIdx ){
         Column *pCol;
+        const char *zColl;
         iCol = pIdx->aiColumn[i];
         pCol = &pTab->aCol[iCol];
         if( pTab->iPKey==iCol ) iCol = -1;
         pLeft->iTable = regData+iCol+1;
         pLeft->affinity = pCol->affinity;
-        pLeft->pColl = sqlite3LocateCollSeq(pParse, pCol->zColl);
+        zColl = pCol->zColl;
+        if( zColl==0 ) zColl = db->pDfltColl->zName;
+        pLeft = sqlite3ExprAddCollateString(pParse, pLeft, zColl);
       }else{
         pLeft->iTable = regData;
         pLeft->affinity = SQLITE_AFF_INTEGER;
@@ -925,7 +928,8 @@ int sqlite3FkRequired(
           int iKey;
           for(iKey=0; iKey<pTab->nCol; iKey++){
             Column *pCol = &pTab->aCol[iKey];
-            if( (zKey ? !sqlite3StrICmp(pCol->zName, zKey) : pCol->isPrimKey) ){
+            if( (zKey ? !sqlite3StrICmp(pCol->zName, zKey)
+                      : (pCol->colFlags & COLFLAG_PRIMKEY)!=0) ){
               if( aChange[iKey]>=0 ) return 1;
               if( iKey==pTab->iPKey && chngRowid ) return 1;
             }

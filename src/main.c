@@ -132,6 +132,13 @@ int sqlite3_initialize(void){
   */
   if( sqlite3GlobalConfig.isInit ) return SQLITE_OK;
 
+#ifdef SQLITE_ENABLE_SQLLOG
+  {
+    extern void sqlite3_init_sqllog(void);
+    sqlite3_init_sqllog();
+  }
+#endif
+
   /* Make sure the mutex subsystem is initialized.  If unable to 
   ** initialize the mutex subsystem, return early with the error.
   ** If the system is so sick that we are unable to allocate a mutex,
@@ -475,6 +482,20 @@ int sqlite3_config(int op, ...){
       break;
     }
 
+    case SQLITE_CONFIG_COVERING_INDEX_SCAN: {
+      sqlite3GlobalConfig.bUseCis = va_arg(ap, int);
+      break;
+    }
+
+#ifdef SQLITE_ENABLE_SQLLOG
+    case SQLITE_CONFIG_SQLLOG: {
+      typedef void(*SQLLOGFUNC_t)(void*, sqlite3*, const char*, int);
+      sqlite3GlobalConfig.xSqllog = va_arg(ap, SQLLOGFUNC_t);
+      sqlite3GlobalConfig.pSqllogArg = va_arg(ap, void *);
+      break;
+    }
+#endif
+
     default: {
       rc = SQLITE_ERROR;
       break;
@@ -814,6 +835,13 @@ static int sqlite3Close(sqlite3 *db, int forceZombie){
     return SQLITE_BUSY;
   }
 
+#ifdef SQLITE_ENABLE_SQLLOG
+  if( sqlite3GlobalConfig.xSqllog ){
+    /* Closing the handle. Fourth parameter is passed the value 2. */
+    sqlite3GlobalConfig.xSqllog(sqlite3GlobalConfig.pSqllogArg, db, 0, 2);
+  }
+#endif
+
   /* Convert the connection into a zombie and then close it.
   */
   db->magic = SQLITE_MAGIC_ZOMBIE;
@@ -1116,6 +1144,7 @@ int sqlite3_busy_handler(
   db->busyHandler.xFunc = xBusy;
   db->busyHandler.pArg = pArg;
   db->busyHandler.nBusy = 0;
+  db->busyTimeout = 0;
   sqlite3_mutex_leave(db->mutex);
   return SQLITE_OK;
 }
@@ -1153,8 +1182,8 @@ void sqlite3_progress_handler(
 */
 int sqlite3_busy_timeout(sqlite3 *db, int ms){
   if( ms>0 ){
-    db->busyTimeout = ms;
     sqlite3_busy_handler(db, sqliteDefaultBusyCallback, (void*)db);
+    db->busyTimeout = ms;
   }else{
     sqlite3_busy_handler(db, 0, 0);
   }
@@ -1765,6 +1794,15 @@ int sqlite3_extended_errcode(sqlite3 *db){
     return SQLITE_NOMEM;
   }
   return db->errCode;
+}
+
+/*
+** Return a string that describes the kind of error specified in the
+** argument.  For now, this simply calls the internal sqlite3ErrStr()
+** function.
+*/
+const char *sqlite3_errstr(int rc){
+  return sqlite3ErrStr(rc);
 }
 
 /*
@@ -2436,6 +2474,13 @@ opendb_out:
     db->magic = SQLITE_MAGIC_SICK;
   }
   *ppDb = db;
+#ifdef SQLITE_ENABLE_SQLLOG
+  if( sqlite3GlobalConfig.xSqllog ){
+    /* Opening a db handle. Fourth parameter is passed 0. */
+    void *pArg = sqlite3GlobalConfig.pSqllogArg;
+    sqlite3GlobalConfig.xSqllog(pArg, db, zFilename, 0);
+  }
+#endif
   return sqlite3ApiExit(0, rc);
 }
 
@@ -2741,7 +2786,7 @@ int sqlite3_table_column_metadata(
     zDataType = pCol->zType;
     zCollSeq = pCol->zColl;
     notnull = pCol->notNull!=0;
-    primarykey  = pCol->isPrimKey!=0;
+    primarykey  = (pCol->colFlags & COLFLAG_PRIMKEY)!=0;
     autoinc = pTab->iPKey==iCol && (pTab->tabFlags & TF_Autoincrement)!=0;
   }else{
     zDataType = "INTEGER";
@@ -3004,8 +3049,7 @@ int sqlite3_test_control(int op, ...){
     */
     case SQLITE_TESTCTRL_OPTIMIZATIONS: {
       sqlite3 *db = va_arg(ap, sqlite3*);
-      int x = va_arg(ap,int);
-      db->flags = (x & SQLITE_OptMask) | (db->flags & ~SQLITE_OptMask);
+      db->dbOptFlags = (u16)(va_arg(ap, int) & 0xffff);
       break;
     }
 

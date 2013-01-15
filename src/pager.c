@@ -1941,12 +1941,13 @@ static int pager_end_transaction(Pager *pPager, int hasMaster){
       ** file should be closed and deleted. If this connection writes to
       ** the database file, it will do so using an in-memory journal. 
       */
+      int bDelete = (!pPager->tempFile && sqlite3JournalExists(pPager->jfd));
       assert( pPager->journalMode==PAGER_JOURNALMODE_DELETE 
            || pPager->journalMode==PAGER_JOURNALMODE_MEMORY 
            || pPager->journalMode==PAGER_JOURNALMODE_WAL 
       );
       sqlite3OsClose(pPager->jfd);
-      if( !pPager->tempFile ){
+      if( bDelete ){
         rc = sqlite3OsDelete(pPager->pVfs, pPager->zJournal, 0);
       }
     }
@@ -2510,6 +2511,21 @@ static int pager_truncate(Pager *pPager, Pgno nPage){
 }
 
 /*
+** Return a sanitized version of the sector-size of OS file pFile. The
+** return value is guaranteed to lie between 32 and MAX_SECTOR_SIZE.
+*/
+int sqlite3SectorSize(sqlite3_file *pFile){
+  int iRet = sqlite3OsSectorSize(pFile);
+  if( iRet<32 ){
+    iRet = 512;
+  }else if( iRet>MAX_SECTOR_SIZE ){
+    assert( MAX_SECTOR_SIZE>=512 );
+    iRet = MAX_SECTOR_SIZE;
+  }
+  return iRet;
+}
+
+/*
 ** Set the value of the Pager.sectorSize variable for the given
 ** pager based on the value returned by the xSectorSize method
 ** of the open database file. The sector size will be used used 
@@ -2544,14 +2560,7 @@ static void setSectorSize(Pager *pPager){
     ** call will segfault. */
     pPager->sectorSize = 512;
   }else{
-    pPager->sectorSize = sqlite3OsSectorSize(pPager->fd);
-    if( pPager->sectorSize<32 ){
-      pPager->sectorSize = 512;
-    }
-    if( pPager->sectorSize>MAX_SECTOR_SIZE ){
-      assert( MAX_SECTOR_SIZE>=512 );
-      pPager->sectorSize = MAX_SECTOR_SIZE;
-    }
+    pPager->sectorSize = sqlite3SectorSize(pPager->fd);
   }
 }
 
@@ -3151,6 +3160,7 @@ static int pagerOpenWalIfPresent(Pager *pPager){
     if( rc ) return rc;
     if( nPage==0 ){
       rc = sqlite3OsDelete(pPager->pVfs, pPager->zWal, 0);
+      if( rc==SQLITE_IOERR_DELETE_NOENT ) rc = SQLITE_OK;
       isWal = 0;
     }else{
       rc = sqlite3OsAccess(
@@ -3468,9 +3478,16 @@ void sqlite3PagerSetBusyhandler(
   Pager *pPager,                       /* Pager object */
   int (*xBusyHandler)(void *),         /* Pointer to busy-handler function */
   void *pBusyHandlerArg                /* Argument to pass to xBusyHandler */
-){  
+){
   pPager->xBusyHandler = xBusyHandler;
   pPager->pBusyHandlerArg = pBusyHandlerArg;
+
+  if( isOpen(pPager->fd) ){
+    void **ap = (void **)&pPager->xBusyHandler;
+    assert( ((int(*)(void *))(ap[0]))==xBusyHandler );
+    assert( ap[1]==pBusyHandlerArg );
+    sqlite3OsFileControlHint(pPager->fd, SQLITE_FCNTL_BUSYHANDLER, (void *)ap);
+  }
 }
 
 /*
@@ -4448,7 +4465,7 @@ int sqlite3PagerOpen(
     memcpy(pPager->zFilename, zPathname, nPathname);
     if( nUri ) memcpy(&pPager->zFilename[nPathname+1], zUri, nUri);
     memcpy(pPager->zJournal, zPathname, nPathname);
-    memcpy(&pPager->zJournal[nPathname], "-journal\000", 8+1);
+    memcpy(&pPager->zJournal[nPathname], "-journal\000", 8+2);
     sqlite3FileSuffix3(pPager->zFilename, pPager->zJournal);
 #ifndef SQLITE_OMIT_WAL
     pPager->zWal = &pPager->zJournal[nPathname+8+1];
@@ -5650,7 +5667,7 @@ static int pager_incr_changecounter(Pager *pPager, int isDirectMode){
 # define DIRECT_MODE isDirectMode
 #endif
 
-  if( !pPager->changeCountDone && pPager->dbSize>0 ){
+  if( !pPager->changeCountDone && ALWAYS(pPager->dbSize>0) ){
     PgHdr *pPgHdr;                /* Reference to page 1 */
 
     assert( !pPager->tempFile && isOpen(pPager->fd) );
@@ -5870,7 +5887,7 @@ int sqlite3PagerCommitPhaseOne(
   
       /* If this transaction has made the database smaller, then all pages
       ** being discarded by the truncation must be written to the journal
-      ** file. This can only happen in auto-vacuum mode.
+      ** file.
       **
       ** Before reading the pages with page numbers larger than the 
       ** current value of Pager.dbSize, set dbSize back to the value
@@ -5878,7 +5895,6 @@ int sqlite3PagerCommitPhaseOne(
       ** calls to sqlite3PagerGet() return zeroed pages instead of 
       ** reading data from the database file.
       */
-  #ifndef SQLITE_OMIT_AUTOVACUUM
       if( pPager->dbSize<pPager->dbOrigSize 
        && pPager->journalMode!=PAGER_JOURNALMODE_OFF
       ){
@@ -5898,7 +5914,6 @@ int sqlite3PagerCommitPhaseOne(
         }
         pPager->dbSize = dbSize;
       } 
-  #endif
   
       /* Write the master journal name into the journal file. If a master 
       ** journal file name has already been written to the journal file, 
@@ -6901,6 +6916,8 @@ int sqlite3PagerCloseWal(Pager *pPager){
   return rc;
 }
 
+#endif /* !SQLITE_OMIT_WAL */
+
 #ifdef SQLITE_ENABLE_ZIPVFS
 /*
 ** A read-lock must be held on the pager when this function is called. If
@@ -6929,8 +6946,6 @@ void *sqlite3PagerCodec(PgHdr *pPg){
   return aData;
 }
 #endif /* SQLITE_HAS_CODEC */
-
-#endif /* !SQLITE_OMIT_WAL */
 
 #endif /* SQLITE_OMIT_DISKIO */
 
