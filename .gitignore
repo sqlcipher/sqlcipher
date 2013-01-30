@@ -13,8 +13,8 @@ config.status
 keywordhash.h
 lemon
 lempar.c
-libsqlite3.la
-libtclsqlite3.la
+libsqlite3-cipher.la
+libtclsqlite3-cipher.la
 libtool
 mkkeywordhash
 opcodes.c
@@ -24,11 +24,12 @@ parse.h
 parse.h.temp
 parse.out
 parse.y
-sqlite3
+sqlite3-cipher
 sqlite3.c
-sqlite3.h
+sqlite3-cipher.h
 *.lo
 *.o
 tsrc
-sqlite3.pc
+sqlite3-cipher.pc
 testfixture
+pkgIndex.tcl

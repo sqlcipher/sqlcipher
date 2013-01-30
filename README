@@ -1,15 +1,31 @@
-== SQLCipher ==
+== SQLCipher -- Doesn't overwrite sqlite3! ==
 
-SQLCipher is an SQLite extension that provides transparent 256-bit AES encryption of 
-database files. Pages are encrypted before being written to disk and are decrypted 
-when read back. Due to the small footprint and great performance it’s ideal for 
+SQLCipher is an SQLite extension that provides transparent 256-bit AES encryption of
+database files. Pages are encrypted before being written to disk and are decrypted
+when read back. Due to the small footprint and great performance it’s ideal for
 protecting embedded application databases and is well suited for mobile development.
 
 The official SQLCipher software site is http://sqlcipher.net
 
-SQLCipher was initially developed by Stephen Lombardo at Zetetic LLC 
-(sjlombardo@zetetic.net) as the encrypted database layer for Strip, 
-an iPhone data vault and password manager (http://getstrip.com).   
+SQLCipher was initially developed by Stephen Lombardo at Zetetic LLC
+(sjlombardo@zetetic.net) as the encrypted database layer for Strip,
+an iPhone data vault and password manager (http://getstrip.com).
+
+[Changes]
+
+Bert JW Regeer has made the following changes:
+
+sqlcipher no longer overwrites or replaces sqlite3, this means the following
+when you are using this package:
+
+ 1. When including the headers, use sqlite3-cipher.h or sqlite3ext-cipher.h
+ 2. When linking against the library, use sqlite3-cipher, so for GCC use:
+    -lsqlite3-cipher
+
+ If you use pkg-config, there is a new .pc file created called sqlite3-cipher,
+ which can be used like so:
+
+    pkg-config --libs --cflags sqlite3-cipher
 
 [Features]
 
@@ -21,42 +37,40 @@ an iPhone data vault and password manager (http://getstrip.com).
 
 [Compiling]
 
-Building SQLCipher is almost the same as compiling a regular version of 
-SQLite with two small exceptions: 
+ 1. You must define SQLITE_HAS_CODEC and SQLITE_TEMP_STORE=2 when building
+    sqlcipher. Default for configure provided.
+ 2. You need to link against a OpenSSL's libcrypto (pkg-config --libs openssl)
+ 3. You must disable amalgation (--disable-amalgamation). Default for the
+    configure provided.
 
- 1. You must define SQLITE_HAS_CODEC and SQLITE_TEMP_STORE=2 when building sqlcipher
- 2. You need to link against a OpenSSL's libcrypto 
- 
 Example Static linking (replace /opt/local/lib with the path to libcrypto.a)
 
-  $ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
-    LDFLAGS="/opt/local/lib/libcrypto.a"
+  $ ./configure LDFLAGS="/opt/local/lib/libcrypto.a"
   $ make
 
 Example Dynamic linking
 
-  $ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
-    LDFLAGS="-lcrypto"
+  $ ./configure LDFLAGS="-lcrypto"
   $ make
 
 [Encrypting a database]
 
-To specify an encryption passphrase for the database via the SQL interface you 
+To specify an encryption passphrase for the database via the SQL interface you
 use a pragma. The passphrase you enter is passed through PBKDF2 key derivation to
-obtain the encryption key for the database 
+obtain the encryption key for the database
 
   PRAGMA key = 'passphrase';
 
 Alternately, you can specify an exact byte sequence using a blob literal. If you
 use this method it is your responsibility to ensure that the data you provide a
-64 character hex string, which will be converted directly to 32 bytes (256 bits) of 
+64 character hex string, which will be converted directly to 32 bytes (256 bits) of
 key data without key derivation.
 
   PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
 
-To encrypt a database programatically you can use the sqlite3_key function. 
-The data provided in pKey is converted to an encryption key according to the 
-same rules as PRAGMA key. 
+To encrypt a database programatically you can use the sqlite3_key function.
+The data provided in pKey is converted to an encryption key according to the
+same rules as PRAGMA key.
 
 
   int sqlite3_key(sqlite3 *db, const void *pKey, int nKey);
@@ -76,24 +90,32 @@ The hexrekey pragma may be used to rekey to a specific binary value
   PRAGMA rekey = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
 
 This can be accomplished programtically by using sqlite3_rekey;
-  
+
   sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey)
 
 [Support]
+
+For this branch/clone:
+----------------------
+
+None.
+
+For SQLCipher support see below:
+--------------------------------
 
 The primary avenue for support and discussions is the SQLCipher users mailing list:
 
 http://groups.google.com/group/sqlcipher
 
-Issues or support questions on using SQLCipher should be entered into the 
+Issues or support questions on using SQLCipher should be entered into the
 GitHub Issue tracker:
 
 http://github.com/sjlombardo/sqlcipher/issues
 
-Please DO NOT post issues, support questions, or other problems to blog 
+Please DO NOT post issues, support questions, or other problems to blog
 posts about SQLCipher as we do not monitor them frequently.
 
-If you are using SQLCipher in your own software please let us know at 
+If you are using SQLCipher in your own software please let us know at
 support@zetetic.net!
 
 [License]
@@ -125,7 +147,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 == End SQLCipher ==
 
-This directory contains source code to 
+This directory contains source code to
 
     SQLite: An Embeddable SQL Database Engine
 
@@ -152,7 +174,7 @@ show what changes are needed.
 
 The linux binaries on the website are created using the generic makefile,
 not the configure script.  The windows binaries on the website are created
-using MinGW32 configured as a cross-compiler running under Linux.  For 
+using MinGW32 configured as a cross-compiler running under Linux.  For
 details, see the ./publish.sh script at the top-level of the source tree.
 The developers do not use teh configure script.
 

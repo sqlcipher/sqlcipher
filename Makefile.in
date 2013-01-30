@@ -269,7 +269,7 @@ SRC = \
   $(TOP)/src/status.c \
   $(TOP)/src/shell.c \
   $(TOP)/src/sqlite.h.in \
-  $(TOP)/src/sqlite3ext.h \
+  $(TOP)/src/sqlite3ext-cipher.h \
   $(TOP)/src/sqliteInt.h \
   $(TOP)/src/sqliteLimit.h \
   $(TOP)/src/table.c \
@@ -349,7 +349,7 @@ SRC += \
   parse.c \
   parse.h \
   config.h \
-  sqlite3.h
+  sqlite3-cipher.h
 
 # Source code to the test files.
 #
@@ -456,8 +456,8 @@ HDR = \
    $(TOP)/src/pager.h \
    $(TOP)/src/pcache.h \
    parse.h  \
-   sqlite3.h  \
-   $(TOP)/src/sqlite3ext.h \
+   sqlite3-cipher.h  \
+   $(TOP)/src/sqlite3ext-cipher.h \
    $(TOP)/src/sqliteInt.h  \
    $(TOP)/src/sqliteLimit.h \
    $(TOP)/src/vdbe.h \
@@ -489,28 +489,28 @@ EXTHDR += \
 # This is the default Makefile target.  The objects listed here
 # are what get build when you type just "make" with no arguments.
 #
-all:	sqlite3.h libsqlite3.la sqlite3$(TEXE) $(HAVE_TCL:1=libtclsqlite3.la)
+all:	sqlite3-cipher.h libsqlite3-cipher.la sqlite3-cipher$(TEXE) $(HAVE_TCL:1=libtclsqlite3-cipher.la)
 
 Makefile: $(TOP)/Makefile.in
 	./config.status
 
-sqlite3.pc: $(TOP)/sqlite3.pc.in
+sqlite3-cipher.pc: $(TOP)/sqlite3-cipher.pc.in
 	./config.status
 
-libsqlite3.la:	$(LIBOBJ)
+libsqlite3-cipher.la:	$(LIBOBJ)
 	$(LTLINK) -o $@ $(LIBOBJ) $(TLIBS) \
 		${ALLOWRELEASE} -rpath "$(libdir)" -version-info "8:6:8"
 
-libtclsqlite3.la:	tclsqlite.lo libsqlite3.la
+libtclsqlite3-cipher.la:	tclsqlite.lo libsqlite3-cipher.la
 	$(LTLINK) -o $@ tclsqlite.lo \
-		libsqlite3.la @TCL_STUB_LIB_SPEC@ $(TLIBS) \
+		libsqlite3-cipher.la @TCL_STUB_LIB_SPEC@ $(TLIBS) \
 		-rpath "$(TCLLIBDIR)" \
 		-version-info "8:6:8" \
 		-avoid-version
 
-sqlite3$(TEXE):	$(TOP)/src/shell.c libsqlite3.la sqlite3.h
+sqlite3-cipher$(TEXE):	$(TOP)/src/shell.c libsqlite3-cipher.la sqlite3-cipher.h
 	$(LTLINK) $(READLINE_FLAGS) \
-		-o $@ $(TOP)/src/shell.c libsqlite3.la \
+		-o $@ $(TOP)/src/shell.c libsqlite3-cipher.la \
 		$(LIBREADLINE) $(TLIBS) -rpath "$(libdir)"
 
 # This target creates a directory named "tsrc" and fills it with
@@ -788,9 +788,9 @@ tclsqlite-shell.lo:	$(TOP)/src/tclsqlite.c $(HDR)
 tclsqlite-stubs.lo:	$(TOP)/src/tclsqlite.c $(HDR)
 	$(LTCOMPILE) -DUSE_TCL_STUBS=1 -o $@ -c $(TOP)/src/tclsqlite.c
 
-tclsqlite3$(TEXE):	tclsqlite-shell.lo libsqlite3.la
+tclsqlite3-cipher$(TEXE):	tclsqlite-shell.lo libsqlite3-cipher.la
 	$(LTLINK) -o $@ tclsqlite-shell.lo \
-		 libsqlite3.la $(LIBTCL)
+		 libsqlite3-cipher.la $(LIBTCL)
 
 # Rules to build opcodes.c and opcodes.h
 #
@@ -811,8 +811,10 @@ parse.c:	$(TOP)/src/parse.y lemon$(BEXE) $(TOP)/addopcodes.awk
 	mv parse.h parse.h.temp
 	$(NAWK) -f $(TOP)/addopcodes.awk parse.h.temp >parse.h
 
-sqlite3.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest.uuid $(TOP)/VERSION
-	$(TCLSH_CMD) $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3.h
+sqlite3-cipher.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest.uuid $(TOP)/VERSION
+	$(TCLSH_CMD) $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3-cipher.h
+	ln -s sqlite3-cipher.h sqlite3.h
+	ln -s $(TOP)/src/sqlite3ext-cipher.h sqlite3ext.h
 
 keywordhash.h:	$(TOP)/tool/mkkeywordhash.c
 	$(BCC) -o mkkeywordhash$(BEXE) $(OPT_FEATURE_FLAGS) $(OPTS) $(TOP)/tool/mkkeywordhash.c
@@ -894,7 +896,7 @@ TESTFIXTURE_FLAGS  = -DTCLSH=1 -DSQLITE_TEST=1 -DSQLITE_CRASH_TEST=1
 TESTFIXTURE_FLAGS += -DSQLITE_SERVER=1 -DSQLITE_PRIVATE="" -DSQLITE_CORE 
 TESTFIXTURE_FLAGS += -DBUILD_sqlite
 
-TESTFIXTURE_SRC0 = $(TESTSRC2) libsqlite3.la
+TESTFIXTURE_SRC0 = $(TESTSRC2) libsqlite3-cipher.la
 TESTFIXTURE_SRC1 = sqlite3.c
 TESTFIXTURE_SRC = $(TESTSRC) $(TOP)/src/tclsqlite.c $(TESTFIXTURE_SRC$(USE_AMALGAMATION))
 
@@ -903,13 +905,13 @@ testfixture$(TEXE):	$(TESTFIXTURE_SRC)
 		-o $@ $(TESTFIXTURE_SRC) $(LIBTCL) $(TLIBS)
 
 
-fulltest:	testfixture$(TEXE) sqlite3$(TEXE)
+fulltest:	testfixture$(TEXE) sqlite3-cipher$(TEXE)
 	./testfixture$(TEXE) $(TOP)/test/all.test
 
-soaktest:	testfixture$(TEXE) sqlite3$(TEXE)
+soaktest:	testfixture$(TEXE) sqlite3-cipher$(TEXE)
 	./testfixture$(TEXE) $(TOP)/test/all.test -soak=1
 
-test:	testfixture$(TEXE) sqlite3$(TEXE)
+test:	testfixture$(TEXE) sqlite3-cipher$(TEXE)
 	./testfixture$(TEXE) $(TOP)/test/veryquick.test
 
 sqlite3_analyzer.c: sqlite3.c $(TOP)/src/test_stat.c $(TOP)/src/tclsqlite.c $(TOP)/tool/spaceanal.tcl
@@ -920,35 +922,35 @@ sqlite3_analyzer.c: sqlite3.c $(TOP)/src/test_stat.c $(TOP)/src/tclsqlite.c $(TO
 	$(NAWK) -f $(TOP)/tool/tostr.awk $(TOP)/tool/spaceanal.tcl >> $@
 	echo "; return zMainloop; }" >> $@
 
-sqlite3_analyzer$(TEXE): sqlite3_analyzer.c
+sqlite3_analyzer-cipher$(TEXE): sqlite3_analyzer.c
 	$(LTLINK) sqlite3_analyzer.c -o $@ $(LIBTCL) $(TLIBS)
 
 # Standard install and cleanup targets
 #
-lib_install:	libsqlite3.la
+lib_install:	libsqlite3-cipher.la
 	$(INSTALL) -d $(DESTDIR)$(libdir)
-	$(LTINSTALL) libsqlite3.la $(DESTDIR)$(libdir)
+	$(LTINSTALL) libsqlite3-cipher.la $(DESTDIR)$(libdir)
 	
-install:	sqlite3$(BEXE) lib_install sqlite3.h sqlite3.pc ${HAVE_TCL:1=tcl_install}
+install:	sqlite3-cipher$(BEXE) lib_install sqlite3-cipher.h sqlite3-cipher.pc ${HAVE_TCL:1=tcl_install}
 	$(INSTALL) -d $(DESTDIR)$(bindir)
-	$(LTINSTALL) sqlite3$(BEXE) $(DESTDIR)$(bindir)
+	$(LTINSTALL) sqlite3-cipher$(BEXE) $(DESTDIR)$(bindir)
 	$(INSTALL) -d $(DESTDIR)$(includedir)
-	$(INSTALL) -m 0644 sqlite3.h $(DESTDIR)$(includedir)
-	$(INSTALL) -m 0644 $(TOP)/src/sqlite3ext.h $(DESTDIR)$(includedir)
+	$(INSTALL) -m 0644 sqlite3-cipher.h $(DESTDIR)$(includedir)
+	$(INSTALL) -m 0644 $(TOP)/src/sqlite3ext-cipher.h $(DESTDIR)$(includedir)
 	$(INSTALL) -d $(DESTDIR)$(pkgconfigdir)
-	$(INSTALL) -m 0644 sqlite3.pc $(DESTDIR)$(pkgconfigdir)
+	$(INSTALL) -m 0644 sqlite3-cipher.pc $(DESTDIR)$(pkgconfigdir)
 
 pkgIndex.tcl:
-	echo 'package ifneeded sqlite3 $(RELEASE) [list load $(TCLLIBDIR)/libtclsqlite3.so sqlite3]' > $@
-tcl_install:	lib_install libtclsqlite3.la pkgIndex.tcl
+	echo 'package ifneeded sqlite3-cipher $(RELEASE) [list load $(TCLLIBDIR)/libtclsqlite3-cipher.so sqlite3-cipher]' > $@
+tcl_install:	lib_install libtclsqlite3-cipher.la pkgIndex.tcl
 	$(INSTALL) -d $(DESTDIR)$(TCLLIBDIR)
-	$(LTINSTALL) libtclsqlite3.la $(DESTDIR)$(TCLLIBDIR)
-	rm -f $(DESTDIR)$(TCLLIBDIR)/libtclsqlite3.la $(DESTDIR)$(TCLLIBDIR)/libtclsqlite3.a
+	$(LTINSTALL) libtclsqlite3-cipher.la $(DESTDIR)$(TCLLIBDIR)
+	rm -f $(DESTDIR)$(TCLLIBDIR)/libtclsqlite3-cipher.la $(DESTDIR)$(TCLLIBDIR)/libtclsqlite3-cipher.a
 	$(INSTALL) -m 0644 pkgIndex.tcl $(DESTDIR)$(TCLLIBDIR)
 
 clean:	
-	rm -f *.lo *.la *.o sqlite3$(TEXE) libsqlite3.la
-	rm -f sqlite3.h opcodes.*
+	rm -f *.lo *.la *.o sqlite3-cipher$(TEXE) libsqlite3-cipher.la
+	rm -f sqlite3-cipher.h sqlite3.h opcodes.*
 	rm -rf .libs .deps
 	rm -f lemon$(BEXE) lempar.c parse.* sqlite*.tar.gz
 	rm -f mkkeywordhash$(BEXE) keywordhash.h
@@ -956,30 +958,32 @@ clean:
 	rm -f *.da *.bb *.bbg gmon.out
 	rm -rf quota2a quota2b quota2c
 	rm -rf tsrc .target_source
-	rm -f tclsqlite3$(TEXE)
+	rm -f tclsqlite3-cipher$(TEXE)
 	rm -f testfixture$(TEXE) test.db
-	rm -f sqlite3.dll sqlite3.lib sqlite3.exp sqlite3.def
+	rm -f sqlite3-cipher.dll sqlite3-cipher.lib sqlite3-cipher.exp sqlite3-cipher.def
 	rm -f sqlite3.c
-	rm -f sqlite3_analyzer$(TEXE) sqlite3_analyzer.c
+	rm -f sqlite3_analyzer-cipher$(TEXE) sqlite3_analyzer.c
 	rm -f sqlite-output.vsix
+	rm -f $(TOP)/src/sqlite3ext.h
+	rm -f sqlite3ext.h
 
 distclean:	clean
-	rm -f config.log config.status libtool Makefile sqlite3.pc
+	rm -f config.log config.status libtool Makefile sqlite3-cipher.pc
 
 #
 # Windows section
 #
-dll: sqlite3.dll
+dll: sqlite3-cipher.dll
 
 REAL_LIBOBJ = $(LIBOBJ:%.lo=.libs/%.o)
 
 $(REAL_LIBOBJ): $(LIBOBJ)
 
-sqlite3.def: $(REAL_LIBOBJ)
-	echo 'EXPORTS' >sqlite3.def
+sqlite3-cipher.def: $(REAL_LIBOBJ)
+	echo 'EXPORTS' >sqlite3-cipher.def
 	nm $(REAL_LIBOBJ) | grep ' T ' | grep ' _sqlite3_' \
-		| sed 's/^.* _//' >>sqlite3.def
+		| sed 's/^.* _//' >>sqlite3-cipher.def
 
-sqlite3.dll: $(REAL_LIBOBJ) sqlite3.def
-	$(TCC) -shared -o $@ sqlite3.def \
+sqlite3-cipher.dll: $(REAL_LIBOBJ) sqlite3-cipher.def
+	$(TCC) -shared -o $@ sqlite3-cipher.def \
 		-Wl,"--strip-all" $(REAL_LIBOBJ)
