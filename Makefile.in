@@ -965,6 +965,7 @@ clean:
 	rm -f sqlite3_analyzer-cipher$(TEXE) sqlite3_analyzer.c
 	rm -f sqlite-output.vsix
 	rm -f $(TOP)/src/sqlite3ext.h
+	rm -f sqlite3ext.h
 
 distclean:	clean
 	rm -f config.log config.status libtool Makefile sqlite3-cipher.pc
