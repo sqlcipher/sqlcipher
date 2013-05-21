@@ -2100,7 +2100,7 @@ void sqlite3CodeDropTable(Parse *pParse, Table *pTab, int iDb, int isView){
   /* Drop all SQLITE_MASTER table and index entries that refer to the
   ** table. The program name loops through the master table and deletes
   ** every row that refers to a table of the same name as the one being
-  ** dropped. Triggers are handled seperately because a trigger can be
+  ** dropped. Triggers are handled separately because a trigger can be
   ** created in the temp database that refers to a table in another
   ** database.
   */
@@ -2392,9 +2392,6 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
   int tnum;                      /* Root page of index */
   Vdbe *v;                       /* Generate code into this virtual machine */
   KeyInfo *pKey;                 /* KeyInfo for index */
-#ifdef SQLITE_OMIT_MERGE_SORT
-  int regIdxKey;                 /* Registers containing the index key */
-#endif
   int regRecord;                 /* Register holding assemblied index record */
   sqlite3 *db = pParse->db;      /* The database connection */
   int iDb = sqlite3SchemaToIndex(db, pIndex->pSchema);
@@ -2422,13 +2419,9 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
                     (char *)pKey, P4_KEYINFO_HANDOFF);
   sqlite3VdbeChangeP5(v, OPFLAG_BULKCSR|((memRootPage>=0)?OPFLAG_P2ISREG:0));
 
-#ifndef SQLITE_OMIT_MERGE_SORT
   /* Open the sorter cursor if we are to use one. */
   iSorter = pParse->nTab++;
   sqlite3VdbeAddOp4(v, OP_SorterOpen, iSorter, 0, 0, (char*)pKey, P4_KEYINFO);
-#else
-  iSorter = iTab;
-#endif
 
   /* Open the table. Loop through all rows of the table, inserting index
   ** records into the sorter. */
@@ -2436,7 +2429,6 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
   addr1 = sqlite3VdbeAddOp2(v, OP_Rewind, iTab, 0);
   regRecord = sqlite3GetTempReg(pParse);
 
-#ifndef SQLITE_OMIT_MERGE_SORT
   sqlite3GenerateIndexKey(pParse, pIndex, iTab, regRecord, 1);
   sqlite3VdbeAddOp2(v, OP_SorterInsert, iSorter, regRecord);
   sqlite3VdbeAddOp2(v, OP_Next, iTab, addr1+1);
@@ -2447,8 +2439,8 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
     sqlite3VdbeAddOp2(v, OP_Goto, 0, j2);
     addr2 = sqlite3VdbeCurrentAddr(v);
     sqlite3VdbeAddOp3(v, OP_SorterCompare, iSorter, j2, regRecord);
-    sqlite3HaltConstraint(
-        pParse, OE_Abort, "indexed columns are not unique", P4_STATIC
+    sqlite3HaltConstraint(pParse, SQLITE_CONSTRAINT_UNIQUE,
+        OE_Abort, "indexed columns are not unique", P4_STATIC
     );
   }else{
     addr2 = sqlite3VdbeCurrentAddr(v);
@@ -2456,30 +2448,6 @@ static void sqlite3RefillIndex(Parse *pParse, Index *pIndex, int memRootPage){
   sqlite3VdbeAddOp2(v, OP_SorterData, iSorter, regRecord);
   sqlite3VdbeAddOp3(v, OP_IdxInsert, iIdx, regRecord, 1);
   sqlite3VdbeChangeP5(v, OPFLAG_USESEEKRESULT);
-#else
-  regIdxKey = sqlite3GenerateIndexKey(pParse, pIndex, iTab, regRecord, 1);
-  addr2 = addr1 + 1;
-  if( pIndex->onError!=OE_None ){
-    const int regRowid = regIdxKey + pIndex->nColumn;
-    const int j2 = sqlite3VdbeCurrentAddr(v) + 2;
-    void * const pRegKey = SQLITE_INT_TO_PTR(regIdxKey);
-
-    /* The registers accessed by the OP_IsUnique opcode were allocated
-    ** using sqlite3GetTempRange() inside of the sqlite3GenerateIndexKey()
-    ** call above. Just before that function was freed they were released
-    ** (made available to the compiler for reuse) using 
-    ** sqlite3ReleaseTempRange(). So in some ways having the OP_IsUnique
-    ** opcode use the values stored within seems dangerous. However, since
-    ** we can be sure that no other temp registers have been allocated
-    ** since sqlite3ReleaseTempRange() was called, it is safe to do so.
-    */
-    sqlite3VdbeAddOp4(v, OP_IsUnique, iIdx, j2, regRowid, pRegKey, P4_INT32);
-    sqlite3HaltConstraint(
-        pParse, OE_Abort, "indexed columns are not unique", P4_STATIC);
-  }
-  sqlite3VdbeAddOp3(v, OP_IdxInsert, iIdx, regRecord, 0);
-  sqlite3VdbeChangeP5(v, OPFLAG_USESEEKRESULT);
-#endif
   sqlite3ReleaseTempReg(pParse, regRecord);
   sqlite3VdbeAddOp2(v, OP_SorterNext, iSorter, addr2);
   sqlite3VdbeJumpHere(v, addr1);
@@ -2594,7 +2562,7 @@ Index *sqlite3CreateIndex(
   assert( pTab!=0 );
   assert( pParse->nErr==0 );
   if( sqlite3StrNICmp(pTab->zName, "sqlite_", 7)==0 
-       && memcmp(&pTab->zName[7],"altertab_",9)!=0 ){
+       && sqlite3StrNICmp(&pTab->zName[7],"altertab_",9)!=0 ){
     sqlite3ErrorMsg(pParse, "table %s may not be indexed", pTab->zName);
     goto exit_create_index;
   }
@@ -2691,10 +2659,8 @@ Index *sqlite3CreateIndex(
   for(i=0; i<pList->nExpr; i++){
     Expr *pExpr = pList->a[i].pExpr;
     if( pExpr ){
-      CollSeq *pColl = sqlite3ExprCollSeq(pParse, pExpr);
-      if( pColl ){
-        nExtra += (1 + sqlite3Strlen30(pColl->zName));
-      }
+      assert( pExpr->op==TK_COLLATE );
+      nExtra += (1 + sqlite3Strlen30(pExpr->u.zToken));
     }
   }
 
@@ -2755,7 +2721,6 @@ Index *sqlite3CreateIndex(
     const char *zColName = pListItem->zName;
     Column *pTabCol;
     int requestedSortOrder;
-    CollSeq *pColl;                /* Collating sequence */
     char *zColl;                   /* Collation sequence name */
 
     for(j=0, pTabCol=pTab->aCol; j<pTab->nCol; j++, pTabCol++){
@@ -2768,11 +2733,10 @@ Index *sqlite3CreateIndex(
       goto exit_create_index;
     }
     pIndex->aiColumn[i] = j;
-    if( pListItem->pExpr
-     && (pColl = sqlite3ExprCollSeq(pParse, pListItem->pExpr))!=0
-    ){
+    if( pListItem->pExpr ){
       int nColl;
-      zColl = pColl->zName;
+      assert( pListItem->pExpr->op==TK_COLLATE );
+      zColl = pListItem->pExpr->u.zToken;
       nColl = sqlite3Strlen30(zColl) + 1;
       assert( nExtra>=nColl );
       memcpy(zExtra, zColl, nColl);
@@ -2781,9 +2745,7 @@ Index *sqlite3CreateIndex(
       nExtra -= nColl;
     }else{
       zColl = pTab->aCol[j].zColl;
-      if( !zColl ){
-        zColl = "BINARY";
-      }
+      if( !zColl ) zColl = "BINARY";
     }
     if( !db->init.busy && !sqlite3LocateCollSeq(pParse, zColl) ){
       goto exit_create_index;
@@ -2839,7 +2801,7 @@ Index *sqlite3CreateIndex(
           ** However the ON CONFLICT clauses are different. If both this 
           ** constraint and the previous equivalent constraint have explicit
           ** ON CONFLICT clauses this is an error. Otherwise, use the
-          ** explicitly specified behaviour for the index.
+          ** explicitly specified behavior for the index.
           */
           if( !(pIdx->onError==OE_Default || pIndex->onError==OE_Default) ){
             sqlite3ErrorMsg(pParse, 
@@ -3692,12 +3654,19 @@ void sqlite3MayAbort(Parse *pParse){
 ** error. The onError parameter determines which (if any) of the statement
 ** and/or current transaction is rolled back.
 */
-void sqlite3HaltConstraint(Parse *pParse, int onError, char *p4, int p4type){
+void sqlite3HaltConstraint(
+  Parse *pParse,    /* Parsing context */
+  int errCode,      /* extended error code */
+  int onError,      /* Constraint type */
+  char *p4,         /* Error message */
+  int p4type        /* P4_STATIC or P4_TRANSIENT */
+){
   Vdbe *v = sqlite3GetVdbe(pParse);
+  assert( (errCode&0xff)==SQLITE_CONSTRAINT );
   if( onError==OE_Abort ){
     sqlite3MayAbort(pParse);
   }
-  sqlite3VdbeAddOp4(v, OP_Halt, SQLITE_CONSTRAINT, onError, 0, p4, p4type);
+  sqlite3VdbeAddOp4(v, OP_Halt, errCode, onError, 0, p4, p4type);
 }
 
 /*

@@ -694,6 +694,13 @@ static int patternCompare(
 }
 
 /*
+** The sqlite3_strglob() interface.
+*/
+int sqlite3_strglob(const char *zGlobPattern, const char *zString){
+  return patternCompare((u8*)zGlobPattern, (u8*)zString, &globInfo, 0)==0;
+}
+
+/*
 ** Count the number of times that the LIKE operator (or GLOB which is
 ** just a variation of LIKE) gets called.  This is used for testing
 ** only.
@@ -960,6 +967,62 @@ static void quoteFunc(sqlite3_context *context, int argc, sqlite3_value **argv){
       break;
     }
   }
+}
+
+/*
+** The unicode() function.  Return the integer unicode code-point value
+** for the first character of the input string. 
+*/
+static void unicodeFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  const unsigned char *z = sqlite3_value_text(argv[0]);
+  (void)argc;
+  if( z && z[0] ) sqlite3_result_int(context, sqlite3Utf8Read(&z));
+}
+
+/*
+** The char() function takes zero or more arguments, each of which is
+** an integer.  It constructs a string where each character of the string
+** is the unicode character for the corresponding integer argument.
+*/
+static void charFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  unsigned char *z, *zOut;
+  int i;
+  zOut = z = sqlite3_malloc( argc*4 );
+  if( z==0 ){
+    sqlite3_result_error_nomem(context);
+    return;
+  }
+  for(i=0; i<argc; i++){
+    sqlite3_int64 x;
+    unsigned c;
+    x = sqlite3_value_int64(argv[i]);
+    if( x<0 || x>0x10ffff ) x = 0xfffd;
+    c = (unsigned)(x & 0x1fffff);
+    if( c<0x00080 ){
+      *zOut++ = (u8)(c&0xFF);
+    }else if( c<0x00800 ){
+      *zOut++ = 0xC0 + (u8)((c>>6)&0x1F);
+      *zOut++ = 0x80 + (u8)(c & 0x3F);
+    }else if( c<0x10000 ){
+      *zOut++ = 0xE0 + (u8)((c>>12)&0x0F);
+      *zOut++ = 0x80 + (u8)((c>>6) & 0x3F);
+      *zOut++ = 0x80 + (u8)(c & 0x3F);
+    }else{
+      *zOut++ = 0xF0 + (u8)((c>>18) & 0x07);
+      *zOut++ = 0x80 + (u8)((c>>12) & 0x3F);
+      *zOut++ = 0x80 + (u8)((c>>6) & 0x3F);
+      *zOut++ = 0x80 + (u8)(c & 0x3F);
+    }                                                    \
+  }
+  sqlite3_result_text(context, (char*)z, (int)(zOut-z), sqlite3_free);
 }
 
 /*
@@ -1595,6 +1658,8 @@ void sqlite3RegisterGlobalFunctions(void){
     FUNCTION(instr,              2, 0, 0, instrFunc        ),
     FUNCTION(substr,             2, 0, 0, substrFunc       ),
     FUNCTION(substr,             3, 0, 0, substrFunc       ),
+    FUNCTION(unicode,            1, 0, 0, unicodeFunc      ),
+    FUNCTION(char,              -1, 0, 0, charFunc         ),
     FUNCTION(abs,                1, 0, 0, absFunc          ),
 #ifndef SQLITE_OMIT_FLOATING_POINT
     FUNCTION(round,              1, 0, 0, roundFunc        ),

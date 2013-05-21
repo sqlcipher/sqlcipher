@@ -38,7 +38,7 @@
 #define FILE_HEADER_SZ 16
 
 #ifndef CIPHER_VERSION
-#define CIPHER_VERSION "2.1.2"
+#define CIPHER_VERSION "2.2.0"
 #endif
 
 #ifndef CIPHER

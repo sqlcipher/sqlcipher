@@ -54,6 +54,7 @@
 #      do_ioerr_test          TESTNAME ARGS...
 #      crashsql               ARGS...
 #      integrity_check        TESTNAME ?DB?
+#      verify_ex_errcode      TESTNAME EXPECTED ?DB?
 #      do_test                TESTNAME SCRIPT EXPECTED
 #      do_execsql_test        TESTNAME SQL EXPECTED
 #      do_catchsql_test       TESTNAME SQL EXPECTED
@@ -122,7 +123,7 @@ if {[info command sqlite_orig]==""} {
       set res
     } else {
       # This command is not opening a new database connection. Pass the 
-      # arguments through to the C implemenation as the are.
+      # arguments through to the C implementation as the are.
       #
       uplevel 1 sqlite_orig $args
     }
@@ -461,6 +462,7 @@ if {0==[info exists ::SLAVE]} {
   set TC(count)     0
   set TC(fail_list) [list]
   set TC(omit_list) [list]
+  set TC(warn_list) [list]
 
   proc set_test_counter {counter args} {
     if {[llength $args]} {
@@ -494,6 +496,18 @@ proc fail_test {name} {
     finalize_testing
   }
 }
+
+# Remember a warning message to be displayed at the conclusion of all testing
+#
+proc warning {msg {append 1}} {
+  puts "Warning: $msg"
+  set warnList [set_test_counter warn_list]
+  if {$append} {
+    lappend warnList $msg
+  }
+  set_test_counter warn_list $warnList
+}
+
 
 # Increment the number of tests run
 #
@@ -783,6 +797,9 @@ proc finalize_testing {} {
   if {$nErr>0} {
     puts "Failures on these tests: [set_test_counter fail_list]"
   }
+  foreach warning [set_test_counter warn_list] {
+    puts "Warning: $warning"
+  }
   run_thread_tests 1
   if {[llength $omitList]>0} {
     puts "Omitted test cases:"
@@ -968,6 +985,12 @@ proc integrity_check {name {db db}} {
   }
 }
 
+# Check the extended error code
+#
+proc verify_ex_errcode {name expected {db db}} {
+  do_test $name [list sqlite3_extended_errcode $db] $expected
+}
+
 
 # Return true if the SQL statement passed as the second argument uses a
 # statement transaction.
@@ -1030,7 +1053,7 @@ proc ifcapable {expr code {else ""} {elsecode ""}} {
 # boolean, indicating whether or not the process actually crashed or
 # reported some other error. The second element in the returned list is the
 # error message. This is "child process exited abnormally" if the crash
-# occured.
+# occurred.
 #
 #   crashsql -delay CRASHDELAY -file CRASHFILE ?-blocksize BLOCKSIZE? $sql
 #
@@ -1111,6 +1134,25 @@ proc crashsql {args} {
   lappend r $msg
 }
 
+proc run_ioerr_prep {} {
+  set ::sqlite_io_error_pending 0
+  catch {db close}
+  catch {db2 close}
+  catch {forcedelete test.db}
+  catch {forcedelete test.db-journal}
+  catch {forcedelete test2.db}
+  catch {forcedelete test2.db-journal}
+  set ::DB [sqlite3 db test.db; sqlite3_connection_pointer db]
+  sqlite3_extended_result_codes $::DB $::ioerropts(-erc)
+  if {[info exists ::ioerropts(-tclprep)]} {
+    eval $::ioerropts(-tclprep)
+  }
+  if {[info exists ::ioerropts(-sqlprep)]} {
+    execsql $::ioerropts(-sqlprep)
+  }
+  expr 0
+}
+
 # Usage: do_ioerr_test <test number> <options...>
 #
 # This proc is used to implement test cases that check that IO errors
@@ -1143,10 +1185,26 @@ proc do_ioerr_test {testname args} {
   # TEMPORARY: For 3.5.9, disable testing of extended result codes. There are
   # a couple of obscure IO errors that do not return them.
   set ::ioerropts(-erc) 0
+  
+  # Create a single TCL script from the TCL and SQL specified
+  # as the body of the test.
+  set ::ioerrorbody {}
+  if {[info exists ::ioerropts(-tclbody)]} {
+    append ::ioerrorbody "$::ioerropts(-tclbody)\n"
+  }
+  if {[info exists ::ioerropts(-sqlbody)]} {
+    append ::ioerrorbody "db eval {$::ioerropts(-sqlbody)}"
+  }
+
+  save_prng_state
+  if {$::ioerropts(-cksum)} {
+    run_ioerr_prep
+    eval $::ioerrorbody
+    set ::goodcksum [cksum]
+  }
 
   set ::go 1
   #reset_prng_state
-  save_prng_state
   for {set n $::ioerropts(-start)} {$::go} {incr n} {
     set ::TN $n
     incr ::ioerropts(-count) -1
@@ -1163,27 +1221,12 @@ proc do_ioerr_test {testname args} {
     # Delete the files test.db and test2.db, then execute the TCL and 
     # SQL (in that order) to prepare for the test case.
     do_test $testname.$n.1 {
-      set ::sqlite_io_error_pending 0
-      catch {db close}
-      catch {db2 close}
-      catch {forcedelete test.db}
-      catch {forcedelete test.db-journal}
-      catch {forcedelete test2.db}
-      catch {forcedelete test2.db-journal}
-      set ::DB [sqlite3 db test.db; sqlite3_connection_pointer db]
-      sqlite3_extended_result_codes $::DB $::ioerropts(-erc)
-      if {[info exists ::ioerropts(-tclprep)]} {
-        eval $::ioerropts(-tclprep)
-      }
-      if {[info exists ::ioerropts(-sqlprep)]} {
-        execsql $::ioerropts(-sqlprep)
-      }
-      expr 0
+      run_ioerr_prep
     } {0}
 
     # Read the 'checksum' of the database.
     if {$::ioerropts(-cksum)} {
-      set checksum [cksum]
+      set ::checksum [cksum]
     }
 
     # Set the Nth IO error to fail.
@@ -1191,20 +1234,10 @@ proc do_ioerr_test {testname args} {
       set ::sqlite_io_error_persist $::ioerropts(-persist)
       set ::sqlite_io_error_pending $n
     }] $n
-  
-    # Create a single TCL script from the TCL and SQL specified
-    # as the body of the test.
-    set ::ioerrorbody {}
-    if {[info exists ::ioerropts(-tclbody)]} {
-      append ::ioerrorbody "$::ioerropts(-tclbody)\n"
-    }
-    if {[info exists ::ioerropts(-sqlbody)]} {
-      append ::ioerrorbody "db eval {$::ioerropts(-sqlbody)}"
-    }
 
-    # Execute the TCL Script created in the above block. If
-    # there are at least N IO operations performed by SQLite as
-    # a result of the script, the Nth will fail.
+    # Execute the TCL script created for the body of this test. If
+    # at least N IO operations performed by SQLite as a result of 
+    # the script, the Nth will fail.
     do_test $testname.$n.3 {
       set ::sqlite_io_error_hit 0
       set ::sqlite_io_error_hardhit 0
@@ -1300,7 +1333,7 @@ proc do_ioerr_test {testname args} {
       }
     }
 
-    # If an IO error occured, then the checksum of the database should
+    # If an IO error occurred, then the checksum of the database should
     # be the same as before the script that caused the IO error was run.
     #
     if {$::go && $::sqlite_io_error_hardhit && $::ioerropts(-cksum)} {
@@ -1308,8 +1341,15 @@ proc do_ioerr_test {testname args} {
         catch {db close}
         catch {db2 close}
         set ::DB [sqlite3 db test.db; sqlite3_connection_pointer db]
-        cksum
-      } $checksum
+        set nowcksum [cksum]
+        set res [expr {$nowcksum==$::checksum || $nowcksum==$::goodcksum}]
+        if {$res==0} {
+          puts "now=$nowcksum"
+          puts "the=$::checksum"
+          puts "fwd=$::goodcksum"
+        }
+        set res
+      } 1
     }
 
     set ::sqlite_io_error_hardhit 0

@@ -116,12 +116,7 @@ CollSeq *sqlite3ExprCollSeq(Parse *pParse, Expr *pExpr){
     }
     assert( op!=TK_REGISTER || p->op2!=TK_COLLATE );
     if( op==TK_COLLATE ){
-      if( db->init.busy ){
-        /* Do not report errors when parsing while the schema */
-        pColl = sqlite3FindCollSeq(db, ENC(db), p->u.zToken, 0);
-      }else{
-        pColl = sqlite3GetCollSeq(pParse, ENC(db), 0, p->u.zToken);
-      }
+      pColl = sqlite3GetCollSeq(pParse, ENC(db), 0, p->u.zToken);
       break;
     }
     if( p->pTab!=0
@@ -638,7 +633,7 @@ void sqlite3ExprAssignVarNumber(Parse *pParse, Expr *pExpr){
       */
       ynVar i;
       for(i=0; i<pParse->nzVar; i++){
-        if( pParse->azVar[i] && memcmp(pParse->azVar[i],z,n+1)==0 ){
+        if( pParse->azVar[i] && strcmp(pParse->azVar[i],z)==0 ){
           pExpr->iColumn = x = (ynVar)i+1;
           break;
         }
@@ -1214,6 +1209,7 @@ static int selectNodeIsConstant(Walker *pWalker, Select *NotUsed){
 }
 static int exprIsConst(Expr *p, int initFlag){
   Walker w;
+  memset(&w, 0, sizeof(w));
   w.u.i = initFlag;
   w.xExprCallback = exprNodeIsConstant;
   w.xSelectCallback = selectNodeIsConstant;
@@ -1456,10 +1452,11 @@ int sqlite3CodeOnce(Parse *pParse){
 **
 ** The returned value of this function indicates the b-tree type, as follows:
 **
-**   IN_INDEX_ROWID - The cursor was opened on a database table.
-**   IN_INDEX_INDEX - The cursor was opened on a database index.
-**   IN_INDEX_EPH -   The cursor was opened on a specially created and
-**                    populated epheremal table.
+**   IN_INDEX_ROWID      - The cursor was opened on a database table.
+**   IN_INDEX_INDEX_ASC  - The cursor was opened on an ascending index.
+**   IN_INDEX_INDEX_DESC - The cursor was opened on a descending index.
+**   IN_INDEX_EPH        - The cursor was opened on a specially created and
+**                         populated epheremal table.
 **
 ** An existing b-tree might be used if the RHS expression pX is a simple
 ** subquery such as:
@@ -1582,7 +1579,8 @@ int sqlite3FindInIndex(Parse *pParse, Expr *pX, int *prNotFound){
           sqlite3VdbeAddOp4(v, OP_OpenRead, iTab, pIdx->tnum, iDb,
                                pKey,P4_KEYINFO_HANDOFF);
           VdbeComment((v, "%s", pIdx->zName));
-          eType = IN_INDEX_INDEX;
+          assert( IN_INDEX_INDEX_DESC == IN_INDEX_INDEX_ASC+1 );
+          eType = IN_INDEX_INDEX_ASC + pIdx->aSortOrder[0];
 
           sqlite3VdbeJumpHere(v, iAddr);
           if( prNotFound && !pTab->aCol[iCol].notNull ){
@@ -2935,7 +2933,8 @@ int sqlite3ExprCodeTarget(Parse *pParse, Expr *pExpr, int target){
         sqlite3VdbeAddOp4(
             v, OP_Halt, SQLITE_OK, OE_Ignore, 0, pExpr->u.zToken,0);
       }else{
-        sqlite3HaltConstraint(pParse, pExpr->affinity, pExpr->u.zToken, 0);
+        sqlite3HaltConstraint(pParse, SQLITE_CONSTRAINT_TRIGGER,
+                              pExpr->affinity, pExpr->u.zToken, 0);
       }
 
       break;
@@ -3281,6 +3280,12 @@ void sqlite3ExplainExprList(Vdbe *pOut, ExprList *pList){
       sqlite3ExplainPush(pOut);
       sqlite3ExplainExpr(pOut, pList->a[i].pExpr);
       sqlite3ExplainPop(pOut);
+      if( pList->a[i].zName ){
+        sqlite3ExplainPrintf(pOut, " AS %s", pList->a[i].zName);
+      }
+      if( pList->a[i].bSpanIsTab ){
+        sqlite3ExplainPrintf(pOut, " (%s)", pList->a[i].zSpan);
+      }
       if( i<pList->nExpr-1 ){
         sqlite3ExplainNL(pOut);
       }
@@ -3419,8 +3424,8 @@ void sqlite3ExprCodeConstants(Parse *pParse, Expr *pExpr){
   Walker w;
   if( pParse->cookieGoto ) return;
   if( OptimizationDisabled(pParse->db, SQLITE_FactorOutConst) ) return;
+  memset(&w, 0, sizeof(w));
   w.xExprCallback = evalConstExpr;
-  w.xSelectCallback = 0;
   w.pParse = pParse;
   sqlite3WalkExpr(&w, pExpr);
 }
@@ -3533,7 +3538,7 @@ void sqlite3ExprIfTrue(Parse *pParse, Expr *pExpr, int dest, int jumpIfNull){
   int r1, r2;
 
   assert( jumpIfNull==SQLITE_JUMPIFNULL || jumpIfNull==0 );
-  if( NEVER(v==0) )     return;  /* Existance of VDBE checked by caller */
+  if( NEVER(v==0) )     return;  /* Existence of VDBE checked by caller */
   if( NEVER(pExpr==0) ) return;  /* No way this can happen */
   op = pExpr->op;
   switch( op ){
@@ -3653,7 +3658,7 @@ void sqlite3ExprIfFalse(Parse *pParse, Expr *pExpr, int dest, int jumpIfNull){
   int r1, r2;
 
   assert( jumpIfNull==SQLITE_JUMPIFNULL || jumpIfNull==0 );
-  if( NEVER(v==0) ) return; /* Existance of VDBE checked by caller */
+  if( NEVER(v==0) ) return; /* Existence of VDBE checked by caller */
   if( pExpr==0 )    return;
 
   /* The value of pExpr->op and op are related as follows:
