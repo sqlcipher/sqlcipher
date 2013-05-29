@@ -38,12 +38,12 @@
 #include "btreeInt.h"
 #include "crypto.h"
 
-const char* codec_get_cipher_version() {
+static const char* codec_get_cipher_version() {
   return CIPHER_VERSION;
 }
 
 /* Generate code to return a string value */
-void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value){
+static void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value){
   Vdbe *v = sqlite3GetVdbe(pParse);
   sqlite3VdbeSetNumCols(v, 1);
   sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLabel, SQLITE_STATIC);
@@ -69,7 +69,7 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
   return rc;
 }
 
-int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
+static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE(("codec_set_pass_key: entered db=%p nDb=%d zKey=%s nKey=%d for_ctx=%d\n", db, nDb, (char *)zKey, nKey, for_ctx));
   if(pDb->pBt) {

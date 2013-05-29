@@ -82,6 +82,15 @@
 #define HMAC_SALT_MASK 0x3a
 #endif
 
+#ifndef CIPHER_MAX_IV_SZ
+#define CIPHER_MAX_IV_SZ 16
+#endif
+
+#ifndef CIPHER_MAX_KEY_SZ
+#define CIPHER_MAX_KEY_SZ 64
+#endif
+
+
 #ifdef CODEC_DEBUG
 #define CODEC_TRACE(X)  {printf X;fflush(stdout);}
 #else
@@ -137,6 +146,9 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
 /* extensions defined in crypto_impl.c */
 
 typedef struct codec_ctx codec_ctx;
+
+void sqlcipher_free(void *ptr, int sz);
+void* sqlcipher_malloc(int sz);
 
 /* utility functions */
 void* sqlcipher_memset(void *v, unsigned char value, int len);
