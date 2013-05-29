@@ -4,7 +4,6 @@
 
 typedef struct {
   EVP_CIPHER *evp_cipher;
-  unsigned char * buffer;
 } openssl_ctx;
 
 
