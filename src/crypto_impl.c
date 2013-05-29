@@ -519,7 +519,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
     /* if unable to read the bytes, generate random salt */
-    if(sqlcipher_random(ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
+    if(sqlcipher_random(&ctx->read_ctx->lib_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
   }
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
@@ -581,10 +581,10 @@ int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
   sqlcipher_hmac(
-    ctx->hmac_key, ctx->key_sz,
-    in, in_sz, 
-    (unsigned char*) &pgno_raw, sizeof(pgno),
-    out);
+    ctx->lib_ctx, ctx->hmac_key,
+    ctx->key_sz, in,
+    in_sz, (unsigned char*) &pgno_raw,
+    sizeof(pgno), out);
   return SQLITE_OK; 
 }
 
@@ -624,7 +624,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
 
   if(mode == CIPHER_ENCRYPT) {
     /* start at front of the reserve block, write random data to the end */
-    if(sqlcipher_random(iv_out, c_ctx->reserve_sz) != 1) return SQLITE_ERROR; 
+    if(sqlcipher_random(c_ctx->lib_ctx, iv_out, c_ctx->reserve_sz) != 1) return SQLITE_ERROR; 
   } else { /* CIPHER_DECRYPT */
     memcpy(iv_out, iv_in, c_ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
@@ -695,9 +695,9 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       cipher_hex2bin(z, n, c_ctx->key);
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
-      sqlcipher_kdf( c_ctx->pass, c_ctx->pass_sz, 
-                              ctx->kdf_salt, ctx->kdf_salt_sz, 
-                              c_ctx->kdf_iter, c_ctx->key_sz, c_ctx->key);
+      sqlcipher_kdf(c_ctx->lib_ctx, c_ctx->pass, c_ctx->pass_sz, 
+                    ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter,
+                    c_ctx->key_sz, c_ctx->key);
                               
     }
 
@@ -721,9 +721,9 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
         c_ctx->fast_kdf_iter)); 
 
       
-      sqlcipher_kdf( (const char*)c_ctx->key, c_ctx->key_sz, 
-                              ctx->hmac_kdf_salt, ctx->kdf_salt_sz, 
-                              c_ctx->fast_kdf_iter, c_ctx->key_sz, c_ctx->hmac_key); 
+      sqlcipher_kdf(c_ctx->lib_ctx, (const char*)c_ctx->key, c_ctx->key_sz, 
+                    ctx->hmac_kdf_salt, ctx->kdf_salt_sz, c_ctx->fast_kdf_iter,
+                    c_ctx->key_sz, c_ctx->hmac_key); 
     }
 
     c_ctx->derive_key = 0;

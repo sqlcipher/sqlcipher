@@ -39,7 +39,7 @@ void sqlcipher_activate(void *ctx) {
 /* deactivate SQLCipher, most imporantly decremeting the activation count and
    freeing the EVP structures on the final deactivation to ensure that 
    OpenSSL memory is cleaned up */
-void sqlcipher_deactivate() {
+void sqlcipher_deactivate(void *ctx) {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   /* If it is initialized externally, then the init counter should never be greater than zero.
      This should prevent SQLCipher from "cleaning up" openssl 
@@ -57,11 +57,11 @@ void sqlcipher_deactivate() {
 }
 
 /* generate a defined number of pseudorandom bytes */
-int sqlcipher_random (void *buffer, int length) {
+int sqlcipher_random (void *ctx, void *buffer, int length) {
   return RAND_bytes((unsigned char *)buffer, length);
 }
 
-int sqlcipher_hmac(unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+int sqlcipher_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   HMAC_CTX hctx;
   HMAC_CTX_init(&hctx);
   HMAC_Init_ex(&hctx, hmac_key, key_sz, EVP_sha1(), NULL);
@@ -72,7 +72,7 @@ int sqlcipher_hmac(unsigned char *hmac_key, int key_sz, unsigned char *in, int i
   return SQLITE_OK; 
 }
 
-int sqlcipher_kdf(const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+int sqlcipher_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   PKCS5_PBKDF2_HMAC_SHA1(pass, pass_sz, salt, salt_sz, workfactor, key_sz, key); 
   return SQLITE_OK; 
 }

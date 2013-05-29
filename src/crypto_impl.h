@@ -36,10 +36,10 @@
 #define CRYPTO_IMPL_H
 
 void sqlcipher_activate(void *ctx);
-void sqlcipher_deactivate();
-int sqlcipher_random (void *buffer, int length);
-int sqlcipher_hmac(unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out);
-int sqlcipher_kdf(const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key);
+void sqlcipher_deactivate(void *ctx);
+int sqlcipher_random (void *ctx, void *buffer, int length);
+int sqlcipher_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out);
+int sqlcipher_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key);
 int sqlcipher_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out);
 int sqlcipher_set_cipher(void *ctx, const char *cipher_name);
 const char* sqlcipher_get_cipher(void *ctx);
