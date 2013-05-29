@@ -36,6 +36,7 @@
 #include "sqliteInt.h"
 #include "btreeInt.h"
 #include "crypto.h"
+#include "crypto_impl.h"
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
 #include <sys/mman.h>
@@ -43,8 +44,6 @@
 # include <windows.h>
 #endif
 #endif
-
-#include "crypto_openssl.c"
 
 /* the default implementation of SQLCipher uses a cipher_ctx
    to keep track of read / write state separately. The following
