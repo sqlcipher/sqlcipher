@@ -208,6 +208,25 @@ int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx)
 
 /* end extensions defined in crypto_impl.c */
 
+typedef struct {
+  int (*activate)(void *ctx);
+  int (*deactivate)(void *ctx);
+  int (*random)(void *ctx, void *buffer, int length);
+  int (*hmac)(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out);
+  int (*kdf)(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key);
+  int (*cipher)(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out);
+  int (*set_cipher)(void *ctx, const char *cipher_name);
+  const char* (*get_cipher)(void *ctx);
+  int (*get_key_sz)(void *ctx);
+  int (*get_iv_sz)(void *ctx);
+  int (*get_block_sz)(void *ctx);
+  int (*get_hmac_sz)(void *ctx);
+  int (*ctx_copy)(void *target_ctx, void *source_ctx);
+  int (*ctx_cmp)(void *c1, void *c2);
+  int (*ctx_init)(void **ctx);
+  int (*ctx_free)(void **ctx);
+} sqlcipher_provider;
+
 #endif
 #endif
 /* END CRYPTO */

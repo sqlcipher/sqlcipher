@@ -92,7 +92,6 @@ if {$addstatic} {
 #
 foreach hdr {
    crypto.h
-   crypto_impl.h
    btree.h
    btreeInt.h
    fts3.h

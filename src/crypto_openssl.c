@@ -11,13 +11,14 @@ typedef struct {
 static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
 
+
 /* activate and initialize sqlcipher. Most importantly, this will automatically
    intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
    this function may be called multiple times as new codecs are intiialized. 
    Thus it performs some basic counting to ensure that only the last and final
-   sqlcipher_deactivate() will free the EVP structures. 
+   sqlcipher_openssl_deactivate() will free the EVP structures. 
 */
-void sqlcipher_activate(void *ctx) {
+static int sqlcipher_openssl_activate(void *ctx) {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 
   /* we'll initialize openssl and increment the internal init counter
@@ -39,7 +40,7 @@ void sqlcipher_activate(void *ctx) {
 /* deactivate SQLCipher, most imporantly decremeting the activation count and
    freeing the EVP structures on the final deactivation to ensure that 
    OpenSSL memory is cleaned up */
-void sqlcipher_deactivate(void *ctx) {
+static int sqlcipher_openssl_deactivate(void *ctx) {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   /* If it is initialized externally, then the init counter should never be greater than zero.
      This should prevent SQLCipher from "cleaning up" openssl 
@@ -57,11 +58,11 @@ void sqlcipher_deactivate(void *ctx) {
 }
 
 /* generate a defined number of pseudorandom bytes */
-int sqlcipher_random (void *ctx, void *buffer, int length) {
+static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   return RAND_bytes((unsigned char *)buffer, length);
 }
 
-int sqlcipher_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   HMAC_CTX hctx;
   HMAC_CTX_init(&hctx);
   HMAC_Init_ex(&hctx, hmac_key, key_sz, EVP_sha1(), NULL);
@@ -72,12 +73,12 @@ int sqlcipher_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char
   return SQLITE_OK; 
 }
 
-int sqlcipher_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_openssl_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   PKCS5_PBKDF2_HMAC_SHA1(pass, pass_sz, salt, salt_sz, workfactor, key_sz, key); 
   return SQLITE_OK; 
 }
 
-int sqlcipher_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
+static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
   EVP_CIPHER_CTX ectx;
   int tmp_csz, csz;
  
@@ -94,49 +95,71 @@ int sqlcipher_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsign
   return SQLITE_OK; 
 }
 
-int sqlcipher_set_cipher(void *ctx, const char *cipher_name) {
+static int sqlcipher_openssl_set_cipher(void *ctx, const char *cipher_name) {
   openssl_ctx *o_ctx = (openssl_ctx *)ctx;
   o_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
   return SQLITE_OK;
 }
 
-const char* sqlcipher_get_cipher(void *ctx) {
+static const char* sqlcipher_openssl_get_cipher(void *ctx) {
   return EVP_CIPHER_name(((openssl_ctx *)ctx)->evp_cipher);
 }
 
-int sqlcipher_get_key_sz(void *ctx) {
+static int sqlcipher_openssl_get_key_sz(void *ctx) {
   return EVP_CIPHER_key_length(((openssl_ctx *)ctx)->evp_cipher);
 }
 
-int sqlcipher_get_iv_sz(void *ctx) {
+static int sqlcipher_openssl_get_iv_sz(void *ctx) {
   return EVP_CIPHER_iv_length(((openssl_ctx *)ctx)->evp_cipher);
 }
 
-int sqlcipher_get_block_sz(void *ctx) {
+static int sqlcipher_openssl_get_block_sz(void *ctx) {
   return EVP_CIPHER_block_size(((openssl_ctx *)ctx)->evp_cipher);
 }
 
-int sqlcipher_get_hmac_sz(void *ctx) {
+static int sqlcipher_openssl_get_hmac_sz(void *ctx) {
   return EVP_MD_size(EVP_sha1());
 }
 
-int sqlcipher_ctx_copy(void *target_ctx, void *source_ctx) {
+static int sqlcipher_openssl_ctx_copy(void *target_ctx, void *source_ctx) {
   memcpy(target_ctx, source_ctx, sizeof(openssl_ctx));
   return SQLITE_OK;
 }
 
-int sqlcipher_ctx_cmp(void *c1, void *c2) {
+static int sqlcipher_openssl_ctx_cmp(void *c1, void *c2) {
   return ((openssl_ctx *)c1)->evp_cipher == ((openssl_ctx *)c2)->evp_cipher;
 }
 
-int sqlcipher_ctx_init(void **ctx) {
+static int sqlcipher_openssl_ctx_init(void **ctx) {
   *ctx = sqlcipher_malloc(sizeof(openssl_ctx));
   if(*ctx == NULL) return SQLITE_NOMEM;
+  sqlcipher_openssl_activate(*ctx);
   return SQLITE_OK;
 }
 
-int sqlcipher_ctx_free(void **ctx) {
+static int sqlcipher_openssl_ctx_free(void **ctx) {
   sqlcipher_free(*ctx, sizeof(openssl_ctx));
+  sqlcipher_openssl_deactivate(*ctx);
   return SQLITE_OK;
 }
+
+int sqlcipher_openssl_setup(sqlcipher_provider *p) {
+  p->activate = sqlcipher_openssl_activate;  
+  p->deactivate = sqlcipher_openssl_deactivate;  
+  p->random = sqlcipher_openssl_random;
+  p->hmac = sqlcipher_openssl_hmac;
+  p->kdf = sqlcipher_openssl_kdf;
+  p->cipher = sqlcipher_openssl_cipher;
+  p->set_cipher = sqlcipher_openssl_set_cipher;
+  p->get_cipher = sqlcipher_openssl_get_cipher;
+  p->get_key_sz = sqlcipher_openssl_get_key_sz;
+  p->get_iv_sz = sqlcipher_openssl_get_iv_sz;
+  p->get_block_sz = sqlcipher_openssl_get_block_sz;
+  p->get_hmac_sz = sqlcipher_openssl_get_hmac_sz;
+  p->ctx_copy = sqlcipher_openssl_ctx_copy;
+  p->ctx_cmp = sqlcipher_openssl_ctx_cmp;
+  p->ctx_init = sqlcipher_openssl_ctx_init;
+  p->ctx_free = sqlcipher_openssl_ctx_free;
+}
+
 #endif

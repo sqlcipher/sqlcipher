@@ -1,17 +1,24 @@
 #ifdef SQLCIPHER_CRYPTO_LIBTOMCRYPT
 #include <tomcrypt.h>
 
-void sqlcipher_activate(void *ctx) {
-  register_prng(&fortuna_desc);
-  register_cipher(&rijndael_desc);
-  register_hash(&sha256_desc);
-  register_hash(&sha1_desc);
+static unsigned int ltc_init = 0;
+
+static int sqlcipher_ltc_activate(void *ctx) {
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  if(ltc_init == 0) {
+    register_prng(&fortuna_desc);
+    register_cipher(&rijndael_desc);
+    register_hash(&sha256_desc);
+    register_hash(&sha1_desc);
+    ltc_init = 1;
+  }
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
-void sqlcipher_deactivate(void *ctx) {
+static int sqlcipher_ltc_deactivate(void *ctx) {
 }
 
-int sqlcipher_random(void *ctx, void *buffer, int length) {
+static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
   prng_state prng;
   int random_value;
   int random_buffer_sz = 256;
@@ -27,7 +34,7 @@ int sqlcipher_random(void *ctx, void *buffer, int length) {
   return SQLITE_OK;
 }
 
-int sqlcipher_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_ltc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   int rc, hash_idx;
   hmac_state hmac;
   unsigned long outlen = key_sz;
@@ -40,7 +47,7 @@ int sqlcipher_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char
   return SQLITE_OK;
 }
 
-int sqlcipher_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_ltc_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   int rc, hash_idx;
   unsigned long outlen = key_sz;
 
@@ -50,11 +57,15 @@ int sqlcipher_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned ch
   return SQLITE_OK;
 }
 
-int sqlcipher_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
+static const char* sqlcipher_ltc_get_cipher(void *ctx) {
+  return "rijndael";
+}
+
+static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
   int rc, cipher_idx, hash_idx;
   symmetric_CBC cbc;
 
-  if((cipher_idx = find_cipher(sqlcipher_get_cipher(ctx))) == -1) return SQLITE_ERROR;
+  if((cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx))) == -1) return SQLITE_ERROR;
   if((hash_idx = find_hash("sha256")) == -1) return SQLITE_ERROR;
   if((rc = cbc_start(cipher_idx, iv, key, key_sz, 0, &cbc)) != CRYPT_OK) return SQLITE_ERROR;
   rc = mode == 1 ? cbc_encrypt(in, out, in_sz, &cbc) : cbc_decrypt(in, out, in_sz, &cbc);
@@ -63,47 +74,66 @@ int sqlcipher_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsign
   return SQLITE_OK;
 }
 
-int sqlcipher_set_cipher(void *ctx, const char *cipher_name) {
+static int sqlcipher_ltc_set_cipher(void *ctx, const char *cipher_name) {
   return SQLITE_OK;
 }
 
-const char* sqlcipher_get_cipher(void *ctx) {
-  return "rijndael";
-}
-
-int sqlcipher_get_key_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_get_cipher(ctx));
+static int sqlcipher_ltc_get_key_sz(void *ctx) {
+  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
   return cipher_descriptor[cipher_idx].max_key_length;
 }
 
-int sqlcipher_get_iv_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_get_cipher(ctx));
+static int sqlcipher_ltc_get_iv_sz(void *ctx) {
+  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
   return cipher_descriptor[cipher_idx].block_length;
 }
 
-int sqlcipher_get_block_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_get_cipher(ctx));
+static int sqlcipher_ltc_get_block_sz(void *ctx) {
+  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
   return cipher_descriptor[cipher_idx].block_length;
 }
 
-int sqlcipher_get_hmac_sz(void *ctx) {
+static int sqlcipher_ltc_get_hmac_sz(void *ctx) {
   int hash_idx = find_hash("sha1");
   return hash_descriptor[hash_idx].hashsize;
 }
 
-int sqlcipher_ctx_copy(void *target_ctx, void *source_ctx) {
+static int sqlcipher_ltc_ctx_copy(void *target_ctx, void *source_ctx) {
   return 1;
 }
 
-int sqlcipher_ctx_cmp(void *c1, void *c2) {
+static int sqlcipher_ltc_ctx_cmp(void *c1, void *c2) {
   return 1;
 }
 
-int sqlcipher_ctx_init(void **ctx) {
+static int sqlcipher_ltc_ctx_init(void **ctx) {
+  sqlcipher_ltc_activate(&ctx);
   return SQLITE_OK;
 }
 
-int sqlcipher_ctx_free(void **ctx) {
+static int sqlcipher_ltc_ctx_free(void **ctx) {
+  sqlcipher_ltc_deactivate(&ctx);
   return SQLITE_OK;
 }
+
+int sqlcipher_ltc_setup(sqlcipher_provider *p) {
+  p->activate = sqlcipher_ltc_activate;  
+  p->deactivate = sqlcipher_ltc_deactivate;  
+  p->random = sqlcipher_ltc_random;
+  p->hmac = sqlcipher_ltc_hmac;
+  p->kdf = sqlcipher_ltc_kdf;
+  p->cipher = sqlcipher_ltc_cipher;
+  p->set_cipher = sqlcipher_ltc_set_cipher;
+  p->get_cipher = sqlcipher_ltc_get_cipher;
+  p->get_key_sz = sqlcipher_ltc_get_key_sz;
+  p->get_iv_sz = sqlcipher_ltc_get_iv_sz;
+  p->get_block_sz = sqlcipher_ltc_get_block_sz;
+  p->get_hmac_sz = sqlcipher_ltc_get_hmac_sz;
+  p->ctx_copy = sqlcipher_ltc_ctx_copy;
+  p->ctx_cmp = sqlcipher_ltc_ctx_cmp;
+  p->ctx_init = sqlcipher_ltc_ctx_init;
+  p->ctx_free = sqlcipher_ltc_ctx_free;
+}
+
+
 #endif

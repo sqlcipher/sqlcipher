@@ -140,7 +140,6 @@ CRYPTOLIBOBJ = \
 CRYPTOSRC = \
   $(TOP)/src/crypto.h \
   $(TOP)/src/crypto.c \
-  $(TOP)/src/crypto_impl.h \
   $(TOP)/src/crypto_impl.c \
 	$(TOP)/src/crypto_libtomcrypt.c \
 	$(TOP)/src/crypto_openssl.c
