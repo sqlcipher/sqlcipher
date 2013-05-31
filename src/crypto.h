@@ -144,18 +144,7 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
 }
 
 /* extensions defined in crypto_impl.c */
-
 typedef struct codec_ctx codec_ctx;
-
-void sqlcipher_free(void *ptr, int sz);
-void* sqlcipher_malloc(int sz);
-
-/* utility functions */
-void* sqlcipher_memset(void *v, unsigned char value, int len);
-int sqlcipher_ismemset(const void *v, unsigned char value, int len);
-int sqlcipher_memcmp(const void *v0, const void *v1, int len);
-int sqlcipher_pseudorandom(void *, int);
-void sqlcipher_free(void *, int);
 
 /* activation and initialization */
 void sqlcipher_activate();
@@ -205,27 +194,6 @@ int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx);
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag);
 int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag);
 int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx);
-
-/* end extensions defined in crypto_impl.c */
-
-typedef struct {
-  int (*activate)(void *ctx);
-  int (*deactivate)(void *ctx);
-  int (*random)(void *ctx, void *buffer, int length);
-  int (*hmac)(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out);
-  int (*kdf)(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key);
-  int (*cipher)(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out);
-  int (*set_cipher)(void *ctx, const char *cipher_name);
-  const char* (*get_cipher)(void *ctx);
-  int (*get_key_sz)(void *ctx);
-  int (*get_iv_sz)(void *ctx);
-  int (*get_block_sz)(void *ctx);
-  int (*get_hmac_sz)(void *ctx);
-  int (*ctx_copy)(void *target_ctx, void *source_ctx);
-  int (*ctx_cmp)(void *c1, void *c2);
-  int (*ctx_init)(void **ctx);
-  int (*ctx_free)(void **ctx);
-} sqlcipher_provider;
 
 #endif
 #endif

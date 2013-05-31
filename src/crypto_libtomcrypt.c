@@ -1,4 +1,6 @@
 #ifdef SQLCIPHER_CRYPTO_LIBTOMCRYPT
+#include "sqliteInt.h"
+#include "sqlcipher.h"
 #include <tomcrypt.h>
 
 static unsigned int ltc_init = 0;

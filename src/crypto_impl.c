@@ -35,6 +35,7 @@
 
 #include "sqliteInt.h"
 #include "btreeInt.h"
+#include "sqlcipher.h"
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
@@ -65,16 +66,6 @@ typedef struct {
   void *provider_ctx;
 } cipher_ctx;
 
-void sqlcipher_cipher_ctx_free(cipher_ctx **);
-int sqlcipher_cipher_ctx_cmp(cipher_ctx *, cipher_ctx *);
-int sqlcipher_cipher_ctx_copy(cipher_ctx *, cipher_ctx *);
-int sqlcipher_cipher_ctx_init(cipher_ctx **);
-int sqlcipher_cipher_ctx_set_pass(cipher_ctx *, const void *, int);
-int sqlcipher_cipher_ctx_key_derive(codec_ctx *, cipher_ctx *);
-
-/* prototype for pager HMAC function */
-int sqlcipher_page_hmac(cipher_ctx *, Pgno, unsigned char *, int, unsigned char *);
-
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 
@@ -91,7 +82,7 @@ struct codec_ctx {
   cipher_ctx *write_ctx;
 };
 
-static int sqlcipher_register_provider(sqlcipher_provider *p) {
+int sqlcipher_register_provider(sqlcipher_provider *p) {
   if(default_provider != NULL) {
     sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
   }
@@ -221,7 +212,7 @@ void* sqlcipher_malloc(int sz) {
   * returns SQLITE_OK if initialization was successful
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
-int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
+static int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   int rc;
   cipher_ctx *ctx;
   *iCtx = (cipher_ctx *) sqlcipher_malloc(sizeof(cipher_ctx));
@@ -247,7 +238,7 @@ int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
 /**
   * Free and wipe memory associated with a cipher_ctx
   */
-void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
+static void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   cipher_ctx *ctx = *iCtx;
   CODEC_TRACE(("cipher_ctx_free: entered iCtx=%p\n", iCtx));
   ctx->provider->ctx_free(&ctx->provider_ctx);
@@ -264,7 +255,7 @@ void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   * returns 0 if all the parameters (except the derived key data) are the same
   * returns 1 otherwise
   */
-int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
+static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
   CODEC_TRACE(("sqlcipher_cipher_ctx_cmp: entered c1=%p c2=%p\n", c1, c2));
 
   if(
@@ -294,7 +285,7 @@ int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
   * returns SQLITE_OK if initialization was successful
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
-int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
+static int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   void *key = target->key; 
   void *hmac_key = target->hmac_key; 
   void *provider = target->provider;
@@ -331,7 +322,7 @@ int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   * returns SQLITE_NOMEM if an error occured allocating memory
   * returns SQLITE_ERROR if the key couldn't be set because the pass was null or size was zero
   */
-int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
+static int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
   sqlcipher_free(ctx->pass, ctx->pass_sz);
   ctx->pass_sz = nKey;
   if(zKey && nKey) {
@@ -603,7 +594,7 @@ static void sqlcipher_put4byte_le(unsigned char *p, u32 v) {
   p[3] = (u8)(v>>24);
 }
 
-int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
+static int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
   unsigned char pgno_raw[sizeof(pgno)];
   /* we may convert page number to consistent representation before calculating MAC for
      compatibility across big-endian and little-endian platforms. 
@@ -723,7 +714,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   * returns SQLITE_OK if initialization was successful
   * returns SQLITE_ERROR if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
   */
-int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
+static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
                 ctx->kdf_salt=%p ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
                 ctx->hmac_kdf_salt=%p, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 

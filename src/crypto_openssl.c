@@ -1,4 +1,7 @@
 #ifdef SQLCIPHER_CRYPTO_OPENSSL
+#include "sqliteInt.h"
+#include "crypto.h"
+#include "sqlcipher.h"
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
