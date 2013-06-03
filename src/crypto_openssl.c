@@ -1,3 +1,4 @@
+#ifdef SQLCIPHER_CRYPTO_OPENSSL
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -138,5 +139,4 @@ int sqlcipher_ctx_free(void **ctx) {
   sqlcipher_free(*ctx, sizeof(openssl_ctx));
   return SQLITE_OK;
 }
-
-
+#endif

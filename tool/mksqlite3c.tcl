@@ -222,12 +222,14 @@ proc copy_file {filename} {
 # used subroutines first in order to help the compiler find
 # inlining opportunities.
 #
+
 foreach file {
    sqliteInt.h
 
    crypto.c
    crypto_impl.c
    crypto_libtomcrypt.c
+   crypto_openssl.c
 
    global.c
    ctime.c

@@ -254,6 +254,23 @@ if test "$SQLITE_THREADSAFE" = "1"; then
 fi
 
 ##########
+# Which crypto library do we use
+#
+AC_ARG_WITH([crypto-lib],
+AC_HELP_STRING([--with-crypto-lib],[Specify which crypto library to use]),
+crypto_lib=$withval)
+AC_MSG_CHECKING([for crypto library to use])
+if test "$crypto_lib" = "libtomcrypto"; then
+   CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPTO"
+   BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPTO"
+   AC_MSG_RESULT([libtomcrypto])
+else
+  CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+  BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+  AC_MSG_RESULT([openssl])
+fi
+
+##########
 # Do we want to allow a connection created in one thread to be used
 # in another thread.  This does not work on many Linux systems (ex: RedHat 9)
 # due to bugs in the threading implementations.  This is thus off by default.

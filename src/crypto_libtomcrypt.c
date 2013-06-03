@@ -1,3 +1,4 @@
+#ifdef SQLCIPHER_CRYPTO_LIBTOMCRYPTO
 #include <tomcrypt.h>
 
 void sqlcipher_activate(void *ctx) {
@@ -105,3 +106,4 @@ int sqlcipher_ctx_init(void **ctx) {
 int sqlcipher_ctx_free(void **ctx) {
   return SQLITE_OK;
 }
+#endif
