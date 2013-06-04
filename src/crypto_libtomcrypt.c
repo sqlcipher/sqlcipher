@@ -1,4 +1,4 @@
-#ifdef SQLCIPHER_CRYPTO_LIBTOMCRYPTO
+#ifdef SQLCIPHER_CRYPTO_LIBTOMCRYPT
 #include <tomcrypt.h>
 
 void sqlcipher_activate(void *ctx) {

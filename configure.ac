@@ -159,9 +159,6 @@ if test "x${TCLLIBDIR+set}" != "xset" ; then
   TCLLIBDIR="${TCLLIBDIR}/sqlite3"
 fi
 
-AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
-
 #########
 # Set up an appropriate program prefix
 #
@@ -260,14 +257,18 @@ AC_ARG_WITH([crypto-lib],
 AC_HELP_STRING([--with-crypto-lib],[Specify which crypto library to use]),
 crypto_lib=$withval)
 AC_MSG_CHECKING([for crypto library to use])
-if test "$crypto_lib" = "libtomcrypto"; then
-   CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPTO"
-   BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPTO"
-   AC_MSG_RESULT([libtomcrypto])
+if test "$crypto_lib" = "libtomcrypt"; then
+  CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+  BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+  AC_MSG_RESULT([libtomcrypt])
+  AC_CHECK_LIB([tomcrypt], [register_cipher], ,
+               AC_MSG_ERROR([Library crypto not found. Install libtomcrypt!"]))
 else
   CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
   BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-  AC_MSG_RESULT([openssl])
+	AC_MSG_RESULT([openssl])
+  AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+               AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
 fi
 
 ##########
