@@ -230,6 +230,7 @@ foreach file {
    crypto_impl.c
    crypto_libtomcrypt.c
    crypto_openssl.c
+   crypto_cc.c
 
    global.c
    ctime.c

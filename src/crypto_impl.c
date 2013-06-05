@@ -100,6 +100,9 @@ void sqlcipher_activate() {
 #elif SQLCIPHER_CRYPTO_LIBTOMCRYPT
   extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
   sqlcipher_ltc_setup(p);
+#elif SQLCIPHER_CRYPTO_CC
+  extern int sqlcipher_cc_setup(sqlcipher_provider *p);
+  sqlcipher_cc_setup(p);
 #endif
   }
   sqlcipher_register_provider(p);
