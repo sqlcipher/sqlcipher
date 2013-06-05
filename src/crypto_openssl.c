@@ -145,8 +145,8 @@ static int sqlcipher_openssl_ctx_init(void **ctx) {
 }
 
 static int sqlcipher_openssl_ctx_free(void **ctx) {
-  sqlcipher_free(*ctx, sizeof(openssl_ctx));
   sqlcipher_openssl_deactivate(*ctx);
+  sqlcipher_free(*ctx, sizeof(openssl_ctx));
   return SQLITE_OK;
 }
 
