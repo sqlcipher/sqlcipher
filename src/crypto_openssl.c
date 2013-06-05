@@ -15,6 +15,11 @@ static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
 
 
+static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
+  RAND_add(buffer, length, 0);
+  return SQLITE_OK;
+}
+
 /* activate and initialize sqlcipher. Most importantly, this will automatically
    intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
    this function may be called multiple times as new codecs are intiialized. 
@@ -71,12 +76,14 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
 
 static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   HMAC_CTX hctx;
+  int outlen;
   HMAC_CTX_init(&hctx);
   HMAC_Init_ex(&hctx, hmac_key, key_sz, EVP_sha1(), NULL);
   HMAC_Update(&hctx, in, in_sz);
   HMAC_Update(&hctx, in2, in2_sz);
-  HMAC_Final(&hctx, out, NULL);
+  HMAC_Final(&hctx, out, &outlen);
   HMAC_CTX_cleanup(&hctx);
+  sqlcipher_openssl_add_random(ctx, out, outlen);
   return SQLITE_OK; 
 }
 
@@ -168,6 +175,7 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->ctx_cmp = sqlcipher_openssl_ctx_cmp;
   p->ctx_init = sqlcipher_openssl_ctx_init;
   p->ctx_free = sqlcipher_openssl_ctx_free;
+  p->add_random = sqlcipher_openssl_add_random;
 }
 
 #endif
