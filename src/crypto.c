@@ -91,6 +91,11 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
 
   CODEC_TRACE(("codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
 
+  if( sqlite3StrICmp(zLeft, "cipher_provider")==0 && !zRight ){
+    if(ctx) { codec_vdbe_return_static_string(pParse, "cipher_provider",
+                                              sqlcipher_codec_get_cipher_provider(ctx));
+    }
+  } else
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else

@@ -28,12 +28,16 @@ static int sqlcipher_ltc_deactivate(void *ctx) {
   fortuna_done(&(ltc->prng));
 }
 
+static const char* sqlcipher_ltc_get_provider_name(void *ctx) {
+  return "libtomcrypt";
+}
+
 static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
   int random_value;
   int random_buffer_sz = 256;
   char random_buffer[random_buffer_sz];
-  ltc_ctx *ltc = (ltc_ctx*)ctx;
 
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
   sqlite3_randomness(sizeof(random_value), &random_value);
   sqlite3_snprintf(random_buffer_sz, random_buffer, "%d", random_value);
   if(fortuna_add_entropy(random_buffer, random_buffer_sz, &(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
@@ -128,7 +132,8 @@ static int sqlcipher_ltc_ctx_free(void **ctx) {
 
 int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->activate = sqlcipher_ltc_activate;  
-  p->deactivate = sqlcipher_ltc_deactivate;  
+  p->deactivate = sqlcipher_ltc_deactivate;
+  p->get_provider_name = sqlcipher_ltc_get_provider_name;
   p->random = sqlcipher_ltc_random;
   p->hmac = sqlcipher_ltc_hmac;
   p->kdf = sqlcipher_ltc_kdf;

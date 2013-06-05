@@ -60,6 +60,10 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
+static const char* sqlcipher_openssl_get_provider_name(void *ctx) {
+  return "openssl";
+}
+
 /* generate a defined number of pseudorandom bytes */
 static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   return RAND_bytes((unsigned char *)buffer, length);
@@ -148,7 +152,8 @@ static int sqlcipher_openssl_ctx_free(void **ctx) {
 
 int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->activate = sqlcipher_openssl_activate;  
-  p->deactivate = sqlcipher_openssl_deactivate;  
+  p->deactivate = sqlcipher_openssl_deactivate;
+  p->get_provider_name = sqlcipher_openssl_get_provider_name;
   p->random = sqlcipher_openssl_random;
   p->hmac = sqlcipher_openssl_hmac;
   p->kdf = sqlcipher_openssl_kdf;

@@ -792,5 +792,8 @@ int sqlcipher_codec_key_copy(codec_ctx *ctx, int source) {
   }
 }
 
+const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx) {
+  return ctx->read_ctx->provider->get_provider_name(ctx->read_ctx);
+}
 
 #endif
