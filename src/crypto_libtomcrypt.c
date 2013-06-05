@@ -3,36 +3,46 @@
 #include "sqlcipher.h"
 #include <tomcrypt.h>
 
+typedef struct {
+  prng_state prng;
+} ltc_ctx;
+
 static unsigned int ltc_init = 0;
 
 static int sqlcipher_ltc_activate(void *ctx) {
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   if(ltc_init == 0) {
-    register_prng(&fortuna_desc);
-    register_cipher(&rijndael_desc);
-    register_hash(&sha256_desc);
-    register_hash(&sha1_desc);
+    if(register_prng(&fortuna_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(register_cipher(&rijndael_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(register_hash(&sha1_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(fortuna_start(&(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
     ltc_init = 1;
   }
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  return SQLITE_OK;
 }
 
 static int sqlcipher_ltc_deactivate(void *ctx) {
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
+  fortuna_done(&(ltc->prng));
+}
+
+static const char* sqlcipher_ltc_get_provider_name(void *ctx) {
+  return "libtomcrypt";
 }
 
 static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
-  prng_state prng;
   int random_value;
   int random_buffer_sz = 256;
   char random_buffer[random_buffer_sz];
 
-  if(fortuna_start(&prng) != CRYPT_OK) return SQLITE_ERROR;
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
   sqlite3_randomness(sizeof(random_value), &random_value);
   sqlite3_snprintf(random_buffer_sz, random_buffer, "%d", random_value);
-  if(fortuna_add_entropy(random_buffer, random_buffer_sz, &prng) != CRYPT_OK) return SQLITE_ERROR;
-  if(fortuna_ready(&prng) != CRYPT_OK) return SQLITE_ERROR;
-  fortuna_read(buffer, length, &prng);
-  fortuna_done(&prng);
+  if(fortuna_add_entropy(random_buffer, random_buffer_sz, &(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
+  if(fortuna_ready(&(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
+  fortuna_read(buffer, length, &(ltc->prng));
   return SQLITE_OK;
 }
 
@@ -68,7 +78,6 @@ static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key
   symmetric_CBC cbc;
 
   if((cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx))) == -1) return SQLITE_ERROR;
-  if((hash_idx = find_hash("sha256")) == -1) return SQLITE_ERROR;
   if((rc = cbc_start(cipher_idx, iv, key, key_sz, 0, &cbc)) != CRYPT_OK) return SQLITE_ERROR;
   rc = mode == 1 ? cbc_encrypt(in, out, in_sz, &cbc) : cbc_decrypt(in, out, in_sz, &cbc);
   if(rc != CRYPT_OK) return SQLITE_ERROR;
@@ -109,18 +118,22 @@ static int sqlcipher_ltc_ctx_cmp(void *c1, void *c2) {
 }
 
 static int sqlcipher_ltc_ctx_init(void **ctx) {
-  sqlcipher_ltc_activate(&ctx);
+  *ctx = sqlcipher_malloc(sizeof(ltc_ctx));
+  if(*ctx == NULL) return SQLITE_NOMEM;
+  sqlcipher_ltc_activate(*ctx);
   return SQLITE_OK;
 }
 
 static int sqlcipher_ltc_ctx_free(void **ctx) {
   sqlcipher_ltc_deactivate(&ctx);
+  sqlcipher_free(*ctx, sizeof(ltc_ctx));
   return SQLITE_OK;
 }
 
 int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->activate = sqlcipher_ltc_activate;  
-  p->deactivate = sqlcipher_ltc_deactivate;  
+  p->deactivate = sqlcipher_ltc_deactivate;
+  p->get_provider_name = sqlcipher_ltc_get_provider_name;
   p->random = sqlcipher_ltc_random;
   p->hmac = sqlcipher_ltc_hmac;
   p->kdf = sqlcipher_ltc_kdf;
