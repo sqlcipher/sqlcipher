@@ -9,6 +9,12 @@ typedef struct {
 
 static unsigned int ltc_init = 0;
 
+static int sqlcipher_ltc_add_random(void *ctx, void *buffer, int length) {
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
+  int rc = fortuna_add_entropy(buffer, length, &(ltc->prng));
+  return rc != CRYPT_OK ? SQLITE_ERROR : SQLITE_OK;
+}
+
 static int sqlcipher_ltc_activate(void *ctx) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
@@ -40,7 +46,7 @@ static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
   sqlite3_randomness(sizeof(random_value), &random_value);
   sqlite3_snprintf(random_buffer_sz, random_buffer, "%d", random_value);
-  if(fortuna_add_entropy(random_buffer, random_buffer_sz, &(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
+  if(sqlcipher_ltc_add_random(ctx, random_buffer, random_buffer_sz) != SQLITE_OK) return SQLITE_ERROR;
   if(fortuna_ready(&(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
   fortuna_read(buffer, length, &(ltc->prng));
   return SQLITE_OK;
@@ -56,6 +62,7 @@ static int sqlcipher_ltc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, un
   if((rc = hmac_process(&hmac, in, in_sz)) != CRYPT_OK) return SQLITE_ERROR;
   if((rc = hmac_process(&hmac, in2, in2_sz)) != CRYPT_OK) return SQLITE_ERROR;
   if((rc = hmac_done(&hmac, out, &outlen)) != CRYPT_OK) return SQLITE_ERROR;
+  sqlcipher_ltc_add_random(ctx, out, outlen);
   return SQLITE_OK;
 }
 
@@ -148,6 +155,7 @@ int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->ctx_cmp = sqlcipher_ltc_ctx_cmp;
   p->ctx_init = sqlcipher_ltc_ctx_init;
   p->ctx_free = sqlcipher_ltc_ctx_free;
+  p->add_random = sqlcipher_ltc_add_random;
 }
 
 
