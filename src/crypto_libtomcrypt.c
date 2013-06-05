@@ -3,35 +3,42 @@
 #include "sqlcipher.h"
 #include <tomcrypt.h>
 
+typedef struct {
+  prng_state prng;
+} ltc_ctx;
+
 static unsigned int ltc_init = 0;
 
 static int sqlcipher_ltc_activate(void *ctx) {
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   if(ltc_init == 0) {
-    register_prng(&fortuna_desc);
-    register_cipher(&rijndael_desc);
-    register_hash(&sha1_desc);
+    if(register_prng(&fortuna_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(register_cipher(&rijndael_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(register_hash(&sha1_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(fortuna_start(&(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
     ltc_init = 1;
   }
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  return SQLITE_OK;
 }
 
 static int sqlcipher_ltc_deactivate(void *ctx) {
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
+  fortuna_done(&(ltc->prng));
 }
 
 static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
-  prng_state prng;
   int random_value;
   int random_buffer_sz = 256;
   char random_buffer[random_buffer_sz];
+  ltc_ctx *ltc = (ltc_ctx*)ctx;
 
-  if(fortuna_start(&prng) != CRYPT_OK) return SQLITE_ERROR;
   sqlite3_randomness(sizeof(random_value), &random_value);
   sqlite3_snprintf(random_buffer_sz, random_buffer, "%d", random_value);
-  if(fortuna_add_entropy(random_buffer, random_buffer_sz, &prng) != CRYPT_OK) return SQLITE_ERROR;
-  if(fortuna_ready(&prng) != CRYPT_OK) return SQLITE_ERROR;
-  fortuna_read(buffer, length, &prng);
-  fortuna_done(&prng);
+  if(fortuna_add_entropy(random_buffer, random_buffer_sz, &(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
+  if(fortuna_ready(&(ltc->prng)) != CRYPT_OK) return SQLITE_ERROR;
+  fortuna_read(buffer, length, &(ltc->prng));
   return SQLITE_OK;
 }
 
@@ -107,12 +114,15 @@ static int sqlcipher_ltc_ctx_cmp(void *c1, void *c2) {
 }
 
 static int sqlcipher_ltc_ctx_init(void **ctx) {
-  sqlcipher_ltc_activate(&ctx);
+  *ctx = sqlcipher_malloc(sizeof(ltc_ctx));
+  if(*ctx == NULL) return SQLITE_NOMEM;
+  sqlcipher_ltc_activate(*ctx);
   return SQLITE_OK;
 }
 
 static int sqlcipher_ltc_ctx_free(void **ctx) {
   sqlcipher_ltc_deactivate(&ctx);
+  sqlcipher_free(*ctx, sizeof(ltc_ctx));
   return SQLITE_OK;
 }
 
