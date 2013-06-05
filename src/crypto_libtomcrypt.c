@@ -10,7 +10,6 @@ static int sqlcipher_ltc_activate(void *ctx) {
   if(ltc_init == 0) {
     register_prng(&fortuna_desc);
     register_cipher(&rijndael_desc);
-    register_hash(&sha256_desc);
     register_hash(&sha1_desc);
     ltc_init = 1;
   }
@@ -68,7 +67,6 @@ static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key
   symmetric_CBC cbc;
 
   if((cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx))) == -1) return SQLITE_ERROR;
-  if((hash_idx = find_hash("sha256")) == -1) return SQLITE_ERROR;
   if((rc = cbc_start(cipher_idx, iv, key, key_sz, 0, &cbc)) != CRYPT_OK) return SQLITE_ERROR;
   rc = mode == 1 ? cbc_encrypt(in, out, in_sz, &cbc) : cbc_decrypt(in, out, in_sz, &cbc);
   if(rc != CRYPT_OK) return SQLITE_ERROR;
