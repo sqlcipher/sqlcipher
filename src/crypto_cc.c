@@ -10,6 +10,10 @@ static int sqlcipher_cc_random (void *ctx, void *buffer, int length) {
   return RAND_bytes((unsigned char *)buffer, length);
 }
 
+static const char* sqlcipher_cc_get_provider_name(void *ctx) {
+  return "commoncrypto";
+}
+
 static int sqlcipher_cc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   CCHmacContext hmac_context;
   CCHmacInit(&hmac_context, kCCHmacAlgSHA1, hmac_key, key_sz);
@@ -84,6 +88,7 @@ static int sqlcipher_cc_ctx_free(void **ctx) {
 
 int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->random = sqlcipher_cc_random;
+  p->get_provider_name = sqlcipher_cc_get_provider_name;
   p->hmac = sqlcipher_cc_hmac;
   p->kdf = sqlcipher_cc_kdf;
   p->cipher = sqlcipher_cc_cipher;
