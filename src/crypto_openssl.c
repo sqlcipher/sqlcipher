@@ -39,6 +39,9 @@ static int sqlcipher_openssl_activate(void *ctx) {
   if(openssl_external_init == 0) {
     if(openssl_init_count == 0)  {
       OpenSSL_add_all_algorithms();
+      if(sqlcipher_openssl_add_random(ctx, &ctx, sizeof(openssl_ctx *)) != SQLITE_OK) {
+        return SQLITE_ERROR;
+      }
     }
     openssl_init_count++; 
   } 
@@ -83,12 +86,16 @@ static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz
   HMAC_Update(&hctx, in2, in2_sz);
   HMAC_Final(&hctx, out, &outlen);
   HMAC_CTX_cleanup(&hctx);
-  sqlcipher_openssl_add_random(ctx, out, outlen);
   return SQLITE_OK; 
 }
 
 static int sqlcipher_openssl_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
-  PKCS5_PBKDF2_HMAC_SHA1(pass, pass_sz, salt, salt_sz, workfactor, key_sz, key); 
+  unsigned long random_buffer_sz = 256;
+  char random_buffer[random_buffer_sz];
+  
+  PKCS5_PBKDF2_HMAC_SHA1(pass, pass_sz, salt, salt_sz, workfactor, key_sz, key);
+  PKCS5_PBKDF2_HMAC_SHA1(key, key_sz, salt, salt_sz, 1, random_buffer_sz, random_buffer);
+  sqlcipher_openssl_add_random(ctx, random_buffer, random_buffer_sz);
   return SQLITE_OK; 
 }
 
