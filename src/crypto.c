@@ -296,12 +296,12 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     sqlcipher_activate(); /* perform internal initialization for sqlcipher */
 
+    sqlite3_mutex_enter(db->mutex);
+
     /* point the internal codec argument against the contet to be prepared */
     rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey); 
 
     if(rc != SQLITE_OK) return rc; /* initialization failed, do not attach potentially corrupted context */
-
-    sqlite3_mutex_enter(db->mutex);
 
     sqlite3pager_sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 

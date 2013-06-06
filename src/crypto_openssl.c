@@ -27,8 +27,6 @@ static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
    sqlcipher_openssl_deactivate() will free the EVP structures. 
 */
 static int sqlcipher_openssl_activate(void *ctx) {
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-
   /* we'll initialize openssl and increment the internal init counter
      but only if it hasn't been initalized outside of SQLCipher by this program 
      e.g. on startup */
@@ -45,7 +43,6 @@ static int sqlcipher_openssl_activate(void *ctx) {
     }
     openssl_init_count++; 
   } 
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
 /* deactivate SQLCipher, most imporantly decremeting the activation count and
