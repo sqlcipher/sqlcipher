@@ -94,7 +94,7 @@ void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   p = sqlcipher_malloc(sizeof(sqlcipher_provider));
   {
-#ifdef SQLCIPHER_CRYPTO_OPENSSL
+#if defined (SQLCIPHER_CRYPTO_OPENSSL) && !defined (SQLCIPHER_CRYPTO_CC)
   extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
   sqlcipher_openssl_setup(p);
 #elif SQLCIPHER_CRYPTO_LIBTOMCRYPT
