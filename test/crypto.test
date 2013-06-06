@@ -82,6 +82,12 @@ proc if_built_with_libtomcrypt {name cmd expected} {
     }
 }
 
+proc if_built_with_commoncrypto {name cmd expected} {
+     if {[get_cipher_provider] == "commoncrypto"} {
+        do_test $name $cmd $expected
+     }
+}
+
 # The database is initially empty.
 # set an hex key create some basic data
 # create table and insert operations should work
@@ -1883,6 +1889,16 @@ if_built_with_libtomcrypt verify-default-cipher {
         PRAGMA cipher;
     }
 } {rijndael}
+db close
+file delete -force test.db
+
+if_built_with_commoncrypto verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {aes-256-cbc}
 db close
 file delete -force test.db
 
