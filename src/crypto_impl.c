@@ -94,15 +94,15 @@ void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
   p = sqlcipher_malloc(sizeof(sqlcipher_provider));
   {
-#if defined (SQLCIPHER_CRYPTO_OPENSSL) && !defined (SQLCIPHER_CRYPTO_CC)
-  extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
-  sqlcipher_openssl_setup(p);
+#if defined (SQLCIPHER_CRYPTO_CC)
+  extern int sqlcipher_cc_setup(sqlcipher_provider *p);
+  sqlcipher_cc_setup(p);
 #elif SQLCIPHER_CRYPTO_LIBTOMCRYPT
   extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
   sqlcipher_ltc_setup(p);
-#elif SQLCIPHER_CRYPTO_CC
-  extern int sqlcipher_cc_setup(sqlcipher_provider *p);
-  sqlcipher_cc_setup(p);
+#elif SQLCIPHER_CRYPTO_OPENSSL
+  extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
+  sqlcipher_openssl_setup(p);
 #else
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
