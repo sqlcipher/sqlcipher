@@ -66,10 +66,9 @@ static const char* sqlcipher_openssl_get_provider_name(void *ctx) {
   return "openssl";
 }
 
-/* generate a defined number of pseudorandom bytes */
+/* generate a defined number of random bytes */
 static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
-  RAND_bytes((unsigned char *)buffer, length);
-  return SQLITE_OK;
+  return (RAND_bytes((unsigned char *)buffer, length) == 1) ? SQLITE_OK : SQLITE_ERROR;
 }
 
 static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
