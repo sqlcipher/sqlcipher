@@ -557,7 +557,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
     /* if unable to read the bytes, generate random salt */
-    if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
+    if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
   }
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
@@ -662,7 +662,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
 
   if(mode == CIPHER_ENCRYPT) {
     /* start at front of the reserve block, write random data to the end */
-    if(c_ctx->provider->random(c_ctx->provider_ctx, iv_out, c_ctx->reserve_sz) != 1) return SQLITE_ERROR; 
+    if(c_ctx->provider->random(c_ctx->provider_ctx, iv_out, c_ctx->reserve_sz) != SQLITE_OK) return SQLITE_ERROR; 
   } else { /* CIPHER_DECRYPT */
     memcpy(iv_out, iv_in, c_ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 

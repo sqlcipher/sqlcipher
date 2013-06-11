@@ -19,7 +19,7 @@ static int sqlcipher_ltc_activate(void *ctx) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
   int random_buffer_sz = 32;
   unsigned char random_buffer[random_buffer_sz];
-
+  
   if(ltc_init == 0) {
     if(register_prng(&fortuna_desc) != CRYPT_OK) return SQLITE_ERROR;
     if(register_cipher(&rijndael_desc) != CRYPT_OK) return SQLITE_ERROR;
@@ -53,8 +53,11 @@ static const char* sqlcipher_ltc_get_provider_name(void *ctx) {
 
 static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
-
-  fortuna_ready(&(ltc->prng));
+  int rc;
+  
+  if((rc = fortuna_ready(&(ltc->prng))) != CRYPT_OK) {
+    return SQLITE_ERROR;
+  }
   fortuna_read(buffer, length, &(ltc->prng));
   return SQLITE_OK;
 }
