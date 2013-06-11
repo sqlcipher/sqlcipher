@@ -103,6 +103,8 @@ void sqlcipher_activate() {
 #elif SQLCIPHER_CRYPTO_CC
   extern int sqlcipher_cc_setup(sqlcipher_provider *p);
   sqlcipher_cc_setup(p);
+#else
+#error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
   }
   sqlcipher_register_provider(p);
