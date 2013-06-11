@@ -319,7 +319,7 @@ void sqlite3Pragma(
   int rc;                      /* return value form SQLITE_FCNTL_PRAGMA */
   sqlite3 *db = pParse->db;    /* The database connection */
   Db *pDb;                     /* The specific database being pragmaed */
-  Vdbe *v = pParse->pVdbe = sqlite3VdbeCreate(db);  /* Prepared statement */
+  Vdbe *v = sqlite3GetVdbe(pParse);  /* Prepared statement */
 /** BEGIN CRYPTO **/
 #ifdef SQLITE_HAS_CODEC
   extern int codec_pragma(sqlite3*, int, Parse *, const char *, const char *);
