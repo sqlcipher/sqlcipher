@@ -557,7 +557,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
     /* if unable to read the bytes, generate random salt */
-    if(ctx->read_ctx->provider->random(&ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
+    if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
   }
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
