@@ -6,7 +6,7 @@
 
 /* generate a defined number of random bytes */
 static int sqlcipher_cc_random (void *ctx, void *buffer, int length) {
-  return (SecRandomCopyBytes(kSecRandomDefault, length, (uint8_t *)buffer) == 0);
+  return (SecRandomCopyBytes(kSecRandomDefault, length, (uint8_t *)buffer) == 0) ? SQLITE_OK : SQLITE_ERROR;
 }
 
 static const char* sqlcipher_cc_get_provider_name(void *ctx) {
