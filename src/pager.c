@@ -7161,7 +7161,7 @@ void *sqlite3PagerCodec(PgHdr *pPg){
 
 #endif /* SQLITE_OMIT_DISKIO */
 
-/* BEGIN CRYPTO */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 void sqlite3pager_get_codec(Pager *pPager, void **ctx) {
   *ctx = pPager->pCodec;
@@ -7190,5 +7190,5 @@ void sqlite3pager_sqlite3PagerSetError( Pager *pPager, int error) {
 }
 
 #endif
-/* END CRYPTO */
+/* END SQLCIPHER */
 

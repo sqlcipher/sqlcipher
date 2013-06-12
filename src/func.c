@@ -1544,16 +1544,24 @@ static void groupConcatFinalize(sqlite3_context *context){
 */
 void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
   int rc = sqlite3_overload_function(db, "MATCH", 2);
+/* BEGIN SQLCIPHER */
+#ifdef SQLITE_HAS_CODEC
 #ifndef OMIT_EXPORT
   extern void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 #endif
+#endif
+/* END SQLCIPHER */
   assert( rc==SQLITE_NOMEM || rc==SQLITE_OK );
   if( rc==SQLITE_NOMEM ){
     db->mallocFailed = 1;
   }
+/* BEGIN SQLCIPHER */
+#ifdef SQLITE_HAS_CODEC
 #ifndef OMIT_EXPORT
   sqlite3CreateFunc(db, "sqlcipher_export", 1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0);
 #endif
+#endif
+/* END SQLCIPHER */
 }
 
 /*

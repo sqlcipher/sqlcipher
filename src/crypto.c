@@ -1,10 +1,8 @@
 /* 
 ** SQLCipher
-** crypto.c developed by Stephen Lombardo (Zetetic LLC) 
-** sjlombardo at zetetic dot net
-** http://zetetic.net
+** http://sqlcipher.net
 ** 
-** Copyright (c) 2009, ZETETIC LLC
+** Copyright (c) 2008 - 2013, ZETETIC LLC
 ** All rights reserved.
 ** 
 ** Redistribution and use in source and binary forms, with or without
@@ -30,7 +28,7 @@
 ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **  
 */
-/* BEGIN CRYPTO */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 
 #include <assert.h>
@@ -626,5 +624,5 @@ end_of_export:
 
 #endif
 
-/* END CRYPTO */
+/* END SQLCIPHER */
 #endif

@@ -320,11 +320,11 @@ void sqlite3Pragma(
   sqlite3 *db = pParse->db;    /* The database connection */
   Db *pDb;                     /* The specific database being pragmaed */
   Vdbe *v = sqlite3GetVdbe(pParse);  /* Prepared statement */
-/** BEGIN CRYPTO **/
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   extern int codec_pragma(sqlite3*, int, Parse *, const char *, const char *);
 #endif
-/** END CRYPTO **/
+/* END SQLCIPHER */
 
 
   if( v==0 ) return;
@@ -386,13 +386,13 @@ void sqlite3Pragma(
     pParse->rc = rc;
   }else
                             
-/** BEGIN CRYPTO **/
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   if(codec_pragma(db, iDb, pParse, zLeft, zRight)) { 
     /* codec_pragma executes internal */
   }else
   #endif
-/** END CRYPTO **/
+/* END SQLCIPHER */
  
 #if !defined(SQLITE_OMIT_PAGER_PRAGMAS) && !defined(SQLITE_OMIT_DEPRECATED)
   /*

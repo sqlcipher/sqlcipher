@@ -30,7 +30,7 @@
 ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **  
 */
-/* BEGIN CRYPTO */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 #ifndef CRYPTO_H
 #define CRYPTO_H
@@ -198,4 +198,4 @@ int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx)
 const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 #endif
 #endif
-/* END CRYPTO */
+/* END SQLCIPHER */

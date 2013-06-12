@@ -30,7 +30,7 @@
 ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **  
 */
-/* BEGIN CRYPTO */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 #ifndef SQLCIPHER_H
 #define SQLCIPHER_H
@@ -69,5 +69,5 @@ int sqlcipher_register_provider(sqlcipher_provider *p);
 
 #endif
 #endif
-/* END CRYPTO */
+/* END SQLCIPHER */
 
