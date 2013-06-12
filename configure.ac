@@ -265,11 +265,9 @@ if test "$crypto_lib" = "libtomcrypt"; then
                AC_MSG_ERROR([Library crypto not found. Install libtomcrypt!"]))
 else
   if test "$crypto_lib" = "commoncrypto"; then
-    CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL -DSQLCIPHER_CRYPTO_CC"
+    CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
     BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL -DSQLCIPHER_CRYPTO_CC"
 	  AC_MSG_RESULT([commoncrypto])
-    AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                 AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
   else
     CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
     BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
