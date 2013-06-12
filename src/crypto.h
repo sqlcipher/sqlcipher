@@ -35,6 +35,12 @@
 #ifndef CRYPTO_H
 #define CRYPTO_H
 
+#if !defined (SQLCIPHER_CRYPTO_CC) \
+   && !defined(SQLCIPHER_CRYPTO_LIBTOMCRYPT) \
+   && !defined(SQLCIPHER_CRYPTO_OPENSSL)
+#define SQLCIPHER_CRYPTO_OPENSSL
+#endif
+
 #define FILE_HEADER_SZ 16
 
 #ifndef CIPHER_VERSION
