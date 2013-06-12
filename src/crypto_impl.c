@@ -95,10 +95,10 @@ void sqlcipher_activate() {
 #if defined (SQLCIPHER_CRYPTO_CC)
   extern int sqlcipher_cc_setup(sqlcipher_provider *p);
   sqlcipher_cc_setup(p);
-#elif SQLCIPHER_CRYPTO_LIBTOMCRYPT
+#elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
   extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
   sqlcipher_ltc_setup(p);
-#elif SQLCIPHER_CRYPTO_OPENSSL
+#elif defined (SQLCIPHER_CRYPTO_OPENSSL)
   extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
   sqlcipher_openssl_setup(p);
 #else
