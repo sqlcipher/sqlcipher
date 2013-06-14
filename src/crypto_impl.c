@@ -1,10 +1,8 @@
 /* 
 ** SQLCipher
-** crypto_impl.c developed by Stephen Lombardo (Zetetic LLC) 
-** sjlombardo at zetetic dot net
-** http://zetetic.net
+** http://sqlcipher.net
 ** 
-** Copyright (c) 2011, ZETETIC LLC
+** Copyright (c) 2008 - 2013, ZETETIC LLC
 ** All rights reserved.
 ** 
 ** Redistribution and use in source and binary forms, with or without
@@ -30,14 +28,12 @@
 ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **  
 */
-/* BEGIN CRYPTO */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 
-#include <openssl/rand.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
 #include "sqliteInt.h"
 #include "btreeInt.h"
+#include "sqlcipher.h"
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
@@ -52,9 +48,6 @@
    struct and associated functions are defined here */
 typedef struct {
   int derive_key;
-  EVP_CIPHER *evp_cipher;
-  EVP_CIPHER_CTX ectx;
-  HMAC_CTX hctx;
   int kdf_iter;
   int fast_kdf_iter;
   int key_sz;
@@ -67,23 +60,14 @@ typedef struct {
   unsigned char *key;
   unsigned char *hmac_key;
   char *pass;
+  sqlcipher_provider *provider;
+  void *provider_ctx;
 } cipher_ctx;
-
-void sqlcipher_cipher_ctx_free(cipher_ctx **);
-int sqlcipher_cipher_ctx_cmp(cipher_ctx *, cipher_ctx *);
-int sqlcipher_cipher_ctx_copy(cipher_ctx *, cipher_ctx *);
-int sqlcipher_cipher_ctx_init(cipher_ctx **);
-int sqlcipher_cipher_ctx_set_pass(cipher_ctx *, const void *, int);
-int sqlcipher_cipher_ctx_key_derive(codec_ctx *, cipher_ctx *);
-
-/* prototype for pager HMAC function */
-int sqlcipher_page_hmac(cipher_ctx *, Pgno, unsigned char *, int, unsigned char *);
 
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 
-static unsigned int openssl_external_init = 0;
-static unsigned int openssl_init_count = 0;
+static sqlcipher_provider *default_provider = NULL;
 
 struct codec_ctx {
   int kdf_salt_sz;
@@ -96,47 +80,41 @@ struct codec_ctx {
   cipher_ctx *write_ctx;
 };
 
-/* activate and initialize sqlcipher. Most importantly, this will automatically
-   intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
-   this function may be called multiple times as new codecs are intiialized. 
-   Thus it performs some basic counting to ensure that only the last and final
-   sqlcipher_deactivate() will free the EVP structures. 
-*/
-void sqlcipher_activate() {
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-
-  /* we'll initialize openssl and increment the internal init counter
-     but only if it hasn't been initalized outside of SQLCipher by this program 
-     e.g. on startup */
-  if(openssl_init_count == 0 && EVP_get_cipherbyname(CIPHER) != NULL) {
-    openssl_external_init = 1;
+int sqlcipher_register_provider(sqlcipher_provider *p) {
+  if(default_provider != NULL) {
+    sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
   }
+  default_provider = p;   
+}
 
-  if(openssl_external_init == 0) {
-    if(openssl_init_count == 0)  {
-      OpenSSL_add_all_algorithms();
-    }
-    openssl_init_count++; 
-  } 
+void sqlcipher_activate() {
+  sqlcipher_provider *p;
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  p = sqlcipher_malloc(sizeof(sqlcipher_provider));
+  {
+#if defined (SQLCIPHER_CRYPTO_CC)
+  extern int sqlcipher_cc_setup(sqlcipher_provider *p);
+  sqlcipher_cc_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
+  extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
+  sqlcipher_ltc_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_OPENSSL)
+  extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
+  sqlcipher_openssl_setup(p);
+#else
+#error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
+#endif
+  }
+  sqlcipher_register_provider(p);
+
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
-/* deactivate SQLCipher, most imporantly decremeting the activation count and
-   freeing the EVP structures on the final deactivation to ensure that 
-   OpenSSL memory is cleaned up */
 void sqlcipher_deactivate() {
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-  /* If it is initialized externally, then the init counter should never be greater than zero.
-     This should prevent SQLCipher from "cleaning up" openssl 
-     when something else in the program might be using it. */
-  if(openssl_external_init == 0) {
-    openssl_init_count--;
-    /* if the counter reaches zero after it's decremented release EVP memory
-       Note: this code will only be reached if OpensSSL_add_all_algorithms()
-       is called by SQLCipher internally. */
-    if(openssl_init_count == 0) {
-      EVP_cleanup();
-    }
+  if(default_provider != NULL) {
+    sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
+    default_provider = NULL;
   }
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
@@ -183,11 +161,6 @@ int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
   }
   
   return (result != 0);
-}
-
-/* generate a defined number of pseudorandom bytes */
-int sqlcipher_random (void *buffer, int length) {
-  return RAND_bytes((unsigned char *)buffer, length);
 }
 
 /**
@@ -242,14 +215,20 @@ void* sqlcipher_malloc(int sz) {
   * returns SQLITE_OK if initialization was successful
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
-int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
+static int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
+  int rc;
   cipher_ctx *ctx;
   *iCtx = (cipher_ctx *) sqlcipher_malloc(sizeof(cipher_ctx));
   ctx = *iCtx;
   if(ctx == NULL) return SQLITE_NOMEM;
 
-  ctx->key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
-  ctx->hmac_key = (unsigned char *) sqlcipher_malloc(EVP_MAX_KEY_LENGTH);
+  ctx->provider = (sqlcipher_provider *) sqlcipher_malloc(sizeof(sqlcipher_provider));
+  if(ctx->provider == NULL) return SQLITE_NOMEM;
+  memcpy(ctx->provider, default_provider, sizeof(sqlcipher_provider));
+
+  if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) return rc;
+  ctx->key = (unsigned char *) sqlcipher_malloc(CIPHER_MAX_KEY_SZ);
+  ctx->hmac_key = (unsigned char *) sqlcipher_malloc(CIPHER_MAX_KEY_SZ);
   if(ctx->key == NULL) return SQLITE_NOMEM;
   if(ctx->hmac_key == NULL) return SQLITE_NOMEM;
 
@@ -262,9 +241,11 @@ int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
 /**
   * Free and wipe memory associated with a cipher_ctx
   */
-void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
+static void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   cipher_ctx *ctx = *iCtx;
   CODEC_TRACE(("cipher_ctx_free: entered iCtx=%p\n", iCtx));
+  ctx->provider->ctx_free(&ctx->provider_ctx);
+  sqlcipher_free(ctx->provider, sizeof(sqlcipher_provider)); 
   sqlcipher_free(ctx->key, ctx->key_sz);
   sqlcipher_free(ctx->hmac_key, ctx->key_sz);
   sqlcipher_free(ctx->pass, ctx->pass_sz);
@@ -277,18 +258,18 @@ void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   * returns 0 if all the parameters (except the derived key data) are the same
   * returns 1 otherwise
   */
-int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
+static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
   CODEC_TRACE(("sqlcipher_cipher_ctx_cmp: entered c1=%p c2=%p\n", c1, c2));
 
   if(
-    c1->evp_cipher == c2->evp_cipher
-    && c1->iv_sz == c2->iv_sz
+    c1->iv_sz == c2->iv_sz
     && c1->kdf_iter == c2->kdf_iter
     && c1->fast_kdf_iter == c2->fast_kdf_iter
     && c1->key_sz == c2->key_sz
     && c1->pass_sz == c2->pass_sz
     && c1->flags == c2->flags
     && c1->hmac_sz == c2->hmac_sz
+    && c1->provider->ctx_cmp(c1->provider_ctx, c2->provider_ctx) 
     && (
       c1->pass == c2->pass
       || !sqlcipher_memcmp((const unsigned char*)c1->pass,
@@ -307,19 +288,27 @@ int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
   * returns SQLITE_OK if initialization was successful
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
-int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
+static int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   void *key = target->key; 
   void *hmac_key = target->hmac_key; 
+  void *provider = target->provider;
+  void *provider_ctx = target->provider_ctx;
 
   CODEC_TRACE(("sqlcipher_cipher_ctx_copy: entered target=%p, source=%p\n", target, source));
   sqlcipher_free(target->pass, target->pass_sz); 
   memcpy(target, source, sizeof(cipher_ctx));
   
   target->key = key; //restore pointer to previously allocated key data
-  memcpy(target->key, source->key, EVP_MAX_KEY_LENGTH);
+  memcpy(target->key, source->key, CIPHER_MAX_KEY_SZ);
 
   target->hmac_key = hmac_key; //restore pointer to previously allocated hmac key data
-  memcpy(target->hmac_key, source->hmac_key, EVP_MAX_KEY_LENGTH);
+  memcpy(target->hmac_key, source->hmac_key, CIPHER_MAX_KEY_SZ);
+
+  target->provider = provider; // restore pointer to previouly allocated provider;
+  memcpy(target->provider, source->provider, sizeof(sqlcipher_provider));
+
+  target->provider_ctx = provider_ctx; // restore pointer to previouly allocated provider context;
+  target->provider->ctx_copy(target->provider_ctx, source->provider_ctx);
 
   target->pass = sqlcipher_malloc(source->pass_sz);
   if(target->pass == NULL) return SQLITE_NOMEM;
@@ -336,7 +325,7 @@ int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   * returns SQLITE_NOMEM if an error occured allocating memory
   * returns SQLITE_ERROR if the key couldn't be set because the pass was null or size was zero
   */
-int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
+static int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
   sqlcipher_free(ctx->pass, ctx->pass_sz);
   ctx->pass_sz = nKey;
   if(zKey && nKey) {
@@ -366,11 +355,12 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
 
-  c_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
-  c_ctx->key_sz = EVP_CIPHER_key_length(c_ctx->evp_cipher);
-  c_ctx->iv_sz = EVP_CIPHER_iv_length(c_ctx->evp_cipher);
-  c_ctx->block_sz = EVP_CIPHER_block_size(c_ctx->evp_cipher);
-  c_ctx->hmac_sz = EVP_MD_size(EVP_sha1());
+  c_ctx->provider->set_cipher(c_ctx->provider_ctx, cipher_name);
+
+  c_ctx->key_sz = c_ctx->provider->get_key_sz(c_ctx->provider_ctx);
+  c_ctx->iv_sz = c_ctx->provider->get_iv_sz(c_ctx->provider_ctx);
+  c_ctx->block_sz = c_ctx->provider->get_block_sz(c_ctx->provider_ctx);
+  c_ctx->hmac_sz = c_ctx->provider->get_hmac_sz(c_ctx->provider_ctx);
   c_ctx->derive_key = 1;
 
   if(for_ctx == 2)
@@ -382,8 +372,7 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
 
 const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
-  EVP_CIPHER *evp_cipher = c_ctx->evp_cipher;
-  return EVP_CIPHER_name(evp_cipher);
+  return c_ctx->provider->get_cipher(c_ctx->provider_ctx);
 }
 
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) {
@@ -444,7 +433,7 @@ unsigned char sqlcipher_get_hmac_salt_mask() {
 
 /* set the codec flag for whether this individual database should be using hmac */
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
-  int reserve = EVP_MAX_IV_LENGTH; /* base reserve size will be IV only */ 
+  int reserve = CIPHER_MAX_IV_SZ; /* base reserve size will be IV only */ 
 
   if(use) reserve += ctx->read_ctx->hmac_sz; /* if reserve will include hmac, update that size */
 
@@ -568,7 +557,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
     /* if unable to read the bytes, generate random salt */
-    if(sqlcipher_random(ctx->kdf_salt, FILE_HEADER_SZ) != 1) return SQLITE_ERROR;
+    if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
   }
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
@@ -608,7 +597,7 @@ static void sqlcipher_put4byte_le(unsigned char *p, u32 v) {
   p[3] = (u8)(v>>24);
 }
 
-int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
+static int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
   unsigned char pgno_raw[sizeof(pgno)];
   /* we may convert page number to consistent representation before calculating MAC for
      compatibility across big-endian and little-endian platforms. 
@@ -626,16 +615,14 @@ int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, int in_sz
     memcpy(pgno_raw, &pgno, sizeof(pgno));
   }
 
-  HMAC_CTX_init(&ctx->hctx);
-  HMAC_Init_ex(&ctx->hctx, ctx->hmac_key, ctx->key_sz, EVP_sha1(), NULL);
-
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
-  HMAC_Update(&ctx->hctx, in, in_sz);
-  HMAC_Update(&ctx->hctx, (const unsigned char*) pgno_raw, sizeof(pgno)); 
-  HMAC_Final(&ctx->hctx, out, NULL);
-  HMAC_CTX_cleanup(&ctx->hctx);
+  ctx->provider->hmac(
+    ctx->provider_ctx, ctx->hmac_key,
+    ctx->key_sz, in,
+    in_sz, (unsigned char*) &pgno_raw,
+    sizeof(pgno), out);
   return SQLITE_OK; 
 }
 
@@ -675,7 +662,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
 
   if(mode == CIPHER_ENCRYPT) {
     /* start at front of the reserve block, write random data to the end */
-    if(sqlcipher_random(iv_out, c_ctx->reserve_sz) != 1) return SQLITE_ERROR; 
+    if(c_ctx->provider->random(c_ctx->provider_ctx, iv_out, c_ctx->reserve_sz) != SQLITE_OK) return SQLITE_ERROR; 
   } else { /* CIPHER_DECRYPT */
     memcpy(iv_out, iv_in, c_ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
@@ -707,17 +694,8 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
       }
     }
   } 
-
-  EVP_CipherInit(&c_ctx->ectx, c_ctx->evp_cipher, NULL, NULL, mode);
-  EVP_CIPHER_CTX_set_padding(&c_ctx->ectx, 0);
-  EVP_CipherInit(&c_ctx->ectx, NULL, c_ctx->key, iv_out, mode);
-  EVP_CipherUpdate(&c_ctx->ectx, out, &tmp_csz, in, size);
-  csz = tmp_csz;  
-  out += tmp_csz;
-  EVP_CipherFinal(&c_ctx->ectx, out, &tmp_csz);
-  csz += tmp_csz;
-  EVP_CIPHER_CTX_cleanup(&c_ctx->ectx);
-  assert(size == csz);
+  
+  c_ctx->provider->cipher(c_ctx->provider_ctx, mode, c_ctx->key, c_ctx->key_sz, iv_out, in, size, out);
 
   if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
     sqlcipher_page_hmac(c_ctx, pgno, out_start, size + c_ctx->iv_sz, hmac_out); 
@@ -739,7 +717,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   * returns SQLITE_OK if initialization was successful
   * returns SQLITE_ERROR if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
   */
-int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
+static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
                 ctx->kdf_salt=%p ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
                 ctx->hmac_kdf_salt=%p, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 
@@ -755,9 +733,9 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       cipher_hex2bin(z, n, c_ctx->key);
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
-      PKCS5_PBKDF2_HMAC_SHA1( c_ctx->pass, c_ctx->pass_sz, 
-                              ctx->kdf_salt, ctx->kdf_salt_sz, 
-                              c_ctx->kdf_iter, c_ctx->key_sz, c_ctx->key);
+      c_ctx->provider->kdf(c_ctx->provider_ctx, c_ctx->pass, c_ctx->pass_sz, 
+                    ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter,
+                    c_ctx->key_sz, c_ctx->key);
                               
     }
 
@@ -779,9 +757,11 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 
       CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
         c_ctx->fast_kdf_iter)); 
-      PKCS5_PBKDF2_HMAC_SHA1( (const char*)c_ctx->key, c_ctx->key_sz, 
-                              ctx->hmac_kdf_salt, ctx->kdf_salt_sz, 
-                              c_ctx->fast_kdf_iter, c_ctx->key_sz, c_ctx->hmac_key); 
+
+      
+      c_ctx->provider->kdf(c_ctx->provider_ctx, (const char*)c_ctx->key, c_ctx->key_sz, 
+                    ctx->hmac_kdf_salt, ctx->kdf_salt_sz, c_ctx->fast_kdf_iter,
+                    c_ctx->key_sz, c_ctx->hmac_key); 
     }
 
     c_ctx->derive_key = 0;
@@ -815,202 +795,9 @@ int sqlcipher_codec_key_copy(codec_ctx *ctx, int source) {
   }
 }
 
-
-#ifndef OMIT_EXPORT
-
-/*
- * Implementation of an "export" function that allows a caller
- * to duplicate the main database to an attached database. This is intended
- * as a conveneince for users who need to:
- * 
- *   1. migrate from an non-encrypted database to an encrypted database
- *   2. move from an encrypted database to a non-encrypted database
- *   3. convert beween the various flavors of encrypted databases.  
- *
- * This implementation is based heavily on the procedure and code used
- * in vacuum.c, but is exposed as a function that allows export to any
- * named attached database.
- */
-
-/*
-** Finalize a prepared statement.  If there was an error, store the
-** text of the error message in *pzErrMsg.  Return the result code.
-** 
-** Based on vacuumFinalize from vacuum.c
-*/
-static int sqlcipher_finalize(sqlite3 *db, sqlite3_stmt *pStmt, char **pzErrMsg){
-  int rc;
-  rc = sqlite3VdbeFinalize((Vdbe*)pStmt);
-  if( rc ){
-    sqlite3SetString(pzErrMsg, db, sqlite3_errmsg(db));
-  }
-  return rc;
-}
-
-/*
-** Execute zSql on database db. Return an error code.
-** 
-** Based on execSql from vacuum.c
-*/
-static int sqlcipher_execSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
-  sqlite3_stmt *pStmt;
-  VVA_ONLY( int rc; )
-  if( !zSql ){
-    return SQLITE_NOMEM;
-  }
-  if( SQLITE_OK!=sqlite3_prepare(db, zSql, -1, &pStmt, 0) ){
-    sqlite3SetString(pzErrMsg, db, sqlite3_errmsg(db));
-    return sqlite3_errcode(db);
-  }
-  VVA_ONLY( rc = ) sqlite3_step(pStmt);
-  assert( rc!=SQLITE_ROW );
-  return sqlcipher_finalize(db, pStmt, pzErrMsg);
-}
-
-/*
-** Execute zSql on database db. The statement returns exactly
-** one column. Execute this as SQL on the same database.
-** 
-** Based on execExecSql from vacuum.c
-*/
-static int sqlcipher_execExecSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
-  sqlite3_stmt *pStmt;
-  int rc;
-
-  rc = sqlite3_prepare(db, zSql, -1, &pStmt, 0);
-  if( rc!=SQLITE_OK ) return rc;
-
-  while( SQLITE_ROW==sqlite3_step(pStmt) ){
-    rc = sqlcipher_execSql(db, pzErrMsg, (char*)sqlite3_column_text(pStmt, 0));
-    if( rc!=SQLITE_OK ){
-      sqlcipher_finalize(db, pStmt, pzErrMsg);
-      return rc;
-    }
-  }
-
-  return sqlcipher_finalize(db, pStmt, pzErrMsg);
-}
-
-/*
- * copy database and schema from the main database to an attached database
- * 
- * Based on sqlite3RunVacuum from vacuum.c
-*/
-void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **argv) {
-  sqlite3 *db = sqlite3_context_db_handle(context);
-  const char* attachedDb = (const char*) sqlite3_value_text(argv[0]);
-  int saved_flags;        /* Saved value of the db->flags */
-  int saved_nChange;      /* Saved value of db->nChange */
-  int saved_nTotalChange; /* Saved value of db->nTotalChange */
-  void (*saved_xTrace)(void*,const char*);  /* Saved db->xTrace */
-  int rc = SQLITE_OK;     /* Return code from service routines */
-  char *zSql = NULL;         /* SQL statements */
-  char *pzErrMsg = NULL;
-  
-  saved_flags = db->flags;
-  saved_nChange = db->nChange;
-  saved_nTotalChange = db->nTotalChange;
-  saved_xTrace = db->xTrace;
-  db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_PreferBuiltin;
-  db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
-  db->xTrace = 0;
-
-  /* Query the schema of the main database. Create a mirror schema
-  ** in the temporary database.
-  */
-  zSql = sqlite3_mprintf(
-    "SELECT 'CREATE TABLE %s.' || substr(sql,14) "
-    "  FROM sqlite_master WHERE type='table' AND name!='sqlite_sequence'"
-    "   AND rootpage>0"
-  , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
-  if( rc!=SQLITE_OK ) goto end_of_export;
-  sqlite3_free(zSql);
-
-  zSql = sqlite3_mprintf(
-    "SELECT 'CREATE INDEX %s.' || substr(sql,14)"
-    "  FROM sqlite_master WHERE sql LIKE 'CREATE INDEX %%' "
-  , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
-  if( rc!=SQLITE_OK ) goto end_of_export;
-  sqlite3_free(zSql);
-
-  zSql = sqlite3_mprintf(
-    "SELECT 'CREATE UNIQUE INDEX %s.' || substr(sql,21) "
-    "  FROM sqlite_master WHERE sql LIKE 'CREATE UNIQUE INDEX %%'"
-  , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
-  if( rc!=SQLITE_OK ) goto end_of_export;
-  sqlite3_free(zSql);
-
-  /* Loop through the tables in the main database. For each, do
-  ** an "INSERT INTO rekey_db.xxx SELECT * FROM main.xxx;" to copy
-  ** the contents to the temporary database.
-  */
-  zSql = sqlite3_mprintf(
-    "SELECT 'INSERT INTO %s.' || quote(name) "
-    "|| ' SELECT * FROM main.' || quote(name) || ';'"
-    "FROM main.sqlite_master "
-    "WHERE type = 'table' AND name!='sqlite_sequence' "
-    "  AND rootpage>0"
-  , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
-  if( rc!=SQLITE_OK ) goto end_of_export;
-  sqlite3_free(zSql);
-
-  /* Copy over the sequence table
-  */
-  zSql = sqlite3_mprintf(
-    "SELECT 'DELETE FROM %s.' || quote(name) || ';' "
-    "FROM %s.sqlite_master WHERE name='sqlite_sequence' "
-  , attachedDb, attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
-  if( rc!=SQLITE_OK ) goto end_of_export;
-  sqlite3_free(zSql);
-
-  zSql = sqlite3_mprintf(
-    "SELECT 'INSERT INTO %s.' || quote(name) "
-    "|| ' SELECT * FROM main.' || quote(name) || ';' "
-    "FROM %s.sqlite_master WHERE name=='sqlite_sequence';"
-  , attachedDb, attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
-  if( rc!=SQLITE_OK ) goto end_of_export;
-  sqlite3_free(zSql);
-
-  /* Copy the triggers, views, and virtual tables from the main database
-  ** over to the temporary database.  None of these objects has any
-  ** associated storage, so all we have to do is copy their entries
-  ** from the SQLITE_MASTER table.
-  */
-  zSql = sqlite3_mprintf(
-    "INSERT INTO %s.sqlite_master "
-    "  SELECT type, name, tbl_name, rootpage, sql"
-    "    FROM main.sqlite_master"
-    "   WHERE type='view' OR type='trigger'"
-    "      OR (type='table' AND rootpage=0)"
-  , attachedDb);
-  rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execSql(db, &pzErrMsg, zSql); 
-  if( rc!=SQLITE_OK ) goto end_of_export;
-  sqlite3_free(zSql);
-
-  zSql = NULL;
-end_of_export:
-  db->flags = saved_flags;
-  db->nChange = saved_nChange;
-  db->nTotalChange = saved_nTotalChange;
-  db->xTrace = saved_xTrace;
-
-  sqlite3_free(zSql);
-
-  if(rc) {
-    if(pzErrMsg != NULL) {
-      sqlite3_result_error(context, pzErrMsg, -1);
-      sqlite3DbFree(db, pzErrMsg);
-    } else {
-      sqlite3_result_error(context, sqlite3ErrStr(rc), -1);
-    }
-  }
+const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx) {
+  return ctx->read_ctx->provider->get_provider_name(ctx->read_ctx);
 }
 
 #endif
-#endif
+/* END SQLCIPHER */

@@ -12,18 +12,24 @@
 **
 ** This module implements the spellfix1 VIRTUAL TABLE that can be used
 ** to search a large vocabulary for close matches.  See separate
-** documentation files (spellfix1.wiki and editdist3.wiki) for details.
+** documentation (http://www.sqlite.org/spellfix1.html) for details.
 */
-#if SQLITE_CORE
-# include "sqliteInt.h"
-#else
+#include "sqlite3ext.h"
+SQLITE_EXTENSION_INIT1
+
+#ifndef SQLITE_AMALGAMATION
 # include <string.h>
 # include <stdio.h>
 # include <stdlib.h>
-# include "sqlite3ext.h"
-  SQLITE_EXTENSION_INIT1
-#endif /* !SQLITE_CORE */
-#include <ctype.h>
+# include <assert.h>
+# define ALWAYS(X)  1
+# define NEVER(X)   0
+  typedef unsigned char u8;
+  typedef unsigned short u16;
+# include <ctype.h>
+#endif
+
+#ifndef SQLITE_OMIT_VIRTUALTABLE
 
 /*
 ** Character classes for ASCII characters:
@@ -739,22 +745,22 @@ static int utf8Len(unsigned char c, int N){
 }
 
 /*
-** Return TRUE (non-zero) of the To side of the given cost matches
+** Return TRUE (non-zero) if the To side of the given cost matches
 ** the given string.
 */
 static int matchTo(EditDist3Cost *p, const char *z, int n){
   if( p->nTo>n ) return 0;
-  if( memcmp(p->a+p->nFrom, z, p->nTo)!=0 ) return 0;
+  if( strncmp(p->a+p->nFrom, z, p->nTo)!=0 ) return 0;
   return 1;
 }
 
 /*
-** Return TRUE (non-zero) of the To side of the given cost matches
+** Return TRUE (non-zero) if the From side of the given cost matches
 ** the given string.
 */
 static int matchFrom(EditDist3Cost *p, const char *z, int n){
   assert( p->nFrom<=n );
-  if( memcmp(p->a, z, p->nFrom)!=0 ) return 0;
+  if( strncmp(p->a, z, p->nFrom)!=0 ) return 0;
   return 1;
 }
 
@@ -1947,7 +1953,7 @@ static int spellfix1Init(
       );
     }
     for(i=3; rc==SQLITE_OK && i<argc; i++){
-      if( memcmp(argv[i],"edit_cost_table=",16)==0 && pNew->zCostTable==0 ){
+      if( strncmp(argv[i],"edit_cost_table=",16)==0 && pNew->zCostTable==0 ){
         pNew->zCostTable = spellfix1Dequote(&argv[i][16]);
         if( pNew->zCostTable==0 ) rc = SQLITE_NOMEM;
         continue;
@@ -2668,12 +2674,24 @@ static int spellfix1Update(
       if( zCmd==0 ){
         pVTab->zErrMsg = sqlite3_mprintf("%s.word may not be NULL",
                                          p->zTableName);
-        return SQLITE_CONSTRAINT;
+        return SQLITE_CONSTRAINT_NOTNULL;
       }
       if( strcmp(zCmd,"reset")==0 ){
         /* Reset the  edit cost table (if there is one). */
         editDist3ConfigDelete(p->pConfig3);
         p->pConfig3 = 0;
+        return SQLITE_OK;
+      }
+      if( strncmp(zCmd,"edit_cost_table=",16)==0 ){
+        editDist3ConfigDelete(p->pConfig3);
+        p->pConfig3 = 0;
+        sqlite3_free(p->zCostTable);
+        p->zCostTable = spellfix1Dequote(zCmd+16);
+        if( p->zCostTable==0 ) return SQLITE_NOMEM;
+        if( p->zCostTable[0]==0 || sqlite3_stricmp(p->zCostTable,"null")==0 ){
+          sqlite3_free(p->zCostTable);
+          p->zCostTable = 0;
+        }
         return SQLITE_OK;
       }
       pVTab->zErrMsg = sqlite3_mprintf("unknown value for %s.command: \"%w\"",
@@ -2805,26 +2823,22 @@ static int spellfix1Register(sqlite3 *db){
   return rc;
 }
 
-#if SQLITE_CORE || defined(SQLITE_TEST)
-/*
-** Register the spellfix1 virtual table and its associated functions.
-*/
-int sqlite3Spellfix1Register(sqlite3 *db){
-  return spellfix1Register(db);
-}
-#endif
+#endif /* SQLITE_OMIT_VIRTUALTABLE */
 
-
-#if !SQLITE_CORE
 /*
 ** Extension load function.
 */
-int sqlite3_extension_init(
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+int sqlite3_spellfix_init(
   sqlite3 *db, 
   char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   SQLITE_EXTENSION_INIT2(pApi);
+#ifndef SQLITE_OMIT_VIRTUALTABLE
   return spellfix1Register(db);
+#endif
+  return SQLITE_OK;
 }
-#endif /* !SQLITE_CORE */

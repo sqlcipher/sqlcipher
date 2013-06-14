@@ -32,7 +32,7 @@ Table *sqlite3SrcListLookup(Parse *pParse, SrcList *pSrc){
   struct SrcList_item *pItem = pSrc->a;
   Table *pTab;
   assert( pItem && pSrc->nSrc==1 );
-  pTab = sqlite3LocateTable(pParse, 0, pItem->zName, pItem->zDatabase);
+  pTab = sqlite3LocateTableItem(pParse, 0, pItem);
   sqlite3DeleteTable(pParse->db, pItem->pTab);
   pItem->pTab = pTab;
   if( pTab ){
@@ -93,29 +93,28 @@ void sqlite3MaterializeView(
   int iCur             /* Cursor number for ephemerial table */
 ){
   SelectDest dest;
-  Select *pDup;
+  Select *pSel;
+  SrcList *pFrom;
   sqlite3 *db = pParse->db;
+  int iDb = sqlite3SchemaToIndex(db, pView->pSchema);
 
-  pDup = sqlite3SelectDup(db, pView->pSelect, 0);
-  if( pWhere ){
-    SrcList *pFrom;
-    
-    pWhere = sqlite3ExprDup(db, pWhere, 0);
-    pFrom = sqlite3SrcListAppend(db, 0, 0, 0);
-    if( pFrom ){
-      assert( pFrom->nSrc==1 );
-      pFrom->a[0].zAlias = sqlite3DbStrDup(db, pView->zName);
-      pFrom->a[0].pSelect = pDup;
-      assert( pFrom->a[0].pOn==0 );
-      assert( pFrom->a[0].pUsing==0 );
-    }else{
-      sqlite3SelectDelete(db, pDup);
-    }
-    pDup = sqlite3SelectNew(pParse, 0, pFrom, pWhere, 0, 0, 0, 0, 0, 0);
+  pWhere = sqlite3ExprDup(db, pWhere, 0);
+  pFrom = sqlite3SrcListAppend(db, 0, 0, 0);
+
+  if( pFrom ){
+    assert( pFrom->nSrc==1 );
+    pFrom->a[0].zName = sqlite3DbStrDup(db, pView->zName);
+    pFrom->a[0].zDatabase = sqlite3DbStrDup(db, db->aDb[iDb].zName);
+    assert( pFrom->a[0].pOn==0 );
+    assert( pFrom->a[0].pUsing==0 );
   }
+
+  pSel = sqlite3SelectNew(pParse, 0, pFrom, pWhere, 0, 0, 0, 0, 0, 0);
+  if( pSel ) pSel->selFlags |= SF_Materialize;
+
   sqlite3SelectDestInit(&dest, SRT_EphemTab, iCur);
-  sqlite3Select(pParse, pDup, &dest);
-  sqlite3SelectDelete(db, pDup);
+  sqlite3Select(pParse, pSel, &dest);
+  sqlite3SelectDelete(db, pSel);
 }
 #endif /* !defined(SQLITE_OMIT_VIEW) && !defined(SQLITE_OMIT_TRIGGER) */
 
@@ -638,7 +637,9 @@ int sqlite3GenerateIndexKey(
   }
   if( doMakeRec ){
     const char *zAff;
-    if( pTab->pSelect || (pParse->db->flags & SQLITE_IdxRealAsInt)!=0 ){
+    if( pTab->pSelect
+     || OptimizationDisabled(pParse->db, SQLITE_IdxRealAsInt)
+    ){
       zAff = 0;
     }else{
       zAff = sqlite3IndexAffinityStr(v, pIdx);

@@ -212,20 +212,28 @@ static int isFatalError(int rc){
 ** page iSrcPg from the source database. Copy this data into the 
 ** destination database.
 */
-static int backupOnePage(sqlite3_backup *p, Pgno iSrcPg, const u8 *zSrcData){
+static int backupOnePage(
+  sqlite3_backup *p,              /* Backup handle */
+  Pgno iSrcPg,                    /* Source database page to backup */
+  const u8 *zSrcData,             /* Source database page data */
+  int bUpdate                     /* True for an update, false otherwise */
+){
   Pager * const pDestPager = sqlite3BtreePager(p->pDest);
   const int nSrcPgsz = sqlite3BtreeGetPageSize(p->pSrc);
   int nDestPgsz = sqlite3BtreeGetPageSize(p->pDest);
   const int nCopy = MIN(nSrcPgsz, nDestPgsz);
   const i64 iEnd = (i64)iSrcPg*(i64)nSrcPgsz;
 #ifdef SQLITE_HAS_CODEC
-  int nSrcReserve = sqlite3BtreeGetReserve(p->pSrc);
+  /* Use BtreeGetReserveNoMutex() for the source b-tree, as although it is
+  ** guaranteed that the shared-mutex is held by this thread, handle
+  ** p->pSrc may not actually be the owner.  */
+  int nSrcReserve = sqlite3BtreeGetReserveNoMutex(p->pSrc);
   int nDestReserve = sqlite3BtreeGetReserve(p->pDest);
 #endif
-
   int rc = SQLITE_OK;
   i64 iOff;
 
+  assert( sqlite3BtreeGetReserveNoMutex(p->pSrc)>=0 );
   assert( p->bDestLocked );
   assert( !isFatalError(p->rc) );
   assert( iSrcPg!=PENDING_BYTE_PAGE(p->pSrc->pBt) );
@@ -282,6 +290,9 @@ static int backupOnePage(sqlite3_backup *p, Pgno iSrcPg, const u8 *zSrcData){
       */
       memcpy(zOut, zIn, nCopy);
       ((u8 *)sqlite3PagerGetExtra(pDestPg))[0] = 0;
+      if( iOff==0 && bUpdate==0 ){
+        sqlite3Put4byte(&zOut[28], sqlite3BtreeLastPage(p->pSrc));
+      }
     }
     sqlite3PagerUnref(pDestPg);
   }
@@ -386,9 +397,10 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
       const Pgno iSrcPg = p->iNext;                 /* Source page number */
       if( iSrcPg!=PENDING_BYTE_PAGE(p->pSrc->pBt) ){
         DbPage *pSrcPg;                             /* Source page object */
-        rc = sqlite3PagerGet(pSrcPager, iSrcPg, &pSrcPg);
+        rc = sqlite3PagerAcquire(pSrcPager, iSrcPg, &pSrcPg,
+                                 PAGER_ACQUIRE_READONLY);
         if( rc==SQLITE_OK ){
-          rc = backupOnePage(p, iSrcPg, sqlite3PagerGetData(pSrcPg));
+          rc = backupOnePage(p, iSrcPg, sqlite3PagerGetData(pSrcPg), 0);
           sqlite3PagerUnref(pSrcPg);
         }
       }
@@ -410,7 +422,13 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
     ** same schema version.
     */
     if( rc==SQLITE_DONE ){
-      rc = sqlite3BtreeUpdateMeta(p->pDest,1,p->iDestSchema+1);
+      if( nSrcPage==0 ){
+        rc = sqlite3BtreeNewDb(p->pDest);
+        nSrcPage = 1;
+      }
+      if( rc==SQLITE_OK || rc==SQLITE_DONE ){
+        rc = sqlite3BtreeUpdateMeta(p->pDest,1,p->iDestSchema+1);
+      }
       if( rc==SQLITE_OK ){
         if( p->pDestDb ){
           sqlite3ResetAllSchemasOfConnection(p->pDestDb);
@@ -444,7 +462,7 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
         }else{
           nDestTruncate = nSrcPage * (pgszSrc/pgszDest);
         }
-        sqlite3PagerTruncateImage(pDestPager, nDestTruncate);
+        assert( nDestTruncate>0 );
 
         if( pgszSrc<pgszDest ){
           /* If the source page-size is smaller than the destination page-size,
@@ -458,22 +476,38 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
           */
           const i64 iSize = (i64)pgszSrc * (i64)nSrcPage;
           sqlite3_file * const pFile = sqlite3PagerFile(pDestPager);
+          Pgno iPg;
+          int nDstPage;
           i64 iOff;
           i64 iEnd;
 
           assert( pFile );
-          assert( (i64)nDestTruncate*(i64)pgszDest >= iSize || (
+          assert( nDestTruncate==0 
+              || (i64)nDestTruncate*(i64)pgszDest >= iSize || (
                 nDestTruncate==(int)(PENDING_BYTE_PAGE(p->pDest->pBt)-1)
              && iSize>=PENDING_BYTE && iSize<=PENDING_BYTE+pgszDest
           ));
 
-          /* This call ensures that all data required to recreate the original
+          /* This block ensures that all data required to recreate the original
           ** database has been stored in the journal for pDestPager and the
           ** journal synced to disk. So at this point we may safely modify
           ** the database file in any way, knowing that if a power failure
           ** occurs, the original database will be reconstructed from the 
           ** journal file.  */
-          rc = sqlite3PagerCommitPhaseOne(pDestPager, 0, 1);
+          sqlite3PagerPagecount(pDestPager, &nDstPage);
+          for(iPg=nDestTruncate; rc==SQLITE_OK && iPg<=(Pgno)nDstPage; iPg++){
+            if( iPg!=PENDING_BYTE_PAGE(p->pDest->pBt) ){
+              DbPage *pPg;
+              rc = sqlite3PagerGet(pDestPager, iPg, &pPg);
+              if( rc==SQLITE_OK ){
+                rc = sqlite3PagerWrite(pPg);
+                sqlite3PagerUnref(pPg);
+              }
+            }
+          }
+          if( rc==SQLITE_OK ){
+            rc = sqlite3PagerCommitPhaseOne(pDestPager, 0, 1);
+          }
 
           /* Write the extra pages and truncate the database file as required */
           iEnd = MIN(PENDING_BYTE + pgszDest, iSize);
@@ -500,6 +534,7 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
             rc = sqlite3PagerSync(pDestPager);
           }
         }else{
+          sqlite3PagerTruncateImage(pDestPager, nDestTruncate);
           rc = sqlite3PagerCommitPhaseOne(pDestPager, 0, 0);
         }
     
@@ -628,7 +663,7 @@ void sqlite3BackupUpdate(sqlite3_backup *pBackup, Pgno iPage, const u8 *aData){
       int rc;
       assert( p->pDestDb );
       sqlite3_mutex_enter(p->pDestDb->mutex);
-      rc = backupOnePage(p, iPage, aData);
+      rc = backupOnePage(p, iPage, aData, 1);
       sqlite3_mutex_leave(p->pDestDb->mutex);
       assert( rc!=SQLITE_BUSY && rc!=SQLITE_LOCKED );
       if( rc!=SQLITE_OK ){

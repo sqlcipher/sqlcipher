@@ -1005,7 +1005,7 @@ static int DbTransPostCmd(
       /* This is a tricky scenario to handle. The most likely cause of an
       ** error is that the exec() above was an attempt to commit the 
       ** top-level transaction that returned SQLITE_BUSY. Or, less likely,
-      ** that an IO-error has occured. In either case, throw a Tcl exception
+      ** that an IO-error has occurred. In either case, throw a Tcl exception
       ** and try to rollback the transaction.
       **
       ** But it could also be that the user executed one or more BEGIN, 
@@ -1489,7 +1489,7 @@ static Tcl_Obj *dbEvalColumnValue(DbEvalContext *p, int iCol){
     }
   }
 
-  return Tcl_NewStringObj(sqlite3_column_text(pStmt, iCol), -1);
+  return Tcl_NewStringObj((char*)sqlite3_column_text(pStmt, iCol), -1);
 }
 
 /*
@@ -2343,7 +2343,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     const char *zDb = "main";
     const char *zTable;
     const char *zColumn;
-    sqlite_int64 iRow;
+    Tcl_WideInt iRow;
 
     /* Check for the -readonly option */
     if( objc>3 && strcmp(Tcl_GetString(objv[2]), "-readonly")==0 ){
@@ -2534,7 +2534,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     pKey = Tcl_GetByteArrayFromObj(objv[2], &nKey);
     rc = sqlite3_rekey(pDb->db, pKey, nKey);
     if( rc ){
-      Tcl_AppendResult(interp, sqlite3ErrStr(rc), 0);
+      Tcl_AppendResult(interp, sqlite3_errstr(rc), 0);
       rc = TCL_ERROR;
     }
 #endif
@@ -2905,6 +2905,7 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
   void *pKey = 0;
   int nKey = 0;
 #endif
+  int rc;
 
   /* In normal use, each TCL interpreter runs in a single thread.  So
   ** by default, we can turn of mutexing on SQLite database connections.
@@ -3009,12 +3010,16 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
   memset(p, 0, sizeof(*p));
   zFile = Tcl_GetStringFromObj(objv[2], 0);
   zFile = Tcl_TranslateFileName(interp, zFile, &translatedFilename);
-  sqlite3_open_v2(zFile, &p->db, flags, zVfs);
+  rc = sqlite3_open_v2(zFile, &p->db, flags, zVfs);
   Tcl_DStringFree(&translatedFilename);
-  if( SQLITE_OK!=sqlite3_errcode(p->db) ){
-    zErrMsg = sqlite3_mprintf("%s", sqlite3_errmsg(p->db));
-    sqlite3_close(p->db);
-    p->db = 0;
+  if( p->db ){
+    if( SQLITE_OK!=sqlite3_errcode(p->db) ){
+      zErrMsg = sqlite3_mprintf("%s", sqlite3_errmsg(p->db));
+      sqlite3_close(p->db);
+      p->db = 0;
+    }
+  }else{
+    zErrMsg = sqlite3_mprintf("%s", sqlite3_errstr(rc));
   }
 #ifdef SQLITE_HAS_CODEC
   if( p->db ){
@@ -3666,6 +3671,7 @@ static void init_all(Tcl_Interp *interp){
     extern int Sqlitetestschema_Init(Tcl_Interp*);
     extern int Sqlitetestsse_Init(Tcl_Interp*);
     extern int Sqlitetesttclvar_Init(Tcl_Interp*);
+    extern int Sqlitetestfs_Init(Tcl_Interp*);
     extern int SqlitetestThread_Init(Tcl_Interp*);
     extern int SqlitetestOnefile_Init();
     extern int SqlitetestOsinst_Init(Tcl_Interp*);
@@ -3677,8 +3683,6 @@ static void init_all(Tcl_Interp *interp){
     extern int Sqlitemultiplex_Init(Tcl_Interp*);
     extern int SqliteSuperlock_Init(Tcl_Interp*);
     extern int SqlitetestSyscall_Init(Tcl_Interp*);
-    extern int Sqlitetestfuzzer_Init(Tcl_Interp*);
-    extern int Sqlitetestwholenumber_Init(Tcl_Interp*);
 
 #if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
     extern int Sqlitetestfts3_Init(Tcl_Interp *interp);
@@ -3709,6 +3713,7 @@ static void init_all(Tcl_Interp *interp){
     Sqlitetest_mutex_Init(interp);
     Sqlitetestschema_Init(interp);
     Sqlitetesttclvar_Init(interp);
+    Sqlitetestfs_Init(interp);
     SqlitetestThread_Init(interp);
     SqlitetestOnefile_Init(interp);
     SqlitetestOsinst_Init(interp);
@@ -3720,8 +3725,6 @@ static void init_all(Tcl_Interp *interp){
     Sqlitemultiplex_Init(interp);
     SqliteSuperlock_Init(interp);
     SqlitetestSyscall_Init(interp);
-    Sqlitetestfuzzer_Init(interp);
-    Sqlitetestwholenumber_Init(interp);
 
 #if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
     Sqlitetestfts3_Init(interp);

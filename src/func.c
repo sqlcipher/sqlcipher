@@ -169,6 +169,56 @@ static void absFunc(sqlite3_context *context, int argc, sqlite3_value **argv){
 }
 
 /*
+** Implementation of the instr() function.
+**
+** instr(haystack,needle) finds the first occurrence of needle
+** in haystack and returns the number of previous characters plus 1,
+** or 0 if needle does not occur within haystack.
+**
+** If both haystack and needle are BLOBs, then the result is one more than
+** the number of bytes in haystack prior to the first occurrence of needle,
+** or 0 if needle never occurs in haystack.
+*/
+static void instrFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  const unsigned char *zHaystack;
+  const unsigned char *zNeedle;
+  int nHaystack;
+  int nNeedle;
+  int typeHaystack, typeNeedle;
+  int N = 1;
+  int isText;
+
+  UNUSED_PARAMETER(argc);
+  typeHaystack = sqlite3_value_type(argv[0]);
+  typeNeedle = sqlite3_value_type(argv[1]);
+  if( typeHaystack==SQLITE_NULL || typeNeedle==SQLITE_NULL ) return;
+  nHaystack = sqlite3_value_bytes(argv[0]);
+  nNeedle = sqlite3_value_bytes(argv[1]);
+  if( typeHaystack==SQLITE_BLOB && typeNeedle==SQLITE_BLOB ){
+    zHaystack = sqlite3_value_blob(argv[0]);
+    zNeedle = sqlite3_value_blob(argv[1]);
+    isText = 0;
+  }else{
+    zHaystack = sqlite3_value_text(argv[0]);
+    zNeedle = sqlite3_value_text(argv[1]);
+    isText = 1;
+  }
+  while( nNeedle<=nHaystack && memcmp(zHaystack, zNeedle, nNeedle)!=0 ){
+    N++;
+    do{
+      nHaystack--;
+      zHaystack++;
+    }while( isText && (zHaystack[0]&0xc0)==0x80 );
+  }
+  if( nNeedle>nHaystack ) N = 0;
+  sqlite3_result_int(context, N);
+}
+
+/*
 ** Implementation of the substr() function.
 **
 ** substr(x,p1,p2)  returns p2 characters of x[] beginning with p1.
@@ -367,33 +417,14 @@ static void lowerFunc(sqlite3_context *context, int argc, sqlite3_value **argv){
   }
 }
 
-
-#if 0  /* This function is never used. */
 /*
-** The COALESCE() and IFNULL() functions used to be implemented as shown
-** here.  But now they are implemented as VDBE code so that unused arguments
-** do not have to be computed.  This legacy implementation is retained as
-** comment.
+** The COALESCE() and IFNULL() functions are implemented as VDBE code so
+** that unused argument values do not have to be computed.  However, we
+** still need some kind of function implementation for this routines in
+** the function table.  That function implementation will never be called
+** so it doesn't matter what the implementation is.  We might as well use
+** the "version()" function as a substitute.
 */
-/*
-** Implementation of the IFNULL(), NVL(), and COALESCE() functions.  
-** All three do the same thing.  They return the first non-NULL
-** argument.
-*/
-static void ifnullFunc(
-  sqlite3_context *context,
-  int argc,
-  sqlite3_value **argv
-){
-  int i;
-  for(i=0; i<argc; i++){
-    if( SQLITE_NULL!=sqlite3_value_type(argv[i]) ){
-      sqlite3_result_value(context, argv[i]);
-      break;
-    }
-  }
-}
-#endif /* NOT USED */
 #define ifnullFunc versionFunc   /* Substitute function - never called */
 
 /*
@@ -512,7 +543,7 @@ struct compareInfo {
 ** whereas only characters less than 0x80 do in ASCII.
 */
 #if defined(SQLITE_EBCDIC)
-# define sqlite3Utf8Read(A,C)  (*(A++))
+# define sqlite3Utf8Read(A)    (*((*A)++))
 # define GlogUpperToLower(A)   A = sqlite3UpperToLower[A]
 #else
 # define GlogUpperToLower(A)   if( !((A)&~0x7f) ){ A = sqlite3UpperToLower[A]; }
@@ -569,18 +600,18 @@ static int patternCompare(
   u8 noCase = pInfo->noCase; 
   int prevEscape = 0;     /* True if the previous character was 'escape' */
 
-  while( (c = sqlite3Utf8Read(zPattern,&zPattern))!=0 ){
-    if( !prevEscape && c==matchAll ){
-      while( (c=sqlite3Utf8Read(zPattern,&zPattern)) == matchAll
+  while( (c = sqlite3Utf8Read(&zPattern))!=0 ){
+    if( c==matchAll && !prevEscape ){
+      while( (c=sqlite3Utf8Read(&zPattern)) == matchAll
                || c == matchOne ){
-        if( c==matchOne && sqlite3Utf8Read(zString, &zString)==0 ){
+        if( c==matchOne && sqlite3Utf8Read(&zString)==0 ){
           return 0;
         }
       }
       if( c==0 ){
         return 1;
       }else if( c==esc ){
-        c = sqlite3Utf8Read(zPattern, &zPattern);
+        c = sqlite3Utf8Read(&zPattern);
         if( c==0 ){
           return 0;
         }
@@ -592,25 +623,25 @@ static int patternCompare(
         }
         return *zString!=0;
       }
-      while( (c2 = sqlite3Utf8Read(zString,&zString))!=0 ){
+      while( (c2 = sqlite3Utf8Read(&zString))!=0 ){
         if( noCase ){
           GlogUpperToLower(c2);
           GlogUpperToLower(c);
           while( c2 != 0 && c2 != c ){
-            c2 = sqlite3Utf8Read(zString, &zString);
+            c2 = sqlite3Utf8Read(&zString);
             GlogUpperToLower(c2);
           }
         }else{
           while( c2 != 0 && c2 != c ){
-            c2 = sqlite3Utf8Read(zString, &zString);
+            c2 = sqlite3Utf8Read(&zString);
           }
         }
         if( c2==0 ) return 0;
         if( patternCompare(zPattern,zString,pInfo,esc) ) return 1;
       }
       return 0;
-    }else if( !prevEscape && c==matchOne ){
-      if( sqlite3Utf8Read(zString, &zString)==0 ){
+    }else if( c==matchOne && !prevEscape ){
+      if( sqlite3Utf8Read(&zString)==0 ){
         return 0;
       }
     }else if( c==matchSet ){
@@ -618,20 +649,20 @@ static int patternCompare(
       assert( esc==0 );    /* This only occurs for GLOB, not LIKE */
       seen = 0;
       invert = 0;
-      c = sqlite3Utf8Read(zString, &zString);
+      c = sqlite3Utf8Read(&zString);
       if( c==0 ) return 0;
-      c2 = sqlite3Utf8Read(zPattern, &zPattern);
+      c2 = sqlite3Utf8Read(&zPattern);
       if( c2=='^' ){
         invert = 1;
-        c2 = sqlite3Utf8Read(zPattern, &zPattern);
+        c2 = sqlite3Utf8Read(&zPattern);
       }
       if( c2==']' ){
         if( c==']' ) seen = 1;
-        c2 = sqlite3Utf8Read(zPattern, &zPattern);
+        c2 = sqlite3Utf8Read(&zPattern);
       }
       while( c2 && c2!=']' ){
         if( c2=='-' && zPattern[0]!=']' && zPattern[0]!=0 && prior_c>0 ){
-          c2 = sqlite3Utf8Read(zPattern, &zPattern);
+          c2 = sqlite3Utf8Read(&zPattern);
           if( c>=prior_c && c<=c2 ) seen = 1;
           prior_c = 0;
         }else{
@@ -640,7 +671,7 @@ static int patternCompare(
           }
           prior_c = c2;
         }
-        c2 = sqlite3Utf8Read(zPattern, &zPattern);
+        c2 = sqlite3Utf8Read(&zPattern);
       }
       if( c2==0 || (seen ^ invert)==0 ){
         return 0;
@@ -648,7 +679,7 @@ static int patternCompare(
     }else if( esc==c && !prevEscape ){
       prevEscape = 1;
     }else{
-      c2 = sqlite3Utf8Read(zString, &zString);
+      c2 = sqlite3Utf8Read(&zString);
       if( noCase ){
         GlogUpperToLower(c);
         GlogUpperToLower(c2);
@@ -660,6 +691,13 @@ static int patternCompare(
     }
   }
   return *zString==0;
+}
+
+/*
+** The sqlite3_strglob() interface.
+*/
+int sqlite3_strglob(const char *zGlobPattern, const char *zString){
+  return patternCompare((u8*)zGlobPattern, (u8*)zString, &globInfo, 0)==0;
 }
 
 /*
@@ -720,7 +758,7 @@ static void likeFunc(
           "ESCAPE expression must be a single character", -1);
       return;
     }
-    escape = sqlite3Utf8Read(zEsc, &zEsc);
+    escape = sqlite3Utf8Read(&zEsc);
   }
   if( zA && zB ){
     struct compareInfo *pInfo = sqlite3_user_data(context);
@@ -929,6 +967,62 @@ static void quoteFunc(sqlite3_context *context, int argc, sqlite3_value **argv){
       break;
     }
   }
+}
+
+/*
+** The unicode() function.  Return the integer unicode code-point value
+** for the first character of the input string. 
+*/
+static void unicodeFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  const unsigned char *z = sqlite3_value_text(argv[0]);
+  (void)argc;
+  if( z && z[0] ) sqlite3_result_int(context, sqlite3Utf8Read(&z));
+}
+
+/*
+** The char() function takes zero or more arguments, each of which is
+** an integer.  It constructs a string where each character of the string
+** is the unicode character for the corresponding integer argument.
+*/
+static void charFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  unsigned char *z, *zOut;
+  int i;
+  zOut = z = sqlite3_malloc( argc*4 );
+  if( z==0 ){
+    sqlite3_result_error_nomem(context);
+    return;
+  }
+  for(i=0; i<argc; i++){
+    sqlite3_int64 x;
+    unsigned c;
+    x = sqlite3_value_int64(argv[i]);
+    if( x<0 || x>0x10ffff ) x = 0xfffd;
+    c = (unsigned)(x & 0x1fffff);
+    if( c<0x00080 ){
+      *zOut++ = (u8)(c&0xFF);
+    }else if( c<0x00800 ){
+      *zOut++ = 0xC0 + (u8)((c>>6)&0x1F);
+      *zOut++ = 0x80 + (u8)(c & 0x3F);
+    }else if( c<0x10000 ){
+      *zOut++ = 0xE0 + (u8)((c>>12)&0x0F);
+      *zOut++ = 0x80 + (u8)((c>>6) & 0x3F);
+      *zOut++ = 0x80 + (u8)(c & 0x3F);
+    }else{
+      *zOut++ = 0xF0 + (u8)((c>>18) & 0x07);
+      *zOut++ = 0x80 + (u8)((c>>12) & 0x3F);
+      *zOut++ = 0x80 + (u8)((c>>6) & 0x3F);
+      *zOut++ = 0x80 + (u8)(c & 0x3F);
+    }                                                    \
+  }
+  sqlite3_result_text(context, (char*)z, (int)(zOut-z), sqlite3_free);
 }
 
 /*
@@ -1451,17 +1545,25 @@ static void groupConcatFinalize(sqlite3_context *context){
 #include "ditto/ditto_funcs.c"
 void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
   int rc = sqlite3_overload_function(db, "MATCH", 2);
+/* BEGIN SQLCIPHER */
+#ifdef SQLITE_HAS_CODEC
 #ifndef OMIT_EXPORT
   extern void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 #endif
+#endif
+/* END SQLCIPHER */
   assert( rc==SQLITE_NOMEM || rc==SQLITE_OK );
   if( rc==SQLITE_NOMEM ){
     db->mallocFailed = 1;
   }
 #include "ditto/ditto_globals.c"
+/* BEGIN SQLCIPHER */
+#ifdef SQLITE_HAS_CODEC
 #ifndef OMIT_EXPORT
   sqlite3CreateFunc(db, "sqlcipher_export", 1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0);
 #endif
+#endif
+/* END SQLCIPHER */
 }
 
 /*
@@ -1563,8 +1665,11 @@ void sqlite3RegisterGlobalFunctions(void){
     AGGREGATE(max,               1, 1, 1, minmaxStep,      minMaxFinalize ),
     FUNCTION2(typeof,            1, 0, 0, typeofFunc,  SQLITE_FUNC_TYPEOF),
     FUNCTION2(length,            1, 0, 0, lengthFunc,  SQLITE_FUNC_LENGTH),
+    FUNCTION(instr,              2, 0, 0, instrFunc        ),
     FUNCTION(substr,             2, 0, 0, substrFunc       ),
     FUNCTION(substr,             3, 0, 0, substrFunc       ),
+    FUNCTION(unicode,            1, 0, 0, unicodeFunc      ),
+    FUNCTION(char,              -1, 0, 0, charFunc         ),
     FUNCTION(abs,                1, 0, 0, absFunc          ),
 #ifndef SQLITE_OMIT_FLOATING_POINT
     FUNCTION(round,              1, 0, 0, roundFunc        ),

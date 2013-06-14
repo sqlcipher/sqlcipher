@@ -1571,7 +1571,7 @@ static int fts3CursorSeek(sqlite3_context *pContext, Fts3Cursor *pCsr){
       }else{
         rc = sqlite3_reset(pCsr->pStmt);
         if( rc==SQLITE_OK && ((Fts3Table *)pCsr->base.pVtab)->zContentTbl==0 ){
-          /* If no row was found and no error has occured, then the %_content
+          /* If no row was found and no error has occurred, then the %_content
           ** table is missing a row that is present in the full-text index.
           ** The data structures are corrupt.  */
           rc = FTS_CORRUPT_VTAB;
@@ -2811,7 +2811,7 @@ static void fts3SegReaderCursorFree(Fts3MultiSegReader *pSegcsr){
 }
 
 /*
-** This function retreives the doclist for the specified term (or term
+** This function retrieves the doclist for the specified term (or term
 ** prefix) from the database.
 */
 static int fts3TermSelect(
@@ -2975,14 +2975,12 @@ static int fts3FilterMethod(
     pCsr->iLangid = 0;
     if( nVal==2 ) pCsr->iLangid = sqlite3_value_int(apVal[1]);
 
+    assert( p->base.zErrMsg==0 );
     rc = sqlite3Fts3ExprParse(p->pTokenizer, pCsr->iLangid,
-        p->azColumn, p->bFts4, p->nColumn, iCol, zQuery, -1, &pCsr->pExpr
+        p->azColumn, p->bFts4, p->nColumn, iCol, zQuery, -1, &pCsr->pExpr, 
+        &p->base.zErrMsg
     );
     if( rc!=SQLITE_OK ){
-      if( rc==SQLITE_ERROR ){
-        static const char *zErr = "malformed MATCH expression: [%s]";
-        p->base.zErrMsg = sqlite3_mprintf(zErr, zQuery);
-      }
       return rc;
     }
 
@@ -3562,7 +3560,7 @@ void sqlite3Fts3IcuTokenizerModule(sqlite3_tokenizer_module const**ppModule);
 #endif
 
 /*
-** Initialise the fts3 extension. If this extension is built as part
+** Initialize the fts3 extension. If this extension is built as part
 ** of the sqlite library, then this function is called directly by
 ** SQLite. If fts3 is built as a dynamically loadable extension, this
 ** function is called by the sqlite3_extension_init() entry point.
@@ -3596,7 +3594,7 @@ int sqlite3Fts3Init(sqlite3 *db){
   sqlite3Fts3SimpleTokenizerModule(&pSimple);
   sqlite3Fts3PorterTokenizerModule(&pPorter);
 
-  /* Allocate and initialise the hash-table used to store tokenizers. */
+  /* Allocate and initialize the hash-table used to store tokenizers. */
   pHash = sqlite3_malloc(sizeof(Fts3Hash));
   if( !pHash ){
     rc = SQLITE_NOMEM;
@@ -3646,8 +3644,12 @@ int sqlite3Fts3Init(sqlite3 *db){
           db, "fts4", &fts3Module, (void *)pHash, 0
       );
     }
+    if( rc==SQLITE_OK ){
+      rc = sqlite3Fts3InitTok(db, (void *)pHash);
+    }
     return rc;
   }
+
 
   /* An error has occurred. Delete the hash table and return the error code. */
   assert( rc!=SQLITE_OK );
@@ -4743,35 +4745,39 @@ static int fts3EvalNearTest(Fts3Expr *pExpr, int *pRc){
       nTmp += p->pRight->pPhrase->doclist.nList;
     }
     nTmp += p->pPhrase->doclist.nList;
-    aTmp = sqlite3_malloc(nTmp*2);
-    if( !aTmp ){
-      *pRc = SQLITE_NOMEM;
+    if( nTmp==0 ){
       res = 0;
     }else{
-      char *aPoslist = p->pPhrase->doclist.pList;
-      int nToken = p->pPhrase->nToken;
+      aTmp = sqlite3_malloc(nTmp*2);
+      if( !aTmp ){
+        *pRc = SQLITE_NOMEM;
+        res = 0;
+      }else{
+        char *aPoslist = p->pPhrase->doclist.pList;
+        int nToken = p->pPhrase->nToken;
 
-      for(p=p->pParent;res && p && p->eType==FTSQUERY_NEAR; p=p->pParent){
-        Fts3Phrase *pPhrase = p->pRight->pPhrase;
-        int nNear = p->nNear;
-        res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
+        for(p=p->pParent;res && p && p->eType==FTSQUERY_NEAR; p=p->pParent){
+          Fts3Phrase *pPhrase = p->pRight->pPhrase;
+          int nNear = p->nNear;
+          res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
+        }
+
+        aPoslist = pExpr->pRight->pPhrase->doclist.pList;
+        nToken = pExpr->pRight->pPhrase->nToken;
+        for(p=pExpr->pLeft; p && res; p=p->pLeft){
+          int nNear;
+          Fts3Phrase *pPhrase;
+          assert( p->pParent && p->pParent->pLeft==p );
+          nNear = p->pParent->nNear;
+          pPhrase = (
+              p->eType==FTSQUERY_NEAR ? p->pRight->pPhrase : p->pPhrase
+              );
+          res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
+        }
       }
-  
-      aPoslist = pExpr->pRight->pPhrase->doclist.pList;
-      nToken = pExpr->pRight->pPhrase->nToken;
-      for(p=pExpr->pLeft; p && res; p=p->pLeft){
-        int nNear;
-        Fts3Phrase *pPhrase;
-        assert( p->pParent && p->pParent->pLeft==p );
-        nNear = p->pParent->nNear;
-        pPhrase = (
-            p->eType==FTSQUERY_NEAR ? p->pRight->pPhrase : p->pPhrase
-        );
-        res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
-      }
+
+      sqlite3_free(aTmp);
     }
-
-    sqlite3_free(aTmp);
   }
 
   return res;
@@ -5191,7 +5197,7 @@ int sqlite3Fts3EvalPhraseStats(
 ** of the current row. 
 **
 ** More specifically, the returned buffer contains 1 varint for each 
-** occurence of the phrase in the column, stored using the normal (delta+2) 
+** occurrence of the phrase in the column, stored using the normal (delta+2) 
 ** compression and is terminated by either an 0x01 or 0x00 byte. For example,
 ** if the requested column contains "a b X c d X X" and the position-list
 ** for 'X' is requested, the buffer returned may contain:

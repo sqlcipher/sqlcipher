@@ -109,7 +109,7 @@ static void attachFunc(
     }
   }
 
-  /* Allocate the new entry in the db->aDb[] array and initialise the schema
+  /* Allocate the new entry in the db->aDb[] array and initialize the schema
   ** hash tables.
   */
   if( db->aDb==db->aDbStatic ){
@@ -126,7 +126,7 @@ static void attachFunc(
 
   /* Open the database file. If the btree is successfully opened, use
   ** it to obtain the database schema. At this point the schema may
-  ** or may not be initialised.
+  ** or may not be initialized.
   */
   flags = db->openFlags;
   rc = sqlite3ParseUri(db->pVfs->zName, zFile, &flags, &pVfs, &zPath, &zErr);
@@ -434,6 +434,7 @@ int sqlite3FixInit(
   assert( db->nDb>iDb );
   pFix->pParse = pParse;
   pFix->zDb = db->aDb[iDb].zName;
+  pFix->pSchema = db->aDb[iDb].pSchema;
   pFix->zType = zType;
   pFix->pName = pName;
   return 1;
@@ -464,14 +465,15 @@ int sqlite3FixSrcList(
   if( NEVER(pList==0) ) return 0;
   zDb = pFix->zDb;
   for(i=0, pItem=pList->a; i<pList->nSrc; i++, pItem++){
-    if( pItem->zDatabase==0 ){
-      pItem->zDatabase = sqlite3DbStrDup(pFix->pParse->db, zDb);
-    }else if( sqlite3StrICmp(pItem->zDatabase,zDb)!=0 ){
+    if( pItem->zDatabase && sqlite3StrICmp(pItem->zDatabase, zDb) ){
       sqlite3ErrorMsg(pFix->pParse,
          "%s %T cannot reference objects in database %s",
          pFix->zType, pFix->pName, pItem->zDatabase);
       return 1;
     }
+    sqlite3DbFree(pFix->pParse->db, pItem->zDatabase);
+    pItem->zDatabase = 0;
+    pItem->pSchema = pFix->pSchema;
 #if !defined(SQLITE_OMIT_VIEW) || !defined(SQLITE_OMIT_TRIGGER)
     if( sqlite3FixSelect(pFix, pItem->pSelect) ) return 1;
     if( sqlite3FixExpr(pFix, pItem->pOn) ) return 1;
