@@ -85,6 +85,7 @@ int sqlcipher_register_provider(sqlcipher_provider *p) {
     sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
   }
   default_provider = p;   
+  return SQLITE_OK;
 }
 
 void sqlcipher_activate() {
@@ -637,7 +638,7 @@ static int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, in
 int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int page_sz, unsigned char *in, unsigned char *out) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   unsigned char *iv_in, *iv_out, *hmac_in, *hmac_out, *out_start;
-  int tmp_csz, csz, size;
+  int size;
 
   /* calculate some required positions into various buffers */
   size = page_sz - c_ctx->reserve_sz; /* adjust size to useable size and memset reserve at end of page */
@@ -733,7 +734,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       cipher_hex2bin(z, n, c_ctx->key);
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
-      c_ctx->provider->kdf(c_ctx->provider_ctx, c_ctx->pass, c_ctx->pass_sz, 
+      c_ctx->provider->kdf(c_ctx->provider_ctx, (const char*) c_ctx->pass, c_ctx->pass_sz, 
                     ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter,
                     c_ctx->key_sz, c_ctx->key);
                               

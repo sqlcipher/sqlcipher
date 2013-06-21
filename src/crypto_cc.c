@@ -54,14 +54,13 @@ static int sqlcipher_cc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, uns
   return SQLITE_OK; 
 }
 
-static int sqlcipher_cc_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_cc_kdf(void *ctx, const char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   CCKeyDerivationPBKDF(kCCPBKDF2, pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA1, workfactor, key, key_sz);
   return SQLITE_OK; 
 }
 
 static int sqlcipher_cc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
   CCCryptorRef cryptor;
-  CCOptions cryptor_options;
   size_t tmp_csz, csz;
   CCOperation op = mode == CIPHER_ENCRYPT ? kCCEncrypt : kCCDecrypt;
 
@@ -133,6 +132,7 @@ int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->ctx_cmp = sqlcipher_cc_ctx_cmp;
   p->ctx_init = sqlcipher_cc_ctx_init;
   p->ctx_free = sqlcipher_cc_ctx_free;
+  return SQLITE_OK;
 }
 
 #endif

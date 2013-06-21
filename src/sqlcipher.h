@@ -43,7 +43,7 @@ typedef struct {
   int (*add_random)(void *ctx, void *buffer, int length);
   int (*random)(void *ctx, void *buffer, int length);
   int (*hmac)(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out);
-  int (*kdf)(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key);
+  int (*kdf)(void *ctx, const char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key);
   int (*cipher)(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out);
   int (*set_cipher)(void *ctx, const char *cipher_name);
   const char* (*get_cipher)(void *ctx);
