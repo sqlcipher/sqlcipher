@@ -266,7 +266,7 @@ if test "$crypto_lib" = "libtomcrypt"; then
 else
   if test "$crypto_lib" = "commoncrypto"; then
     CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
-    BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL -DSQLCIPHER_CRYPTO_CC"
+    BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
 	  AC_MSG_RESULT([commoncrypto])
   else
     CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
