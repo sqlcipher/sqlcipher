@@ -116,9 +116,6 @@ static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz
 }
 
 static int sqlcipher_openssl_kdf(void *ctx, const char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
-  unsigned long random_buffer_sz = 256;
-  char random_buffer[random_buffer_sz];
-  
   PKCS5_PBKDF2_HMAC_SHA1(pass, pass_sz, salt, salt_sz, workfactor, key_sz, key);
   return SQLITE_OK; 
 }
