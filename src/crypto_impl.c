@@ -81,11 +81,21 @@ struct codec_ctx {
 };
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
-  if(default_provider != NULL) {
+  if(default_provider != NULL && default_provider != p) {
+    /* only free the current registerd provider if it has been initialized
+       and it isn't a pointer to the same provider passed to the function
+       (i.e. protect against a caller calling register twice for the same provider) */
     sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
   }
   default_provider = p;   
   return SQLITE_OK;
+}
+
+/* return a pointer to the currently registered provider. This will
+   allow an application to fetch the current registered provider and
+   make minor changes to it */
+sqlcipher_provider* sqlcipher_get_provider() {
+  return default_provider;
 }
 
 void sqlcipher_activate() {
