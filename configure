@@ -10611,12 +10611,22 @@ fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for crypto library to use" >&5
 $as_echo_n "checking for crypto library to use... " >&6; }
-if test "$crypto_lib" = "libtomcrypt"; then
-  CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
-  BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
-  { $as_echo "$as_me:${as_lineno-$LINENO}: result: libtomcrypt" >&5
+if test "$crypto_lib" = "none"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: none" >&5
+$as_echo "none" >&6; }
+else
+  if test "$crypto_lib" = "commoncrypto"; then
+    CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
+    BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
+	  { $as_echo "$as_me:${as_lineno-$LINENO}: result: commoncrypto" >&5
+$as_echo "commoncrypto" >&6; }
+  else
+    if test "$crypto_lib" = "libtomcrypt"; then
+      CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+      BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: libtomcrypt" >&5
 $as_echo "libtomcrypt" >&6; }
-  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for register_cipher in -ltomcrypt" >&5
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for register_cipher in -ltomcrypt" >&5
 $as_echo_n "checking for register_cipher in -ltomcrypt... " >&6; }
 if ${ac_cv_lib_tomcrypt_register_cipher+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -10663,18 +10673,12 @@ else
   as_fn_error $? "Library crypto not found. Install libtomcrypt!\"" "$LINENO" 5
 fi
 
-else
-  if test "$crypto_lib" = "commoncrypto"; then
-    CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
-    BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
-	  { $as_echo "$as_me:${as_lineno-$LINENO}: result: commoncrypto" >&5
-$as_echo "commoncrypto" >&6; }
-  else
-    CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-    BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-	  { $as_echo "$as_me:${as_lineno-$LINENO}: result: openssl" >&5
+    else
+        CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+	      { $as_echo "$as_me:${as_lineno-$LINENO}: result: openssl" >&5
 $as_echo "openssl" >&6; }
-    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for HMAC_Init_ex in -lcrypto" >&5
+        { $as_echo "$as_me:${as_lineno-$LINENO}: checking for HMAC_Init_ex in -lcrypto" >&5
 $as_echo_n "checking for HMAC_Init_ex in -lcrypto... " >&6; }
 if ${ac_cv_lib_crypto_HMAC_Init_ex+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -10721,6 +10725,7 @@ else
   as_fn_error $? "Library crypto not found. Install openssl!\"" "$LINENO" 5
 fi
 
+    fi
   fi
 fi
 
