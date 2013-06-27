@@ -72,6 +72,7 @@ static int sqlcipher_openssl_activate(void *ctx) {
     }
     openssl_init_count++; 
   } 
+  return SQLITE_OK;
 }
 
 /* deactivate SQLCipher, most imporantly decremeting the activation count and
@@ -92,6 +93,7 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
     }
   }
   sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  return SQLITE_OK;
 }
 
 static const char* sqlcipher_openssl_get_provider_name(void *ctx) {
@@ -105,7 +107,7 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
 
 static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   HMAC_CTX hctx;
-  int outlen;
+  unsigned int outlen;
   HMAC_CTX_init(&hctx);
   HMAC_Init_ex(&hctx, hmac_key, key_sz, EVP_sha1(), NULL);
   HMAC_Update(&hctx, in, in_sz);
@@ -204,6 +206,7 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->ctx_init = sqlcipher_openssl_ctx_init;
   p->ctx_free = sqlcipher_openssl_ctx_free;
   p->add_random = sqlcipher_openssl_add_random;
+  return SQLITE_OK;
 }
 
 #endif
