@@ -85,6 +85,7 @@ void sqlite3Vacuum(Parse *pParse){
   Vdbe *v = sqlite3GetVdbe(pParse);
   if( v ){
     sqlite3VdbeAddOp2(v, OP_Vacuum, 0, 0);
+    sqlite3VdbeUsesBtree(v, 0);
   }
   return;
 }
@@ -288,6 +289,7 @@ int sqlite3RunVacuum(char **pzErrMsg, sqlite3 *db){
        BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
        BTREE_TEXT_ENCODING,      0,  /* Preserve the text encoding */
        BTREE_USER_VERSION,       0,  /* Preserve the user version */
+       BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
     };
 
     assert( 1==sqlite3BtreeIsInTrans(pTemp) );

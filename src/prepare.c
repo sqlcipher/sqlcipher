@@ -134,7 +134,9 @@ int sqlite3InitCallback(void *pInit, int argc, char **argv, char **NotUsed){
 static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   int rc;
   int i;
+#ifndef SQLITE_OMIT_DEPRECATED
   int size;
+#endif
   Table *pTab;
   Db *pDb;
   char const *azArg[4];
@@ -177,7 +179,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
 
   /* zMasterSchema and zInitScript are set to point at the master schema
   ** and initialisation script appropriate for the database being
-  ** initialised. zMasterName is the name of the master table.
+  ** initialized. zMasterName is the name of the master table.
   */
   if( !OMIT_TEMPDB && iDb==1 ){
     zMasterSchema = temp_master_schema;
@@ -257,11 +259,15 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   */
   if( meta[BTREE_TEXT_ENCODING-1] ){  /* text encoding */
     if( iDb==0 ){
+#ifndef SQLITE_OMIT_UTF16
       u8 encoding;
       /* If opening the main database, set ENC(db). */
       encoding = (u8)meta[BTREE_TEXT_ENCODING-1] & 3;
       if( encoding==0 ) encoding = SQLITE_UTF8;
       ENC(db) = encoding;
+#else
+      ENC(db) = SQLITE_UTF8;
+#endif
     }else{
       /* If opening an attached database, the encoding much match ENC(db) */
       if( meta[BTREE_TEXT_ENCODING-1]!=ENC(db) ){
@@ -398,7 +404,7 @@ int sqlite3Init(sqlite3 *db, char **pzErrMsg){
     }
   }
 
-  /* Once all the other databases have been initialised, load the schema
+  /* Once all the other databases have been initialized, load the schema
   ** for the TEMP database. This is loaded last, as the TEMP database
   ** schema may contain references to objects in other databases.
   */
@@ -421,7 +427,7 @@ int sqlite3Init(sqlite3 *db, char **pzErrMsg){
 }
 
 /*
-** This routine is a no-op if the database schema is already initialised.
+** This routine is a no-op if the database schema is already initialized.
 ** Otherwise, the schema is loaded. An error code is returned.
 */
 int sqlite3ReadSchema(Parse *pParse){
@@ -648,7 +654,6 @@ static int sqlite3Prepare(
   }
 #endif
 
-  assert( db->init.busy==0 || saveSqlFlag==0 );
   if( db->init.busy==0 ){
     Vdbe *pVdbe = pParse->pVdbe;
     sqlite3VdbeSetSql(pVdbe, zSql, (int)(pParse->zTail-zSql), saveSqlFlag);

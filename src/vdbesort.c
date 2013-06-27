@@ -18,7 +18,6 @@
 #include "sqliteInt.h"
 #include "vdbeInt.h"
 
-#ifndef SQLITE_OMIT_MERGE_SORT
 
 typedef struct VdbeSorterIter VdbeSorterIter;
 typedef struct SorterRecord SorterRecord;
@@ -195,8 +194,11 @@ static int vdbeSorterIterRead(
     int rc;                       /* sqlite3OsRead() return code */
 
     /* Determine how many bytes of data to read. */
-    nRead = (int)(p->iEof - p->iReadOff);
-    if( nRead>p->nBuffer ) nRead = p->nBuffer;
+    if( (p->iEof - p->iReadOff) > (i64)p->nBuffer ){
+      nRead = p->nBuffer;
+    }else{
+      nRead = (int)(p->iEof - p->iReadOff);
+    }
     assert( nRead>0 );
 
     /* Read data from the file. Return early if an error occurs. */
@@ -1034,5 +1036,3 @@ int sqlite3VdbeSorterCompare(
   vdbeSorterCompare(pCsr, 1, pVal->z, pVal->n, pKey, nKey, pRes);
   return SQLITE_OK;
 }
-
-#endif /* #ifndef SQLITE_OMIT_MERGE_SORT */

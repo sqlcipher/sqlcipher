@@ -87,7 +87,7 @@
 # you don't need (for example BLT) by erasing or commenting out
 # the corresponding code.
 #
-AC_INIT(sqlite, m4_esyscmd([cat VERSION | tr -d '\n']))
+AC_INIT(sqlcipher, m4_esyscmd([cat VERSION | tr -d '\n']))
 
 dnl Make sure the local VERSION file matches this configure script
 sqlite_version_sanity_check=`cat $srcdir/VERSION | tr -d '\n'`
@@ -158,7 +158,6 @@ if test "x${TCLLIBDIR+set}" != "xset" ; then
   done
   TCLLIBDIR="${TCLLIBDIR}/sqlite3"
 fi
-
 
 #########
 # Set up an appropriate program prefix
@@ -249,6 +248,37 @@ AC_SUBST(SQLITE_THREADSAFE)
 
 if test "$SQLITE_THREADSAFE" = "1"; then
   AC_SEARCH_LIBS(pthread_create, pthread)
+fi
+
+##########
+# Which crypto library do we use
+#
+AC_ARG_WITH([crypto-lib],
+AC_HELP_STRING([--with-crypto-lib],[Specify which crypto library to use]),
+crypto_lib=$withval)
+AC_MSG_CHECKING([for crypto library to use])
+if test "$crypto_lib" = "none"; then
+  AC_MSG_RESULT([none])
+else
+  if test "$crypto_lib" = "commoncrypto"; then
+    CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
+    BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
+	  AC_MSG_RESULT([commoncrypto])
+  else
+    if test "$crypto_lib" = "libtomcrypt"; then
+      CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+      BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+      AC_MSG_RESULT([libtomcrypt])
+      AC_CHECK_LIB([tomcrypt], [register_cipher], ,
+                   AC_MSG_ERROR([Library crypto not found. Install libtomcrypt!"]))
+    else
+        CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+	      AC_MSG_RESULT([openssl])
+        AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+    fi
+  fi
 fi
 
 ##########
@@ -501,7 +531,6 @@ if test "${use_tcl}" = "yes" ; then
     AC_SUBST(TCL_VERSION)
     AC_SUBST(TCL_BIN_DIR)
     AC_SUBST(TCL_SRC_DIR)
-    AC_SUBST(TCL_LIBS)
     AC_SUBST(TCL_INCLUDE_SPEC)
     
     AC_SUBST(TCL_LIB_FILE)
@@ -700,5 +729,5 @@ AC_CONFIG_HEADERS(config.h)
 AC_SUBST(BUILD_CFLAGS)
 AC_OUTPUT([
 Makefile
-sqlite3.pc
+sqlcipher.pc
 ])
