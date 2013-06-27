@@ -17,18 +17,6 @@
 #include "sqliteInt.h"
 #include "vdbeInt.h"
 
-
-
-/*
-** When debugging the code generator in a symbolic debugger, one can
-** set the sqlite3VdbeAddopTrace to 1 and all opcodes will be printed
-** as they are added to the instruction stream.
-*/
-#ifdef SQLITE_DEBUG
-int sqlite3VdbeAddopTrace = 0;
-#endif
-
-
 /*
 ** Create a new virtual database engine.
 */
@@ -158,7 +146,9 @@ int sqlite3VdbeAddOp3(Vdbe *p, int op, int p1, int p2, int p3){
   pOp->p4type = P4_NOTUSED;
 #ifdef SQLITE_DEBUG
   pOp->zComment = 0;
-  if( sqlite3VdbeAddopTrace ) sqlite3VdbePrintOp(0, i, &p->aOp[i]);
+  if( p->db->flags & SQLITE_VdbeAddopTrace ){
+    sqlite3VdbePrintOp(0, i, &p->aOp[i]);
+  }
 #endif
 #ifdef VDBE_PROFILE
   pOp->cycles = 0;
@@ -377,7 +367,7 @@ int sqlite3VdbeAssertMayAbort(Vdbe *v, int mayAbort){
      || (opcode==OP_FkCounter && pOp->p1==0 && pOp->p2==1) 
 #endif
      || ((opcode==OP_Halt || opcode==OP_HaltIfNull) 
-      && (pOp->p1==SQLITE_CONSTRAINT && pOp->p2==OE_Abort))
+      && ((pOp->p1&0xff)==SQLITE_CONSTRAINT && pOp->p2==OE_Abort))
     ){
       hasAbort = 1;
       break;
@@ -385,7 +375,7 @@ int sqlite3VdbeAssertMayAbort(Vdbe *v, int mayAbort){
   }
   sqlite3DbFree(v->db, sIter.apSub);
 
-  /* Return true if hasAbort==mayAbort. Or if a malloc failure occured.
+  /* Return true if hasAbort==mayAbort. Or if a malloc failure occurred.
   ** If malloc failed, then the while() loop above may not have iterated
   ** through all opcodes and hasAbort may be set incorrectly. Return
   ** true for this case to prevent the assert() in the callers frame
@@ -512,7 +502,7 @@ int sqlite3VdbeAddOpList(Vdbe *p, int nOp, VdbeOpList const *aOp){
       pOut->p5 = 0;
 #ifdef SQLITE_DEBUG
       pOut->zComment = 0;
-      if( sqlite3VdbeAddopTrace ){
+      if( p->db->flags & SQLITE_VdbeAddopTrace ){
         sqlite3VdbePrintOp(0, i+addr, &p->aOp[i+addr]);
       }
 #endif
@@ -1538,7 +1528,7 @@ void sqlite3VdbeMakeReady(
     zEnd = &zCsr[nByte];
   }while( nByte && !db->mallocFailed );
 
-  p->nCursor = (u16)nCursor;
+  p->nCursor = nCursor;
   p->nOnceFlag = nOnce;
   if( p->aVar ){
     p->nVar = (ynVar)nVar;
@@ -1780,7 +1770,7 @@ static int vdbeCommit(sqlite3 *db, Vdbe *p){
   if( needXcommit && db->xCommitCallback ){
     rc = db->xCommitCallback(db->pCommitArg);
     if( rc ){
-      return SQLITE_CONSTRAINT;
+      return SQLITE_CONSTRAINT_COMMITHOOK;
     }
   }
 
@@ -2017,7 +2007,7 @@ int sqlite3VdbeCloseStatement(Vdbe *p, int eOp){
 
   /* If p->iStatement is greater than zero, then this Vdbe opened a 
   ** statement transaction that should be closed here. The only exception
-  ** is that an IO error may have occured, causing an emergency rollback.
+  ** is that an IO error may have occurred, causing an emergency rollback.
   ** In this case (db->nStatement==0), and there is nothing to do.
   */
   if( db->nStatement && p->iStatement ){
@@ -2072,14 +2062,14 @@ int sqlite3VdbeCloseStatement(Vdbe *p, int eOp){
 ** violations, return SQLITE_ERROR. Otherwise, SQLITE_OK.
 **
 ** If there are outstanding FK violations and this function returns 
-** SQLITE_ERROR, set the result of the VM to SQLITE_CONSTRAINT and write
-** an error message to it. Then return SQLITE_ERROR.
+** SQLITE_ERROR, set the result of the VM to SQLITE_CONSTRAINT_FOREIGNKEY
+** and write an error message to it. Then return SQLITE_ERROR.
 */
 #ifndef SQLITE_OMIT_FOREIGN_KEY
 int sqlite3VdbeCheckFk(Vdbe *p, int deferred){
   sqlite3 *db = p->db;
   if( (deferred && db->nDeferredCons>0) || (!deferred && p->nFkConstraint>0) ){
-    p->rc = SQLITE_CONSTRAINT;
+    p->rc = SQLITE_CONSTRAINT_FOREIGNKEY;
     p->errorAction = OE_Abort;
     sqlite3SetString(&p->zErrMsg, db, "foreign key constraint failed");
     return SQLITE_ERROR;
@@ -2153,7 +2143,7 @@ int sqlite3VdbeHalt(Vdbe *p){
       **
       ** Even if the statement is read-only, it is important to perform
       ** a statement or transaction rollback operation. If the error 
-      ** occured while writing to the journal, sub-journal or database
+      ** occurred while writing to the journal, sub-journal or database
       ** file as part of an effort to free up cache space (see function
       ** pagerStress() in pager.c), the rollback is required to restore 
       ** the pager to a consistent state.
@@ -2194,7 +2184,7 @@ int sqlite3VdbeHalt(Vdbe *p){
             sqlite3VdbeLeave(p);
             return SQLITE_ERROR;
           }
-          rc = SQLITE_CONSTRAINT;
+          rc = SQLITE_CONSTRAINT_FOREIGNKEY;
         }else{ 
           /* The auto-commit flag is true, the vdbe program was successful 
           ** or hit an 'OR FAIL' constraint and there are no deferred foreign
@@ -2237,7 +2227,7 @@ int sqlite3VdbeHalt(Vdbe *p){
     if( eStatementOp ){
       rc = sqlite3VdbeCloseStatement(p, eStatementOp);
       if( rc ){
-        if( p->rc==SQLITE_OK || p->rc==SQLITE_CONSTRAINT ){
+        if( p->rc==SQLITE_OK || (p->rc&0xff)==SQLITE_CONSTRAINT ){
           p->rc = rc;
           sqlite3DbFree(db, p->zErrMsg);
           p->zErrMsg = 0;
@@ -2478,7 +2468,7 @@ void sqlite3VdbeClearObject(sqlite3 *db, Vdbe *p){
   sqlite3DbFree(db, p->zSql);
   sqlite3DbFree(db, p->pFree);
 #if defined(SQLITE_ENABLE_TREE_EXPLAIN)
-  sqlite3_free(p->zExplain);
+  sqlite3DbFree(db, p->zExplain);
   sqlite3DbFree(db, p->pExplain);
 #endif
 }
@@ -2567,7 +2557,7 @@ int sqlite3VdbeCursorMoveto(VdbeCursor *p){
 ** the blob of data that it corresponds to. In a table record, all serial
 ** types are stored at the start of the record, and the blobs of data at
 ** the end. Hence these functions allow the caller to handle the
-** serial-type and data blob seperately.
+** serial-type and data blob separately.
 **
 ** The following table describes the various storage classes for data:
 **

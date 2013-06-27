@@ -62,6 +62,32 @@ proc setup {file key} {
   db close
 }
 
+proc get_cipher_provider {} {
+   sqlite_orig db test.db
+    return [execsql {
+            PRAGMA key = 'test';
+            PRAGMA cipher_provider;
+    }];
+}
+
+proc if_built_with_openssl {name cmd expected} {
+    if {[get_cipher_provider] == "openssl"} {
+        do_test $name $cmd $expected
+    }
+}
+
+proc if_built_with_libtomcrypt {name cmd expected} {
+    if {[get_cipher_provider] == "libtomcrypt"} {
+        do_test $name $cmd $expected
+    }
+}
+
+proc if_built_with_commoncrypto {name cmd expected} {
+     if {[get_cipher_provider] == "commoncrypto"} {
+        do_test $name $cmd $expected
+     }
+}
+
 # The database is initially empty.
 # set an hex key create some basic data
 # create table and insert operations should work
@@ -1413,7 +1439,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {2.1.1}
+} {2.2.0}
 db close
 file delete -force test.db
 
@@ -1756,7 +1782,7 @@ file delete -force test.db
 
 # verify the pragma cipher
 # reports the default value
-do_test verify-pragma-cipher-default {
+if_built_with_openssl verify-pragma-cipher-default {
     sqlite_orig db test.db
     execsql {
         PRAGMA key = 'test';
@@ -1768,7 +1794,7 @@ file delete -force test.db
 
 # verify the pragma cipher
 # reports a change in value
-do_test verify-pragma-cipher-changed {
+if_built_with_openssl verify-pragma-cipher-changed {
     sqlite_orig db test.db
     execsql {
         PRAGMA key = 'test';
@@ -1874,6 +1900,26 @@ do_test 2.0-beta-to-2.0-migration {
     SELECT * FROM t1;
   }
 } {test-0-0 test-0-1 test-1-0 test-1-1}
+db close
+file delete -force test.db
+
+if_built_with_libtomcrypt verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {rijndael}
+db close
+file delete -force test.db
+
+if_built_with_commoncrypto verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {aes-256-cbc}
 db close
 file delete -force test.db
 

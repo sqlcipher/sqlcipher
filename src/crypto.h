@@ -30,15 +30,21 @@
 ** SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **  
 */
-/* BEGIN CRYPTO */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 #ifndef CRYPTO_H
 #define CRYPTO_H
 
+#if !defined (SQLCIPHER_CRYPTO_CC) \
+   && !defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT) \
+   && !defined (SQLCIPHER_CRYPTO_OPENSSL)
+#define SQLCIPHER_CRYPTO_OPENSSL
+#endif
+
 #define FILE_HEADER_SZ 16
 
 #ifndef CIPHER_VERSION
-#define CIPHER_VERSION "2.1.2"
+#define CIPHER_VERSION "2.2.0"
 #endif
 
 #ifndef CIPHER
@@ -81,6 +87,15 @@
 #ifndef HMAC_SALT_MASK
 #define HMAC_SALT_MASK 0x3a
 #endif
+
+#ifndef CIPHER_MAX_IV_SZ
+#define CIPHER_MAX_IV_SZ 16
+#endif
+
+#ifndef CIPHER_MAX_KEY_SZ
+#define CIPHER_MAX_KEY_SZ 64
+#endif
+
 
 #ifdef CODEC_DEBUG
 #define CODEC_TRACE(X)  {printf X;fflush(stdout);}
@@ -135,15 +150,7 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
 }
 
 /* extensions defined in crypto_impl.c */
-
 typedef struct codec_ctx codec_ctx;
-
-/* utility functions */
-void* sqlcipher_memset(void *v, unsigned char value, int len);
-int sqlcipher_ismemset(const void *v, unsigned char value, int len);
-int sqlcipher_memcmp(const void *v0, const void *v1, int len);
-int sqlcipher_pseudorandom(void *, int);
-void sqlcipher_free(void *, int);
 
 /* activation and initialization */
 void sqlcipher_activate();
@@ -194,8 +201,7 @@ int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag);
 int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag);
 int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx);
 
-/* end extensions defined in crypto_impl.c */
-
+const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 #endif
 #endif
-/* END CRYPTO */
+/* END SQLCIPHER */

@@ -90,7 +90,8 @@ static int enableTimer = 0;
 #define IsDigit(X)  isdigit((unsigned char)X)
 #define ToLower(X)  (char)tolower((unsigned char)X)
 
-#if !defined(_WIN32) && !defined(WIN32) && !defined(_WRS_KERNEL)
+#if !defined(_WIN32) && !defined(WIN32) && !defined(_WRS_KERNEL) \
+ && !defined(__minux)
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -1525,17 +1526,55 @@ static void resolve_backslashes(char *z){
 ** Interpret zArg as a boolean value.  Return either 0 or 1.
 */
 static int booleanValue(char *zArg){
-  int val = atoi(zArg);
-  int j;
-  for(j=0; zArg[j]; j++){
-    zArg[j] = ToLower(zArg[j]);
+  int i;
+  for(i=0; zArg[i]>='0' && zArg[i]<='9'; i++){}
+  if( i>0 && zArg[i]==0 ) return atoi(zArg);
+  if( sqlite3_stricmp(zArg, "on")==0 || sqlite3_stricmp(zArg,"yes")==0 ){
+    return 1;
   }
-  if( strcmp(zArg,"on")==0 ){
-    val = 1;
-  }else if( strcmp(zArg,"yes")==0 ){
-    val = 1;
+  if( sqlite3_stricmp(zArg, "off")==0 || sqlite3_stricmp(zArg,"no")==0 ){
+    return 0;
   }
-  return val;
+  fprintf(stderr, "ERROR: Not a boolean value: \"%s\". Assuming \"no\".\n",
+          zArg);
+  return 0;
+}
+
+/*
+** Interpret zArg as an integer value, possibly with suffixes.
+*/
+static sqlite3_int64 integerValue(const char *zArg){
+  sqlite3_int64 v = 0;
+  static const struct { char *zSuffix; int iMult; } aMult[] = {
+    { "KiB", 1024 },
+    { "MiB", 1024*1024 },
+    { "GiB", 1024*1024*1024 },
+    { "KB",  1000 },
+    { "MB",  1000000 },
+    { "GB",  1000000000 },
+    { "K",   1000 },
+    { "M",   1000000 },
+    { "G",   1000000000 },
+  };
+  int i;
+  int isNeg = 0;
+  if( zArg[0]=='-' ){
+    isNeg = 1;
+    zArg++;
+  }else if( zArg[0]=='+' ){
+    zArg++;
+  }
+  while( isdigit(zArg[0]) ){
+    v = v*10 + zArg[0] - '0';
+    zArg++;
+  }
+  for(i=0; i<sizeof(aMult)/sizeof(aMult[0]); i++){
+    if( sqlite3_stricmp(aMult[i].zSuffix, zArg)==0 ){
+      v *= aMult[i].iMult;
+      break;
+    }
+  }
+  return isNeg? -v : v;
 }
 
 /*
@@ -1623,24 +1662,50 @@ static int do_meta_command(char *zLine, struct callback_data *p){
   if( nArg==0 ) return 0; /* no tokens, no error */
   n = strlen30(azArg[0]);
   c = azArg[0][0];
-  if( c=='b' && n>=3 && strncmp(azArg[0], "backup", n)==0 && nArg>1 && nArg<4){
-    const char *zDestFile;
-    const char *zDb;
+  if( c=='b' && n>=3 && strncmp(azArg[0], "backup", n)==0 ){
+    const char *zDestFile = 0;
+    const char *zDb = 0;
+    const char *zKey = 0;
     sqlite3 *pDest;
     sqlite3_backup *pBackup;
-    if( nArg==2 ){
-      zDestFile = azArg[1];
-      zDb = "main";
-    }else{
-      zDestFile = azArg[2];
-      zDb = azArg[1];
+    int j;
+    for(j=1; j<nArg; j++){
+      const char *z = azArg[j];
+      if( z[0]=='-' ){
+        while( z[0]=='-' ) z++;
+        if( strcmp(z,"key")==0 && j<nArg-1 ){
+          zKey = azArg[++j];
+        }else
+        {
+          fprintf(stderr, "unknown option: %s\n", azArg[j]);
+          return 1;
+        }
+      }else if( zDestFile==0 ){
+        zDestFile = azArg[j];
+      }else if( zDb==0 ){
+        zDb = zDestFile;
+        zDestFile = azArg[j];
+      }else{
+        fprintf(stderr, "too many arguments to .backup\n");
+        return 1;
+      }
     }
+    if( zDestFile==0 ){
+      fprintf(stderr, "missing FILENAME argument on .backup\n");
+      return 1;
+    }
+    if( zDb==0 ) zDb = "main";
     rc = sqlite3_open(zDestFile, &pDest);
     if( rc!=SQLITE_OK ){
       fprintf(stderr, "Error: cannot open \"%s\"\n", zDestFile);
       sqlite3_close(pDest);
       return 1;
     }
+#ifdef SQLITE_HAS_CODEC
+    sqlite3_key(pDest, zKey, (int)strlen(zKey));
+#else
+    (void)zKey;
+#endif
     open_db(p);
     pBackup = sqlite3_backup_init(pDest, "main", p->db, zDb);
     if( pBackup==0 ){
@@ -1742,7 +1807,8 @@ static int do_meta_command(char *zLine, struct callback_data *p){
     p->echoOn = booleanValue(azArg[1]);
   }else
 
-  if( c=='e' && strncmp(azArg[0], "exit", n)==0  && nArg==1 ){
+  if( c=='e' && strncmp(azArg[0], "exit", n)==0 ){
+    if( nArg>1 && (rc = atoi(azArg[1]))!=0 ) exit(rc);
     rc = 2;
   }else
 
@@ -2212,8 +2278,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
           "   SELECT sql, type, tbl_name, name, rowid FROM sqlite_temp_master) "
           "WHERE lower(tbl_name) LIKE shellstatic()"
           "  AND type!='meta' AND sql NOTNULL "
-          "ORDER BY substr(type,2,1), "
-                  " CASE type WHEN 'view' THEN rowid ELSE name END",
+          "ORDER BY rowid",
           callback, &data, &zErrMsg);
         zShellStatic = 0;
       }
@@ -2224,8 +2289,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
          "     FROM sqlite_master UNION ALL"
          "   SELECT sql, type, tbl_name, name, rowid FROM sqlite_temp_master) "
          "WHERE type!='meta' AND sql NOTNULL AND name NOT LIKE 'sqlite_%'"
-         "ORDER BY substr(type,2,1),"
-                  " CASE type WHEN 'view' THEN rowid ELSE name END",
+         "ORDER BY rowid",
          callback, &data, &zErrMsg
       );
     }
@@ -2347,9 +2411,9 @@ static int do_meta_command(char *zLine, struct callback_data *p){
       for(i=0; i<nPrintRow; i++){
         for(j=i; j<nRow; j+=nPrintRow){
           char *zSp = j<nPrintRow ? "" : "  ";
-          printf("%s%-*s", zSp, maxlen, azResult[j] ? azResult[j] : "");
+          fprintf(p->out, "%s%-*s", zSp, maxlen, azResult[j] ? azResult[j] : "");
         }
-        printf("\n");
+        fprintf(p->out, "\n");
       }
     }
     for(ii=0; ii<nRow; ii++) sqlite3_free(azResult[ii]);
@@ -2406,7 +2470,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
           if( nArg==3 ){
             int opt = (int)strtol(azArg[2], 0, 0);        
             rc = sqlite3_test_control(testctrl, p->db, opt);
-            printf("%d (0x%08x)\n", rc, rc);
+            fprintf(p->out, "%d (0x%08x)\n", rc, rc);
           } else {
             fprintf(stderr,"Error: testctrl %s takes a single int option\n",
                     azArg[1]);
@@ -2419,7 +2483,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
         case SQLITE_TESTCTRL_PRNG_RESET:
           if( nArg==2 ){
             rc = sqlite3_test_control(testctrl);
-            printf("%d (0x%08x)\n", rc, rc);
+            fprintf(p->out, "%d (0x%08x)\n", rc, rc);
           } else {
             fprintf(stderr,"Error: testctrl %s takes no options\n", azArg[1]);
           }
@@ -2428,9 +2492,9 @@ static int do_meta_command(char *zLine, struct callback_data *p){
         /* sqlite3_test_control(int, uint) */
         case SQLITE_TESTCTRL_PENDING_BYTE:        
           if( nArg==3 ){
-            unsigned int opt = (unsigned int)atoi(azArg[2]);        
+            unsigned int opt = (unsigned int)integerValue(azArg[2]);        
             rc = sqlite3_test_control(testctrl, opt);
-            printf("%d (0x%08x)\n", rc, rc);
+            fprintf(p->out, "%d (0x%08x)\n", rc, rc);
           } else {
             fprintf(stderr,"Error: testctrl %s takes a single unsigned"
                            " int option\n", azArg[1]);
@@ -2443,7 +2507,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
           if( nArg==3 ){
             int opt = atoi(azArg[2]);        
             rc = sqlite3_test_control(testctrl, opt);
-            printf("%d (0x%08x)\n", rc, rc);
+            fprintf(p->out, "%d (0x%08x)\n", rc, rc);
           } else {
             fprintf(stderr,"Error: testctrl %s takes a single int option\n",
                             azArg[1]);
@@ -2456,7 +2520,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
           if( nArg==3 ){
             const char *opt = azArg[2];        
             rc = sqlite3_test_control(testctrl, opt);
-            printf("%d (0x%08x)\n", rc, rc);
+            fprintf(p->out, "%d (0x%08x)\n", rc, rc);
           } else {
             fprintf(stderr,"Error: testctrl %s takes a single char * option\n",
                             azArg[1]);
@@ -2501,7 +2565,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
   }else
 
   if( c=='v' && strncmp(azArg[0], "version", n)==0 ){
-    printf("SQLite %s %s\n" /*extra-version-info*/,
+    fprintf(p->out, "SQLite %s %s\n" /*extra-version-info*/,
         sqlite3_libversion(), sqlite3_sourceid());
   }else
 
@@ -2511,7 +2575,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
     if( p->db ){
       sqlite3_file_control(p->db, zDbName, SQLITE_FCNTL_VFSNAME, &zVfsName);
       if( zVfsName ){
-        printf("%s\n", zVfsName);
+        fprintf(p->out, "%s\n", zVfsName);
         sqlite3_free(zVfsName);
       }
     }
@@ -2520,7 +2584,7 @@ static int do_meta_command(char *zLine, struct callback_data *p){
 #if defined(SQLITE_DEBUG) && defined(SQLITE_ENABLE_WHERETRACE)
   if( c=='w' && strncmp(azArg[0], "wheretrace", n)==0 ){
     extern int sqlite3WhereTrace;
-    sqlite3WhereTrace = atoi(azArg[1]);
+    sqlite3WhereTrace = booleanValue(azArg[1]);
   }else
 #endif
 
@@ -2706,6 +2770,10 @@ static int process_input(struct callback_data *p, FILE *in){
       free(zSql);
       zSql = 0;
       nSql = 0;
+    }else if( zSql && _all_whitespace(zSql) ){
+      free(zSql);
+      zSql = 0;
+      nSql = 0;
     }
   }
   if( zSql ){
@@ -2841,6 +2909,7 @@ static const char zOptions[] =
   "   -interactive         force interactive I/O\n"
   "   -line                set output mode to 'line'\n"
   "   -list                set output mode to 'list'\n"
+  "   -mmap N              default mmap size set to N\n"
 #ifdef SQLITE_ENABLE_MULTIPLEX
   "   -multiplex           enable the multiplexor VFS\n"
 #endif
@@ -2960,12 +3029,7 @@ int main(int argc, char **argv){
       sqlite3_int64 szHeap;
 
       zSize = cmdline_option_value(argc, argv, ++i);
-      szHeap = atoi(zSize);
-      for(j=0; (c = zSize[j])!=0; j++){
-        if( c=='M' ){ szHeap *= 1000000; break; }
-        if( c=='K' ){ szHeap *= 1000; break; }
-        if( c=='G' ){ szHeap *= 1000000000; break; }
-      }
+      szHeap = integerValue(zSize);
       if( szHeap>0x7fff0000 ) szHeap = 0x7fff0000;
       sqlite3_config(SQLITE_CONFIG_HEAP, malloc((int)szHeap), (int)szHeap, 64);
 #endif
@@ -2985,6 +3049,9 @@ int main(int argc, char **argv){
       extern int sqlite3_multiple_initialize(const char*,int);
       sqlite3_multiplex_initialize(0, 1);
 #endif
+    }else if( strcmp(z,"-mmap")==0 ){
+      sqlite3_int64 sz = integerValue(cmdline_option_value(argc,argv,++i));
+      sqlite3_config(SQLITE_CONFIG_MMAP_SIZE, sz, sz);
     }else if( strcmp(z,"-vfs")==0 ){
       sqlite3_vfs *pVfs = sqlite3_vfs_find(cmdline_option_value(argc,argv,++i));
       if( pVfs ){
@@ -3070,6 +3137,8 @@ int main(int argc, char **argv){
       stdin_is_interactive = 0;
     }else if( strcmp(z,"-heap")==0 ){
       i++;
+    }else if( strcmp(z,"-mmap")==0 ){
+      i++;
     }else if( strcmp(z,"-vfs")==0 ){
       i++;
 #ifdef SQLITE_ENABLE_VFSTRACE
@@ -3087,7 +3156,7 @@ int main(int argc, char **argv){
       z = cmdline_option_value(argc,argv,++i);
       if( z[0]=='.' ){
         rc = do_meta_command(z, &data);
-        if( rc && bail_on_error ) return rc;
+        if( rc && bail_on_error ) return rc==2 ? 0 : rc;
       }else{
         open_db(&data);
         rc = shell_exec(data.db, z, shell_callback, &data, &zErrMsg);
@@ -3111,6 +3180,7 @@ int main(int argc, char **argv){
     */
     if( zFirstCmd[0]=='.' ){
       rc = do_meta_command(zFirstCmd, &data);
+      if( rc==2 ) rc = 0;
     }else{
       open_db(&data);
       rc = shell_exec(data.db, zFirstCmd, shell_callback, &data, &zErrMsg);
@@ -3130,7 +3200,13 @@ int main(int argc, char **argv){
       char *zHistory = 0;
       int nHistory;
       printf(
+/* BEGIN SQLCIPHER */
+#ifdef SQLITE_HAS_CODEC
+        "SQLCipher version %s %.19s\n" /*extra-version-info*/
+#else
         "SQLite version %s %.19s\n" /*extra-version-info*/
+#endif
+/* END SQLCIPHER */
         "Enter \".help\" for instructions\n"
         "Enter SQL statements terminated with a \";\"\n",
         sqlite3_libversion(), sqlite3_sourceid()

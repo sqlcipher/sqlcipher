@@ -23,7 +23,7 @@
 #
 
 # Begin by reading the "sqlite3.h" header file.  Extract the version number
-# from in this file.  The versioon number is needed to generate the header
+# from in this file.  The version number is needed to generate the header
 # comment of the amalgamation.
 #
 if {[lsearch $argv --nostatic]>=0} {
@@ -92,6 +92,7 @@ if {$addstatic} {
 #
 foreach hdr {
    crypto.h
+   sqlcipher.h
    btree.h
    btreeInt.h
    fts3.h
@@ -221,11 +222,15 @@ proc copy_file {filename} {
 # used subroutines first in order to help the compiler find
 # inlining opportunities.
 #
+
 foreach file {
    sqliteInt.h
 
    crypto.c
    crypto_impl.c
+   crypto_libtomcrypt.c
+   crypto_openssl.c
+   crypto_cc.c
 
    global.c
    ctime.c
@@ -315,6 +320,7 @@ foreach file {
    fts3_porter.c
    fts3_tokenizer.c
    fts3_tokenizer1.c
+   fts3_tokenize_vtab.c
    fts3_write.c
    fts3_snippet.c
    fts3_unicode.c
