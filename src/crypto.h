@@ -59,7 +59,7 @@
 #define CIPHER_READWRITE_CTX 2
 
 #ifndef PBKDF2_ITER
-#define PBKDF2_ITER 4000
+#define PBKDF2_ITER 64000
 #endif
 
 /* possible flags for cipher_ctx->flags */
@@ -172,6 +172,9 @@ void sqlcipher_codec_get_pass(codec_ctx *, void **zKey, int *nKey);
 int sqlcipher_codec_ctx_set_pagesize(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_pagesize(codec_ctx *);
 int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);
+
+void sqlcipher_set_default_kdf_iter(int iter);
+int sqlcipher_get_default_kdf_iter();
 
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int, int);
 int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx, int);

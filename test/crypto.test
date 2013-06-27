@@ -879,6 +879,7 @@ do_test open-1.1.8-database {
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_use_hmac = OFF;
+    PRAGMA kdf_iter = 4000;
     SELECT count(*) FROM t1;
     SELECT * FROM t1;
   } 
@@ -893,6 +894,7 @@ do_test attach-and-copy-1.1.8 {
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_use_hmac = OFF;
+    PRAGMA kdf_iter = 4000;
     ATTACH DATABASE 'test.db' AS db2 KEY 'testkey-hmac'; 
     CREATE TABLE db2.t1(a,b);
     INSERT INTO db2.t1 SELECT * FROM main.t1;
@@ -1350,20 +1352,22 @@ do_test cipher-options-before-keys {
 db close
 file delete -force test.db
 
-# open a 1.1.8 database (no HMAC), then 
+# open a 1.1.8 database (no HMAC, 4K iter), then 
 # try to open another 1.1.8 database. The
 # attached database should have the same hmac
 # setting as the original 
-do_test default-use-hmac-attach {
+do_test default-hmac-kdf-attach {
   file copy -force sqlcipher-1.1.8-testkey.db test.db
   sqlite_orig db test.db
   execsql {
     PRAGMA cipher_default_use_hmac = OFF;
+    PRAGMA cipher_default_kdf_iter = 4000;
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
     ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2;
     SELECT count(*) from db2.t1;
     PRAGMA cipher_default_use_hmac = ON;
+    PRAGMA cipher_default_kdf_iter = 64000;
   } 
 } {4 4}
 db close
@@ -1384,12 +1388,12 @@ do_test attach-1.1.8-database-from-2.0-fails {
 db close
 file delete -force test.db
 
-# open a 2.0 database (with HMAC), then 
+# open a 2.0 database (with HMAC, 4k iter), then 
 # set the default hmac setting to OFF.
 # try to a 1.1.8 database. this should 
 # succeed now that hmac is off by default
 # before the attach
-do_test change-default-use-hmac-attach {
+do_test change-default-hmac-kdf-attach {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -1402,9 +1406,11 @@ do_test change-default-use-hmac-attach {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
     PRAGMA cipher_default_use_hmac = OFF;
+    PRAGMA cipher_default_kdf_iter = 4000;
     ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2;
     SELECT count(*) from db2.t1;
     PRAGMA cipher_default_use_hmac = ON;
+    PRAGMA cipher_default_kdf_iter = 64000;
   } 
 } {1 4}
 db close
@@ -1580,12 +1586,25 @@ do_test multipage-schema-autovacuum-shortread-wal {
 db close
 file delete -force test.db
 
+# open a 2.3 database with little endian hmac page numbers (default)
+# verify it can be opened
+do_test open-2.3-le-database {
+  sqlite_orig db sqlcipher-2.3-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+    SELECT * FROM t1;
+  } 
+} {4 1 1 one one 1 2 one two}
+db close
+
 # open a 2.0 database with little endian hmac page numbers (default)
 # verify it can be opened
 do_test open-2.0-le-database {
   sqlite_orig db sqlcipher-2.0-le-testkey.db
   execsql {
     PRAGMA key = 'testkey';
+    PRAGMA kdf_iter = 4000;
     SELECT count(*) FROM t1;
     SELECT * FROM t1;
   } 
@@ -1599,6 +1618,7 @@ do_test open-2.0-be-database {
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_hmac_pgno = be;
+    PRAGMA kdf_iter = 4000;
     SELECT count(*) FROM t1;
     SELECT * FROM t1;
   } 
@@ -1615,6 +1635,7 @@ do_test be-to-le-migration {
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_hmac_pgno = be;
+    PRAGMA kdf_iter = 4000;
     ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
     CREATE TABLE db2.t1(a,b);
     INSERT INTO db2.t1 SELECT * FROM main.t1;
@@ -1684,6 +1705,31 @@ do_test verify-pragma-cipher-default-use-hmac-off {
 db close
 file delete -force test.db
 
+# verify the pragma default_cipher_kdf_iter
+# is set to 64000 by default
+do_test verify-pragma-cipher-default-kdf-iter-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_kdf_iter;
+    }
+} {64000}
+db close
+file delete -force test.db
+
+
+# verify the pragma default_cipher_kdf_ter
+# reports changes
+do_test verify-pragma-cipher-default-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_kdf_iter = 1000;
+        PRAGMA cipher_default_kdf_iter;
+        PRAGMA cipher_default_kdf_iter = 64000;
+    }
+} {1000}
+db close
+file delete -force test.db
+
 # verify the pragma kdf_iter
 # reports the default value
 do_test verify-pragma-kdf-iter-reports-default {
@@ -1692,7 +1738,7 @@ do_test verify-pragma-kdf-iter-reports-default {
         PRAGMA key = 'test';
         PRAGMA kdf_iter;
     }
-} {4000}
+} {64000}
 db close
 file delete -force test.db
 
@@ -1843,6 +1889,7 @@ do_test open-2.0-beta-database {
   sqlite_orig db sqlcipher-2.0-beta-testkey.db
   execsql {
     PRAGMA key = 'testkey';
+    PRAGMA kdf_iter = 4000;
     PRAGMA fast_kdf_iter = 4000;
     PRAGMA cipher_hmac_salt_mask = "x'00'";
     SELECT count(*) FROM t1;
@@ -1861,6 +1908,7 @@ do_test 2.0-beta-to-2.0-migration {
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_hmac_salt_mask = "x'00'";
+    PRAGMA kdf_iter = 4000;
     PRAGMA fast_kdf_iter = 4000;
     SELECT count(*) FROM sqlite_master;
 

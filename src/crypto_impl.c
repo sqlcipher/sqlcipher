@@ -66,6 +66,7 @@ typedef struct {
 
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
+static int default_kdf_iter = PBKDF2_ITER;
 
 static sqlcipher_provider *default_provider = NULL;
 
@@ -386,6 +387,15 @@ const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx, int for_ctx) {
   return c_ctx->provider->get_cipher(c_ctx->provider_ctx);
 }
 
+/* set the global default KDF iteration */
+void sqlcipher_set_default_kdf_iter(int iter) {
+  default_kdf_iter = iter; 
+}
+
+int sqlcipher_get_default_kdf_iter() {
+  return default_kdf_iter;
+}
+
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter, int for_ctx) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
@@ -572,7 +582,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   }
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
-  if((rc = sqlcipher_codec_ctx_set_kdf_iter(ctx, PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_kdf_iter(ctx, default_kdf_iter, 0)) != SQLITE_OK) return rc;
   if((rc = sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, FAST_PBKDF2_ITER, 0)) != SQLITE_OK) return rc;
   if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) return rc;
 
