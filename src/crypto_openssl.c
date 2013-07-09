@@ -48,9 +48,13 @@ static unsigned int openssl_init_count = 0;
 static sqlite3_mutex* openssl_rand_mutex = NULL;
 
 static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   sqlite3_mutex_enter(openssl_rand_mutex);
+#endif
   RAND_add(buffer, length, 0);
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   sqlite3_mutex_leave(openssl_rand_mutex);
+#endif
   return SQLITE_OK;
 }
 
@@ -78,10 +82,12 @@ static int sqlcipher_openssl_activate(void *ctx) {
     OpenSSL_add_all_algorithms();
   } 
 
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   if(openssl_rand_mutex == NULL) {
     /* allocate a mutex to guard against concurrent calls to RAND_bytes() */
     openssl_rand_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
   }
+#endif
 
   openssl_init_count++; 
   sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
@@ -104,8 +110,10 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
        "cleaning up" openssl when it was initialized externally by the program */
       EVP_cleanup();
     }
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
     sqlite3_mutex_free(openssl_rand_mutex);
     openssl_rand_mutex = NULL;
+#endif
   }
   sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   return SQLITE_OK;
@@ -124,9 +132,13 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
      This is simple workaround to prevent this common crash
      but a more proper solution is that applications setup platform-appropriate
      thread saftey in openssl externally */
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   sqlite3_mutex_enter(openssl_rand_mutex);
+#endif
   rc = RAND_bytes((unsigned char *)buffer, length);
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   sqlite3_mutex_leave(openssl_rand_mutex);
+#endif
   return (rc == 1) ? SQLITE_OK : SQLITE_ERROR;
 }
 
