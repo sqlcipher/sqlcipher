@@ -18,6 +18,7 @@ an iPhone data vault and password manager (http://getstrip.com).
 - Good security practices (CBC mode, key derivation)
 - Zero-configuration and application level cryptography
 - Algorithms provided by the peer reviewed OpenSSL crypto library.
+- Configurable crypto providers
 
 [Compiling]
 
