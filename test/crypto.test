@@ -1418,7 +1418,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {2.2.0}
+} {2.2.1}
 db close
 file delete -force test.db
 
