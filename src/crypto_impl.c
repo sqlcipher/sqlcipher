@@ -66,7 +66,8 @@ typedef struct {
 
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
-
+static unsigned int sqlcipher_activate_count = 0;
+static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
 
 struct codec_ctx {
@@ -81,6 +82,7 @@ struct codec_ctx {
 };
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
+  sqlite3_mutex_enter(sqlcipher_provider_mutex);
   if(default_provider != NULL && default_provider != p) {
     /* only free the current registerd provider if it has been initialized
        and it isn't a pointer to the same provider passed to the function
@@ -88,6 +90,7 @@ int sqlcipher_register_provider(sqlcipher_provider *p) {
     sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
   }
   default_provider = p;   
+  sqlite3_mutex_leave(sqlcipher_provider_mutex);
   return SQLITE_OK;
 }
 
@@ -99,35 +102,57 @@ sqlcipher_provider* sqlcipher_get_provider() {
 }
 
 void sqlcipher_activate() {
-  sqlcipher_provider *p;
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-  p = sqlcipher_malloc(sizeof(sqlcipher_provider));
-  {
+  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+
+  if(sqlcipher_provider_mutex == NULL) {
+    /* allocate a new mutex to guard access to the provider */
+    sqlcipher_provider_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
+  }
+
+  /* check to see if there is a provider registered at this point
+     if there no provider registered at this point, register the 
+     default provider */
+  if(sqlcipher_get_provider() == NULL) {
+    sqlcipher_provider *p = sqlcipher_malloc(sizeof(sqlcipher_provider)); 
 #if defined (SQLCIPHER_CRYPTO_CC)
-  extern int sqlcipher_cc_setup(sqlcipher_provider *p);
-  sqlcipher_cc_setup(p);
+    extern int sqlcipher_cc_setup(sqlcipher_provider *p);
+    sqlcipher_cc_setup(p);
 #elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
-  extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
-  sqlcipher_ltc_setup(p);
+    extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
+    sqlcipher_ltc_setup(p);
 #elif defined (SQLCIPHER_CRYPTO_OPENSSL)
-  extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
-  sqlcipher_openssl_setup(p);
+    extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
+    sqlcipher_openssl_setup(p);
 #else
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
+    sqlcipher_register_provider(p);
   }
-  sqlcipher_register_provider(p);
 
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  sqlcipher_activate_count++; /* increment activation count */
+
+  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
 void sqlcipher_deactivate() {
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-  if(default_provider != NULL) {
-    sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
-    default_provider = NULL;
+  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  sqlcipher_activate_count--;
+  /* if no connections are using sqlcipher, cleanup globals */
+  if(sqlcipher_activate_count < 1) {
+    sqlite3_mutex_enter(sqlcipher_provider_mutex);
+    if(default_provider != NULL) {
+      sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
+      default_provider = NULL;
+    }
+    sqlite3_mutex_leave(sqlcipher_provider_mutex);
+    
+    /* last connection closed, free provider mutex*/
+    sqlite3_mutex_free(sqlcipher_provider_mutex); 
+    sqlcipher_provider_mutex = NULL;
+
+    sqlcipher_activate_count = 0; /* reset activation count */
   }
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 
 /* constant time memset using volitile to avoid having the memset
@@ -235,7 +260,11 @@ static int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
 
   ctx->provider = (sqlcipher_provider *) sqlcipher_malloc(sizeof(sqlcipher_provider));
   if(ctx->provider == NULL) return SQLITE_NOMEM;
+
+  /* make a copy of the provider to be used for the duration of the context */
+  sqlite3_mutex_enter(sqlcipher_provider_mutex);
   memcpy(ctx->provider, default_provider, sizeof(sqlcipher_provider));
+  sqlite3_mutex_leave(sqlcipher_provider_mutex);
 
   if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) return rc;
   ctx->key = (unsigned char *) sqlcipher_malloc(CIPHER_MAX_KEY_SZ);
