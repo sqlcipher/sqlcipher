@@ -45,10 +45,16 @@ typedef struct {
 
 static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
-
+static sqlite3_mutex* openssl_rand_mutex = NULL;
 
 static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  sqlite3_mutex_enter(openssl_rand_mutex);
+#endif
   RAND_add(buffer, length, 0);
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  sqlite3_mutex_leave(openssl_rand_mutex);
+#endif
   return SQLITE_OK;
 }
 
@@ -59,19 +65,32 @@ static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
    sqlcipher_openssl_deactivate() will free the EVP structures. 
 */
 static int sqlcipher_openssl_activate(void *ctx) {
-  /* we'll initialize openssl and increment the internal init counter
+  /* initialize openssl and increment the internal init counter
      but only if it hasn't been initalized outside of SQLCipher by this program 
      e.g. on startup */
+  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+
   if(openssl_init_count == 0 && EVP_get_cipherbyname(CIPHER) != NULL) {
+    /* if openssl has not yet been initialized by this library, but 
+       a call to get_cipherbyname works, then the openssl library
+       has been initialized externally already. */
     openssl_external_init = 1;
   }
 
-  if(openssl_external_init == 0) {
-    if(openssl_init_count == 0)  {
-      OpenSSL_add_all_algorithms();
-    }
-    openssl_init_count++; 
+  if(openssl_init_count == 0 && openssl_external_init == 0)  {
+    /* if the library was not externally initialized, then should be now */
+    OpenSSL_add_all_algorithms();
   } 
+
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  if(openssl_rand_mutex == NULL) {
+    /* allocate a mutex to guard against concurrent calls to RAND_bytes() */
+    openssl_rand_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
+  }
+#endif
+
+  openssl_init_count++; 
+  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   return SQLITE_OK;
 }
 
@@ -79,20 +98,24 @@ static int sqlcipher_openssl_activate(void *ctx) {
    freeing the EVP structures on the final deactivation to ensure that 
    OpenSSL memory is cleaned up */
 static int sqlcipher_openssl_deactivate(void *ctx) {
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
-  /* If it is initialized externally, then the init counter should never be greater than zero.
-     This should prevent SQLCipher from "cleaning up" openssl 
-     when something else in the program might be using it. */
-  if(openssl_external_init == 0) {
-    openssl_init_count--;
-    /* if the counter reaches zero after it's decremented release EVP memory
+  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  openssl_init_count--;
+
+  if(openssl_init_count == 0) {
+    if(openssl_external_init == 0) {
+    /* if OpenSSL hasn't be initialized externally, and the counter reaches zero 
+       after it's decremented, release EVP memory
        Note: this code will only be reached if OpensSSL_add_all_algorithms()
-       is called by SQLCipher internally. */
-    if(openssl_init_count == 0) {
+       is called by SQLCipher internally. This should prevent SQLCipher from 
+       "cleaning up" openssl when it was initialized externally by the program */
       EVP_cleanup();
     }
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+    sqlite3_mutex_free(openssl_rand_mutex);
+    openssl_rand_mutex = NULL;
+#endif
   }
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   return SQLITE_OK;
 }
 
@@ -102,7 +125,21 @@ static const char* sqlcipher_openssl_get_provider_name(void *ctx) {
 
 /* generate a defined number of random bytes */
 static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
-  return (RAND_bytes((unsigned char *)buffer, length) == 1) ? SQLITE_OK : SQLITE_ERROR;
+  int rc = 0;
+  /* concurrent calls to RAND_bytes can cause a crash under some openssl versions when a 
+     naive application doesn't use CRYPTO_set_locking_callback and
+     CRYPTO_THREADID_set_callback to ensure openssl thread safety. 
+     This is simple workaround to prevent this common crash
+     but a more proper solution is that applications setup platform-appropriate
+     thread saftey in openssl externally */
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  sqlite3_mutex_enter(openssl_rand_mutex);
+#endif
+  rc = RAND_bytes((unsigned char *)buffer, length);
+#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  sqlite3_mutex_leave(openssl_rand_mutex);
+#endif
+  return (rc == 1) ? SQLITE_OK : SQLITE_ERROR;
 }
 
 static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
