@@ -149,6 +149,13 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
   }
 }
 
+static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
+    int i;
+    for(i=0; i < sz; i++) {
+      sprintf(out + (i*2), "%02x ", in[i]);
+    } 
+}
+
 /* extensions defined in crypto_impl.c */
 typedef struct codec_ctx codec_ctx;
 
@@ -167,7 +174,7 @@ int sqlcipher_page_cipher(codec_ctx *, int, Pgno, int, int, unsigned char *, uns
 void sqlcipher_codec_ctx_set_error(codec_ctx *, int);
 
 int sqlcipher_codec_ctx_set_pass(codec_ctx *, const void *, int, int);
-void sqlcipher_codec_get_pass(codec_ctx *, void **zKey, int *nKey);
+void sqlcipher_codec_get_keyspec(codec_ctx *, void **zKey, int *nKey);
 
 int sqlcipher_codec_ctx_set_pagesize(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_pagesize(codec_ctx *);

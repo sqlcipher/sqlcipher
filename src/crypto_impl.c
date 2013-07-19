@@ -56,10 +56,12 @@ typedef struct {
   int pass_sz;
   int reserve_sz;
   int hmac_sz;
+  int keyspec_sz;
   unsigned int flags;
   unsigned char *key;
   unsigned char *hmac_key;
   char *pass;
+  char *keyspec;
   sqlcipher_provider *provider;
   void *provider_ctx;
 } cipher_ctx;
@@ -260,6 +262,7 @@ static void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   sqlcipher_free(ctx->key, ctx->key_sz);
   sqlcipher_free(ctx->hmac_key, ctx->key_sz);
   sqlcipher_free(ctx->pass, ctx->pass_sz);
+  sqlcipher_free(ctx->keyspec, ctx->keyspec_sz);
   sqlcipher_free(ctx, sizeof(cipher_ctx)); 
 }
 
@@ -307,8 +310,9 @@ static int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
 
   CODEC_TRACE(("sqlcipher_cipher_ctx_copy: entered target=%p, source=%p\n", target, source));
   sqlcipher_free(target->pass, target->pass_sz); 
+  sqlcipher_free(target->keyspec, target->keyspec_sz); 
   memcpy(target, source, sizeof(cipher_ctx));
-  
+
   target->key = key; //restore pointer to previously allocated key data
   memcpy(target->key, source->key, CIPHER_MAX_KEY_SZ);
 
@@ -321,31 +325,67 @@ static int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   target->provider_ctx = provider_ctx; // restore pointer to previouly allocated provider context;
   target->provider->ctx_copy(target->provider_ctx, source->provider_ctx);
 
-  target->pass = sqlcipher_malloc(source->pass_sz);
-  if(target->pass == NULL) return SQLITE_NOMEM;
-  memcpy(target->pass, source->pass, source->pass_sz);
+  if(source->pass && source->pass_sz) {
+    target->pass = sqlcipher_malloc(source->pass_sz);
+    if(target->pass == NULL) return SQLITE_NOMEM;
+    memcpy(target->pass, source->pass, source->pass_sz);
+  }
+  if(source->keyspec && source->keyspec_sz) {
+    target->keyspec = sqlcipher_malloc(source->keyspec_sz);
+    if(target->keyspec == NULL) return SQLITE_NOMEM;
+    memcpy(target->keyspec, source->keyspec, source->keyspec_sz);
+  }
+  return SQLITE_OK;
+}
+
+/**
+  * Set the keyspec for the cipher_ctx
+  * 
+  * returns SQLITE_OK if assignment was successfull
+  * returns SQLITE_NOMEM if an error occured allocating memory
+  */
+static int sqlcipher_cipher_ctx_set_keyspec(cipher_ctx *ctx, const unsigned char *key, int key_sz, const unsigned char *salt, int salt_sz) {
+
+    /* free, zero existing pointers and size */
+  sqlcipher_free(ctx->keyspec, ctx->keyspec_sz);
+  ctx->keyspec = NULL;
+  ctx->keyspec_sz = 0;
+
+  /* establic a hex-formated key specification, containing the raw encryption key and
+     the salt used to generate it */
+  ctx->keyspec_sz = ((key_sz + salt_sz) * 2) + 3;
+  ctx->keyspec = sqlcipher_malloc(ctx->keyspec_sz);
+  if(ctx->keyspec == NULL) return SQLITE_NOMEM;
+
+  ctx->keyspec[0] = 'x';
+  ctx->keyspec[1] = '\'';
+  ctx->keyspec[ctx->keyspec_sz - 1] = '\'';
+  cipher_bin2hex(key, key_sz, ctx->keyspec + 2);
+  cipher_bin2hex(salt, salt_sz, ctx->keyspec + (key_sz * 2) + 2);
 
   return SQLITE_OK;
 }
 
-
 /**
-  * Set the raw password / key data for a cipher context
+  * Set the passphrase for the cipher_ctx
   * 
   * returns SQLITE_OK if assignment was successfull
   * returns SQLITE_NOMEM if an error occured allocating memory
-  * returns SQLITE_ERROR if the key couldn't be set because the pass was null or size was zero
   */
 static int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
+
+  /* free, zero existing pointers and size */
   sqlcipher_free(ctx->pass, ctx->pass_sz);
-  ctx->pass_sz = nKey;
-  if(zKey && nKey) {
+  ctx->pass = NULL;
+  ctx->pass_sz = 0;
+
+  if(zKey && nKey) { /* if new password is provided, copy it */
+    ctx->pass_sz = nKey;
     ctx->pass = sqlcipher_malloc(nKey);
     if(ctx->pass == NULL) return SQLITE_NOMEM;
     memcpy(ctx->pass, zKey, nKey);
-    return SQLITE_OK;
-  }
-  return SQLITE_ERROR;
+  } 
+  return SQLITE_OK;
 }
 
 int sqlcipher_codec_ctx_set_pass(codec_ctx *ctx, const void *zKey, int nKey, int for_ctx) {
@@ -508,9 +548,9 @@ void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx) {
   return ctx->kdf_salt;
 }
 
-void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
-  *zKey = ctx->read_ctx->pass;
-  *nKey = ctx->read_ctx->pass_sz;
+void sqlcipher_codec_get_keyspec(codec_ctx *ctx, void **zKey, int *nKey) {
+  *zKey = ctx->read_ctx->keyspec;
+  *nKey = ctx->read_ctx->keyspec_sz;
 }
 
 int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
@@ -721,7 +761,11 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   * Derive an encryption key for a cipher contex key based on the raw password.
   *
   * If the raw key data is formated as x'hex' and there are exactly enough hex chars to fill
-  * the key space (i.e 64 hex chars for a 256 bit key) then the key data will be used directly. 
+  * the key (i.e 64 hex chars for a 256 bit key) then the key data will be used directly. 
+
+  * Else, if the raw key data is formated as x'hex' and there are exactly enough hex chars to fill
+  * the key and the salt (i.e 92 hex chars for a 256 bit key and 16 byte salt) then it will be unpacked
+  * as the key followed by the salt.
   * 
   * Otherwise, a key data will be derived using PBKDF2
   * 
@@ -729,7 +773,8 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   * returns SQLITE_ERROR if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
   */
 static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
-  CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
+  int rc;
+  CODEC_TRACE(("cipher_ctx_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
                 ctx->kdf_salt=%p ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
                 ctx->hmac_kdf_salt=%p, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 
                 c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, 
@@ -737,18 +782,25 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
-    if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
+    if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-      CODEC_TRACE(("codec_key_derive: using raw key from hex\n")); 
+      CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
+    } else if (c_ctx->pass_sz == (((c_ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
+      const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
+      CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
+      cipher_hex2bin(z, (c_ctx->key_sz * 2), c_ctx->key);
+      cipher_hex2bin(z + (c_ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
     } else { 
-      CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
+      CODEC_TRACE(("cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
       c_ctx->provider->kdf(c_ctx->provider_ctx, (const char*) c_ctx->pass, c_ctx->pass_sz, 
                     ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter,
                     c_ctx->key_sz, c_ctx->key);
-                              
     }
+
+    /* set the context "keyspec" containing the hex-formatted key and salt to be used when attaching databases */
+    if((rc = sqlcipher_cipher_ctx_set_keyspec(c_ctx, c_ctx->key, c_ctx->key_sz, ctx->kdf_salt, ctx->kdf_salt_sz)) != SQLITE_OK) return rc;
 
     /* if this context is setup to use hmac checks, generate a seperate and different 
        key for HMAC. In this case, we use the output of the previous KDF as the input to 
@@ -766,7 +818,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
         ctx->hmac_kdf_salt[i] ^= hmac_salt_mask;
       } 
 
-      CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
+      CODEC_TRACE(("cipher_ctx_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
         c_ctx->fast_kdf_iter)); 
 
       
@@ -789,12 +841,17 @@ int sqlcipher_codec_key_derive(codec_ctx *ctx) {
 
   if(ctx->write_ctx->derive_key) {
     if(sqlcipher_cipher_ctx_cmp(ctx->write_ctx, ctx->read_ctx) == 0) {
-      // the relevant parameters are the same, just copy read key
+      /* the relevant parameters are the same, just copy read key */
       if(sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx) != SQLITE_OK) return SQLITE_ERROR;
     } else {
       if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->write_ctx) != SQLITE_OK) return SQLITE_ERROR;
     }
   }
+
+  /* TODO: wipe and free passphrase after key derivation */
+  sqlcipher_cipher_ctx_set_pass(ctx->read_ctx, NULL, 0);
+  sqlcipher_cipher_ctx_set_pass(ctx->write_ctx, NULL, 0);
+
   return SQLITE_OK; 
 }
 

@@ -317,9 +317,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
       sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
     }
     sqlite3_mutex_leave(db->mutex);
-    return SQLITE_OK;
   }
-  return SQLITE_ERROR;
+  return SQLITE_OK;
 }
 
 void sqlite3_activate_see(const char* in) {
@@ -413,8 +412,16 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE(("sqlite3CodecGetKey: entered db=%p, nDb=%d\n", db, nDb));
-  *zKey = NULL;
-  *nKey = 0;
+  if( pDb->pBt ) {
+    codec_ctx *ctx;
+    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+    if(ctx) { /* if the codec has an attached codec_context user the raw key data */
+      sqlcipher_codec_get_keyspec(ctx, zKey, nKey);
+    } else {
+      *zKey = NULL;
+      *nKey = 0;
+    }
+  }
 }
 
 #ifndef OMIT_EXPORT
