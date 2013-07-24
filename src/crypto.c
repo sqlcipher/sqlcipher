@@ -89,6 +89,13 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
 
   CODEC_TRACE(("codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
 
+  if( sqlite3StrICmp(zLeft, "cipher_migrate")==0 && !zRight ){
+    if(ctx){
+      char *migrate_status = sqlite3_mprintf("%d", sqlcipher_codec_ctx_migrate(ctx));
+      codec_vdbe_return_static_string(pParse, "sqlcipher_migrate", migrate_status);
+      sqlite3_free(migrate_status);
+    }
+  } else
   if( sqlite3StrICmp(zLeft, "cipher_provider")==0 && !zRight ){
     if(ctx) { codec_vdbe_return_static_string(pParse, "cipher_provider",
                                               sqlcipher_codec_get_cipher_provider(ctx));

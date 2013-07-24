@@ -867,5 +867,79 @@ const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx) {
   return ctx->read_ctx->provider->get_provider_name(ctx->read_ctx);
 }
 
+int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
+  u32 meta;
+  int rc = 0;
+  int command_idx = 0;
+  sqlite3 *db = ctx->pBt->db;
+  const char *db_filename = sqlite3_db_filename(db, "main");
+  const char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
+  const char *key = ctx->read_ctx->pass;
+  int db_idx = db->nDb;
+  CODEC_TRACE(("current database count:%d\n", db_idx));
+  if(db_filename){
+    char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%s';",
+                                            db_filename, key);
+    const char *commands[] = {
+      "PRAGMA kdf_iter = '4000';",
+      attach_command,
+      "SELECT sqlcipher_export('migrate');",
+    };
+    for(command_idx = 0; command_idx < ArraySize(commands); command_idx++){
+      const char *command = commands[command_idx];
+      rc = sqlite3_exec(db, command, NULL, NULL, NULL);
+      if(rc != SQLITE_OK){
+        break;
+      }
+    }
+    sqlite3_free(attach_command);
+    if(rc == SQLITE_OK){
+      
+      static const unsigned char aCopy[] = {
+        BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
+        BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
+        BTREE_TEXT_ENCODING,      0,  /* Preserve the text encoding */
+        BTREE_USER_VERSION,       0,  /* Preserve the user version */
+        BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
+      };
+
+      CODEC_TRACE(("current database count:%d\n", db->nDb));
+      Btree *pDest = db->aDb[0].pBt;
+      Btree *pSrc = db->aDb[db->nDb-1].pBt;
+
+      CODEC_TRACE(("pSrc is '%p'\n", (void*)pSrc));
+      CODEC_TRACE(("pDest is '%p'\n", (void*)pDest));
+
+      //rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
+      rc = sqlite3BtreeBeginTrans(pSrc, 2);
+      rc = sqlite3BtreeBeginTrans(pDest, 2);
+      
+      assert( 1==sqlite3BtreeIsInTrans(pDest) );
+      assert( 1==sqlite3BtreeIsInTrans(pSrc) );
+      
+      CODEC_TRACE(("before metadata copy\n"));
+      int i = 0;
+      for(i=0; i<ArraySize(aCopy); i+=2){
+        sqlite3BtreeGetMeta(pSrc, aCopy[i], &meta);
+        rc = sqlite3BtreeUpdateMeta(pDest, aCopy[i], meta+aCopy[i+1]);
+        if( NEVER(rc!=SQLITE_OK) ) goto handle_error; 
+      }
+      rc = sqlite3BtreeCopyFile(pSrc, pDest);
+      if( rc!=SQLITE_OK ) goto handle_error;
+      rc = sqlite3BtreeCommit(pDest);
+      rc = sqlite3_exec(db, "DETACH DATABASE migrate;", NULL, NULL, NULL);
+      remove(migrated_db_filename);
+    }
+    sqlite3_free(migrated_db_filename);
+  }
+  goto exit;
+
+ handle_error:
+  CODEC_TRACE(("An error occurred\n"));
+
+ exit:
+  return rc;
+}
+
 #endif
 /* END SQLCIPHER */
