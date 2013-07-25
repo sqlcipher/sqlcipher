@@ -871,12 +871,23 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   u32 meta;
   int rc = 0;
   int command_idx = 0;
+  int saved_flags;
+  int saved_nChange;
+  int saved_nTotalChange;
+  void (*saved_xTrace)(void*,const char*);
+  Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
   const char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
   const char *key = ctx->read_ctx->pass;
-  int db_idx = db->nDb;
-  CODEC_TRACE(("current database count:%d\n", db_idx));
+  static const unsigned char aCopy[] = {
+    BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
+    BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
+    BTREE_TEXT_ENCODING,      0,  /* Preserve the text encoding */
+    BTREE_USER_VERSION,       0,  /* Preserve the user version */
+    BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
+  };
+
   if(db_filename){
     char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%s';",
                                             db_filename, key);
@@ -893,31 +904,39 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       }
     }
     sqlite3_free(attach_command);
+    
     if(rc == SQLITE_OK){
+      if( !db->autoCommit ){
+        CODEC_TRACE(("cannot migrate from within a transaction"));
+        goto handle_error;
+      }
+      if( db->activeVdbeCnt>1 ){
+        CODEC_TRACE(("cannot migrate - SQL statements in progress"));
+        goto handle_error;
+      }
       
-      static const unsigned char aCopy[] = {
-        BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
-        BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
-        BTREE_TEXT_ENCODING,      0,  /* Preserve the text encoding */
-        BTREE_USER_VERSION,       0,  /* Preserve the user version */
-        BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
-      };
-
-      CODEC_TRACE(("current database count:%d\n", db->nDb));
+      /* Save the current value of the database flags so that it can be
+      ** restored before returning. Then set the writable-schema flag, and
+      ** disable CHECK and foreign key constraints.  */
+      saved_flags = db->flags;
+      saved_nChange = db->nChange;
+      saved_nTotalChange = db->nTotalChange;
+      saved_xTrace = db->xTrace;
+      db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_PreferBuiltin;
+      db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
+      db->xTrace = 0;
+      
       Btree *pDest = db->aDb[0].pBt;
-      Btree *pSrc = db->aDb[db->nDb-1].pBt;
+      pDb = &(db->aDb[db->nDb-1]);
+      Btree *pSrc = pDb->pBt;
 
-      CODEC_TRACE(("pSrc is '%p'\n", (void*)pSrc));
-      CODEC_TRACE(("pDest is '%p'\n", (void*)pDest));
-
-      //rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
+      rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
       rc = sqlite3BtreeBeginTrans(pSrc, 2);
-      rc = sqlite3BtreeBeginTrans(pDest, 2);
+      //rc = sqlite3BtreeBeginTrans(pDest, 2);
       
       assert( 1==sqlite3BtreeIsInTrans(pDest) );
       assert( 1==sqlite3BtreeIsInTrans(pSrc) );
       
-      CODEC_TRACE(("before metadata copy\n"));
       int i = 0;
       for(i=0; i<ArraySize(aCopy); i+=2){
         sqlite3BtreeGetMeta(pSrc, aCopy[i], &meta);
@@ -927,15 +946,28 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       rc = sqlite3BtreeCopyFile(pSrc, pDest);
       if( rc!=SQLITE_OK ) goto handle_error;
       rc = sqlite3BtreeCommit(pDest);
-      rc = sqlite3_exec(db, "DETACH DATABASE migrate;", NULL, NULL, NULL);
+
+      db->flags = saved_flags;
+      db->nChange = saved_nChange;
+      db->nTotalChange = saved_nTotalChange;
+      db->xTrace = saved_xTrace;
+      sqlite3BtreeSetPageSize(pDest, -1, -1, 1);
+      db->autoCommit = 1;
+      if( pDb ){
+        sqlite3BtreeClose(pDb->pBt);
+        pDb->pBt = 0;
+        pDb->pSchema = 0;
+      }
+      sqlite3ResetAllSchemasOfConnection(db);
       remove(migrated_db_filename);
+      sqlite3_free(migrated_db_filename);
     }
-    sqlite3_free(migrated_db_filename);
   }
   goto exit;
 
  handle_error:
-  CODEC_TRACE(("An error occurred\n"));
+  CODEC_TRACE(("an error occurred\n"));
+  rc = SQLITE_ERROR;
 
  exit:
   return rc;
