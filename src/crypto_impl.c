@@ -879,7 +879,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
-  const char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
+  char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
   char *key = ctx->read_ctx->pass;
   static const unsigned char aCopy[] = {
     BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
@@ -938,7 +938,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       assert( 1==sqlite3BtreeIsInTrans(pDest) );
       assert( 1==sqlite3BtreeIsInTrans(pSrc) );
 
-      sqlite3CodecGetKey(db, db->nDb - 1, &key, &password_sz);
+      sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
       sqlcipher_codec_ctx_set_pass(ctx, key, password_sz, 2);
       
       int i = 0;
