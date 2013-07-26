@@ -871,6 +871,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   u32 meta;
   int rc = 0;
   int command_idx = 0;
+  int password_sz;
   int saved_flags;
   int saved_nChange;
   int saved_nTotalChange;
@@ -879,7 +880,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
   const char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
-  const char *key = ctx->read_ctx->pass;
+  char *key = ctx->read_ctx->pass;
   static const unsigned char aCopy[] = {
     BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
     BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
@@ -932,10 +933,13 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
       rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
       rc = sqlite3BtreeBeginTrans(pSrc, 2);
-      //rc = sqlite3BtreeBeginTrans(pDest, 2);
+      rc = sqlite3BtreeBeginTrans(pDest, 2);
       
       assert( 1==sqlite3BtreeIsInTrans(pDest) );
       assert( 1==sqlite3BtreeIsInTrans(pSrc) );
+
+      sqlite3CodecGetKey(db, db->nDb - 1, &key, &password_sz);
+      sqlcipher_codec_ctx_set_pass(ctx, key, password_sz, 2);
       
       int i = 0;
       for(i=0; i<ArraySize(aCopy); i+=2){
@@ -943,7 +947,8 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
         rc = sqlite3BtreeUpdateMeta(pDest, aCopy[i], meta+aCopy[i+1]);
         if( NEVER(rc!=SQLITE_OK) ) goto handle_error; 
       }
-      rc = sqlite3BtreeCopyFile(pSrc, pDest);
+
+      rc = sqlite3BtreeCopyFile(pDest, pSrc);
       if( rc!=SQLITE_OK ) goto handle_error;
       rc = sqlite3BtreeCommit(pDest);
 
