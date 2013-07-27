@@ -35,6 +35,7 @@
 #include "sqliteInt.h"
 #include "btreeInt.h"
 #include "crypto.h"
+#include "sqlcipher.h"
 
 static const char* codec_get_cipher_version() {
   return CIPHER_VERSION;
@@ -379,11 +380,9 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       */
       rc = sqlite3BtreeBeginTrans(pDb->pBt, 1); /* begin write transaction */
 
-      original_salt = sqlite3_malloc(kdf_salt_sz);
-      memset(original_salt, 0, kdf_salt_sz);
+      original_salt = sqlcipher_malloc(kdf_salt_sz);
       memcpy(original_salt, sqlcipher_codec_ctx_get_kdf_salt(ctx), kdf_salt_sz);
-      new_salt = sqlite3_malloc(kdf_salt_sz);
-      memset(new_salt, 0, kdf_salt_sz);
+      new_salt = sqlcipher_malloc(kdf_salt_sz);
       sqlcipher_codec_ctx_random(ctx, new_salt, kdf_salt_sz);
       sqlcipher_codec_ctx_set_kdf_salt(ctx, new_salt);
       
@@ -414,8 +413,8 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         sqlcipher_codec_ctx_set_kdf_salt(ctx, original_salt);
         sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK);
       }
-      sqlite3_free(new_salt);
-      sqlite3_free(original_salt);
+      sqlcipher_free(new_salt, kdf_salt_sz);
+      sqlcipher_free(original_salt, kdf_salt_sz);
       sqlite3_mutex_leave(db->mutex);
     }
     return SQLITE_OK;
