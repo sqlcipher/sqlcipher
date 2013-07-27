@@ -247,6 +247,12 @@ do_test rekey-same-passkey {
     COMMIT;
     SELECT count(*) FROM t1;
     PRAGMA rekey = 'test123';
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test123';
     SELECT count(*) FROM t1;
   }
 } {1000 1000}
