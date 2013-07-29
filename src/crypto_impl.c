@@ -979,8 +979,9 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       assert( 1==sqlite3BtreeIsInTrans(pDest) );
       assert( 1==sqlite3BtreeIsInTrans(pSrc) );
 
+
       sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
-      sqlcipher_codec_ctx_set_pass(ctx, key, password_sz, 2);
+      sqlite3CodecAttach(db, 0, key, password_sz);
       
       int i = 0;
       for(i=0; i<ArraySize(aCopy); i+=2){
@@ -997,7 +998,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       db->nChange = saved_nChange;
       db->nTotalChange = saved_nTotalChange;
       db->xTrace = saved_xTrace;
-      sqlite3BtreeSetPageSize(pDest, -1, -1, 1);
       db->autoCommit = 1;
       if( pDb ){
         sqlite3BtreeClose(pDb->pBt);
