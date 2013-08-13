@@ -896,7 +896,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     BTREE_USER_VERSION,       0,  /* Preserve the user version */
     BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
   };
-
   key_sz = ctx->read_ctx->pass_sz + 1;
   key = sqlcipher_malloc(key_sz);
   memset(key, 0, key_sz);
@@ -907,35 +906,34 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%s';",
                                             db_filename, key);
 
-    int rc = sqlcipher_check_connection(db_filename, key, "");
+    int rc = sqlcipher_check_connection(db_filename, key, key_sz, "");
     if(rc == SQLITE_OK){
-      // no upgrade required
+      CODEC_TRACE(("No upgrade required - exiting\n"));
       goto exit;
     }
     
-    // check for 1x format
-    //rc = sqlcipher_check_connection(db_filename, key, pragma_hmac_off);
-    //if(rc == SQLITE_OK) {
-    //  upgrade_1x_format = 1;
-    //}
-
     // Version 2 - check for 4k with hmac format 
-    rc = sqlcipher_check_connection(db_filename, key, pragma_4k_kdf_iter);
+    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_4k_kdf_iter);
     if(rc == SQLITE_OK) {
+      CODEC_TRACE(("Version 2 format found\n"));
       upgrade_4k_format = 1;
     }
 
     // Version 1 - check both no hmac and 4k together
     char *pragma_1x_and_4k = sqlite3_mprintf("%s%s", pragma_hmac_off,
                                              pragma_4k_kdf_iter);
-    rc = sqlcipher_check_connection(db_filename, key, pragma_1x_and_4k);
+    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_1x_and_4k);
     sqlite3_free(pragma_1x_and_4k);
     if(rc == SQLITE_OK) {
+      CODEC_TRACE(("Version 1 format found\n"));
       upgrade_1x_format = 1;
       upgrade_4k_format = 1;
     }
 
-    if(upgrade_1x_format == 0 || upgrade_4k_format == 0) goto handle_error;
+    if(upgrade_1x_format == 0 && upgrade_4k_format == 0) {
+      CODEC_TRACE(("Upgrade format not determined\n"));
+      goto handle_error;
+    }
 
     const char *commands[] = {
       upgrade_4k_format == 1 ? pragma_4k_kdf_iter : "",
@@ -1016,31 +1014,33 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       sqlite3ResetAllSchemasOfConnection(db);
       remove(migrated_db_filename);
       sqlite3_free(migrated_db_filename);
+    } else {
+      CODEC_TRACE(("*** migration failure** \n\n"));
     }
+    
   }
   goto exit;
 
  handle_error:
-  CODEC_TRACE(("an error occurred\n"));
+  CODEC_TRACE(("An error occurred attempting to migrate the database\n"));
   rc = SQLITE_ERROR;
 
  exit:
   return rc;
 }
 
-int sqlcipher_check_connection(char *filename, char *key, char *sql) {
+int sqlcipher_check_connection(char *filename, char *key, int key_sz, char *sql) {
   int rc;
   sqlite3 *db;
   char *errMsg;
   sqlite3_stmt *statement;
-  int status = SQLITE_ERROR;
   char *query_sqlite_master = "SELECT count(*) FROM sqlite_master;";
   
   rc = sqlite3_open(filename, &db);
   if(rc != SQLITE_OK){
     goto cleanup;
   }
-  rc = sqlite3_key(db, key, (int)strlen(key));
+  rc = sqlite3_key(db, key, key_sz);
   if(rc != SQLITE_OK){
     goto cleanup;
   }
@@ -1053,7 +1053,7 @@ int sqlcipher_check_connection(char *filename, char *key, char *sql) {
     goto cleanup;
   }
   if(sqlite3_step(statement) == SQLITE_ROW){
-    status = SQLITE_OK;
+    rc = SQLITE_OK;
   }
   goto cleanup;
   
@@ -1066,7 +1066,7 @@ cleanup:
   }
 
  exit:
-  return status;
+  return rc;
   
 }
 

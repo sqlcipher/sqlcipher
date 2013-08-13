@@ -1960,8 +1960,6 @@ db close
 file delete -force test.db
 
 do_test migrate-1.1.8-database-to-3x-format {
-  file delete -force test.db-migrated
-  file delete -force test.db
   file copy -force sqlcipher-1.1.8-testkey.db test.db
   sqlite_orig db test.db
   execsql {
@@ -1978,10 +1976,8 @@ do_test migrate-1.1.8-database-to-3x-format {
 } {1}
 db close
 file delete -force test.db
-file delete -force test.db-migrated
 
 do_test migrate-2-0-le-database-to-3x-format {
-  file delete -force test.db
   file copy -force sqlcipher-2.0-le-testkey.db test.db
   sqlite_orig db test.db
   execsql {
@@ -1998,6 +1994,5 @@ do_test migrate-2-0-le-database-to-3x-format {
 } {1}
 db close
 file delete -force test.db
-file delete -force test.db-migrated
 
 finish_test
