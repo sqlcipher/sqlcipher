@@ -89,6 +89,13 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
 
   CODEC_TRACE(("codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
 
+  if( sqlite3StrICmp(zLeft, "cipher_migrate")==0 && !zRight ){
+    if(ctx){
+      char *migrate_status = sqlite3_mprintf("%d", sqlcipher_codec_ctx_migrate(ctx));
+      codec_vdbe_return_static_string(pParse, "sqlcipher_migrate", migrate_status);
+      sqlite3_free(migrate_status);
+    }
+  } else
   if( sqlite3StrICmp(zLeft, "cipher_provider")==0 && !zRight ){
     if(ctx) { codec_vdbe_return_static_string(pParse, "cipher_provider",
                                               sqlcipher_codec_get_cipher_provider(ctx));
@@ -421,13 +428,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE(("sqlite3CodecGetKey: entered db=%p, nDb=%d\n", db, nDb));
-  
   if( pDb->pBt ) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
-
     if(ctx) { /* if the codec has an attached codec_context user the raw key data */
-      sqlcipher_codec_get_pass(ctx, zKey, nKey);
+      sqlcipher_codec_get_keyspec(ctx, zKey, nKey);
     } else {
       *zKey = NULL;
       *nKey = 0;
