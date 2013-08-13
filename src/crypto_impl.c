@@ -883,7 +883,8 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   char *query_sqlite_master = "SELECT count(*) from sqlite_master;";
   char *pragma_hmac_off = "PRAGMA cipher_use_hmac = OFF;";
   char *pragma_4k_kdf_iter = "PRAGMA kdf_iter = 4000;";
-  char *key = ctx->read_ctx->pass;
+  char *key;
+  int key_sz;
   int upgrade_1x_format = 0;
   int upgrade_4k_format = 0;
   sqlite3 *test;
@@ -895,6 +896,11 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     BTREE_USER_VERSION,       0,  /* Preserve the user version */
     BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
   };
+
+  key_sz = ctx->read_ctx->pass_sz + 1;
+  key = sqlcipher_malloc(key_sz);
+  memset(key, 0, key_sz);
+  memcpy(key, ctx->read_ctx->pass, ctx->read_ctx->pass_sz);
 
   if(db_filename){
     
@@ -908,18 +914,18 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     }
     
     // check for 1x format
-    rc = sqlcipher_check_connection(db_filename, key, pragma_hmac_off);
-    if(rc == SQLITE_OK) {
-      upgrade_1x_format = 1;
-    }
+    //rc = sqlcipher_check_connection(db_filename, key, pragma_hmac_off);
+    //if(rc == SQLITE_OK) {
+    //  upgrade_1x_format = 1;
+    //}
 
-    // check for 4k format
+    // Version 2 - check for 4k with hmac format 
     rc = sqlcipher_check_connection(db_filename, key, pragma_4k_kdf_iter);
     if(rc == SQLITE_OK) {
       upgrade_4k_format = 1;
     }
 
-    // check both 1x and 4k together
+    // Version 1 - check both no hmac and 4k together
     char *pragma_1x_and_4k = sqlite3_mprintf("%s%s", pragma_hmac_off,
                                              pragma_4k_kdf_iter);
     rc = sqlcipher_check_connection(db_filename, key, pragma_1x_and_4k);
@@ -928,6 +934,8 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       upgrade_1x_format = 1;
       upgrade_4k_format = 1;
     }
+
+    if(upgrade_1x_format == 0 || upgrade_4k_format == 0) goto handle_error;
 
     const char *commands[] = {
       upgrade_4k_format == 1 ? pragma_4k_kdf_iter : "",
@@ -946,6 +954,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       }
     }
     sqlite3_free(attach_command);
+    sqlcipher_free(key, key_sz);
     
     if(rc == SQLITE_OK){
       if( !db->autoCommit ){
