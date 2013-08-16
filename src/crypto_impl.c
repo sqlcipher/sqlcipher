@@ -839,5 +839,13 @@ const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx) {
   return ctx->read_ctx->provider->get_provider_name(ctx->read_ctx);
 }
 
+void sqlcipher_codec_ctx_random(codec_ctx *ctx, void *dest, int dest_sz){
+  ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, dest, dest_sz);
+}
+
+void sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, void *salt) {
+  memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
+}
+
 #endif
 /* END SQLCIPHER */

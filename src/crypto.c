@@ -354,6 +354,9 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       int rc, page_count;
       Pgno pgno;
       PgHdr *page;
+      char *new_salt;
+      char *original_salt;
+      int kdf_salt_sz = FILE_HEADER_SZ;
       Pager *pPager = pDb->pBt->pBt->pPager;
 
       sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
@@ -363,11 +366,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         CODEC_TRACE(("sqlite3_rekey: no codec attached to db, exiting\n"));
         return SQLITE_OK;
       }
-
+      
       sqlite3_mutex_enter(db->mutex);
 
       codec_set_pass_key(db, 0, pKey, nKey, CIPHER_WRITE_CTX);
-    
+            
       /* do stuff here to rewrite the database 
       ** 1. Create a transaction on the database
       ** 2. Iterate through each page, reading it and then writing it.
@@ -375,6 +378,15 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       **    note: don't deallocate rekey since it may be used in a subsequent iteration 
       */
       rc = sqlite3BtreeBeginTrans(pDb->pBt, 1); /* begin write transaction */
+
+      original_salt = sqlite3_malloc(kdf_salt_sz);
+      memset(original_salt, 0, kdf_salt_sz);
+      memcpy(original_salt, sqlcipher_codec_ctx_get_kdf_salt(ctx), kdf_salt_sz);
+      new_salt = sqlite3_malloc(kdf_salt_sz);
+      memset(new_salt, 0, kdf_salt_sz);
+      sqlcipher_codec_ctx_random(ctx, new_salt, kdf_salt_sz);
+      sqlcipher_codec_ctx_set_kdf_salt(ctx, new_salt);
+      
       sqlite3PagerPagecount(pPager, &page_count);
       for(pgno = 1; rc == SQLITE_OK && pgno <= page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
         if(!sqlite3pager_is_mj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
@@ -399,9 +411,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         sqlcipher_codec_key_copy(ctx, CIPHER_WRITE_CTX);
       } else {
         CODEC_TRACE(("sqlite3_rekey: rollback\n"));
+        sqlcipher_codec_ctx_set_kdf_salt(ctx, original_salt);
         sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK);
       }
-
+      sqlite3_free(new_salt);
+      sqlite3_free(original_salt);
       sqlite3_mutex_leave(db->mutex);
     }
     return SQLITE_OK;
