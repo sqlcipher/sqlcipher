@@ -234,7 +234,7 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   int page_sz = sqlcipher_codec_ctx_get_pagesize(ctx); 
   unsigned char *pData = (unsigned char *) data;
   void *buffer = sqlcipher_codec_ctx_get_data(ctx);
-  void *kdf_salt = sqlcipher_codec_ctx_get_kdf_salt(ctx);
+  
   CODEC_TRACE(("sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz));
 
   /* call to derive keys if not present yet */
@@ -250,20 +250,24 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
     case 0: /* decrypt */
     case 2:
     case 3:
-      if(pgno == 1) memcpy(buffer, SQLITE_FILE_HEADER, FILE_HEADER_SZ); /* copy file header to the first 16 bytes of the page */ 
+      /* if this is the first page, overwrite the first 16 bytes of the page containing the random KDF salt with the 
+         standard SQLite File header that the library expects. */
+      if(pgno == 1) memcpy(buffer, SQLITE_FILE_HEADER, FILE_HEADER_SZ); 
       rc = sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
       break;
-    case 6: /* encrypt */
-      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
+    case 6: /* encrypt page for datbae file */
+      /* if this is the first page, copy the write context KDF salt to the first 16 bytes of the file */
+      if(pgno == 1) memcpy(buffer, sqlcipher_codec_ctx_get_kdf_salt(ctx, CIPHER_WRITE_CTX), FILE_HEADER_SZ); 
       rc = sqlcipher_page_cipher(ctx, CIPHER_WRITE_CTX, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       return buffer; /* return persistent buffer data, pData remains intact */
       break;
-    case 7:
-      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
+    case 7: /* special case - encrypt for journal file (should be encrypted with the read context in case of rollback) */
+      /* if this is the first page, copy the read context KDF salt to the first 16 bytes of the file */
+      if(pgno == 1) memcpy(buffer, sqlcipher_codec_ctx_get_kdf_salt(ctx, CIPHER_READ_CTX), FILE_HEADER_SZ); 
       rc = sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       return buffer; /* return persistent buffer data, pData remains intact */
@@ -356,8 +360,6 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       Pgno pgno;
       PgHdr *page;
       char *new_salt;
-      char *original_salt;
-      int kdf_salt_sz = FILE_HEADER_SZ;
       Pager *pPager = pDb->pBt->pBt->pPager;
 
       sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
@@ -369,8 +371,6 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       }
       
       sqlite3_mutex_enter(db->mutex);
-
-      codec_set_pass_key(db, 0, pKey, nKey, CIPHER_WRITE_CTX);
             
       /* do stuff here to rewrite the database 
       ** 1. Create a transaction on the database
@@ -380,11 +380,15 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
       */
       rc = sqlite3BtreeBeginTrans(pDb->pBt, 1); /* begin write transaction */
 
-      original_salt = sqlcipher_malloc(kdf_salt_sz);
-      memcpy(original_salt, sqlcipher_codec_ctx_get_kdf_salt(ctx), kdf_salt_sz);
-      new_salt = sqlcipher_malloc(kdf_salt_sz);
-      sqlcipher_codec_ctx_random(ctx, new_salt, kdf_salt_sz);
-      sqlcipher_codec_ctx_set_kdf_salt(ctx, new_salt);
+      /* create a new random salt for the database */
+      new_salt = sqlcipher_malloc(FILE_HEADER_SZ);
+      if(new_salt == NULL) return SQLITE_NOMEM;
+      sqlcipher_codec_ctx_random(ctx, new_salt, FILE_HEADER_SZ);
+      sqlcipher_codec_ctx_set_kdf_salt(ctx, new_salt, CIPHER_WRITE_CTX);
+      sqlcipher_free(new_salt, FILE_HEADER_SZ);
+
+      /* set the new password for the database */
+      codec_set_pass_key(db, 0, pKey, nKey, CIPHER_WRITE_CTX);
       
       sqlite3PagerPagecount(pPager, &page_count);
       for(pgno = 1; rc == SQLITE_OK && pgno <= page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
@@ -410,11 +414,9 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
         sqlcipher_codec_key_copy(ctx, CIPHER_WRITE_CTX);
       } else {
         CODEC_TRACE(("sqlite3_rekey: rollback\n"));
-        sqlcipher_codec_ctx_set_kdf_salt(ctx, original_salt);
+        sqlcipher_codec_key_copy(ctx, CIPHER_READ_CTX);
         sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK);
       }
-      sqlcipher_free(new_salt, kdf_salt_sz);
-      sqlcipher_free(original_salt, kdf_salt_sz);
       sqlite3_mutex_leave(db->mutex);
     }
     return SQLITE_OK;

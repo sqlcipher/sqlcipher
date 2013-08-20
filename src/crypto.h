@@ -176,13 +176,14 @@ int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int, int);
 int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx, int);
 
-void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
-
 int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *, int, int);
 int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *, int);
 
+int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *, void *, int);
+void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *, int);
+
 int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *, int);
-const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx, int for_ctx);
+const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx, int);
 
 void* sqlcipher_codec_ctx_get_data(codec_ctx *);
 
@@ -203,7 +204,7 @@ int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx)
 
 const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 void sqlcipher_codec_ctx_random(codec_ctx *ctx, void *dest, int dest_sz);
-void sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, void *salt);
+
 #endif
 #endif
 /* END SQLCIPHER */

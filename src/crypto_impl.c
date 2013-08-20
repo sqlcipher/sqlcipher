@@ -56,9 +56,12 @@ typedef struct {
   int pass_sz;
   int reserve_sz;
   int hmac_sz;
+  int kdf_salt_sz;
   unsigned int flags;
   unsigned char *key;
   unsigned char *hmac_key;
+  unsigned char *kdf_salt;
+  unsigned char *hmac_kdf_salt;
   char *pass;
   sqlcipher_provider *provider;
   void *provider_ctx;
@@ -71,10 +74,7 @@ static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
 
 struct codec_ctx {
-  int kdf_salt_sz;
   int page_sz;
-  unsigned char *kdf_salt;
-  unsigned char *hmac_kdf_salt;
   unsigned char *buffer;
   Btree *pBt;
   cipher_ctx *read_ctx;
@@ -272,6 +272,15 @@ static int sqlcipher_cipher_ctx_init(cipher_ctx **iCtx) {
   if(ctx->key == NULL) return SQLITE_NOMEM;
   if(ctx->hmac_key == NULL) return SQLITE_NOMEM;
 
+  /* allocate space for salt data and hmac salt data.
+     The HMAC derivation salt will be different than the encryption 
+     key derivation salt */
+  ctx->kdf_salt_sz = FILE_HEADER_SZ;
+  ctx->kdf_salt = sqlcipher_malloc(ctx->kdf_salt_sz);
+  if(ctx->kdf_salt == NULL) return SQLITE_NOMEM;
+  ctx->hmac_kdf_salt = sqlcipher_malloc(ctx->kdf_salt_sz);
+  if(ctx->hmac_kdf_salt == NULL) return SQLITE_NOMEM;
+
   /* setup default flags */
   ctx->flags = default_flags;
 
@@ -289,6 +298,8 @@ static void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   sqlcipher_free(ctx->key, ctx->key_sz);
   sqlcipher_free(ctx->hmac_key, ctx->key_sz);
   sqlcipher_free(ctx->pass, ctx->pass_sz);
+  sqlcipher_free(ctx->kdf_salt, ctx->kdf_salt_sz);
+  sqlcipher_free(ctx->hmac_kdf_salt, ctx->kdf_salt_sz);
   sqlcipher_free(ctx, sizeof(cipher_ctx)); 
 }
 
@@ -316,6 +327,18 @@ static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
                            (const unsigned char*)c2->pass,
                            c1->pass_sz)
     ) 
+    && (
+      c1->kdf_salt == c2->kdf_salt
+      || !sqlcipher_memcmp((const unsigned char*)c1->kdf_salt,
+                           (const unsigned char*)c2->kdf_salt,
+                           c1->kdf_salt_sz)
+    ) 
+    && (
+      c1->hmac_kdf_salt == c2->hmac_kdf_salt
+      || !sqlcipher_memcmp((const unsigned char*)c1->hmac_kdf_salt,
+                           (const unsigned char*)c2->hmac_kdf_salt,
+                           c1->kdf_salt_sz)
+    ) 
   ) return 0;
   return 1;
 }
@@ -331,6 +354,8 @@ static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
 static int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
   void *key = target->key; 
   void *hmac_key = target->hmac_key; 
+  void *kdf_salt = target->kdf_salt; 
+  void *hmac_kdf_salt = target->hmac_kdf_salt; 
   void *provider = target->provider;
   void *provider_ctx = target->provider_ctx;
 
@@ -343,6 +368,12 @@ static int sqlcipher_cipher_ctx_copy(cipher_ctx *target, cipher_ctx *source) {
 
   target->hmac_key = hmac_key; //restore pointer to previously allocated hmac key data
   memcpy(target->hmac_key, source->hmac_key, CIPHER_MAX_KEY_SZ);
+
+  target->kdf_salt = kdf_salt; //restore pointer to previously allocated kdf salt
+  memcpy(target->kdf_salt, source->kdf_salt, source-> kdf_salt_sz);
+
+  target->hmac_kdf_salt = hmac_kdf_salt; //restore pointer to previously allocated hmac kdf salt
+  memcpy(target->hmac_kdf_salt, source->hmac_kdf_salt, source->kdf_salt_sz);
 
   target->provider = provider; // restore pointer to previouly allocated provider;
   memcpy(target->provider, source->provider, sizeof(sqlcipher_provider));
@@ -453,6 +484,25 @@ int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *ctx, int for_ctx) {
   return c_ctx->fast_kdf_iter;
 }
 
+int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, void *salt, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  int rc;
+  memcpy(c_ctx->kdf_salt, salt, c_ctx->kdf_salt_sz);
+  c_ctx->derive_key = 1;
+
+  if(for_ctx == 2)
+    if((rc = sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK) 
+      return rc; 
+
+  return SQLITE_OK;
+}
+
+void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, int for_ctx) {
+  cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
+  return c_ctx->kdf_salt;
+}
+
+
 /* set the global default flag for HMAC */
 void sqlcipher_set_default_use_hmac(int use) {
   if(use) default_flags |= CIPHER_FLAG_HMAC; 
@@ -533,10 +583,6 @@ void* sqlcipher_codec_ctx_get_data(codec_ctx *ctx) {
   return ctx->buffer;
 }
 
-void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx) {
-  return ctx->kdf_salt;
-}
-
 void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
   *zKey = ctx->read_ctx->pass;
   *nKey = ctx->read_ctx->pass_sz;
@@ -570,21 +616,6 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
 
-  /* allocate space for salt data. Then read the first 16 bytes 
-       directly off the database file. This is the salt for the
-       key derivation function. If we get a short read allocate
-       a new random salt value */
-  ctx->kdf_salt_sz = FILE_HEADER_SZ;
-  ctx->kdf_salt = sqlcipher_malloc(ctx->kdf_salt_sz);
-  if(ctx->kdf_salt == NULL) return SQLITE_NOMEM;
-
-  /* allocate space for separate hmac salt data. We want the
-     HMAC derivation salt to be different than the encryption
-     key derivation salt */
-  ctx->hmac_kdf_salt = sqlcipher_malloc(ctx->kdf_salt_sz);
-  if(ctx->hmac_kdf_salt == NULL) return SQLITE_NOMEM;
-
-
   /*
      Always overwrite page size and set to the default because the first page of the database
      in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
@@ -595,9 +626,13 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   if((rc = sqlcipher_cipher_ctx_init(&ctx->read_ctx)) != SQLITE_OK) return rc; 
   if((rc = sqlcipher_cipher_ctx_init(&ctx->write_ctx)) != SQLITE_OK) return rc; 
 
-  if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
+  /* Read the first 16 bytes directly off the database file. This is the salt for the 
+     key derivation function. If we get a short read allocate
+     a new random salt value */
+
+  if(fd == NULL || sqlite3OsRead(fd, ctx->read_ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
     /* if unable to read the bytes, generate random salt */
-    if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
+    if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->read_ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
   }
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
@@ -621,8 +656,6 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   codec_ctx *ctx = *iCtx;
   CODEC_TRACE(("codec_ctx_free: entered iCtx=%p\n", iCtx));
-  sqlcipher_free(ctx->kdf_salt, ctx->kdf_salt_sz);
-  sqlcipher_free(ctx->hmac_kdf_salt, ctx->kdf_salt_sz);
   sqlcipher_free(ctx->buffer, 0);
   sqlcipher_cipher_ctx_free(&ctx->read_ctx);
   sqlcipher_cipher_ctx_free(&ctx->write_ctx);
@@ -757,12 +790,12 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   * returns SQLITE_OK if initialization was successful
   * returns SQLITE_ERROR if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
   */
-static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
+static int sqlcipher_cipher_ctx_key_derive(cipher_ctx *c_ctx) {
   CODEC_TRACE(("codec_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
-                ctx->kdf_salt=%p ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
-                ctx->hmac_kdf_salt=%p, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 
-                c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, 
-                ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, c_ctx->key_sz)); 
+                c_ctx->kdf_salt=%p c_ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
+                c_ctx->hmac_kdf_salt=%p, c_ctx->fast_kdf_iter=%d c_ctx->key_sz=%d\n", 
+                c_ctx->pass, c_ctx->pass_sz, c_ctx->kdf_salt, c_ctx->kdf_salt_sz, c_ctx->kdf_iter, 
+                c_ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, c_ctx->key_sz)); 
                 
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
@@ -774,7 +807,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     } else { 
       CODEC_TRACE(("codec_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
       c_ctx->provider->kdf(c_ctx->provider_ctx, (const char*) c_ctx->pass, c_ctx->pass_sz, 
-                    ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter,
+                    c_ctx->kdf_salt, c_ctx->kdf_salt_sz, c_ctx->kdf_iter,
                     c_ctx->key_sz, c_ctx->key);
                               
     }
@@ -790,9 +823,9 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
          this ensures that the salt passed in to derive the hmac key, while 
          easy to derive and publically known, is not the same as the salt used 
          to generate the encryption key */ 
-      memcpy(ctx->hmac_kdf_salt, ctx->kdf_salt, ctx->kdf_salt_sz);
-      for(i = 0; i < ctx->kdf_salt_sz; i++) {
-        ctx->hmac_kdf_salt[i] ^= hmac_salt_mask;
+      memcpy(c_ctx->hmac_kdf_salt, c_ctx->kdf_salt, c_ctx->kdf_salt_sz);
+      for(i = 0; i < c_ctx->kdf_salt_sz; i++) {
+        c_ctx->hmac_kdf_salt[i] ^= hmac_salt_mask;
       } 
 
       CODEC_TRACE(("codec_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
@@ -800,7 +833,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 
       
       c_ctx->provider->kdf(c_ctx->provider_ctx, (const char*)c_ctx->key, c_ctx->key_sz, 
-                    ctx->hmac_kdf_salt, ctx->kdf_salt_sz, c_ctx->fast_kdf_iter,
+                    c_ctx->hmac_kdf_salt, c_ctx->kdf_salt_sz, c_ctx->fast_kdf_iter,
                     c_ctx->key_sz, c_ctx->hmac_key); 
     }
 
@@ -813,15 +846,16 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 int sqlcipher_codec_key_derive(codec_ctx *ctx) {
   /* derive key on first use if necessary */
   if(ctx->read_ctx->derive_key) {
-    if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->read_ctx) != SQLITE_OK) return SQLITE_ERROR;
+    if(sqlcipher_cipher_ctx_key_derive(ctx->read_ctx) != SQLITE_OK) return SQLITE_ERROR;
   }
 
   if(ctx->write_ctx->derive_key) {
+    /* if the read context was just derived and all of the relevant parameters are identical copy the 
+       the read key to the write key */ 
     if(sqlcipher_cipher_ctx_cmp(ctx->write_ctx, ctx->read_ctx) == 0) {
-      // the relevant parameters are the same, just copy read key
       if(sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx) != SQLITE_OK) return SQLITE_ERROR;
     } else {
-      if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->write_ctx) != SQLITE_OK) return SQLITE_ERROR;
+      if(sqlcipher_cipher_ctx_key_derive(ctx->write_ctx) != SQLITE_OK) return SQLITE_ERROR;
     }
   }
   return SQLITE_OK; 
@@ -841,10 +875,6 @@ const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx) {
 
 void sqlcipher_codec_ctx_random(codec_ctx *ctx, void *dest, int dest_sz){
   ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, dest, dest_sz);
-}
-
-void sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, void *salt) {
-  memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
 }
 
 #endif

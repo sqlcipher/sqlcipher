@@ -255,7 +255,7 @@ do_test rekey-same-passkey {
     PRAGMA key = 'test123';
     SELECT count(*) FROM t1;
   }
-} {1000 1000}
+} {1000}
 db close
 file delete -force test.db
 
