@@ -413,6 +413,46 @@ do_test rekey-delete-and-query-wal-3 {
 db close
 file delete -force test.db
 
+do_test rekey-with-wal-mode-enabled-same-password {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA journal_mode = WAL;
+        create table t1(a,b);
+        insert into t1(a,b) values('one for the money', 'two for the show');
+        PRAGMA rekey = 'test';
+    }
+    db close
+
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        select count(*) from t1;
+    }
+} {1}
+db close
+file delete -force test.db
+
+do_test rekey-with-wal-mode-enabled-different-password {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA journal_mode = WAL;
+        create table t1(a,b);
+        insert into t1(a,b) values('one for the money', 'two for the show');
+        PRAGMA rekey = 'testkey';
+    }
+    db close
+
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'testkey';
+        select count(*) from t1;
+    }
+} {1}
+db close
+file delete -force test.db
+
 # attach an encrypted database
 # where both database have the same
 # key
