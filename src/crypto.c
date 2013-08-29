@@ -341,16 +341,39 @@ void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
 }
 
+int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
+  if(zDb == NULL){
+    return 0;
+  }
+  int db_index;
+  for(db_index = 0; db_index < db->nDb - 1; db_index++) {
+    struct Db *pDb = &db->aDb[db_index];
+    if(strcmp(pDb->zName, zDb) == 0) {
+      return db_index;
+    }
+  }
+  return 0;
+}
+
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
+  return sqlite3_key_v2(db, "main", pKey, nKey);
+}
+
+int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_key: entered db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
-    return sqlite3CodecAttach(db, 0, pKey, nKey); // operate only on the main db 
+    int db_index = sqlcipher_find_db_index(db, zDb);
+    return sqlite3CodecAttach(db, db_index, pKey, nKey); 
   }
   return SQLITE_ERROR;
 }
 
-/* sqlite3_rekey 
+int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
+  return sqlite3_rekey_v2(db, "main", pKey, nKey);
+}
+
+/* sqlite3_rekey_v2
 ** Given a database, this will reencrypt the database using a new key.
 ** There is only one possible modes of operation - to encrypt a database
 ** that is already encrpyted. If the database is not already encrypted
@@ -360,10 +383,11 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 ** 2. If there is NOT already a key present do nothing
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
-int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
+int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_rekey: entered db=%p pKey=%s, nKey=%d\n", db, (char *)pKey, nKey));
   if(db && pKey && nKey) {
-    struct Db *pDb = &db->aDb[0];
+    int db_index = sqlcipher_find_db_index(db, zDb);
+    struct Db *pDb = &db->aDb[db_index];
     CODEC_TRACE(("sqlite3_rekey: database pDb=%p\n", pDb));
     if(pDb->pBt) {
       codec_ctx *ctx;
