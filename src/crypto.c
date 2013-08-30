@@ -78,7 +78,7 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
   return SQLITE_ERROR;
 } 
 
-int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
+int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
   struct Db *pDb = &db->aDb[iDb];
   codec_ctx *ctx = NULL;
   int rc;
@@ -87,8 +87,8 @@ int codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const c
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
   }
 
-  CODEC_TRACE(("codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
-
+  CODEC_TRACE(("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
+  
   if( sqlite3StrICmp(zLeft, "cipher_migrate")==0 && !zRight ){
     if(ctx){
       char *migrate_status = sqlite3_mprintf("%d", sqlcipher_codec_ctx_migrate(ctx));
@@ -341,12 +341,12 @@ void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
 }
 
-int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
+static int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
   if(zDb == NULL){
     return 0;
   }
   int db_index;
-  for(db_index = 0; db_index < db->nDb - 1; db_index++) {
+  for(db_index = 0; db_index < db->nDb; db_index++) {
     struct Db *pDb = &db->aDb[db_index];
     if(strcmp(pDb->zName, zDb) == 0) {
       return db_index;

@@ -356,7 +356,7 @@ void sqlite3Pragma(
   Vdbe *v = sqlite3GetVdbe(pParse);  /* Prepared statement */
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
-  extern int codec_pragma(sqlite3*, int, Parse *, const char *, const char *);
+  extern int sqlcipher_codec_pragma(sqlite3*, int, Parse *, const char *, const char *);
 #endif
 /* END SQLCIPHER */
 
@@ -422,8 +422,8 @@ void sqlite3Pragma(
                             
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
-  if(codec_pragma(db, iDb, pParse, zLeft, zRight)) { 
-    /* codec_pragma executes internal */
+  if(sqlcipher_codec_pragma(db, iDb, pParse, zLeft, zRight)) { 
+    /* sqlcipher_codec_pragma executes internal */
   }else
   #endif
 /* END SQLCIPHER */
