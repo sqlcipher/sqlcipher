@@ -1,12 +1,12 @@
-C Version\s3.8.0
-D 2013-08-26T04:50:08.905
+C Version\s3.8.0.1
+D 2013-08-29T17:35:01.986
 F Makefile.arm-wince-mingw32ce-gcc d6df77f1f48d690bd73162294bbba7f59507c72f
 F Makefile.in 5e41da95d92656a5004b03d3576e8b226858a28e
 F Makefile.linux-gcc 91d710bdc4998cb015f39edf3cb314ec4f4d7e23
 F Makefile.msc e9f41f89111627baaabd95cab4988b8d1c3e47c9
 F Makefile.vxworks db21ed42a01d5740e656b16f92cb5d8d5e5dd315
 F README cd04a36fbc7ea56932a4052d7d0b7f09f27c33d6
-F VERSION f135b651727f978b7191bd6fa12c7fc1e13e13ac
+F VERSION 087a4ef56b220aeb0fbef8ae45871be9668cd970
 F aclocal.m4 a5c22d164aff7ed549d53a90fa56d56955281f50
 F addopcodes.awk 17dc593f791f874d2c23a0f9360850ded0286531
 F art/sqlite370.eps aa97a671332b432a54e1d74ff5e8775be34200c2
@@ -38,7 +38,7 @@ F autoconf/tea/win/rules.vc c511f222b80064096b705dbeb97060ee1d6b6d63
 F config.guess 226d9a188c6196f3033ffc651cbc9dcee1a42977
 F config.h.in 0921066a13130082764ab4ab6456f7b5bebe56de
 F config.sub 9ebe4c3b3dab6431ece34f16828b594fb420da55
-F configure 27e9279a219b652bd1c53439353a5e5be70214b2 x
+F configure 9af276330ddd63041537a88323705690d02df76e x
 F configure.ac 81c43d151d0b0e406be056394cc9ff4cb3fd0444
 F contrib/sqlitecon.tcl 210a913ad63f9f991070821e599d600bd913e0ad
 F doc/lemon.html 334dbf6621b8fb8790297ec1abf3cfa4621709d1
@@ -155,7 +155,7 @@ F mptest/multiwrite01.test 499ad0310da8dff8e8f98d2e272fc2a8aa741b2e
 F spec.template 86a4a43b99ebb3e75e6b9a735d5fd293a24e90ca
 F sqlite.pc.in 42b7bf0d02e08b9e77734a47798d1a55a9e0716b
 F sqlite3.1 6be1ad09113570e1fc8dcaff84c9b0b337db5ffc
-F sqlite3.pc.in ae6f59a76e862f5c561eb32a380228a02afc3cad
+F sqlite3.pc.in 48fed132e7cb71ab676105d2a4dc77127d8c1f3a
 F src/alter.c f8db986c03eb0bfb221523fc9bbb9d0b70de3168
 F src/analyze.c a33fcb0b3a399d966951feb9f32115106b3ecc2e
 F src/attach.c fea00cab11c854646a27641a263f5876569a51f9
@@ -217,7 +217,7 @@ F src/random.c 0b2dbc37fdfbfa6bd455b091dfcef5bdb32dba68
 F src/resolve.c 9d53899cc6e1f4ec0b4632d07e97d57827bf63b9
 F src/rowset.c 64655f1a627c9c212d9ab497899e7424a34222e0
 F src/select.c 8b148eb851f384412aea57091659d14b369918ca
-F src/shell.c 1c317a4c96d61d8d9fdad9fd1811d9b10b8c7f57
+F src/shell.c 0fb2ce9876596e99ed64caffaec6c4bf224cb22d
 F src/sqlite.h.in bd1451ba1ab681022a53bccc3c39580ba094a3ff
 F src/sqlite3.rc fea433eb0a59f4c9393c8e6d76a6e2596b1fe0c0
 F src/sqlite3ext.h 886f5a34de171002ad46fae8c36a7d8051c190fc
@@ -290,7 +290,7 @@ F src/vtab.c 165ce0e797c2cd23badb104c9f2ae9042d6d942c
 F src/wal.c 7dc3966ef98b74422267e7e6e46e07ff6c6eb1b4
 F src/wal.h df01efe09c5cb8c8e391ff1715cca294f89668a4
 F src/walker.c 4fa43583d0a84b48f93b1e88f11adf2065be4e73
-F src/where.c 6e718c39d6b2964f15f6c96ce5938b4652e3538e
+F src/where.c a9ec7caba7697f152bd34853b98500dd54c4b240
 F test/8_3_names.test ebbb5cd36741350040fd28b432ceadf495be25b2
 F test/aggerror.test a867e273ef9e3d7919f03ef4f0e8c0d2767944f2
 F test/aggnested.test 45c0201e28045ad38a530b5a144b73cd4aa2cfd6
@@ -857,6 +857,7 @@ F test/tkt-868145d012.test a5f941107ece6a64410ca4755c6329b7eb57a356
 F test/tkt-91e2e8ba6f.test 08c4f94ae07696b05c9b822da0b4e5337a2f54c5
 F test/tkt-94c04eaadb.test fa9c71192f7e2ea2d51bf078bc34e8da6088bf71
 F test/tkt-9d68c883.test 458f7d82a523d7644b54b497c986378a7d8c8b67
+F test/tkt-9f2eb3abac.test 85bc63e749f050e6a61c8f9207f1eee65c9d3395
 F test/tkt-a7b7803e.test 159ef554234fa1f9fb318c751b284bd1cf858da4
 F test/tkt-b1d3a2e531.test 610ef582413171b379652663111b1f996d9f8f78
 F test/tkt-b351d95f9.test d14a503c414c5c58fdde3e80f9a3cfef986498c0
@@ -1047,7 +1048,7 @@ F test/where6.test 5da5a98cec820d488e82708301b96cb8c18a258b
 F test/where7.test 5a4b0abc207d71da4deecd734ad8579e8dd40aa8
 F test/where8.test 6f95896633cf2d307b5263145b942b7d33e837c6
 F test/where8m.test da346596e19d54f0aba35ebade032a7c47d79739
-F test/where9.test 9a7fda4a4512abc26a855e8b2b6572b200f6019b
+F test/where9.test 167a89495715db4d6a7d1e6a1aadf934ddc06516
 F test/whereA.test 4d253178d135ec46d1671e440cd8f2b916aa6e6b
 F test/whereB.test 0def95db3bdec220a731c7e4bec5930327c1d8c5
 F test/whereC.test d6f4ecd4fa2d9429681a5b22a25d2bda8e86ab8a
@@ -1105,10 +1106,9 @@ F tool/warnings-clang.sh f6aa929dc20ef1f856af04a730772f59283631d4
 F tool/warnings.sh fbc018d67fd7395f440c28f33ef0f94420226381
 F tool/wherecosttest.c f407dc4c79786982a475261866a161cd007947ae
 F tool/win/sqlite.vsix 97894c2790eda7b5bce3cc79cb2a8ec2fde9b3ac
-P ed310201628cf79c0f57674ae7478ee6738b1c6e
-R 5a6ead2576f296902c1b2ccbdf985254
-T +bgcolor * #d0c0ff
+P c5857808c0707baa30994dd6aa3b9c93a74c0073
+R f09fdab74837e6353df38f5d2273681e
 T +sym-release *
-T +sym-version-3.8.0 *
+T +sym-version-3.8.0.1 *
 U drh
-Z 16184cb835825e1de42c653d441df656
+Z 3c028394a3a00a433c82a9881b010566
