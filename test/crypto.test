@@ -2064,6 +2064,32 @@ db close
 file delete -force test.db
 file delete -force new.db
 
+do_test key-multiple-databases-with-different-keys-using-pragma {
+    sqlite_orig db test.db
+    execsql {
+        pragma key = 'foobar';
+        create table t1(a,b);
+        insert into t1(a,b) values('baz','qux');
+        attach database 'new.db' as new;
+        pragma new.key = 'foo';
+        create table new.t1(a,b);
+        insert into new.t1(a,b) values('foo', 'bar');
+        detach database new;
+    }
+    db close
+
+    sqlite_orig db new.db
+    execsql {
+        pragma key = 'foo';
+        attach database 'test.db' as test key 'foobar';
+        select * from t1;
+        select * from test.t1;
+    }
+} {foo bar baz qux}
+db close
+file delete -force test.db
+file delete -force new.db
+
 do_test rekey-database-by-name {
     sqlite_orig db test.db
     execsql {
