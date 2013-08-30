@@ -356,11 +356,12 @@ static int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
+  CODEC_TRACE(("sqlite3_key entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
   return sqlite3_key_v2(db, "main", pKey, nKey);
 }
 
 int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_key: entered db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
+  CODEC_TRACE(("sqlite3_key_v2: entered db=%p zDb=%s pKey=%s nKey=%d\n", db, zDb, (char *)pKey, nKey));
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
@@ -370,6 +371,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 }
 
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
+  CODEC_TRACE(("sqlite3_rekey entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
   return sqlite3_rekey_v2(db, "main", pKey, nKey);
 }
 
@@ -384,11 +386,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_rekey: entered db=%p pKey=%s, nKey=%d\n", db, (char *)pKey, nKey));
+  CODEC_TRACE(("sqlite3_rekey_v2: entered db=%p zDb=%s pKey=%s, nKey=%d\n", db, zDb, (char *)pKey, nKey));
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = &db->aDb[db_index];
-    CODEC_TRACE(("sqlite3_rekey: database pDb=%p\n", pDb));
+    CODEC_TRACE(("sqlite3_rekey_v2: database pDb=%p db_index:%d\n", pDb, db_index));
     if(pDb->pBt) {
       codec_ctx *ctx;
       int rc, page_count;
@@ -400,13 +402,13 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
      
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
-        CODEC_TRACE(("sqlite3_rekey: no codec attached to db, exiting\n"));
+        CODEC_TRACE(("sqlite3_rekey_v2: no codec attached to db, exiting\n"));
         return SQLITE_OK;
       }
 
       sqlite3_mutex_enter(db->mutex);
 
-      codec_set_pass_key(db, 0, pKey, nKey, CIPHER_WRITE_CTX);
+      codec_set_pass_key(db, db_index, pKey, nKey, CIPHER_WRITE_CTX);
     
       /* do stuff here to rewrite the database 
       ** 1. Create a transaction on the database
@@ -424,21 +426,21 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
             if(rc == SQLITE_OK) {
               sqlite3PagerUnref(page);
             } else {
-             CODEC_TRACE(("sqlite3_rekey: error %d occurred writing page %d\n", rc, pgno));  
+             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred writing page %d\n", rc, pgno));  
             }
           } else {
-             CODEC_TRACE(("sqlite3_rekey: error %d occurred getting page %d\n", rc, pgno));  
+             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred getting page %d\n", rc, pgno));  
           }
         } 
       }
 
       /* if commit was successful commit and copy the rekey data to current key, else rollback to release locks */
       if(rc == SQLITE_OK) { 
-        CODEC_TRACE(("sqlite3_rekey: committing\n"));
+        CODEC_TRACE(("sqlite3_rekey_v2: committing\n"));
         rc = sqlite3BtreeCommit(pDb->pBt); 
         sqlcipher_codec_key_copy(ctx, CIPHER_WRITE_CTX);
       } else {
-        CODEC_TRACE(("sqlite3_rekey: rollback\n"));
+        CODEC_TRACE(("sqlite3_rekey_v2: rollback\n"));
         sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK);
       }
 

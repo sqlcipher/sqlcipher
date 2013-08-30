@@ -2061,6 +2061,29 @@ do_test key-database-by-name {
     }
 } {foo bar}
 db close
+file delete -force test.db
+file delete -force new.db
+
+do_test rekey-database-by-name {
+    sqlite_orig db test.db
+    execsql {
+        attach database 'new.db' as new;
+        pragma new.key = 'foo';
+        create table new.t1(a,b);
+        insert into new.t1(a,b) values('foo', 'bar');
+        pragma new.rekey = 'bar';
+        detach database new;
+    }
+    db close
+
+    sqlite_orig db new.db
+    execsql {
+        pragma key = 'bar';
+        select * from t1;
+    }
+} {foo bar}
+db close
+file delete -force test.db
 file delete -force new.db
 
 finish_test
