@@ -2043,4 +2043,24 @@ do_test migrate-2-0-le-database-to-3x-format {
 db close
 file delete -force test.db
 
+do_test key-database-by-name {
+    sqlite_orig db test.db
+    execsql {
+        attach database 'new.db' as new;
+        pragma new.key = 'foo';
+        create table new.t1(a,b);
+        insert into new.t1(a,b) values('foo', 'bar');
+        detach database new;
+    }
+    db close
+
+    sqlite_orig db new.db
+    execsql {
+        pragma key = 'foo';
+        select * from t1;
+    }
+} {foo bar}
+db close
+file delete -force new.db
+
 finish_test
