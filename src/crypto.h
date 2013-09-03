@@ -152,7 +152,7 @@ static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
 static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
     int i;
     for(i=0; i < sz; i++) {
-      sqlite3_snprintf(2, out + (i*2), "%02x ", in[i]);
+      sqlite3_snprintf(3, out + (i*2), "%02x ", in[i]);
     } 
 }
 
