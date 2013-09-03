@@ -1017,7 +1017,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     commands[2] = attach_command;
     commands[3] = "SELECT sqlcipher_export('migrate');";
       
-    for(command_idx = 0; command_idx < (sizeof(commands)/sizeof(commands[0])); command_idx++){
+    for(command_idx = 0; command_idx < ArraySize(commands); command_idx++){
       const char *command = commands[command_idx];
       if(strcmp(command, "") == 0){
         continue;
@@ -1070,7 +1070,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
       sqlite3CodecAttach(db, 0, key, password_sz);
       
-      for(i=0; i<(sizeof(aCopy)/sizeof(aCopy[0])); i+=2){
+      for(i=0; i<ArraySize(aCopy); i+=2){
         sqlite3BtreeGetMeta(pSrc, aCopy[i], &meta);
         rc = sqlite3BtreeUpdateMeta(pDest, aCopy[i], meta+aCopy[i+1]);
         if( NEVER(rc!=SQLITE_OK) ) goto handle_error; 
