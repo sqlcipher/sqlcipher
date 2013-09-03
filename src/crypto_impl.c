@@ -955,7 +955,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
   char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
-  char *query_sqlite_master = "SELECT count(*) from sqlite_master;";
   char *pragma_hmac_off = "PRAGMA cipher_use_hmac = OFF;";
   char *pragma_4k_kdf_iter = "PRAGMA kdf_iter = 4000;";
   char *pragma_1x_and_4k;
@@ -963,7 +962,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   int key_sz;
   int upgrade_1x_format = 0;
   int upgrade_4k_format = 0;
-  char *err = 0;
   static const unsigned char aCopy[] = {
     BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
     BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
