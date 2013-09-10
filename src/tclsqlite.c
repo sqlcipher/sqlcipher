@@ -41,6 +41,18 @@
 #endif
 #include <ctype.h>
 
+/* Used to get the current process ID */
+#if !defined(_WIN32)
+# include <unistd.h>
+# define GETPID getpid
+#elif !defined(_WIN32_WCE)
+# ifndef SQLITE_AMALGAMATION
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+# endif
+# define GETPID (int)GetCurrentProcessId
+#endif
+
 /*
  * Windows needs to know which symbols to export.  Unix does not.
  * BUILD_sqlite should be undefined for Unix.
@@ -3050,7 +3062,7 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
 */
 #ifndef USE_TCL_STUBS
 # undef  Tcl_InitStubs
-# define Tcl_InitStubs(a,b,c)
+# define Tcl_InitStubs(a,b,c) TCL_VERSION
 #endif
 
 /*
@@ -3074,19 +3086,18 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
 ** The EXTERN macros are required by TCL in order to work on windows.
 */
 EXTERN int Sqlite3_Init(Tcl_Interp *interp){
-  Tcl_InitStubs(interp, "8.4", 0);
-  Tcl_CreateObjCommand(interp, "sqlite3", (Tcl_ObjCmdProc*)DbMain, 0, 0);
-  Tcl_PkgProvide(interp, "sqlite3", PACKAGE_VERSION);
-
+  int rc = Tcl_InitStubs(interp, "8.4", 0)==0 ? TCL_ERROR : TCL_OK;
+  if( rc==TCL_OK ){
+    Tcl_CreateObjCommand(interp, "sqlite3", (Tcl_ObjCmdProc*)DbMain, 0, 0);
 #ifndef SQLITE_3_SUFFIX_ONLY
-  /* The "sqlite" alias is undocumented.  It is here only to support
-  ** legacy scripts.  All new scripts should use only the "sqlite3"
-  ** command.
-  */
-  Tcl_CreateObjCommand(interp, "sqlite", (Tcl_ObjCmdProc*)DbMain, 0, 0);
+    /* The "sqlite" alias is undocumented.  It is here only to support
+    ** legacy scripts.  All new scripts should use only the "sqlite3"
+    ** command. */
+    Tcl_CreateObjCommand(interp, "sqlite", (Tcl_ObjCmdProc*)DbMain, 0, 0);
 #endif
-
-  return TCL_OK;
+    rc = Tcl_PkgProvide(interp, "sqlite3", PACKAGE_VERSION);
+  }
+  return rc;
 }
 EXTERN int Tclsqlite3_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp); }
 EXTERN int Sqlite3_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
@@ -3747,7 +3758,16 @@ static void init_all(Tcl_Interp *interp){
 #define TCLSH_MAIN main   /* Needed to fake out mktclapp */
 int TCLSH_MAIN(int argc, char **argv){
   Tcl_Interp *interp;
-  
+
+#if !defined(_WIN32_WCE)
+  if( getenv("BREAK") ){
+    fprintf(stderr,
+        "attach debugger to process %d and press any key to continue.\n",
+        GETPID());
+    fgetc(stdin);
+  }
+#endif
+
   /* Call sqlite3_shutdown() once before doing anything else. This is to
   ** test that sqlite3_shutdown() can be safely called by a process before
   ** sqlite3_initialize() is. */

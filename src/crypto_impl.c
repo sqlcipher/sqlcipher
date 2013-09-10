@@ -998,7 +998,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
         CODEC_TRACE(("cannot migrate from within a transaction"));
         goto handle_error;
       }
-      if( db->activeVdbeCnt>1 ){
+      if( db->nVdbeActive>1 ){
         CODEC_TRACE(("cannot migrate - SQL statements in progress"));
         goto handle_error;
       }
