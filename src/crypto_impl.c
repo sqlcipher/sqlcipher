@@ -389,10 +389,9 @@ static int sqlcipher_cipher_ctx_set_keyspec(cipher_ctx *ctx, const unsigned char
 
   ctx->keyspec[0] = 'x';
   ctx->keyspec[1] = '\'';
-  ctx->keyspec[ctx->keyspec_sz - 1] = '\'';
   cipher_bin2hex(key, key_sz, ctx->keyspec + 2);
   cipher_bin2hex(salt, salt_sz, ctx->keyspec + (key_sz * 2) + 2);
-
+  ctx->keyspec[ctx->keyspec_sz - 1] = '\'';
   return SQLITE_OK;
 }
 
@@ -956,7 +955,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
   char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
-  char *query_sqlite_master = "SELECT count(*) from sqlite_master;";
   char *pragma_hmac_off = "PRAGMA cipher_use_hmac = OFF;";
   char *pragma_4k_kdf_iter = "PRAGMA kdf_iter = 4000;";
   char *pragma_1x_and_4k;
@@ -964,7 +962,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   int key_sz;
   int upgrade_1x_format = 0;
   int upgrade_4k_format = 0;
-  char *err = 0;
   static const unsigned char aCopy[] = {
     BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
     BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
@@ -980,15 +977,9 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   memcpy(key, ctx->read_ctx->pass, ctx->read_ctx->pass_sz);
 
   if(db_filename){
-    
+    const char* commands[4];
     char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%s';",
                                             db_filename, key);
-    const char* commands[] = {
-      upgrade_4k_format == 1 ? pragma_4k_kdf_iter : "",
-      upgrade_1x_format == 1 ? pragma_hmac_off : "",
-      attach_command,
-      "SELECT sqlcipher_export('migrate');",
-    };
 
     int rc = sqlcipher_check_connection(db_filename, key, key_sz, "");
     if(rc == SQLITE_OK){
@@ -1019,8 +1010,12 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       goto handle_error;
     }
 
-    
-    for(command_idx = 0; command_idx < (sizeof(commands)/sizeof(commands[0])); command_idx++){
+    commands[0] = upgrade_4k_format == 1 ? pragma_4k_kdf_iter : "";
+    commands[1] = upgrade_1x_format == 1 ? pragma_hmac_off : "";
+    commands[2] = attach_command;
+    commands[3] = "SELECT sqlcipher_export('migrate');";
+      
+    for(command_idx = 0; command_idx < ArraySize(commands); command_idx++){
       const char *command = commands[command_idx];
       if(strcmp(command, "") == 0){
         continue;
@@ -1073,7 +1068,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
       sqlite3CodecAttach(db, 0, key, password_sz);
       
-      for(i=0; i<(sizeof(aCopy)/sizeof(aCopy[0])); i+=2){
+      for(i=0; i<ArraySize(aCopy); i+=2){
         sqlite3BtreeGetMeta(pSrc, aCopy[i], &meta);
         rc = sqlite3BtreeUpdateMeta(pDest, aCopy[i], meta+aCopy[i+1]);
         if( NEVER(rc!=SQLITE_OK) ) goto handle_error; 
