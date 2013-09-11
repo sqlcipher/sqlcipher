@@ -342,10 +342,10 @@ void sqlite3_activate_see(const char* in) {
 }
 
 static int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
+  int db_index;
   if(zDb == NULL){
     return 0;
   }
-  int db_index;
   for(db_index = 0; db_index < db->nDb; db_index++) {
     struct Db *pDb = &db->aDb[db_index];
     if(strcmp(pDb->zName, zDb) == 0) {
@@ -418,7 +418,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       */
       rc = sqlite3BtreeBeginTrans(pDb->pBt, 1); /* begin write transaction */
       sqlite3PagerPagecount(pPager, &page_count);
-      for(pgno = 1; rc == SQLITE_OK && pgno <= page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
+      for(pgno = 1; rc == SQLITE_OK && pgno <= (unsigned int)page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
         if(!sqlite3pager_is_mj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
           rc = sqlite3PagerGet(pPager, pgno, &page);
           if(rc == SQLITE_OK) { /* write page see pager_incr_changecounter for example */
