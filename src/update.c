@@ -246,7 +246,7 @@ void sqlite3Update(
   }
   for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
     int reg;
-    if( hasFK || chngRowid ){
+    if( hasFK || chngRowid || pIdx->pPartIdxWhere ){
       reg = ++pParse->nMem;
     }else{
       reg = 0;
@@ -318,7 +318,7 @@ void sqlite3Update(
       pParse, pTabList, pWhere, 0, 0, WHERE_ONEPASS_DESIRED, 0
   );
   if( pWInfo==0 ) goto update_cleanup;
-  okOnePass = pWInfo->okOnePass;
+  okOnePass = sqlite3WhereOkOnePass(pWInfo);
 
   /* Remember the rowid of every item to be updated.
   */

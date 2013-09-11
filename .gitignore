@@ -13,7 +13,7 @@ xcuserdata/*
 /config.log
 /config.status
 /keywordhash.h
-/mkkeywordhash
+/mkkeywordhash*
 /opcodes.c
 /opcodes.h
 /parse.c
@@ -21,8 +21,8 @@ xcuserdata/*
 /parse.h.temp
 /parse.out
 /tsrc
-/testfixture
-/lemon
+/testfixture*
+/lemon*
 /libtool
 /libsqlite3.la
 /libtclsqlite3.la
