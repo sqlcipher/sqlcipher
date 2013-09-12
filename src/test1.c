@@ -2218,6 +2218,7 @@ static int test_stmt_status(
     { "SQLITE_STMTSTATUS_FULLSCAN_STEP",   SQLITE_STMTSTATUS_FULLSCAN_STEP   },
     { "SQLITE_STMTSTATUS_SORT",            SQLITE_STMTSTATUS_SORT            },
     { "SQLITE_STMTSTATUS_AUTOINDEX",       SQLITE_STMTSTATUS_AUTOINDEX       },
+    { "SQLITE_STMTSTATUS_VM_STEP",         SQLITE_STMTSTATUS_VM_STEP         },
   };
   if( objc!=4 ){
     Tcl_WrongNumArgs(interp, 1, objv, "STMT PARAMETER RESETFLAG");
@@ -2469,7 +2470,7 @@ static int sqlite_static_bind_nbyte = 0;
 /*
 ** Usage:  sqlite3_bind  VM  IDX  VALUE  FLAGS
 **
-** Sets the value of the IDX-th occurance of "?" in the original SQL
+** Sets the value of the IDX-th occurrence of "?" in the original SQL
 ** string.  VALUE is the new value.  If FLAGS=="null" then VALUE is
 ** ignored and the value is set to NULL.  If FLAGS=="static" then
 ** the value is set to the value of a static variable named
@@ -5563,7 +5564,7 @@ static int test_wal_checkpoint(
 **
 ** Otherwise, this command returns a list of three integers. The first integer
 ** is 1 if SQLITE_BUSY was returned, or 0 otherwise. The following two integers
-** are the values returned via the output paramaters by wal_checkpoint_v2() -
+** are the values returned via the output parameters by wal_checkpoint_v2() -
 ** the number of frames in the log and the number of frames in the log
 ** that have been checkpointed.
 */
@@ -5958,15 +5959,20 @@ static int optimization_control(
     const char *zOptName;
     int mask;
   } aOpt[] = {
-    { "all",              SQLITE_AllOpts        },
-    { "query-flattener",  SQLITE_QueryFlattener },
-    { "column-cache",     SQLITE_ColumnCache    },
-    { "groupby-order",    SQLITE_GroupByOrder   },
-    { "factor-constants", SQLITE_FactorOutConst },
-    { "real-as-int",      SQLITE_IdxRealAsInt   },
-    { "distinct-opt",     SQLITE_DistinctOpt    },
-    { "cover-idx-scan",   SQLITE_CoverIdxScan   },
-    { "order-by-idx-join",SQLITE_OrderByIdxJoin },
+    { "all",                 SQLITE_AllOpts        },
+    { "none",                0                     },
+    { "query-flattener",     SQLITE_QueryFlattener },
+    { "column-cache",        SQLITE_ColumnCache    },
+    { "groupby-order",       SQLITE_GroupByOrder   },
+    { "factor-constants",    SQLITE_FactorOutConst },
+    { "real-as-int",         SQLITE_IdxRealAsInt   },
+    { "distinct-opt",        SQLITE_DistinctOpt    },
+    { "cover-idx-scan",      SQLITE_CoverIdxScan   },
+    { "order-by-idx-join",   SQLITE_OrderByIdxJoin },
+    { "transitive",          SQLITE_Transitive     },
+    { "subquery-coroutine",  SQLITE_SubqCoroutine  },
+    { "omit-noop-join",      SQLITE_OmitNoopJoin   },
+    { "stat3",               SQLITE_Stat3          },
   };
 
   if( objc!=4 ){
@@ -5987,7 +5993,7 @@ static int optimization_control(
     Tcl_AppendResult(interp, "unknown optimization - should be one of:",
                      (char*)0);
     for(i=0; i<sizeof(aOpt)/sizeof(aOpt[0]); i++){
-      Tcl_AppendResult(interp, " ", aOpt[i].zOptName);
+      Tcl_AppendResult(interp, " ", aOpt[i].zOptName, (char*)0);
     }
     return TCL_ERROR;
   }
@@ -6012,6 +6018,7 @@ static int tclLoadStaticExtensionCmd(
   extern int sqlite3_fuzzer_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_ieee_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_nextchar_init(sqlite3*,char**,const sqlite3_api_routines*);
+  extern int sqlite3_percentile_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_regexp_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_spellfix_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_wholenumber_init(sqlite3*,char**,const sqlite3_api_routines*);
@@ -6024,6 +6031,7 @@ static int tclLoadStaticExtensionCmd(
     { "fuzzer",                sqlite3_fuzzer_init               },
     { "ieee754",               sqlite3_ieee_init                 },
     { "nextchar",              sqlite3_nextchar_init             },
+    { "percentile",            sqlite3_percentile_init           },
     { "regexp",                sqlite3_regexp_init               },
     { "spellfix",              sqlite3_spellfix_init             },
     { "wholenumber",           sqlite3_wholenumber_init          },
@@ -6300,8 +6308,6 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
   extern int sqlite3WalTrace;
 #endif
 #ifdef SQLITE_TEST
-  extern char sqlite3_query_plan[];
-  static char *query_plan = sqlite3_query_plan;
 #ifdef SQLITE_ENABLE_FTS3
   extern int sqlite3_fts3_enable_parentheses;
 #endif
@@ -6355,8 +6361,11 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
       (char*)&sqlite3_os_type, TCL_LINK_INT);
 #endif
 #ifdef SQLITE_TEST
-  Tcl_LinkVar(interp, "sqlite_query_plan",
-      (char*)&query_plan, TCL_LINK_STRING|TCL_LINK_READ_ONLY);
+  {
+    static const char *query_plan = "*** OBSOLETE VARIABLE ***";
+    Tcl_LinkVar(interp, "sqlite_query_plan",
+       (char*)&query_plan, TCL_LINK_STRING|TCL_LINK_READ_ONLY);
+  }
 #endif
 #ifdef SQLITE_DEBUG
   Tcl_LinkVar(interp, "sqlite_where_trace",
