@@ -906,11 +906,11 @@ const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx) {
 }
 
 
-static int sqlcipher_check_connection(const char *filename, char *key, int key_sz, char *sql) {
+static int sqlcipher_check_connection(const char *filename, char *key, int key_sz, char *sql, int *user_version) {
   int rc;
   sqlite3 *db = NULL;
   sqlite3_stmt *statement = NULL;
-  char *query_sqlite_master = "SELECT count(*) FROM sqlite_master;";
+  char *query_user_version = "PRAGMA user_version;";
   
   rc = sqlite3_open(filename, &db);
   if(rc != SQLITE_OK){
@@ -924,11 +924,13 @@ static int sqlcipher_check_connection(const char *filename, char *key, int key_s
   if(rc != SQLITE_OK){
     goto cleanup;
   }
-  rc = sqlite3_prepare(db, query_sqlite_master, -1, &statement, NULL);
+  rc = sqlite3_prepare(db, query_user_version, -1, &statement, NULL);
   if(rc != SQLITE_OK){
     goto cleanup;
   }
-  if(sqlite3_step(statement) == SQLITE_ROW){
+  rc = sqlite3_step(statement);
+  if(rc == SQLITE_ROW){
+    *user_version = sqlite3_column_int(statement, 0);
     rc = SQLITE_OK;
   }
   
@@ -958,8 +960,10 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   char *pragma_hmac_off = "PRAGMA cipher_use_hmac = OFF;";
   char *pragma_4k_kdf_iter = "PRAGMA kdf_iter = 4000;";
   char *pragma_1x_and_4k;
+  char *set_user_version;
   char *key;
   int key_sz;
+  int user_version = 0;
   int upgrade_1x_format = 0;
   int upgrade_4k_format = 0;
   static const unsigned char aCopy[] = {
@@ -977,18 +981,18 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   memcpy(key, ctx->read_ctx->pass, ctx->read_ctx->pass_sz);
 
   if(db_filename){
-    const char* commands[4];
-    char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%s';",
+    const char* commands[5];
+    char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%q';",
                                             db_filename, key);
 
-    int rc = sqlcipher_check_connection(db_filename, key, key_sz, "");
+    int rc = sqlcipher_check_connection(db_filename, key, key_sz, "", &user_version);
     if(rc == SQLITE_OK){
       CODEC_TRACE(("No upgrade required - exiting\n"));
       goto exit;
     }
     
     // Version 2 - check for 4k with hmac format 
-    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_4k_kdf_iter);
+    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_4k_kdf_iter, &user_version);
     if(rc == SQLITE_OK) {
       CODEC_TRACE(("Version 2 format found\n"));
       upgrade_4k_format = 1;
@@ -997,7 +1001,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     // Version 1 - check both no hmac and 4k together
     pragma_1x_and_4k = sqlite3_mprintf("%s%s", pragma_hmac_off,
                                              pragma_4k_kdf_iter);
-    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_1x_and_4k);
+    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_1x_and_4k, &user_version);
     sqlite3_free(pragma_1x_and_4k);
     if(rc == SQLITE_OK) {
       CODEC_TRACE(("Version 1 format found\n"));
@@ -1010,10 +1014,12 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       goto handle_error;
     }
 
+    set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
     commands[0] = upgrade_4k_format == 1 ? pragma_4k_kdf_iter : "";
     commands[1] = upgrade_1x_format == 1 ? pragma_hmac_off : "";
     commands[2] = attach_command;
     commands[3] = "SELECT sqlcipher_export('migrate');";
+    commands[4] = set_user_version;
       
     for(command_idx = 0; command_idx < ArraySize(commands); command_idx++){
       const char *command = commands[command_idx];
@@ -1026,6 +1032,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       }
     }
     sqlite3_free(attach_command);
+    sqlite3_free(set_user_version);
     sqlcipher_free(key, key_sz);
     
     if(rc == SQLITE_OK){
