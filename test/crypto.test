@@ -1952,9 +1952,9 @@ do_test open-2.0-beta-database {
     PRAGMA fast_kdf_iter = 4000;
     PRAGMA cipher_hmac_salt_mask = "x'00'";
     SELECT count(*) FROM t1;
-    SELECT * FROM t1;
+    SELECT distinct * FROM t1;
   } 
-} {2 test-0-0 test-0-1 test-1-0 test-1-1}
+} {38768 test-0-0 test-0-1 test-1-0 test-1-1}
 db close
 
 # open a 2.0 beta database 
@@ -1983,7 +1983,7 @@ do_test 2.0-beta-to-2.0-migration {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    SELECT * FROM t1;
+    SELECT distinct * FROM t1;
   }
 } {test-0-0 test-0-1 test-1-0 test-1-1}
 db close
