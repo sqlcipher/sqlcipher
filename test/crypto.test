@@ -1643,10 +1643,10 @@ do_test multipage-schema-autovacuum-shortread-wal {
 db close
 file delete -force test.db
 
-# open a 2.3 database with little endian hmac page numbers (default)
+# open a 3.0 database with little endian hmac page numbers (default)
 # verify it can be opened
-do_test open-2.3-le-database {
-  sqlite_orig db sqlcipher-2.3-testkey.db
+do_test open-3.0-le-database {
+  sqlite_orig db sqlcipher-3.0-testkey.db
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
