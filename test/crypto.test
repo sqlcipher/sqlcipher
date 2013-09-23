@@ -1652,9 +1652,9 @@ do_test open-3.0-le-database {
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
-    SELECT * FROM t1;
+    SELECT distinct * FROM t1;
   } 
-} {4 1 1 one one 1 2 one two}
+} {78536 1 1 one one 1 2 one two}
 db close
 
 # open a 2.0 database with little endian hmac page numbers (default)
