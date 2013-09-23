@@ -1679,9 +1679,9 @@ do_test open-2.0-be-database {
     PRAGMA cipher_hmac_pgno = be;
     PRAGMA kdf_iter = 4000;
     SELECT count(*) FROM t1;
-    SELECT * FROM t1;
+    SELECT distinct * FROM t1;
   } 
-} {4 1 1 one one 1 2 one two}
+} {78536 1 1 one one 1 2 one two}
 db close
 
 # open a 2.0 database with big-endian hmac page numbers
@@ -1706,9 +1706,9 @@ do_test be-to-le-migration {
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
-    SELECT * FROM t1;
+    SELECT distinct * FROM t1;
   }
-} {4 1 1 one one 1 2 one two}
+} {78536 1 1 one one 1 2 one two}
 db close
 file delete -force test.db
 
