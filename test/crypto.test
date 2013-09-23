@@ -42,6 +42,7 @@ file delete -force test4.db
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
+set old_pending_byte [sqlite3_test_control_pending_byte 0x40000000]
 
 # If the library is not compiled with has_codec support then
 # skip all tests in this file.
@@ -932,17 +933,18 @@ file delete -force test.db
 
 # open a 1.1.8 database using the new code, HMAC disabled
 do_test open-1.1.8-database {
-  sqlite_orig db sqlcipher-1.1.8-testkey.db
+  file copy -force sqlcipher-1.1.8-testkey.db test.db
+  sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_use_hmac = OFF;
+    PRAGMA cipher_use_hmac = off;
     PRAGMA kdf_iter = 4000;
     SELECT count(*) FROM t1;
-    SELECT * FROM t1;
+    SELECT distinct * FROM t1;
   } 
-} {4 1 1 one one 1 2 one two}
+} {75709 1 1 one one 1 2 one two 1 2}
 db close
-
+file delete -force test.db
 
 # open a 1.1.8 database without hmac, then copy the data
 do_test attach-and-copy-1.1.8 {
@@ -963,9 +965,9 @@ do_test attach-and-copy-1.1.8 {
   execsql {
     PRAGMA key = 'testkey-hmac';
     SELECT count(*) FROM t1;
-    SELECT * FROM t1;
+    SELECT distinct * FROM t1;
   }
-} {4 1 1 one one 1 2 one two}
+} {75709 1 1 one one 1 2 one two 1 2}
 db close
 file delete -force test.db
 
@@ -1426,7 +1428,7 @@ do_test default-hmac-kdf-attach {
     PRAGMA cipher_default_use_hmac = ON;
     PRAGMA cipher_default_kdf_iter = 64000;
   } 
-} {4 4}
+} {75709 75709}
 db close
 file delete -force test.db
 
@@ -1469,7 +1471,7 @@ do_test change-default-hmac-kdf-attach {
     PRAGMA cipher_default_use_hmac = ON;
     PRAGMA cipher_default_kdf_iter = 64000;
   } 
-} {1 4}
+} {1 75709}
 db close
 file delete -force test.db
 
@@ -2112,4 +2114,5 @@ db close
 file delete -force test.db
 file delete -force new.db
 
+sqlite3_test_control_pending_byte $old_pending_byte
 finish_test
