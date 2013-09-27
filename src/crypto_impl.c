@@ -82,6 +82,7 @@ struct codec_ctx {
   Btree *pBt;
   cipher_ctx *read_ctx;
   cipher_ctx *write_ctx;
+  unsigned int skip_read_hmac;
 };
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
@@ -756,7 +757,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     memcpy(iv_out, iv_in, c_ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
 
-  if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
+  if((c_ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT) && !ctx->skip_read_hmac) {
     if(sqlcipher_page_hmac(c_ctx, pgno, in, size + c_ctx->iv_sz, hmac_out) != SQLITE_OK) {
       sqlcipher_memset(out, 0, page_sz); 
       CODEC_TRACE(("codec_cipher: hmac operations failed for pgno=%d\n", pgno));
@@ -1048,7 +1049,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
         CODEC_TRACE(("cannot migrate - SQL statements in progress"));
         goto handle_error;
       }
-      
+
       /* Save the current value of the database flags so that it can be
       ** restored before returning. Then set the writable-schema flag, and
       ** disable CHECK and foreign key constraints.  */
@@ -1063,7 +1064,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       pDest = db->aDb[0].pBt;
       pDb = &(db->aDb[db->nDb-1]);
       pSrc = pDb->pBt;
-
+      
       rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
       rc = sqlite3BtreeBeginTrans(pSrc, 2);
       rc = sqlite3BtreeBeginTrans(pDest, 2);
@@ -1071,17 +1072,18 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       assert( 1==sqlite3BtreeIsInTrans(pDest) );
       assert( 1==sqlite3BtreeIsInTrans(pSrc) );
 
-
       sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
       sqlite3CodecAttach(db, 0, key, password_sz);
+      sqlite3pager_get_codec(pDest->pBt->pPager, (void**)&ctx);
       
+      ctx->skip_read_hmac = 1;      
       for(i=0; i<ArraySize(aCopy); i+=2){
         sqlite3BtreeGetMeta(pSrc, aCopy[i], &meta);
         rc = sqlite3BtreeUpdateMeta(pDest, aCopy[i], meta+aCopy[i+1]);
         if( NEVER(rc!=SQLITE_OK) ) goto handle_error; 
       }
-
       rc = sqlite3BtreeCopyFile(pDest, pSrc);
+      ctx->skip_read_hmac = 0;
       if( rc!=SQLITE_OK ) goto handle_error;
       rc = sqlite3BtreeCommit(pDest);
 
