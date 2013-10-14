@@ -25,6 +25,16 @@
 		9069D0A30FCE1A4D0042E34C /* sqlite3.c in Sources */ = {isa = PBXBuildFile; fileRef = 9069D0A20FCE1A4D0042E34C /* sqlite3.c */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		289BE0E7180C4930003E52DA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 08FB7793FE84155DC02AAC07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9069D08B0FCE185A0042E34C;
+			remoteInfo = amalgamation;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		28B46E6217CD07A600672510 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		9069D0A20FCE1A4D0042E34C /* sqlite3.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = sqlite3.c; sourceTree = "<group>"; };
@@ -101,6 +111,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				289BE0E8180C4930003E52DA /* PBXTargetDependency */,
 			);
 			name = sqlcipher;
 			productName = sqlcipher;
@@ -163,6 +174,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		289BE0E8180C4930003E52DA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9069D08B0FCE185A0042E34C /* amalgamation */;
+			targetProxy = 289BE0E7180C4930003E52DA /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		1DEB91EC08733DB70010E9CD /* Debug */ = {
