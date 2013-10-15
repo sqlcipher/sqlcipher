@@ -60,7 +60,7 @@ typedef struct {
   unsigned int flags;
   unsigned char *key;
   unsigned char *hmac_key;
-  char *pass;
+  unsigned char *pass;
   char *keyspec;
   sqlcipher_provider *provider;
   void *provider_ctx;
@@ -821,19 +821,19 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
-    if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
+    if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
-      const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
+      const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
-    } else if (c_ctx->pass_sz == (((c_ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
-      const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
+    } else if (c_ctx->pass_sz == (((c_ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
+      const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, (c_ctx->key_sz * 2), c_ctx->key);
       cipher_hex2bin(z + (c_ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
     } else { 
       CODEC_TRACE(("cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter)); 
-      c_ctx->provider->kdf(c_ctx->provider_ctx, (const char*) c_ctx->pass, c_ctx->pass_sz, 
+      c_ctx->provider->kdf(c_ctx->provider_ctx, c_ctx->pass, c_ctx->pass_sz, 
                     ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter,
                     c_ctx->key_sz, c_ctx->key);
     }
@@ -861,7 +861,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
         c_ctx->fast_kdf_iter)); 
 
       
-      c_ctx->provider->kdf(c_ctx->provider_ctx, (const char*)c_ctx->key, c_ctx->key_sz, 
+      c_ctx->provider->kdf(c_ctx->provider_ctx, c_ctx->key, c_ctx->key_sz, 
                     ctx->hmac_kdf_salt, ctx->kdf_salt_sz, c_ctx->fast_kdf_iter,
                     c_ctx->key_sz, c_ctx->hmac_key); 
     }

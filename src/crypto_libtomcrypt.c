@@ -49,8 +49,9 @@ static int sqlcipher_ltc_add_random(void *ctx, void *buffer, int length) {
 
 static int sqlcipher_ltc_activate(void *ctx) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
-  int random_buffer_sz = 32;
-  unsigned char random_buffer[random_buffer_sz];
+  int random_buffer_sz = sizeof(char) * 32;
+  unsigned char *random_buffer = sqlcipher_malloc(random_buffer_sz);
+  sqlcipher_memset(random_buffer, 0, random_buffer_sz);
   
   if(ltc_init == 0) {
     if(register_prng(&fortuna_desc) != CRYPT_OK) return SQLITE_ERROR;
@@ -61,7 +62,7 @@ static int sqlcipher_ltc_activate(void *ctx) {
   if(fortuna_start(&(ltc->prng)) != CRYPT_OK) {
     return SQLITE_ERROR;
   }
-  sqlite3_randomness(random_buffer_sz, &random_buffer);
+  sqlite3_randomness(random_buffer_sz, random_buffer);
   if(sqlcipher_ltc_add_random(ctx, random_buffer, random_buffer_sz) != SQLITE_OK) {
     return SQLITE_ERROR;
   }
@@ -71,12 +72,14 @@ static int sqlcipher_ltc_activate(void *ctx) {
   if(fortuna_ready(&(ltc->prng)) != CRYPT_OK) {
     return SQLITE_ERROR;
   }
+  sqlcipher_free(random_buffer, random_buffer_sz);
   return SQLITE_OK;
 }
 
 static int sqlcipher_ltc_deactivate(void *ctx) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
   fortuna_done(&(ltc->prng));
+  return SQLITE_OK;
 }
 
 static const char* sqlcipher_ltc_get_provider_name(void *ctx) {
@@ -107,12 +110,13 @@ static int sqlcipher_ltc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, un
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_kdf(void *ctx, const char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_ltc_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   int rc, hash_idx;
-  unsigned long outlen = key_sz;
-  unsigned long random_buffer_sz = 256;
-  char random_buffer[random_buffer_sz];
   ltc_ctx *ltc = (ltc_ctx*)ctx;
+  unsigned long outlen = key_sz;
+  unsigned long random_buffer_sz = sizeof(char) * 256;
+  unsigned char *random_buffer = sqlcipher_malloc(random_buffer_sz);
+  sqlcipher_memset(random_buffer, 0, random_buffer_sz);
 
   hash_idx = find_hash("sha1");
   if((rc = pkcs_5_alg2(pass, pass_sz, salt, salt_sz,
@@ -124,6 +128,7 @@ static int sqlcipher_ltc_kdf(void *ctx, const char *pass, int pass_sz, unsigned 
     return SQLITE_ERROR;
   }
   sqlcipher_ltc_add_random(ctx, random_buffer, random_buffer_sz);
+  sqlcipher_free(random_buffer, random_buffer_sz);
   return SQLITE_OK;
 }
 
@@ -132,7 +137,7 @@ static const char* sqlcipher_ltc_get_cipher(void *ctx) {
 }
 
 static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
-  int rc, cipher_idx, hash_idx;
+  int rc, cipher_idx;
   symmetric_CBC cbc;
 
   if((cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx))) == -1) return SQLITE_ERROR;
@@ -208,6 +213,7 @@ int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->ctx_init = sqlcipher_ltc_ctx_init;
   p->ctx_free = sqlcipher_ltc_ctx_free;
   p->add_random = sqlcipher_ltc_add_random;
+  return SQLITE_OK;
 }
 
 #endif

@@ -142,7 +142,7 @@ static int cipher_hex2int(char c) {
          (c>='a' && c<='f') ? (c)-'a'+10 : 0;
 }
 
-static void cipher_hex2bin(const char *hex, int sz, unsigned char *out){
+static void cipher_hex2bin(const unsigned char *hex, int sz, unsigned char *out){
   int i;
   for(i = 0; i < sz; i += 2){
     out[i/2] = (cipher_hex2int(hex[i])<<4) | cipher_hex2int(hex[i+1]);

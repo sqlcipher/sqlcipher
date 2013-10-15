@@ -220,7 +220,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       if(zRight) {
         if (sqlite3StrNICmp(zRight ,"x'", 2) == 0 && sqlite3Strlen30(zRight) == 5) {
           unsigned char mask = 0;
-          const char *hex = zRight+2;
+          const unsigned char *hex = (const unsigned char *)zRight+2;
           cipher_hex2bin(hex,2,&mask);
           sqlcipher_set_hmac_salt_mask(mask);
         }
