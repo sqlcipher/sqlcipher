@@ -110,7 +110,7 @@ static int sqlcipher_ltc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, un
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_kdf(void *ctx, const char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_ltc_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   int rc, hash_idx;
   ltc_ctx *ltc = (ltc_ctx*)ctx;
   unsigned long outlen = key_sz;
