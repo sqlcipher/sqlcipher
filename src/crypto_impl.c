@@ -219,7 +219,9 @@ void sqlcipher_free(void *ptr, int sz) {
 #if defined(__unix__) || defined(__APPLE__) 
       munlock(ptr, sz);
 #elif defined(_WIN32)
-      VirtualUnlock(ptr, sz);
+#if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
+VirtualUnlock(ptr, sz);
+#endif
 #endif
 #endif
     }
@@ -240,7 +242,9 @@ void* sqlcipher_malloc(int sz) {
 #if defined(__unix__) || defined(__APPLE__) 
     mlock(ptr, sz);
 #elif defined(_WIN32)
+#if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
     VirtualLock(ptr, sz);
+#endif
 #endif
   }
 #endif
