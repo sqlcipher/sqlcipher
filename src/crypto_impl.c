@@ -83,6 +83,7 @@ struct codec_ctx {
   cipher_ctx *read_ctx;
   cipher_ctx *write_ctx;
   unsigned int skip_read_hmac;
+  unsigned int need_kdf_salt;
 };
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
@@ -650,8 +651,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   if((rc = sqlcipher_cipher_ctx_init(&ctx->write_ctx)) != SQLITE_OK) return rc; 
 
   if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
-    /* if unable to read the bytes, generate random salt */
-    if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
+    ctx->need_kdf_salt = 1;
   }
 
   if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER, 0)) != SQLITE_OK) return rc;
@@ -823,8 +823,13 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, 
                 ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, c_ctx->key_sz)); 
                 
-
+  
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
+
+    if(ctx->need_kdf_salt) {
+      if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
+      ctx->need_kdf_salt = 0;
+    }
     if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
@@ -1117,6 +1122,23 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
  exit:
   return rc;
+}
+
+int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight){
+  int random_sz = strlen(zRight);
+  if (random_sz == ((ctx->read_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)zRight ,"x'", 2) == 0) {
+    unsigned char *random;
+    int n = random_sz - 3; /* adjust for leading x' and tailing ' */
+    const unsigned char *z = (const unsigned char *)zRight + 2; /* adjust lead offset of x' */
+    CODEC_TRACE(("sqlcipher_codec_add_random: using raw random blob from hex\n"));
+    random = sqlcipher_malloc(n);
+    memset(random, 0, n);
+    cipher_hex2bin(z, n, random);
+    int rc = ctx->read_ctx->provider->add_random(ctx->read_ctx->provider_ctx, random, n);
+    sqlcipher_free(random, n);
+    return rc;
+  }
+  return SQLITE_ERROR;
 }
 
 

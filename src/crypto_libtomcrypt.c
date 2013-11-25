@@ -39,12 +39,20 @@ typedef struct {
   prng_state prng;
 } ltc_ctx;
 
+static unsigned int random_block_sz = 32;
 static unsigned int ltc_init = 0;
 
 static int sqlcipher_ltc_add_random(void *ctx, void *buffer, int length) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
-  int rc = fortuna_add_entropy(buffer, length, &(ltc->prng));
-  return rc != CRYPT_OK ? SQLITE_ERROR : SQLITE_OK;
+  int block_count = length / random_block_sz;
+  for(int block_idx = 0; block_idx < block_count; block_idx++){
+    int rc = fortuna_add_entropy(buffer, random_block_sz, &(ltc->prng));
+    buffer += random_block_sz;
+    if(rc != CRYPT_OK) {
+      return SQLITE_ERROR;
+    }
+  }
+  return SQLITE_OK;
 }
 
 static int sqlcipher_ltc_activate(void *ctx) {

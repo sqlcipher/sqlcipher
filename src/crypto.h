@@ -213,6 +213,7 @@ int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx)
 
 const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx);
+int sqlcipher_codec_add_random(codec_ctx *ctx, const char *data);
 #endif
 #endif
 /* END SQLCIPHER */
