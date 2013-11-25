@@ -1127,6 +1127,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight){
   int random_sz = strlen(zRight);
   if (random_sz == ((ctx->read_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)zRight ,"x'", 2) == 0) {
+    int rc = 0;
     unsigned char *random;
     int n = random_sz - 3; /* adjust for leading x' and tailing ' */
     const unsigned char *z = (const unsigned char *)zRight + 2; /* adjust lead offset of x' */
@@ -1134,7 +1135,7 @@ int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight){
     random = sqlcipher_malloc(n);
     memset(random, 0, n);
     cipher_hex2bin(z, n, random);
-    int rc = ctx->read_ctx->provider->add_random(ctx->read_ctx->provider_ctx, random, n);
+    rc = ctx->read_ctx->provider->add_random(ctx->read_ctx->provider_ctx, random, n);
     sqlcipher_free(random, n);
     return rc;
   }

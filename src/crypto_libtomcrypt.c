@@ -47,14 +47,15 @@ static sqlite3_mutex* ltc_rand_mutex = NULL;
 
 static int sqlcipher_ltc_add_random(void *ctx, void *buffer, int length) {
   ltc_ctx *ltc = (ltc_ctx*)ctx;
-  int rc = 0;
+  int rc, block_idx = 0;
   int block_count = length / random_block_sz;
+  const unsigned char * data = (const unsigned char *)buffer;
 #ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
   sqlite3_mutex_enter(ltc_rand_mutex);
 #endif
-  for(int block_idx = 0; block_idx < block_count; block_idx++){
-    rc = fortuna_add_entropy(buffer, random_block_sz, &(ltc->prng));
-    buffer += random_block_sz;
+  for(; block_idx < block_count; block_idx++){
+    rc = fortuna_add_entropy(data, random_block_sz, &(ltc->prng));
+    data += random_block_sz;
     rc = rc != CRYPT_OK ? SQLITE_ERROR : SQLITE_OK;
     if(rc != SQLITE_OK) {
       break;
