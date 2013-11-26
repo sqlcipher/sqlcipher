@@ -1126,7 +1126,8 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
 int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight){
   int random_sz = strlen(zRight);
-  if (random_sz == ((ctx->read_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)zRight ,"x'", 2) == 0) {
+  const char *suffix = &zRight[random_sz-1];
+  if (sqlite3StrNICmp((const char *)zRight ,"x'", 2) == 0 && sqlite3StrNICmp(suffix, "'", 1) == 0) {
     int rc = 0;
     unsigned char *random;
     int n = random_sz - 3; /* adjust for leading x' and tailing ' */
