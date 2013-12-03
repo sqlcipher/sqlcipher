@@ -125,7 +125,6 @@ static const char* sqlcipher_ltc_get_provider_name(void *ctx) {
 }
 
 static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
-  int rc;
 #ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
   sqlite3_mutex_enter(ltc_rand_mutex);
 #endif
