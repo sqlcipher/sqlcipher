@@ -91,7 +91,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
 
   if( sqlite3StrICmp(zLeft, "cipher_add_random")==0 && zRight ){
     if(ctx) {
-      char *add_random_status = sqlite3_mprintf("%d", sqlcipher_codec_add_random(ctx, zRight));
+      char *add_random_status = sqlite3_mprintf("%d", sqlcipher_codec_add_random(ctx, zRight, sqlite3Strlen30(zRight)));
       codec_vdbe_return_static_string(pParse, "cipher_add_random", add_random_status);
       sqlite3_free(add_random_status);
     }

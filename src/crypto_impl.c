@@ -1124,20 +1124,23 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   return rc;
 }
 
-int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight){
-  int random_sz = strlen(zRight);
+int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int random_sz){
   const char *suffix = &zRight[random_sz-1];
-  if (sqlite3StrNICmp((const char *)zRight ,"x'", 2) == 0 && sqlite3StrNICmp(suffix, "'", 1) == 0) {
+  int n = random_sz - 3; /* adjust for leading x' and tailing ' */
+  if (n > 0 &&
+      sqlite3StrNICmp((const char *)zRight ,"x'", 2) == 0 &&
+      sqlite3StrNICmp(suffix, "'", 1) == 0 &&
+      n % 2 == 0) {
     int rc = 0;
+    int buffer_sz = n / 2;
     unsigned char *random;
-    int n = random_sz - 3; /* adjust for leading x' and tailing ' */
     const unsigned char *z = (const unsigned char *)zRight + 2; /* adjust lead offset of x' */
     CODEC_TRACE(("sqlcipher_codec_add_random: using raw random blob from hex\n"));
-    random = sqlcipher_malloc(n);
-    memset(random, 0, n);
+    random = sqlcipher_malloc(buffer_sz);
+    memset(random, 0, buffer_sz);
     cipher_hex2bin(z, n, random);
-    rc = ctx->read_ctx->provider->add_random(ctx->read_ctx->provider_ctx, random, n);
-    sqlcipher_free(random, n);
+    rc = ctx->read_ctx->provider->add_random(ctx->read_ctx->provider_ctx, random, buffer_sz);
+    sqlcipher_free(random, buffer_sz);
     return rc;
   }
   return SQLITE_ERROR;

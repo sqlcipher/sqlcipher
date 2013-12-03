@@ -87,6 +87,21 @@ proc if_built_with_commoncrypto {name cmd expected} {
      }
 }
 
+proc cmpFilesChunked {file1 file2 {chunksize 16384}} {
+    set f1 [open $file1]; fconfigure $f1 -translation binary
+    set f2 [open $file2]; fconfigure $f2 -translation binary
+    while {1} {
+        set d1 [read $f1 $chunksize]
+        set d2 [read $f2 $chunksize]
+        set diff [string compare $d1 $d2]
+        if {$diff != 0 || [eof $f1] || [eof $f2]} {
+            close $f1; close $f2
+            return $diff
+        }
+    }
+    return 0
+}
+
 # The database is initially empty.
 # set an hex key create some basic data
 # create table and insert operations should work
@@ -413,9 +428,9 @@ file delete -force test.db
 setup test.db "'testkey'"
 do_test attach-database-with-default-key {
   sqlite_orig db2 test2.db
-
   execsql {
     PRAGMA key = 'testkey';
+    PRAGMA cipher_add_random = "x'deadbaad'";
     CREATE TABLE t2(a,b);
     INSERT INTO t2 VALUES ('test1', 'test2'); 
   } db2
@@ -423,7 +438,7 @@ do_test attach-database-with-default-key {
   catchsql {
     ATTACH 'test.db' AS db;
   } db2
-
+    
 } {1 {file is encrypted or is not a database}}
 db2 close
 file delete -force test.db
@@ -2113,6 +2128,40 @@ do_test rekey-database-by-name {
 db close
 file delete -force test.db
 file delete -force new.db
+
+# Requires SQLCipher to be built with -DSQLCIPHER_TEST
+if_built_with_libtomcrypt verify-random-data-alters-file-content {
+    file delete -force test.db
+    file delete -force test2.db
+    file delete -force test3.db
+    set rc {}
+    
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key="x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+        create table t1(a,b);
+    }
+    db close
+    sqlite_orig db test2.db
+    execsql {
+        PRAGMA key="x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+        create table t1(a,b);
+    }
+    db close
+    sqlite_orig db test3.db
+    execsql {
+        PRAGMA key="x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+        PRAGMA cipher_add_random = "x'deadbaad'";
+        create table t1(a,b);
+    }
+    db close
+    lappend rc [cmpFilesChunked test.db test2.db]
+    lappend rc [cmpFilesChunked test2.db test3.db]
+} {0 1}
+file delete -force test.db
+file delete -force test2.db
+file delete -force test3.db
+
 
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test
