@@ -2170,13 +2170,20 @@ do_test can-migrate-with-keys-longer-than-64-characters {
         PRAGMA user_version = 5;
     }
     db close
+
     sqlite_orig db test.db
     execsql {
-                PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
+        PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
         PRAGMA cipher_migrate;
+    }
+    db close
+
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
         PRAGMA user_version;
     }
-} {0 5}
+} {5}
 db close
 file delete -force test.db
 
@@ -2189,13 +2196,20 @@ do_test can-migrate-with-raw-hex-key {
         PRAGMA user_version = 5;
     }
     db close
+
     sqlite_orig db test.db
     execsql {
-                PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+        PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
         PRAGMA cipher_migrate;
+    }
+
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
         PRAGMA user_version;
     }
-} {0 5}
+    
+} {5}
 db close
 file delete -force test.db
 
