@@ -995,14 +995,14 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%q';",
                                             db_filename, key);
 
-    int rc = sqlcipher_check_connection(db_filename, key, key_sz, "", &user_version);
+    int rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, "", &user_version);
     if(rc == SQLITE_OK){
       CODEC_TRACE(("No upgrade required - exiting\n"));
       goto exit;
     }
     
     // Version 2 - check for 4k with hmac format 
-    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_4k_kdf_iter, &user_version);
+    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, pragma_4k_kdf_iter, &user_version);
     if(rc == SQLITE_OK) {
       CODEC_TRACE(("Version 2 format found\n"));
       upgrade_4k_format = 1;
@@ -1011,7 +1011,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     // Version 1 - check both no hmac and 4k together
     pragma_1x_and_4k = sqlite3_mprintf("%s%s", pragma_hmac_off,
                                              pragma_4k_kdf_iter);
-    rc = sqlcipher_check_connection(db_filename, key, key_sz, pragma_1x_and_4k, &user_version);
+    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, pragma_1x_and_4k, &user_version);
     sqlite3_free(pragma_1x_and_4k);
     if(rc == SQLITE_OK) {
       CODEC_TRACE(("Version 1 format found\n"));

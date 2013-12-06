@@ -2162,6 +2162,42 @@ file delete -force test.db
 file delete -force test2.db
 file delete -force test3.db
 
+do_test can-migrate-with-keys-longer-than-64-characters {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
+        PRAGMA kdf_iter = 4000;
+        PRAGMA user_version = 5;
+    }
+    db close
+    sqlite_orig db test.db
+    execsql {
+                PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
+        PRAGMA cipher_migrate;
+        PRAGMA user_version;
+    }
+} {0 5}
+db close
+file delete -force test.db
+
+do_test can-migrate-with-raw-hex-key {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+        PRAGMA kdf_iter = 4000;
+        PRAGMA cipher_use_hmac = off;
+        PRAGMA user_version = 5;
+    }
+    db close
+    sqlite_orig db test.db
+    execsql {
+                PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+        PRAGMA cipher_migrate;
+        PRAGMA user_version;
+    }
+} {0 5}
+db close
+file delete -force test.db
 
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test
