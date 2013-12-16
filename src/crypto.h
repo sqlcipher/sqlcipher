@@ -44,7 +44,7 @@
 #define FILE_HEADER_SZ 16
 
 #ifndef CIPHER_VERSION
-#define CIPHER_VERSION "3.0.0"
+#define CIPHER_VERSION "3.0.1"
 #endif
 
 #ifndef CIPHER
@@ -213,6 +213,7 @@ int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx)
 
 const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx);
+int sqlcipher_codec_add_random(codec_ctx *ctx, const char *data, int random_sz);
 #endif
 #endif
 /* END SQLCIPHER */

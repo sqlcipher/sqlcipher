@@ -36,6 +36,10 @@
 #include <CommonCrypto/CommonCrypto.h>
 #include <Security/SecRandom.h>
 
+static int sqlcipher_cc_add_random(void *ctx, void *buffer, int length) {
+  return SQLITE_OK;
+}
+
 /* generate a defined number of random bytes */
 static int sqlcipher_cc_random (void *ctx, void *buffer, int length) {
   return (SecRandomCopyBytes(kSecRandomDefault, length, (uint8_t *)buffer) == 0) ? SQLITE_OK : SQLITE_ERROR;
@@ -132,6 +136,7 @@ int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->ctx_cmp = sqlcipher_cc_ctx_cmp;
   p->ctx_init = sqlcipher_cc_ctx_init;
   p->ctx_free = sqlcipher_cc_ctx_free;
+  p->add_random = sqlcipher_cc_add_random;
   return SQLITE_OK;
 }
 
