@@ -203,10 +203,18 @@ SET TOOLPATH=%gawk.exe_PATH%;%tclsh85.exe_PATH%
 %_VECHO% ToolPath = '%TOOLPATH%'
 
 REM
-REM NOTE: Check for MSVC 2012 because the Windows SDK directory handling is
-REM       slightly different for that version.
+REM NOTE: Check for MSVC 2012/2013 because the Windows SDK directory handling
+REM       is slightly different for those versions.
 REM
 IF "%VisualStudioVersion%" == "11.0" (
+  REM
+  REM NOTE: If the Windows SDK library path has already been set, do not set
+  REM       it to something else later on.
+  REM
+  IF NOT DEFINED NSDKLIBPATH (
+    SET SET_NSDKLIBPATH=1
+  )
+) ELSE IF "%VisualStudioVersion%" == "12.0" (
   REM
   REM NOTE: If the Windows SDK library path has already been set, do not set
   REM       it to something else later on.
@@ -244,7 +252,7 @@ FOR %%P IN (%PLATFORMS%) DO (
   CALL :fn_CopyVariable %%P_NAME PLATFORMNAME
 
   REM
-  REM NOTE: This is the inner loop.  There should be exactly one iteration.
+  REM NOTE: This is the second loop.  There should be exactly one iteration.
   REM       This loop is necessary because the PlatformName environment
   REM       variable was set above and that value is needed by some of the
   REM       commands contained in the inner loop.  If these commands were
@@ -281,6 +289,10 @@ FOR %%P IN (%PLATFORMS%) DO (
     REM
     SET PATH=%TOOLPATH%;%SystemRoot%\System32;%SystemRoot%
 
+    REM
+    REM NOTE: This is the inner loop.  There are normally two iterations, one
+    REM       for each supported build configuration, e.g. Debug or Retail.
+    REM
     FOR %%B IN (%CONFIGURATIONS%) DO (
       REM
       REM NOTE: When preparing the debug build, set the DEBUG and MEMDEBUG
@@ -310,6 +322,10 @@ FOR %%P IN (%PLATFORMS%) DO (
       REM          platform to the platform-specific directory beneath the
       REM          binary directory.
       REM
+      REM       5. Unless prevented from doing so, copy the "sqlite3.pdb"
+      REM          symbols file for this platform to the platform-specific
+      REM          directory beneath the binary directory.
+      REM
       "%ComSpec%" /C (
         REM
         REM NOTE: Attempt to setup the MSVC environment for this platform.
@@ -337,21 +353,35 @@ FOR %%P IN (%PLATFORMS%) DO (
         )
 
         REM
-        REM NOTE: When using MSVC 2012, the native SDK path cannot simply use
-        REM       the "lib" sub-directory beneath the location specified in the
-        REM       WindowsSdkDir environment variable because that location does
-        REM       not actually contain the necessary library files for x86.
-        REM       This must be done for each iteration because it relies upon
-        REM       the WindowsSdkDir environment variable being set by the batch
-        REM       file used to setup the MSVC environment.
+        REM NOTE: When using MSVC 2012 and/or 2013, the native SDK path cannot
+        REM       simply use the "lib" sub-directory beneath the location
+        REM       specified in the WindowsSdkDir environment variable because
+        REM       that location does not actually contain the necessary library
+        REM       files for x86.  This must be done for each iteration because
+        REM       it relies upon the WindowsSdkDir environment variable being
+        REM       set by the batch file used to setup the MSVC environment.
         REM
         IF DEFINED SET_NSDKLIBPATH (
+          REM
+          REM NOTE: The Windows Phone SDK has a slightly different directory
+          REM       structure and must be handled specially here.
+          REM
           IF DEFINED WindowsPhoneKitDir (
             CALL :fn_CopyVariable WindowsPhoneKitDir NSDKLIBPATH
             CALL :fn_AppendVariable NSDKLIBPATH \lib\x86
           ) ELSE IF DEFINED WindowsSdkDir (
             CALL :fn_CopyVariable WindowsSdkDir NSDKLIBPATH
-            CALL :fn_AppendVariable NSDKLIBPATH \lib\win8\um\x86
+
+            REM
+            REM NOTE: The Windows 8.1 SDK has a slightly different directory
+            REM       naming convention.  Currently, this tool assumes that
+            REM       the Windows 8.1 SDK should only be used with MSVC 2013.
+            REM
+            IF "%VisualStudioVersion%" == "12.0" (
+              CALL :fn_AppendVariable NSDKLIBPATH \lib\winv6.3\um\x86
+            ) ELSE (
+              CALL :fn_AppendVariable NSDKLIBPATH \lib\win8\um\x86
+            )
           )
         )
 
@@ -462,9 +492,9 @@ GOTO no_errors
   GOTO :EOF
 
 :fn_CopyVariable
-  SETLOCAL
   IF NOT DEFINED %1 GOTO :EOF
   IF "%2" == "" GOTO :EOF
+  SETLOCAL
   SET __ECHO_CMD=ECHO %%%1%%
   FOR /F "delims=" %%V IN ('%__ECHO_CMD%') DO (
     SET VALUE=%%V

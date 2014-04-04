@@ -63,6 +63,12 @@ static void set_options(Tcl_Interp *interp){
   Tcl_SetVar2(interp, "sqlite_options", "curdir", "0", TCL_GLOBAL_ONLY);
 #endif
 
+#ifdef SQLITE_WIN32_MALLOC
+  Tcl_SetVar2(interp, "sqlite_options", "win32malloc", "1", TCL_GLOBAL_ONLY);
+#else
+  Tcl_SetVar2(interp, "sqlite_options", "win32malloc", "0", TCL_GLOBAL_ONLY);
+#endif
+
 #ifdef SQLITE_DEBUG
   Tcl_SetVar2(interp, "sqlite_options", "debug", "1", TCL_GLOBAL_ONLY);
 #else
@@ -219,6 +225,12 @@ static void set_options(Tcl_Interp *interp){
   Tcl_SetVar2(interp, "sqlite_options", "check", "1", TCL_GLOBAL_ONLY);
 #endif
 
+#ifdef SQLITE_OMIT_CTE
+  Tcl_SetVar2(interp, "sqlite_options", "cte", "0", TCL_GLOBAL_ONLY);
+#else
+  Tcl_SetVar2(interp, "sqlite_options", "cte", "1", TCL_GLOBAL_ONLY);
+#endif
+
 #ifdef SQLITE_ENABLE_COLUMN_METADATA
   Tcl_SetVar2(interp, "sqlite_options", "columnmetadata", "1", TCL_GLOBAL_ONLY);
 #else
@@ -252,12 +264,7 @@ static void set_options(Tcl_Interp *interp){
 #endif
 
   Tcl_SetVar2(interp, "sqlite_options", "conflict", "1", TCL_GLOBAL_ONLY);
-
-#if SQLITE_OS_UNIX
   Tcl_SetVar2(interp, "sqlite_options", "crashtest", "1", TCL_GLOBAL_ONLY);
-#else
-  Tcl_SetVar2(interp, "sqlite_options", "crashtest", "0", TCL_GLOBAL_ONLY);
-#endif
 
 #ifdef SQLITE_OMIT_DATETIME_FUNCS
   Tcl_SetVar2(interp, "sqlite_options", "datetime", "0", TCL_GLOBAL_ONLY);
@@ -458,7 +465,12 @@ Tcl_SetVar2(interp, "sqlite_options", "mergesort", "1", TCL_GLOBAL_ONLY);
   Tcl_SetVar2(interp, "sqlite_options", "schema_version", "1", TCL_GLOBAL_ONLY);
 #endif
 
-#ifdef SQLITE_ENABLE_STAT3
+#ifdef SQLITE_ENABLE_STAT4
+  Tcl_SetVar2(interp, "sqlite_options", "stat4", "1", TCL_GLOBAL_ONLY);
+#else
+  Tcl_SetVar2(interp, "sqlite_options", "stat4", "0", TCL_GLOBAL_ONLY);
+#endif
+#if defined(SQLITE_ENABLE_STAT3) && !defined(SQLITE_ENABLE_STAT4)
   Tcl_SetVar2(interp, "sqlite_options", "stat3", "1", TCL_GLOBAL_ONLY);
 #else
   Tcl_SetVar2(interp, "sqlite_options", "stat3", "0", TCL_GLOBAL_ONLY);

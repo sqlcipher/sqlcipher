@@ -163,7 +163,8 @@ SRC = \
   $(TOP)/src/wal.c \
   $(TOP)/src/wal.h \
   $(TOP)/src/walker.c \
-  $(TOP)/src/where.c
+  $(TOP)/src/where.c \
+  $(TOP)/src/whereInt.h
 
 # Source code for extensions
 #
@@ -279,7 +280,9 @@ TESTSRC += \
   $(TOP)/ext/misc/percentile.c \
   $(TOP)/ext/misc/regexp.c \
   $(TOP)/ext/misc/spellfix.c \
-  $(TOP)/ext/misc/wholenumber.c
+  $(TOP)/ext/misc/totype.c \
+  $(TOP)/ext/misc/wholenumber.c \
+  $(TOP)/ext/misc/vfslog.c
 
 
 #TESTSRC += $(TOP)/ext/fts2/fts2_tokenizer.c
@@ -344,7 +347,8 @@ HDR = \
    $(TOP)/src/sqliteInt.h  \
    $(TOP)/src/sqliteLimit.h \
    $(TOP)/src/vdbe.h \
-   $(TOP)/src/vdbeInt.h
+   $(TOP)/src/vdbeInt.h \
+   $(TOP)/src/whereInt.h
 
 # Header files used by extensions
 #
@@ -385,7 +389,7 @@ mptester$(EXE):	sqlite3.c $(TOP)/mptest/mptest.c
 		$(TLIBS) $(THREADLIB)
 
 sqlite3.o:	sqlite3.c
-	$(TCCX) -c sqlite3.c
+	$(TCCX) -I. -c sqlite3.c
 
 # This target creates a directory named "tsrc" and fills it with
 # copies of all of the C source code and header files needed to
@@ -398,7 +402,7 @@ target_source:	$(SRC) $(TOP)/tool/vdbe-compress.tcl
 	mkdir tsrc
 	cp -f $(SRC) tsrc
 	rm tsrc/sqlite.h.in tsrc/parse.y
-	tclsh $(TOP)/tool/vdbe-compress.tcl <tsrc/vdbe.c >vdbe.new
+	tclsh $(TOP)/tool/vdbe-compress.tcl $(OPTS) <tsrc/vdbe.c >vdbe.new
 	mv vdbe.new tsrc/vdbe.c
 	touch target_source
 
@@ -618,6 +622,17 @@ $(TEST_EXTENSION): $(TOP)/src/test_loadext.c
 extensiontest: testfixture$(EXE) $(TEST_EXTENSION)
 	./testfixture$(EXE) $(TOP)/test/loadext.test
 
+showdb$(EXE):	$(TOP)/tool/showdb.c sqlite3.c
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o showdb$(EXE) \
+		$(TOP)/tool/showdb.c sqlite3.c
+
+wordcount$(EXE):	$(TOP)/test/wordcount.c sqlite3.c
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o wordcount$(EXE) \
+		$(TOP)/test/wordcount.c sqlite3.c
+
+speedtest1$(EXE):	$(TOP)/test/speedtest1.c sqlite3.o
+	$(TCC) -I. -o speedtest1$(EXE) $(TOP)/test/speedtest1.c sqlite3.o $(THREADLIB)
+
 # This target will fail if the SQLite amalgamation contains any exported
 # symbols that do not begin with "sqlite3_". It is run as part of the
 # releasetest.tcl script.
@@ -651,9 +666,10 @@ clean:
 	rm -f fts3-testfixture fts3-testfixture.exe
 	rm -f testfixture testfixture.exe
 	rm -f threadtest3 threadtest3.exe
-	rm -f sqlite3.c fts?amal.c tclsqlite3.c
+	rm -f sqlite3.c sqlite3-*.c fts?amal.c tclsqlite3.c
 	rm -f sqlite3rc.h
 	rm -f shell.c sqlite3ext.h
 	rm -f sqlite3_analyzer sqlite3_analyzer.exe sqlite3_analyzer.c
 	rm -f sqlite-*-output.vsix
 	rm -f mptester mptester.exe
+	rm -f showdb
