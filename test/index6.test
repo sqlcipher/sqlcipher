@@ -37,6 +37,13 @@ do_test index6-1.1 {
   }
 } {14 20 ok}
 
+# Make sure the count(*) optimization works correctly with
+# partial indices.  Ticket [a5c8ed66cae16243be6] 2013-10-03.
+#
+do_execsql_test index6-1.1.1 {
+  SELECT count(*) FROM t1;
+} {20}
+
 # Error conditions during parsing...
 #
 do_test index6-1.2 {
@@ -149,15 +156,15 @@ do_test index6-2.2 {
     SELECT * FROM t2 WHERE a=5;
   }
 } {/.* TABLE t2 USING INDEX t2a1 .*/}
-ifcapable stat3 {
-  do_test index6-2.3stat3 {
+ifcapable stat4||stat3 {
+  do_test index6-2.3stat4 {
     execsql {
       EXPLAIN QUERY PLAN
       SELECT * FROM t2 WHERE a IS NOT NULL;
     }
   } {/.* TABLE t2 USING INDEX t2a1 .*/}
 } else {
-  do_test index6-2.3stat3 {
+  do_test index6-2.3stat4 {
     execsql {
       EXPLAIN QUERY PLAN
       SELECT * FROM t2 WHERE a IS NOT NULL AND a>0;
@@ -213,7 +220,7 @@ do_test index6-3.2 {
   catchsql {
     INSERT INTO t3(a,b) VALUES(150, 'test1');
   }
-} {1 {column a is not unique}}
+} {1 {UNIQUE constraint failed: t3.a}}
 do_test index6-3.3 {
   # can insert multiple rows with a==999 because such rows are not
   # part of the unique index.

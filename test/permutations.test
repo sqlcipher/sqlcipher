@@ -195,6 +195,7 @@ test_suite "fts3" -prefix "" -description {
   fts3conf.test fts3prefix.test fts3fault2.test fts3corrupt.test
   fts3corrupt2.test fts3first.test fts4langid.test fts4merge.test
   fts4check.test fts4unicode.test fts4noti.test
+  fts3varint.test
 }
 
 test_suite "nofaultsim" -prefix "" -description {
@@ -289,6 +290,17 @@ test_suite "queryplanner" -prefix "" -description {
   where.test
 }
 
+test_suite "vfslog" -prefix "" -description {
+  "Vfslog" quick test suite. Like "veryquick" except does not omits
+  a few tests that do not work with a version 1 VFS. And the quota* tests,
+  which do not work with a VFS that uses the pVfs argument passed to
+  sqlite3_vfs methods.
+} -files [
+  test_set $allquicktests -exclude *malloc* *ioerr* *fault* oserror.test \
+  pager1.test syscall.test sysfault.test tkt3457.test quota* superlock* \
+  wal* mmap*
+]
+
 lappend ::testsuitelist xxx
 #-------------------------------------------------------------------------
 # Define the coverage related test suites:
@@ -309,6 +321,14 @@ test_suite "coverage-pager" -description {
 } -files {
   pager1.test    pager2.test  pagerfault.test  pagerfault2.test
   walfault.test  walbak.test  journal2.test    tkt-9d68c883.test
+} 
+
+test_suite "coverage-analyze" -description {
+  Coverage tests for file analyze.c.
+} -files {
+  analyze3.test analyze4.test analyze5.test analyze6.test
+  analyze7.test analyze8.test analyze9.test analyzeA.test
+  analyze.test analyzeB.test mallocA.test
 } 
 
 
@@ -500,6 +520,8 @@ test_suite "utf16" -description {
   pragma encoding = 'UTF-16'
 } -files {
     alter.test alter3.test
+    analyze.test analyze3.test analyze4.test analyze5.test analyze6.test
+    analyze7.test analyze8.test analyze9.test analyzeA.test analyzeB.test
     auth.test bind.test blob.test capi2.test capi3.test collate1.test
     collate2.test collate3.test collate4.test collate5.test collate6.test
     conflict.test date.test delete.test expr.test fkey1.test func.test
@@ -620,7 +642,7 @@ test_suite "inmemory_journal" -description {
   ioerr.test ioerr2.test ioerr3.test ioerr4.test ioerr5.test
   vacuum3.test incrblob_err.test diskfull.test backup_ioerr.test
   e_fts3.test fts3cov.test fts3malloc.test fts3rnd.test
-  fts3snippet.test
+  fts3snippet.test mmapfault.test
 
   # Exclude test scripts that use tcl IO to access journal files or count
   # the number of fsync() calls.

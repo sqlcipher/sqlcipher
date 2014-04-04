@@ -84,32 +84,6 @@
 #endif
 
 /*
-** These #defines should enable >2GB file support on Posix if the
-** underlying operating system supports it.  If the OS lacks
-** large file support, these should be no-ops.
-**
-** Large file support can be disabled using the -DSQLITE_DISABLE_LFS switch
-** on the compiler command line.  This is necessary if you are compiling
-** on a recent machine (ex: RedHat 7.2) but you want your code to work
-** on an older machine (ex: RedHat 6.0).  If you compile on RedHat 7.2
-** without this option, LFS is enable.  But LFS does not exist in the kernel
-** in RedHat 6.0, so the code won't work.  Hence, for maximum binary
-** portability you should omit LFS.
-**
-** The previous paragraph was written in 2005.  (This paragraph is written
-** on 2008-11-28.) These days, all Linux kernels support large files, so
-** you should probably leave LFS enabled.  But some embedded platforms might
-** lack LFS in which case the SQLITE_DISABLE_LFS macro might still be useful.
-*/
-#ifndef SQLITE_DISABLE_LFS
-# define _LARGE_FILE       1
-# ifndef _FILE_OFFSET_BITS
-#   define _FILE_OFFSET_BITS 64
-# endif
-# define _LARGEFILE_SOURCE 1
-#endif
-
-/*
 ** standard include files.
 */
 #include <sys/types.h>
@@ -218,11 +192,13 @@ struct unixFile {
   const char *zPath;                  /* Name of the file */
   unixShm *pShm;                      /* Shared memory segment information */
   int szChunk;                        /* Configured by FCNTL_CHUNK_SIZE */
+#if SQLITE_MAX_MMAP_SIZE>0
   int nFetchOut;                      /* Number of outstanding xFetch refs */
   sqlite3_int64 mmapSize;             /* Usable size of mapping at pMapRegion */
   sqlite3_int64 mmapSizeActual;       /* Actual size of mapping at pMapRegion */
   sqlite3_int64 mmapSizeMax;          /* Configured FCNTL_MMAP_SIZE value */
   void *pMapRegion;                   /* Memory mapped region */
+#endif
 #ifdef __QNXNTO__
   int sectorSize;                     /* Device sector size */
   int deviceCharacteristics;          /* Precomputed device characteristics */
@@ -257,6 +233,12 @@ struct unixFile {
   char aPadding[32];
 #endif
 };
+
+/* This variable holds the process id (pid) from when the xRandomness()
+** method was called.  If xOpen() is called from a different process id,
+** indicating that a fork() has occurred, the PRNG will be reset.
+*/
+static int randomnessPid = 0;
 
 /*
 ** Allowed values for the unixFile.ctrlFlags bitmask:
@@ -449,6 +431,7 @@ static struct unix_syscall {
   { "fchown",       (sqlite3_syscall_ptr)posixFchown,     0 },
 #define osFchown    ((int(*)(int,uid_t,gid_t))aSyscall[20].pCurrent)
 
+#if !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0
   { "mmap",       (sqlite3_syscall_ptr)mmap,     0 },
 #define osMmap ((void*(*)(void*,size_t,int,int,int,off_t))aSyscall[21].pCurrent)
 
@@ -461,6 +444,7 @@ static struct unix_syscall {
   { "mremap",       (sqlite3_syscall_ptr)0,               0 },
 #endif
 #define osMremap ((void*(*)(void*,size_t,size_t,int,...))aSyscall[23].pCurrent)
+#endif
 
 }; /* End of the overrideable system calls */
 
@@ -548,6 +532,15 @@ static const char *unixNextSystemCall(sqlite3_vfs *p, const char *zName){
 }
 
 /*
+** Do not accept any file descriptor less than this value, in order to avoid
+** opening database file using file descriptors that are commonly used for 
+** standard input, output, and error.
+*/
+#ifndef SQLITE_MINIMUM_FILE_DESCRIPTOR
+# define SQLITE_MINIMUM_FILE_DESCRIPTOR 3
+#endif
+
+/*
 ** Invoke open().  Do so multiple times, until it either succeeds or
 ** fails for some reason other than EINTR.
 **
@@ -567,13 +560,23 @@ static const char *unixNextSystemCall(sqlite3_vfs *p, const char *zName){
 static int robust_open(const char *z, int f, mode_t m){
   int fd;
   mode_t m2 = m ? m : SQLITE_DEFAULT_FILE_PERMISSIONS;
-  do{
+  while(1){
 #if defined(O_CLOEXEC)
     fd = osOpen(z,f|O_CLOEXEC,m2);
 #else
     fd = osOpen(z,f,m2);
 #endif
-  }while( fd<0 && errno==EINTR );
+    if( fd<0 ){
+      if( errno==EINTR ) continue;
+      break;
+    }
+    if( fd>=SQLITE_MINIMUM_FILE_DESCRIPTOR ) break;
+    osClose(fd);
+    sqlite3_log(SQLITE_WARNING, 
+                "attempt to open \"%s\" as file descriptor %d", z, fd);
+    fd = -1;
+    if( osOpen("/dev/null", f, m)<0 ) break;
+  }
   if( fd>=0 ){
     if( m!=0 ){
       struct stat statbuf;
@@ -1292,6 +1295,15 @@ static int findInodeInfo(
   return SQLITE_OK;
 }
 
+/*
+** Return TRUE if pFile has been renamed or unlinked since it was first opened.
+*/
+static int fileHasMoved(unixFile *pFile){
+  struct stat buf;
+  return pFile->pInode!=0 &&
+         (osStat(pFile->zPath, &buf)!=0 || buf.st_ino!=pFile->pInode->fileId.ino);
+}
+
 
 /*
 ** Check a unixFile that is a database.  Verify the following:
@@ -1326,10 +1338,7 @@ static void verifyDbFile(unixFile *pFile){
     pFile->ctrlFlags |= UNIXFILE_WARNED;
     return;
   }
-  if( pFile->pInode!=0
-   && ((rc = osStat(pFile->zPath, &buf))!=0
-       || buf.st_ino!=pFile->pInode->fileId.ino)
-  ){
+  if( fileHasMoved(pFile) ){
     sqlite3_log(SQLITE_WARNING, "file renamed while open: %s", pFile->zPath);
     pFile->ctrlFlags |= UNIXFILE_WARNED;
     return;
@@ -1867,12 +1876,16 @@ end_unlock:
 ** the requested locking level, this routine is a no-op.
 */
 static int unixUnlock(sqlite3_file *id, int eFileLock){
+#if SQLITE_MAX_MMAP_SIZE>0
   assert( eFileLock==SHARED_LOCK || ((unixFile *)id)->nFetchOut==0 );
+#endif
   return posixUnlock(id, eFileLock, 0);
 }
 
+#if SQLITE_MAX_MMAP_SIZE>0
 static int unixMapfile(unixFile *pFd, i64 nByte);
 static void unixUnmapfile(unixFile *pFd);
+#endif
 
 /*
 ** This function performs the parts of the "close file" operation 
@@ -1886,7 +1899,9 @@ static void unixUnmapfile(unixFile *pFd);
 */
 static int closeUnixFile(sqlite3_file *id){
   unixFile *pFile = (unixFile*)id;
+#if SQLITE_MAX_MMAP_SIZE>0
   unixUnmapfile(pFile);
+#endif
   if( pFile->h>=0 ){
     robust_close(pFile, pFile->h, __LINE__);
     pFile->h = -1;
@@ -3091,6 +3106,7 @@ static int seekAndRead(unixFile *id, sqlite3_int64 offset, void *pBuf, int cnt){
 #endif
   TIMER_START;
   assert( cnt==(cnt&0x1ffff) );
+  assert( id->h>2 );
   cnt &= 0x1ffff;
   do{
 #if defined(USE_PREAD)
@@ -3205,6 +3221,7 @@ static int seekAndWriteFd(
   int rc = 0;                     /* Value returned by system call */
 
   assert( nBuf==(nBuf&0x1ffff) );
+  assert( fd>2 );
   nBuf &= 0x1ffff;
   TIMER_START;
 
@@ -3590,6 +3607,7 @@ static int unixTruncate(sqlite3_file *id, i64 nByte){
     }
 #endif
 
+#if SQLITE_MAX_MMAP_SIZE>0
     /* If the file was just truncated to a size smaller than the currently
     ** mapped region, reduce the effective mapping size as well. SQLite will
     ** use read() and write() to access data beyond this point from now on.  
@@ -3597,6 +3615,7 @@ static int unixTruncate(sqlite3_file *id, i64 nByte){
     if( nByte<pFile->mmapSize ){
       pFile->mmapSize = nByte;
     }
+#endif
 
     return SQLITE_OK;
   }
@@ -3686,6 +3705,7 @@ static int fcntlSizeHint(unixFile *pFile, i64 nByte){
     }
   }
 
+#if SQLITE_MAX_MMAP_SIZE>0
   if( pFile->mmapSizeMax>0 && nByte>pFile->mmapSize ){
     int rc;
     if( pFile->szChunk<=0 ){
@@ -3698,6 +3718,7 @@ static int fcntlSizeHint(unixFile *pFile, i64 nByte){
     rc = unixMapfile(pFile, nByte);
     return rc;
   }
+#endif
 
   return SQLITE_OK;
 }
@@ -3766,6 +3787,11 @@ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
       }
       return SQLITE_OK;
     }
+    case SQLITE_FCNTL_HAS_MOVED: {
+      *(int*)pArg = fileHasMoved(pFile);
+      return SQLITE_OK;
+    }
+#if SQLITE_MAX_MMAP_SIZE>0
     case SQLITE_FCNTL_MMAP_SIZE: {
       i64 newLimit = *(i64*)pArg;
       int rc = SQLITE_OK;
@@ -3782,6 +3808,7 @@ static int unixFileControl(sqlite3_file *id, int op, void *pArg){
       }
       return rc;
     }
+#endif
 #ifdef SQLITE_DEBUG
     /* The pager calls this method to signal that it has done
     ** a rollback and that the database is therefore unchanged and
@@ -4044,7 +4071,7 @@ static int unixShmSystemLock(
 #ifdef SQLITE_DEBUG
   { u16 mask;
   OSTRACE(("SHM-LOCK "));
-  mask = (1<<(ofst+n)) - (1<<ofst);
+  mask = ofst>31 ? 0xffff : (1<<(ofst+n)) - (1<<ofst);
   if( rc==SQLITE_OK ){
     if( lockType==F_UNLCK ){
       OSTRACE(("unlock %d ok", ofst));
@@ -4592,22 +4619,20 @@ static int unixShmUnmap(
 # define unixShmUnmap   0
 #endif /* #ifndef SQLITE_OMIT_WAL */
 
+#if SQLITE_MAX_MMAP_SIZE>0
 /*
 ** If it is currently memory mapped, unmap file pFd.
 */
 static void unixUnmapfile(unixFile *pFd){
   assert( pFd->nFetchOut==0 );
-#if SQLITE_MAX_MMAP_SIZE>0
   if( pFd->pMapRegion ){
     osMunmap(pFd->pMapRegion, pFd->mmapSizeActual);
     pFd->pMapRegion = 0;
     pFd->mmapSize = 0;
     pFd->mmapSizeActual = 0;
   }
-#endif
 }
 
-#if SQLITE_MAX_MMAP_SIZE>0
 /*
 ** Return the system page size.
 */
@@ -4620,9 +4645,7 @@ static int unixGetPagesize(void){
   return (int)sysconf(_SC_PAGESIZE);
 #endif
 }
-#endif /* SQLITE_MAX_MMAP_SIZE>0 */
 
-#if SQLITE_MAX_MMAP_SIZE>0
 /*
 ** Attempt to set the size of the memory mapping maintained by file 
 ** descriptor pFd to nNew bytes. Any existing mapping is discarded.
@@ -4707,7 +4730,6 @@ static void unixRemapfile(
   pFd->pMapRegion = (void *)pNew;
   pFd->mmapSize = pFd->mmapSizeActual = nNew;
 }
-#endif
 
 /*
 ** Memory map or remap the file opened by file-descriptor pFd (if the file
@@ -4726,7 +4748,6 @@ static void unixRemapfile(
 ** code otherwise.
 */
 static int unixMapfile(unixFile *pFd, i64 nByte){
-#if SQLITE_MAX_MMAP_SIZE>0
   i64 nMap = nByte;
   int rc;
 
@@ -4752,10 +4773,10 @@ static int unixMapfile(unixFile *pFd, i64 nByte){
       unixUnmapfile(pFd);
     }
   }
-#endif
 
   return SQLITE_OK;
 }
+#endif /* SQLITE_MAX_MMAP_SIZE>0 */
 
 /*
 ** If possible, return a pointer to a mapping of file fd starting at offset
@@ -4801,6 +4822,7 @@ static int unixFetch(sqlite3_file *fd, i64 iOff, int nAmt, void **pp){
 ** may now be invalid and should be unmapped.
 */
 static int unixUnfetch(sqlite3_file *fd, i64 iOff, void *p){
+#if SQLITE_MAX_MMAP_SIZE>0
   unixFile *pFd = (unixFile *)fd;   /* The underlying database file */
   UNUSED_PARAMETER(iOff);
 
@@ -4819,6 +4841,11 @@ static int unixUnfetch(sqlite3_file *fd, i64 iOff, void *p){
   }
 
   assert( pFd->nFetchOut>=0 );
+#else
+  UNUSED_PARAMETER(fd);
+  UNUSED_PARAMETER(p);
+  UNUSED_PARAMETER(iOff);
+#endif
   return SQLITE_OK;
 }
 
@@ -5150,7 +5177,9 @@ static int fillInUnixFile(
   pNew->pVfs = pVfs;
   pNew->zPath = zFilename;
   pNew->ctrlFlags = (u8)ctrlFlags;
+#if SQLITE_MAX_MMAP_SIZE>0
   pNew->mmapSizeMax = sqlite3GlobalConfig.szMmap;
+#endif
   if( sqlite3_uri_boolean(((ctrlFlags & UNIXFILE_URI) ? zFilename : 0),
                            "psow", SQLITE_POWERSAFE_OVERWRITE) ){
     pNew->ctrlFlags |= UNIXFILE_PSOW;
@@ -5307,6 +5336,7 @@ static const char *unixTempFileDir(void){
   static const char *azDirs[] = {
      0,
      0,
+     0,
      "/var/tmp",
      "/usr/tmp",
      "/tmp",
@@ -5317,7 +5347,8 @@ static const char *unixTempFileDir(void){
   const char *zDir = 0;
 
   azDirs[0] = sqlite3_temp_directory;
-  if( !azDirs[1] ) azDirs[1] = getenv("TMPDIR");
+  if( !azDirs[1] ) azDirs[1] = getenv("SQLITE_TMPDIR");
+  if( !azDirs[2] ) azDirs[2] = getenv("TMPDIR");
   for(i=0; i<sizeof(azDirs)/sizeof(azDirs[0]); zDir=azDirs[i++]){
     if( zDir==0 ) continue;
     if( osStat(zDir, &buf) ) continue;
@@ -5603,6 +5634,16 @@ static int unixOpen(
        || eType==SQLITE_OPEN_SUBJOURNAL   || eType==SQLITE_OPEN_MASTER_JOURNAL 
        || eType==SQLITE_OPEN_TRANSIENT_DB || eType==SQLITE_OPEN_WAL
   );
+
+  /* Detect a pid change and reset the PRNG.  There is a race condition
+  ** here such that two or more threads all trying to open databases at
+  ** the same instant might all reset the PRNG.  But multiple resets
+  ** are harmless.
+  */
+  if( randomnessPid!=getpid() ){
+    randomnessPid = getpid();
+    sqlite3_randomness(0,0);
+  }
 
   memset(p, 0, sizeof(unixFile));
 
@@ -5991,18 +6032,18 @@ static int unixRandomness(sqlite3_vfs *NotUsed, int nBuf, char *zBuf){
   ** tests repeatable.
   */
   memset(zBuf, 0, nBuf);
+  randomnessPid = getpid();  
 #if !defined(SQLITE_TEST)
   {
-    int pid, fd, got;
+    int fd, got;
     fd = robust_open("/dev/urandom", O_RDONLY, 0);
     if( fd<0 ){
       time_t t;
       time(&t);
       memcpy(zBuf, &t, sizeof(t));
-      pid = getpid();
-      memcpy(&zBuf[sizeof(t)], &pid, sizeof(pid));
-      assert( sizeof(t)+sizeof(pid)<=(size_t)nBuf );
-      nBuf = sizeof(t) + sizeof(pid);
+      memcpy(&zBuf[sizeof(t)], &randomnessPid, sizeof(randomnessPid));
+      assert( sizeof(t)+sizeof(randomnessPid)<=(size_t)nBuf );
+      nBuf = sizeof(t) + sizeof(randomnessPid);
     }else{
       do{ got = osRead(fd, zBuf, nBuf); }while( got<0 && errno==EINTR );
       robust_close(0, fd, __LINE__);

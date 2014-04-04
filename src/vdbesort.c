@@ -386,7 +386,7 @@ static int vdbeSorterIterInit(
 */
 static void vdbeSorterCompare(
   const VdbeCursor *pCsr,         /* Cursor object (for pKeyInfo) */
-  int bOmitRowid,                 /* Ignore rowid field at end of keys */
+  int nIgnore,                    /* Ignore the last nIgnore fields */
   const void *pKey1, int nKey1,   /* Left side of comparison */
   const void *pKey2, int nKey2,   /* Right side of comparison */
   int *pRes                       /* OUT: Result of comparison */
@@ -400,8 +400,8 @@ static void vdbeSorterCompare(
     sqlite3VdbeRecordUnpack(pKeyInfo, nKey2, pKey2, r2);
   }
 
-  if( bOmitRowid ){
-    r2->nField = pKeyInfo->nField;
+  if( nIgnore ){
+    r2->nField = pKeyInfo->nField - nIgnore;
     assert( r2->nField>0 );
     for(i=0; i<r2->nField; i++){
       if( r2->aMem[i].flags & MEM_Null ){
@@ -409,10 +409,10 @@ static void vdbeSorterCompare(
         return;
       }
     }
-    r2->flags |= UNPACKED_PREFIX_MATCH;
+    assert( r2->default_rc==0 );
   }
 
-  *pRes = sqlite3VdbeRecordCompare(nKey1, pKey1, r2);
+  *pRes = sqlite3VdbeRecordCompare(nKey1, pKey1, r2, 0);
 }
 
 /*
@@ -1027,12 +1027,13 @@ int sqlite3VdbeSorterRowkey(const VdbeCursor *pCsr, Mem *pOut){
 int sqlite3VdbeSorterCompare(
   const VdbeCursor *pCsr,         /* Sorter cursor */
   Mem *pVal,                      /* Value to compare to current sorter key */
+  int nIgnore,                    /* Ignore this many fields at the end */
   int *pRes                       /* OUT: Result of comparison */
 ){
   VdbeSorter *pSorter = pCsr->pSorter;
   void *pKey; int nKey;           /* Sorter key to compare pVal with */
 
   pKey = vdbeSorterRowkey(pSorter, &nKey);
-  vdbeSorterCompare(pCsr, 1, pVal->z, pVal->n, pKey, nKey, pRes);
+  vdbeSorterCompare(pCsr, nIgnore, pVal->z, pVal->n, pKey, nKey, pRes);
   return SQLITE_OK;
 }

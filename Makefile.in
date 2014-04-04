@@ -281,7 +281,8 @@ SRC = \
   $(TOP)/src/wal.c \
   $(TOP)/src/wal.h \
   $(TOP)/src/walker.c \
-  $(TOP)/src/where.c
+  $(TOP)/src/where.c \
+  $(TOP)/src/whereInt.h
 
 # Source code for extensions
 #
@@ -396,6 +397,7 @@ TESTSRC += \
   $(TOP)/ext/misc/percentile.c \
   $(TOP)/ext/misc/regexp.c \
   $(TOP)/ext/misc/spellfix.c \
+  $(TOP)/ext/misc/totype.c \
   $(TOP)/ext/misc/wholenumber.c
 
 # Source code to the library files needed by the test fixture
@@ -464,6 +466,7 @@ HDR = \
    $(TOP)/src/sqliteLimit.h \
    $(TOP)/src/vdbe.h \
    $(TOP)/src/vdbeInt.h \
+   $(TOP)/src/whereInt.h \
    config.h
 
 # Header files used by extensions
@@ -500,11 +503,11 @@ sqlite3.pc: $(TOP)/sqlite3.pc.in
 	./config.status
 
 libsqlite3.la:	$(LIBOBJ)
-	$(LTLINK) -o $@ $(LIBOBJ) $(TLIBS) \
+	$(LTLINK) -no-undefined -o $@ $(LIBOBJ) $(TLIBS) \
 		${ALLOWRELEASE} -rpath "$(libdir)" -version-info "8:6:8"
 
 libtclsqlite3.la:	tclsqlite.lo libsqlite3.la
-	$(LTLINK) -o $@ tclsqlite.lo \
+	$(LTLINK) -no-undefined -o $@ tclsqlite.lo \
 		libsqlite3.la @TCL_STUB_LIB_SPEC@ $(TLIBS) \
 		-rpath "$(TCLLIBDIR)" \
 		-version-info "8:6:8" \
@@ -531,7 +534,7 @@ mptester$(EXE):	sqlite3.c $(TOP)/mptest/mptest.c
 	mkdir tsrc
 	cp -f $(SRC) tsrc
 	rm tsrc/sqlite.h.in tsrc/parse.y
-	$(TCLSH_CMD) $(TOP)/tool/vdbe-compress.tcl <tsrc/vdbe.c >vdbe.new
+	$(TCLSH_CMD) $(TOP)/tool/vdbe-compress.tcl $(OPTS) <tsrc/vdbe.c >vdbe.new
 	mv vdbe.new tsrc/vdbe.c
 	touch .target_source
 
@@ -930,6 +933,15 @@ sqlite3_analyzer.c: sqlite3.c $(TOP)/src/test_stat.c $(TOP)/src/tclsqlite.c $(TO
 
 sqlite3_analyzer$(TEXE): sqlite3_analyzer.c
 	$(LTLINK) sqlite3_analyzer.c -o $@ $(LIBTCL) $(TLIBS)
+
+showdb$(TEXE):	$(TOP)/tool/showdb.c sqlite3.c
+	$(LTLINK) -o $@ $(TOP)/tool/showdb.c sqlite3.c $(TLIBS)
+
+wordcount$(TEXE):	$(TOP)/test/wordcount.c sqlite3.c
+	$(LTLINK) -o $@ $(TOP)/test/wordcount.c sqlite3.c $(TLIBS)
+
+speedtest1$(TEXE):	$(TOP)/test/wordcount.c sqlite3.lo
+	$(LTLINK) -o $@ $(TOP)/test/speedtest1.c sqlite3.lo $(TLIBS)
 
 # Standard install and cleanup targets
 #

@@ -237,10 +237,10 @@ do_test where-1.34 {
 } {97 99}
 do_test where-1.35 {
   count {SELECT w FROM t1 WHERE w<3}
-} {1 2 2}
+} {1 2 3}
 do_test where-1.36 {
   count {SELECT w FROM t1 WHERE w<=3}
-} {1 2 3 3}
+} {1 2 3 4}
 do_test where-1.37 {
   count {SELECT w FROM t1 WHERE w+1<=4 ORDER BY w}
 } {1 2 3 99}
@@ -1125,9 +1125,9 @@ do_test where-13.12 {
 if {[permutation] != "no_optimization"} {
 do_test where-14.1 {
   execsql {
-    CREATE TABLE t8(a INTEGER PRIMARY KEY, b TEXT UNIQUE);
-    INSERT INTO t8 VALUES(1,'one');
-    INSERT INTO t8 VALUES(4,'four');
+    CREATE TABLE t8(a INTEGER PRIMARY KEY, b TEXT UNIQUE, c CHAR(100));
+    INSERT INTO t8(a,b) VALUES(1,'one');
+    INSERT INTO t8(a,b) VALUES(4,'four');
   }
   cksort {
     SELECT x.a || '/' || y.a FROM t8 x, t8 y ORDER BY x.a, y.b
@@ -1303,5 +1303,34 @@ do_test where-17.5 {
     SELECT id, a FROM tbooking, tother WHERE id>a;
   }
 } {42 1 43 1}
+
+# Ticket [be84e357c035d068135f20bcfe82761bbf95006b]  2013-09-03
+# Segfault during query involving LEFT JOIN column in the ORDER BY clause.
+#
+do_execsql_test where-18.1 {
+  CREATE TABLE t181(a);
+  CREATE TABLE t182(b,c);
+  INSERT INTO t181 VALUES(1);
+  SELECT DISTINCT a FROM t181 LEFT JOIN t182 ON a=b ORDER BY c IS NULL;
+} {1}
+do_execsql_test where-18.2 {
+  SELECT DISTINCT a FROM t181 LEFT JOIN t182 ON a=b ORDER BY +c;
+} {1}
+do_execsql_test where-18.3 {
+  SELECT DISTINCT a FROM t181 LEFT JOIN t182 ON a=b ORDER BY c;
+} {1}
+do_execsql_test where-18.4 {
+  INSERT INTO t181 VALUES(1),(1),(1),(1);
+  SELECT DISTINCT a FROM t181 LEFT JOIN t182 ON a=b ORDER BY +c;
+} {1}
+do_execsql_test where-18.5 {
+  INSERT INTO t181 VALUES(2);
+  SELECT DISTINCT a FROM t181 LEFT JOIN t182 ON a=b ORDER BY c IS NULL, +a;
+} {1 2}
+do_execsql_test where-18.6 {
+  INSERT INTO t181 VALUES(2);
+  SELECT DISTINCT a FROM t181 LEFT JOIN t182 ON a=b ORDER BY +a, +c IS NULL;
+} {1 2}
+
 
 finish_test
