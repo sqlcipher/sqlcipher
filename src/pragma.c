@@ -790,6 +790,15 @@ void sqlite3Pragma(
     goto pragma_out;
   }
 
+/* BEGIN SQLCIPHER */
+#ifdef SQLITE_HAS_CODEC
+  if(sqlcipher_codec_pragma(db, iDb, pParse, zLeft, zRight)) { 
+    /* sqlcipher_codec_pragma executes internal */
+    goto pragma_out;
+  }
+#endif
+/* END SQLCIPHER */  
+
   /* Locate the pragma in the lookup table */
   lwr = 0;
   upr = ArraySize(aPragmaNames)-1;
@@ -2308,14 +2317,6 @@ void sqlite3Pragma(
 #endif
 
   } /* End of the PRAGMA switch */
-
-/* BEGIN SQLCIPHER */
-#ifdef SQLITE_HAS_CODEC
-  if(sqlcipher_codec_pragma(db, iDb, pParse, zLeft, zRight)) { 
-    /* sqlcipher_codec_pragma executes internal */
-  }
-  #endif
-/* END SQLCIPHER */  
 
 pragma_out:
   sqlite3DbFree(db, zLeft);
