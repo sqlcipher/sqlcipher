@@ -1,3 +1,4 @@
+*.DS_Store
 *.lo
 *.o
 *.mode1v3
