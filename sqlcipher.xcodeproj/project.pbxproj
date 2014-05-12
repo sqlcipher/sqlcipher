@@ -184,6 +184,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				"ARCHS[sdk=iphoneos*]" = (
+					armv7s,
+					armv7,
+					arm64,
+				);
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				GCC_DYNAMIC_NO_PIC = NO;
@@ -207,6 +212,7 @@
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
+				VALID_ARCHS = "i386 arm64 x86_64 armv7 armv6 armv7s";
 			};
 			name = Debug;
 		};
@@ -214,6 +220,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				"ARCHS[sdk=iphoneos*]" = (
+					armv7s,
+					armv7,
+					arm64,
+				);
 				COMBINE_HIDPI_IMAGES = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				GCC_MODEL_TUNING = G5;
@@ -239,6 +250,7 @@
 				);
 				OTHER_LDFLAGS = "";
 				PRODUCT_NAME = sqlcipher;
+				VALID_ARCHS = "i386 arm64 x86_64 armv7 armv6 armv7s";
 			};
 			name = Release;
 		};
