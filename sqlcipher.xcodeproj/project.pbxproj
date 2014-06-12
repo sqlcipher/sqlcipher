@@ -367,6 +367,76 @@
 			};
 			name = Release;
 		};
+		658183981949FFE400128CAE /* Alpha */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"ARCHS[sdk=iphoneos*]" = (
+					armv7s,
+					armv7,
+				);
+				"ARCHS[sdk=macosx*]" = (
+					x86_64,
+					i386,
+				);
+				GCC_C_LANGUAGE_STANDARD = c99;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = "$(PLATFORM_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphonesimulator macosx iphoneos";
+			};
+			name = Alpha;
+		};
+		658183991949FFE400128CAE /* Alpha */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				"ARCHS[sdk=iphoneos*]" = (
+					armv7s,
+					armv7,
+					arm64,
+				);
+				COMBINE_HIDPI_IMAGES = YES;
+				COPY_PHASE_STRIP = NO;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_MODEL_TUNING = G5;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)",
+					"$(OPENSSL_SRC)/include",
+				);
+				INSTALL_PATH = /usr/local/lib;
+				ONLY_ACTIVE_ARCH = NO;
+				OTHER_CFLAGS = (
+					"-DSQLITE_HAS_CODEC",
+					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
+				);
+				"OTHER_CFLAGS[arch=armv6]" = (
+					"-mno-thumb",
+					"-DSQLITE_HAS_CODEC",
+					"-DSQLITE_TEMP_STORE=2",
+					"-DSQLITE_THREADSAFE",
+				);
+				OTHER_LDFLAGS = "";
+				PRODUCT_NAME = sqlcipher;
+				VALID_ARCHS = "i386 arm64 x86_64 armv7 armv6 armv7s";
+			};
+			name = Alpha;
+		};
+		6581839A1949FFE400128CAE /* Alpha */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				COPY_PHASE_STRIP = NO;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				PRODUCT_NAME = amalgamation;
+			};
+			name = Alpha;
+		};
 		9069D08C0FCE185A0042E34C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -397,6 +467,7 @@
 			buildConfigurations = (
 				1DEB91EC08733DB70010E9CD /* Debug */,
 				00C0BACA19266A8700307B8C /* Staging */,
+				658183991949FFE400128CAE /* Alpha */,
 				1DEB91ED08733DB70010E9CD /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -407,6 +478,7 @@
 			buildConfigurations = (
 				1DEB91F008733DB70010E9CD /* Debug */,
 				00C0BAC919266A8700307B8C /* Staging */,
+				658183981949FFE400128CAE /* Alpha */,
 				1DEB91F108733DB70010E9CD /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -417,6 +489,7 @@
 			buildConfigurations = (
 				9069D08C0FCE185A0042E34C /* Debug */,
 				00C0BACB19266A8700307B8C /* Staging */,
+				6581839A1949FFE400128CAE /* Alpha */,
 				9069D08D0FCE185A0042E34C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
