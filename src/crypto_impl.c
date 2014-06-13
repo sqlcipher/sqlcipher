@@ -47,6 +47,7 @@
    to keep track of read / write state separately. The following
    struct and associated functions are defined here */
 typedef struct {
+  int store_pass;
   int derive_key;
   int kdf_iter;
   int fast_kdf_iter;
@@ -399,6 +400,19 @@ static int sqlcipher_cipher_ctx_set_keyspec(cipher_ctx *ctx, const unsigned char
   cipher_bin2hex(salt, salt_sz, ctx->keyspec + (key_sz * 2) + 2);
   ctx->keyspec[ctx->keyspec_sz - 1] = '\'';
   return SQLITE_OK;
+}
+
+static int sqlcipher_codec_get_store_pass(codec_ctx *ctx) {
+  return ctx->read_ctx->store_pass;
+}
+
+static void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value) {
+  ctx->read_ctx->store_pass = value;
+}
+
+static void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
+  *zKey = ctx->read_ctx->pass;
+  *nKey = ctx->read_ctx->pass_sz;
 }
 
 /**
@@ -897,8 +911,10 @@ int sqlcipher_codec_key_derive(codec_ctx *ctx) {
   }
 
   /* TODO: wipe and free passphrase after key derivation */
-  sqlcipher_cipher_ctx_set_pass(ctx->read_ctx, NULL, 0);
-  sqlcipher_cipher_ctx_set_pass(ctx->write_ctx, NULL, 0);
+  if(ctx->read_ctx->store_pass  != 1) {
+    sqlcipher_cipher_ctx_set_pass(ctx->read_ctx, NULL, 0);
+    sqlcipher_cipher_ctx_set_pass(ctx->write_ctx, NULL, 0);
+  }
 
   return SQLITE_OK; 
 }
