@@ -310,9 +310,7 @@ static void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   * returns 1 otherwise
   */
 static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
-  CODEC_TRACE(("sqlcipher_cipher_ctx_cmp: entered c1=%p c2=%p\n", c1, c2));
-
-  if(
+  int are_equal = (
     c1->iv_sz == c2->iv_sz
     && c1->kdf_iter == c2->kdf_iter
     && c1->fast_kdf_iter == c2->fast_kdf_iter
@@ -326,9 +324,43 @@ static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
       || !sqlcipher_memcmp((const unsigned char*)c1->pass,
                            (const unsigned char*)c2->pass,
                            c1->pass_sz)
-    ) 
-  ) return 0;
-  return 1;
+    ));
+
+  CODEC_TRACE(("sqlcipher_cipher_ctx_cmp: entered \
+                  c1=%p c2=%p \
+                  c1->iv_sz=%d c2->iv_sz=%d \
+                  c1->kdf_iter=%d c2->kdf_iter=%d \
+                  c1->fast_kdf_iter=%d c2->fast_kdf_iter=%d \
+                  c1->key_sz=%d c2->key_sz=%d \
+                  c1->pass_sz=%d c2->pass_sz=%d \
+                  c1->flags=%d c2->flags=%d \
+                  c1->hmac_sz=%d c2->hmac_sz=%d \
+                  c1->provider_ctx=%p c2->provider_ctx=%p \
+                  c1->pass=%p c2->pass=%p \
+                  c1->pass=%s c2->pass=%s \
+                  provider->ctx_cmp=%d \
+                  sqlcipher_memcmp=%d \
+                  are_equal=%d \
+                   \n", 
+                  c1, c2,
+                  c1->iv_sz, c2->iv_sz,
+                  c1->kdf_iter, c2->kdf_iter,
+                  c1->fast_kdf_iter, c2->fast_kdf_iter,
+                  c1->key_sz, c2->key_sz,
+                  c1->pass_sz, c2->pass_sz,
+                  c1->flags, c2->flags,
+                  c1->hmac_sz, c2->hmac_sz,
+                  c1->provider_ctx, c2->provider_ctx,
+                  c1->pass, c2->pass,
+                  c1->pass, c2->pass,
+                  c1->provider->ctx_cmp(c1->provider_ctx, c2->provider_ctx),
+                  sqlcipher_memcmp((const unsigned char*)c1->pass,
+                           (const unsigned char*)c2->pass,
+                           c1->pass_sz),
+                  are_equal
+                  ));
+
+  return !are_equal; /* return 0 if they are the same, 1 otherwise */
 }
 
 /**
