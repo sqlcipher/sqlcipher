@@ -445,6 +445,49 @@ file delete -force test.db
 file delete -force test2.db
 
 # attach an encrypted database
+# without specifying key, verify it attaches
+# correctly when PRAGMA cipher_store_pass = 1
+# is set.
+do_test attach-database-with-default-key-using-cipher-store-pass {
+ 
+    sqlite_orig db1 test.db  
+    execsql {
+        PRAGMA key = 'testkey';
+        CREATE TABLE t1(a,b);
+        INSERT INTO t1(a,b) VALUES('foo', 'bar');        
+    } db1
+    db1 close
+
+    sqlite_orig db2 test2.db
+    execsql {
+      PRAGMA key = 'testkey';
+      CREATE TABLE t2(a,b);
+      INSERT INTO t2 VALUES ('test1', 'test2'); 
+    } db2
+    db2 close
+
+    sqlite_orig db1 test.db
+    execsql {
+        PRAGMA key = 'testkey';
+        PRAGMA cipher_store_pass = 1;
+        ATTACH DATABASE 'test2.db' as db2;
+        SELECT sqlcipher_export('db2');
+        DETACH DATABASE db2;
+    } db1
+    db1 close
+
+    sqlite_orig db2 test2.db  
+    execsql {
+        PRAGMA key = 'testkey';
+        SELECT * FROM t1;
+    } db2
+
+} {foo bar}
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an encrypted database
 # where both database have the same
 # key explicitly
 setup test.db "'testkey'"
@@ -1498,7 +1541,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {3.1.0}
+} {3.2.0}
 db close
 file delete -force test.db
 

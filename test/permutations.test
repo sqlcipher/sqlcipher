@@ -112,6 +112,7 @@ set allquicktests [test_set $alltests -exclude {
   incrvacuum_ioerr.test autovacuum_crash.test btree8.test shared_err.test
   vtab_err.test walslow.test walcrash.test walcrash3.test
   walthread.test rtree3.test indexfault.test securedel2.test
+  fts4growth.test fts4growth2.test
 }]
 if {[info exists ::env(QUICKTEST_INCLUDE)]} {
   set allquicktests [concat $allquicktests $::env(QUICKTEST_INCLUDE)]
@@ -157,6 +158,28 @@ test_suite "valgrind" -prefix "" -description {
   unset -nocomplain ::G(valgrind)
 }
 
+test_suite "valgrind-nolookaside" -prefix "" -description {
+  Run the "veryquick" test suite with a couple of multi-process tests (that
+  fail under valgrind) omitted.
+} -files [
+  test_set $allquicktests -exclude *malloc* *ioerr* *fault* wal.test atof1.test
+] -initialize {
+  set ::G(valgrind) 1
+  catch {db close}
+  sqlite3_shutdown
+  sqlite3_config_lookaside 0 0
+  sqlite3_initialize
+  autoinstall_test_functions
+} -shutdown {
+  catch {db close}
+  sqlite3_shutdown
+  sqlite3_config_lookaside 100 500
+  sqlite3_initialize
+  autoinstall_test_functions
+  unset -nocomplain ::G(valgrind)
+}
+
+
 test_suite "quick" -prefix "" -description {
   Quick test suite. Runs in around 10 minutes on a workstation.
 } -files [
@@ -196,6 +219,7 @@ test_suite "fts3" -prefix "" -description {
   fts3corrupt2.test fts3first.test fts4langid.test fts4merge.test
   fts4check.test fts4unicode.test fts4noti.test
   fts3varint.test
+  fts4growth.test fts4growth2.test
 }
 
 test_suite "nofaultsim" -prefix "" -description {

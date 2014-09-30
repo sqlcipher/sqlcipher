@@ -566,7 +566,7 @@ foreach {tn schema} {
 drop_all_tables
 do_test 13.1 {
   execsql {
-    CREATE TABLE t1(a, b, c);
+    CREATE TABLE t1(a, b, c, d);
     CREATE INDEX i1 ON t1(a);
     CREATE INDEX i2 ON t1(b, c);
   }
@@ -577,16 +577,16 @@ do_test 13.1 {
   execsql ANALYZE
 } {}
 do_eqp_test 13.2.1 {
-  SELECT * FROM t1 WHERE a='abc' AND rowid<15 AND b<20
+  SELECT * FROM t1 WHERE a='abc' AND rowid<15 AND b<12
 } {/SEARCH TABLE t1 USING INDEX i1/}
 do_eqp_test 13.2.2 {
-  SELECT * FROM t1 WHERE a='abc' AND rowid<'15' AND b<20
+  SELECT * FROM t1 WHERE a='abc' AND rowid<'15' AND b<12
 } {/SEARCH TABLE t1 USING INDEX i1/}
 do_eqp_test 13.3.1 {
-  SELECT * FROM t1 WHERE a='abc' AND rowid<100 AND b<20
+  SELECT * FROM t1 WHERE a='abc' AND rowid<100 AND b<12
 } {/SEARCH TABLE t1 USING INDEX i2/}
 do_eqp_test 13.3.2 {
-  SELECT * FROM t1 WHERE a='abc' AND rowid<'100' AND b<20
+  SELECT * FROM t1 WHERE a='abc' AND rowid<'100' AND b<12
 } {/SEARCH TABLE t1 USING INDEX i2/}
 
 #-------------------------------------------------------------------------
@@ -951,6 +951,141 @@ for {set i 0} {$i<16} {incr i} {
       SELECT count(*) FROM sqlite_stat4 
       WHERE lrange(test_decode(sample), 0, 3)=$val
     } {1}
+}
+
+#-------------------------------------------------------------------------
+#
+reset_db
+
+do_execsql_test 21.0 {
+  CREATE TABLE t2(a, b);
+  CREATE INDEX i2 ON t2(a);
+}
+
+do_test 21.1 {
+  for {set i 1} {$i < 100} {incr i} {
+    execsql { 
+      INSERT INTO t2 VALUES(CASE WHEN $i < 80 THEN 'one' ELSE 'two' END, $i) 
+    }
+  }
+  execsql ANALYZE
+} {}
+
+# Condition (a='one') matches 80% of the table. (rowid<10) reduces this to
+# 10%, but (rowid<50) only reduces it to 50%. So in the first case below
+# the index is used. In the second, it is not. 
+#
+do_eqp_test 21.2 {
+  SELECT * FROM t2 WHERE a='one' AND rowid < 10
+} {/*USING INDEX i2 (a=? AND rowid<?)*/}
+do_eqp_test 21.3 {
+  SELECT * FROM t2 WHERE a='one' AND rowid < 50
+} {/*USING INTEGER PRIMARY KEY*/}
+
+#-------------------------------------------------------------------------
+#
+reset_db
+do_execsql_test 22.0 {
+  CREATE TABLE t3(a, b, c, d, PRIMARY KEY(a, b)) WITHOUT ROWID;
+}
+do_execsql_test 22.1 {
+  WITH r(x) AS (
+    SELECT 1
+    UNION ALL
+    SELECT x+1 FROM r WHERE x<=100
+  )
+
+  INSERT INTO t3 SELECT
+    CASE WHEN (x>45 AND x<96) THEN 'B' ELSE 'A' END,  /* Column "a" */
+    x,                                                /* Column "b" */
+    CASE WHEN (x<51) THEN 'one' ELSE 'two' END,       /* Column "c" */
+    x                                                 /* Column "d" */
+  FROM r;
+
+  CREATE INDEX i3 ON t3(c);
+  CREATE INDEX i4 ON t3(d);
+  ANALYZE;
+}
+
+# Expression (c='one' AND a='B') matches 5 table rows. But (c='one' AND a=A')
+# matches 45. Expression (d<?) matches 20. Neither index is a covering index.
+#
+# Therefore, with stat4 data, SQLite prefers (c='one' AND a='B') over (d<20),
+# and (d<20) over (c='one' AND a='A').
+foreach {tn where res} {
+  1 "c='one' AND a='B' AND d < 20"   {/*INDEX i3 (c=? AND a=?)*/}
+  2 "c='one' AND a='A' AND d < 20"   {/*INDEX i4 (d<?)*/}
+} {
+  do_eqp_test 22.2.$tn "SELECT * FROM t3 WHERE $where" $res
+}
+
+proc int_to_char {i} {
+  set ret ""
+  set char [list a b c d e f g h i j]
+  foreach {div} {1000 100 10 1} {
+    append ret [lindex $char [expr ($i / $div) % 10]]
+  }
+  set ret
+}
+db func int_to_char int_to_char
+
+do_execsql_test 23.0 {
+  CREATE TABLE t4(
+    a COLLATE nocase, b, c, 
+    d, e, f, 
+    PRIMARY KEY(c, b, a)
+  ) WITHOUT ROWID;
+  CREATE INDEX i41 ON t4(e);
+  CREATE INDEX i42 ON t4(f);
+
+  WITH data(a, b, c, d, e, f) AS (
+    SELECT int_to_char(0), 'xyz', 'zyx', '*', 0, 0
+    UNION ALL
+    SELECT 
+      int_to_char(f+1), b, c, d, (e+1) % 2, f+1
+    FROM data WHERE f<1024
+  )
+  INSERT INTO t4 SELECT a, b, c, d, e, f FROM data;
+  ANALYZE;
+} {}
+
+do_eqp_test 23.1 {
+  SELECT * FROM t4 WHERE 
+    (e=1 AND b='xyz' AND c='zyx' AND a<'AEA') AND f<300
+} {
+  0 0 0 {SEARCH TABLE t4 USING INDEX i41 (e=? AND c=? AND b=? AND a<?)}
+}
+do_eqp_test 23.2 {
+  SELECT * FROM t4 WHERE 
+    (e=1 AND b='xyz' AND c='zyx' AND a<'JJJ') AND f<300
+} {
+  0 0 0 {SEARCH TABLE t4 USING INDEX i42 (f<?)}
+}
+
+do_execsql_test 24.0 {
+  CREATE TABLE t5(c, d, b, e, a, PRIMARY KEY(a, b, c)) WITHOUT ROWID;
+  WITH data(a, b, c, d, e) AS (
+    SELECT 'z', 'y', 0, 0, 0
+    UNION ALL
+    SELECT 
+      a, CASE WHEN b='y' THEN 'n' ELSE 'y' END, c+1, e/250, e+1 
+    FROM data
+    WHERE e<1000
+  )
+  INSERT INTO t5(a, b, c, d, e) SELECT * FROM data;
+  CREATE INDEX t5d ON t5(d);
+  CREATE INDEX t5e ON t5(e);
+  ANALYZE;
+}
+
+foreach {tn where eqp} {
+  1 "d=0 AND a='z' AND b='n' AND e<200" {/*t5d (d=? AND a=? AND b=?)*/}
+  2 "d=0 AND a='z' AND b='n' AND e<100" {/*t5e (e<?)*/}
+
+  3 "d=0 AND e<300"                     {/*t5d (d=?)*/}
+  4 "d=0 AND e<200"                     {/*t5e (e<?)*/}
+} {
+  do_eqp_test 24.$tn "SeLeCt * FROM t5 WHERE $where" $eqp
 }
 
 finish_test

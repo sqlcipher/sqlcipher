@@ -14,6 +14,10 @@
 ** testing of the SQLite library.
 */
 #include "sqliteInt.h"
+#if SQLITE_OS_WIN
+#  include "os_win.h"
+#endif
+
 #include "vdbeInt.h"
 #include "tcl.h"
 #include <stdlib.h>
@@ -112,6 +116,16 @@ int getDbPointer(Tcl_Interp *interp, const char *zA, sqlite3 **ppDb){
   }
   return TCL_OK;
 }
+
+#if SQLITE_OS_WIN
+/*
+** Decode a Win32 HANDLE object.
+*/
+int getWin32Handle(Tcl_Interp *interp, const char *zA, LPHANDLE phFile){
+  *phFile = (HANDLE)sqlite3TestTextToPtr(zA);
+  return TCL_OK;
+}
+#endif
 
 extern const char *sqlite3ErrName(int);
 #define t1ErrorName sqlite3ErrName
@@ -5206,6 +5220,7 @@ static int file_control_lockproxy_test(
   return TCL_OK;  
 }
 
+#if SQLITE_OS_WIN
 /*
 ** tclcmd:   file_control_win32_av_retry DB  NRETRY  DELAY
 **
@@ -5238,6 +5253,42 @@ static int file_control_win32_av_retry(
   Tcl_AppendResult(interp, z, (char*)0);
   return TCL_OK;  
 }
+
+/*
+** tclcmd:   file_control_win32_set_handle DB HANDLE
+**
+** This TCL command runs the sqlite3_file_control interface with
+** the SQLITE_FCNTL_WIN32_SET_HANDLE opcode.
+*/
+static int file_control_win32_set_handle(
+  ClientData clientData, /* Pointer to sqlite3_enable_XXX function */
+  Tcl_Interp *interp,    /* The TCL interpreter that invoked this command */
+  int objc,              /* Number of arguments */
+  Tcl_Obj *CONST objv[]  /* Command arguments */
+){
+  sqlite3 *db;
+  int rc;
+  HANDLE hFile = NULL;
+  char z[100];
+
+  if( objc!=3 ){
+    Tcl_AppendResult(interp, "wrong # args: should be \"",
+        Tcl_GetStringFromObj(objv[0], 0), " DB HANDLE", 0);
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
+    return TCL_ERROR;
+  }
+  if( getWin32Handle(interp, Tcl_GetString(objv[2]), &hFile) ){
+    return TCL_ERROR;
+  }
+  rc = sqlite3_file_control(db, NULL, SQLITE_FCNTL_WIN32_SET_HANDLE,
+                            (void*)&hFile);
+  sqlite3_snprintf(sizeof(z), z, "%d %p", rc, (void*)hFile);
+  Tcl_AppendResult(interp, z, (char*)0);
+  return TCL_OK;  
+}
+#endif
 
 /*
 ** tclcmd:   file_control_persist_wal DB PERSIST-FLAG
@@ -6230,6 +6281,7 @@ static int tclLoadStaticExtensionCmd(
 ){
   extern int sqlite3_amatch_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_closure_init(sqlite3*,char**,const sqlite3_api_routines*);
+  extern int sqlite3_fileio_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_fuzzer_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_ieee_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_nextchar_init(sqlite3*,char**,const sqlite3_api_routines*);
@@ -6244,6 +6296,7 @@ static int tclLoadStaticExtensionCmd(
   } aExtension[] = {
     { "amatch",                sqlite3_amatch_init               },
     { "closure",               sqlite3_closure_init              },
+    { "fileio",                sqlite3_fileio_init               },
     { "fuzzer",                sqlite3_fuzzer_init               },
     { "ieee754",               sqlite3_ieee_init                 },
     { "nextchar",              sqlite3_nextchar_init             },
@@ -6468,7 +6521,10 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "file_control_lockproxy_test", file_control_lockproxy_test,  0   },
      { "file_control_chunksize_test", file_control_chunksize_test,  0   },
      { "file_control_sizehint_test",  file_control_sizehint_test,   0   },
+#if SQLITE_OS_WIN
      { "file_control_win32_av_retry", file_control_win32_av_retry,  0   },
+     { "file_control_win32_set_handle", file_control_win32_set_handle, 0  },
+#endif
      { "file_control_persist_wal",    file_control_persist_wal,     0   },
      { "file_control_powersafe_overwrite",file_control_powersafe_overwrite,0},
      { "file_control_vfsname",        file_control_vfsname,         0   },
@@ -6525,7 +6581,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
   extern int sqlite3_pager_writedb_count;
   extern int sqlite3_pager_writej_count;
 #if SQLITE_OS_WIN
-  extern int sqlite3_os_type;
+  extern LONG volatile sqlite3_os_type;
 #endif
 #ifdef SQLITE_DEBUG
   extern int sqlite3WhereTrace;
@@ -6583,7 +6639,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
 #endif
 #if SQLITE_OS_WIN
   Tcl_LinkVar(interp, "sqlite_os_type",
-      (char*)&sqlite3_os_type, TCL_LINK_INT);
+      (char*)&sqlite3_os_type, TCL_LINK_LONG);
 #endif
 #ifdef SQLITE_TEST
   {

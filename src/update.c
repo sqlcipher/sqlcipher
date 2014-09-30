@@ -187,7 +187,7 @@ void sqlite3Update(
   iIdxCur = iDataCur+1;
   pPk = HasRowid(pTab) ? 0 : sqlite3PrimaryKeyIndex(pTab);
   for(nIdx=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, nIdx++){
-    if( pIdx->autoIndex==2 && pPk!=0 ){
+    if( IsPrimaryKeyIndex(pIdx) && pPk!=0 ){
       iDataCur = pParse->nTab;
       pTabList->a[0].iCursor = iDataCur;
     }
@@ -438,7 +438,8 @@ void sqlite3Update(
     }
     labelContinue = labelBreak;
     sqlite3VdbeAddOp2(v, OP_IsNull, pPk ? regKey : regOldRowid, labelBreak);
-    VdbeCoverage(v);
+    VdbeCoverageIf(v, pPk==0);
+    VdbeCoverageIf(v, pPk!=0);
   }else if( pPk ){
     labelContinue = sqlite3VdbeMakeLabel(v);
     sqlite3VdbeAddOp2(v, OP_Rewind, iEph, labelBreak); VdbeCoverage(v);

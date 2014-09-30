@@ -109,7 +109,7 @@ static int sqlcipher_cc_ctx_copy(void *target_ctx, void *source_ctx) {
 }
 
 static int sqlcipher_cc_ctx_cmp(void *c1, void *c2) {
-  return SQLITE_OK;
+  return 1; /* always indicate contexts are the same */
 }
 
 static int sqlcipher_cc_ctx_init(void **ctx) {

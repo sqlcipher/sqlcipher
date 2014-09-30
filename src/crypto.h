@@ -44,7 +44,7 @@
 #define FILE_HEADER_SZ 16
 
 #ifndef CIPHER_VERSION
-#define CIPHER_VERSION "3.1.0"
+#define CIPHER_VERSION "3.2.0"
 #endif
 
 #ifndef CIPHER
@@ -216,6 +216,10 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx);
 int sqlcipher_codec_add_random(codec_ctx *ctx, const char *data, int random_sz);
 int sqlcipher_cipher_profile(sqlite3 *db, const char *destination);
 static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint64 run_time);
+static int sqlcipher_codec_get_store_pass(codec_ctx *ctx);
+static void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey);
+static void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value);
+
 #endif
 #endif
 /* END SQLCIPHER */

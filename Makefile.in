@@ -259,8 +259,10 @@ SRC = \
   $(TOP)/src/os.c \
   $(TOP)/src/os.h \
   $(TOP)/src/os_common.h \
+  $(TOP)/src/os_setup.h \
   $(TOP)/src/os_unix.c \
   $(TOP)/src/os_win.c \
+  $(TOP)/src/os_win.h \
   $(TOP)/src/pager.c \
   $(TOP)/src/pager.h \
   $(TOP)/src/parse.y \
@@ -411,6 +413,7 @@ TESTSRC = \
 TESTSRC += \
   $(TOP)/ext/misc/amatch.c \
   $(TOP)/ext/misc/closure.c \
+  $(TOP)/ext/misc/fileio.c \
   $(TOP)/ext/misc/fuzzer.c \
   $(TOP)/ext/misc/ieee754.c \
   $(TOP)/ext/misc/nextchar.c \
@@ -477,6 +480,8 @@ HDR = \
    opcodes.h \
    $(TOP)/src/os.h \
    $(TOP)/src/os_common.h \
+   $(TOP)/src/os_setup.h \
+   $(TOP)/src/os_win.h \
    $(TOP)/src/pager.h \
    $(TOP)/src/pcache.h \
    parse.h  \
@@ -967,8 +972,23 @@ sqlite3_analyzer.c: sqlite3.c $(TOP)/src/test_stat.c $(TOP)/src/tclsqlite.c $(TO
 sqlite3_analyzer$(TEXE): sqlite3_analyzer.c
 	$(LTLINK) sqlite3_analyzer.c -o $@ $(LIBTCL) $(TLIBS)
 
-showdb$(TEXE):	$(TOP)/tool/showdb.c sqlite3.c
-	$(LTLINK) -o $@ $(TOP)/tool/showdb.c sqlite3.c $(TLIBS)
+showdb$(TEXE):	$(TOP)/tool/showdb.c sqlite3.lo
+	$(LTLINK) -o $@ $(TOP)/tool/showdb.c sqlite3.lo $(TLIBS)
+
+showstat4$(TEXE):	$(TOP)/tool/showstat4.c sqlite3.lo
+	$(LTLINK) -o $@ $(TOP)/tool/showstat4.c sqlite3.lo $(TLIBS)
+
+showjournal$(TEXE):	$(TOP)/tool/showjournal.c sqlite3.lo
+	$(LTLINK) -o $@ $(TOP)/tool/showjournal.c sqlite3.lo $(TLIBS)
+
+showwal$(TEXE):	$(TOP)/tool/showwal.c sqlite3.lo
+	$(LTLINK) -o $@ $(TOP)/tool/showwal.c sqlite3.lo $(TLIBS)
+
+rollback-test$(TEXE):	$(TOP)/tool/rollback-test.c sqlite3.lo
+	$(LTLINK) -o $@ $(TOP)/tool/rollback-test.c sqlite3.lo $(TLIBS)
+
+LogEst$(TEXE):	$(TOP)/tool/logest.c sqlite3.h
+	$(LTLINK) -I. -o $@ $(TOP)/tool/logest.c
 
 wordcount$(TEXE):	$(TOP)/test/wordcount.c sqlite3.c
 	$(LTLINK) -o $@ $(TOP)/test/wordcount.c sqlite3.c $(TLIBS)
@@ -1010,6 +1030,9 @@ clean:
 	rm -rf tsrc .target_source
 	rm -f tclsqlcipher$(TEXE)
 	rm -f testfixture$(TEXE) test.db
+	rm -f LogEst$(TEXE) fts3view$(TEXE) rollback-test$(TEXE) showdb$(TEXE)
+	rm -f showjournal$(TEXE) showstat4$(TEXE) showwal$(TEXE) speedtest1$(TEXE)
+	rm -f wordcount$(TEXE)
 	rm -f sqlite3.dll sqlite3.lib sqlite3.exp sqlite3.def
 	rm -f sqlite3.c
 	rm -f sqlite3rc.h

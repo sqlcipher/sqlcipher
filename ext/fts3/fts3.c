@@ -1333,7 +1333,7 @@ static int fts3InitVtab(
   p->bHasStat = isFts4;
   p->bFts4 = isFts4;
   p->bDescIdx = bDescIdx;
-  p->bAutoincrmerge = 0xff;   /* 0xff means setting unknown */
+  p->nAutoincrmerge = 0xff;   /* 0xff means setting unknown */
   p->zContentTbl = zContent;
   p->zLanguageid = zLanguageid;
   zContent = 0;
@@ -1376,7 +1376,9 @@ static int fts3InitVtab(
     int n = (int)strlen(p->azColumn[iCol]);
     for(i=0; i<nNotindexed; i++){
       char *zNot = azNotindexed[i];
-      if( zNot && 0==sqlite3_strnicmp(p->azColumn[iCol], zNot, n) ){
+      if( zNot && n==(int)strlen(zNot)
+       && 0==sqlite3_strnicmp(p->azColumn[iCol], zNot, n) 
+      ){
         p->abNotindexed[iCol] = 1;
         sqlite3_free(zNot);
         azNotindexed[i] = 0;
@@ -1410,10 +1412,7 @@ static int fts3InitVtab(
   ** addition of a %_stat table so that it can use incremental merge.
   */
   if( !isFts4 && !isCreate ){
-    int rc2 = SQLITE_OK;
-    fts3DbExec(&rc2, db, "SELECT 1 FROM %Q.'%q_stat' WHERE id=2",
-               p->zDb, p->zName);
-    if( rc2==SQLITE_OK ) p->bHasStat = 1;
+    p->bHasStat = 2;
   }
 
   /* Figure out the page-size for the database. This is required in order to
@@ -3305,7 +3304,10 @@ static int fts3SyncMethod(sqlite3_vtab *pVtab){
   Fts3Table *p = (Fts3Table*)pVtab;
   int rc = sqlite3Fts3PendingTermsFlush(p);
 
-  if( rc==SQLITE_OK && p->bAutoincrmerge==1 && p->nLeafAdd>(nMinMerge/16) ){
+  if( rc==SQLITE_OK 
+   && p->nLeafAdd>(nMinMerge/16) 
+   && p->nAutoincrmerge && p->nAutoincrmerge!=0xff
+  ){
     int mxLevel = 0;              /* Maximum relative level value in db */
     int A;                        /* Incr-merge parameter A */
 
@@ -3313,14 +3315,41 @@ static int fts3SyncMethod(sqlite3_vtab *pVtab){
     assert( rc==SQLITE_OK || mxLevel==0 );
     A = p->nLeafAdd * mxLevel;
     A += (A/2);
-    if( A>(int)nMinMerge ) rc = sqlite3Fts3Incrmerge(p, A, 8);
+    if( A>(int)nMinMerge ) rc = sqlite3Fts3Incrmerge(p, A, p->nAutoincrmerge);
   }
   sqlite3Fts3SegmentsClose(p);
   return rc;
 }
 
 /*
-** Implementation of xBegin() method. This is a no-op.
+** If it is currently unknown whether or not the FTS table has an %_stat
+** table (if p->bHasStat==2), attempt to determine this (set p->bHasStat
+** to 0 or 1). Return SQLITE_OK if successful, or an SQLite error code
+** if an error occurs.
+*/
+static int fts3SetHasStat(Fts3Table *p){
+  int rc = SQLITE_OK;
+  if( p->bHasStat==2 ){
+    const char *zFmt ="SELECT 1 FROM %Q.sqlite_master WHERE tbl_name='%q_stat'";
+    char *zSql = sqlite3_mprintf(zFmt, p->zDb, p->zName);
+    if( zSql ){
+      sqlite3_stmt *pStmt = 0;
+      rc = sqlite3_prepare_v2(p->db, zSql, -1, &pStmt, 0);
+      if( rc==SQLITE_OK ){
+        int bHasStat = (sqlite3_step(pStmt)==SQLITE_ROW);
+        rc = sqlite3_finalize(pStmt);
+        if( rc==SQLITE_OK ) p->bHasStat = bHasStat;
+      }
+      sqlite3_free(zSql);
+    }else{
+      rc = SQLITE_NOMEM;
+    }
+  }
+  return rc;
+}
+
+/*
+** Implementation of xBegin() method. 
 */
 static int fts3BeginMethod(sqlite3_vtab *pVtab){
   Fts3Table *p = (Fts3Table*)pVtab;
@@ -3331,7 +3360,7 @@ static int fts3BeginMethod(sqlite3_vtab *pVtab){
   TESTONLY( p->inTransaction = 1 );
   TESTONLY( p->mxSavepoint = -1; );
   p->nLeafAdd = 0;
-  return SQLITE_OK;
+  return fts3SetHasStat(p);
 }
 
 /*
@@ -3580,6 +3609,10 @@ static int fts3RenameMethod(
   sqlite3 *db = p->db;            /* Database connection */
   int rc;                         /* Return Code */
 
+  /* At this point it must be known if the %_stat table exists or not.
+  ** So bHasStat may not be 2.  */
+  rc = fts3SetHasStat(p);
+  
   /* As it happens, the pending terms table is always empty here. This is
   ** because an "ALTER TABLE RENAME TABLE" statement inside a transaction 
   ** always opens a savepoint transaction. And the xSavepoint() method 
@@ -3587,7 +3620,9 @@ static int fts3RenameMethod(
   ** PendingTermsFlush() in in case that changes.
   */
   assert( p->nPendingData==0 );
-  rc = sqlite3Fts3PendingTermsFlush(p);
+  if( rc==SQLITE_OK ){
+    rc = sqlite3Fts3PendingTermsFlush(p);
+  }
 
   if( p->zContentTbl==0 ){
     fts3DbExec(&rc, db,
@@ -3715,7 +3750,7 @@ static void hashDestroy(void *p){
 */
 void sqlite3Fts3SimpleTokenizerModule(sqlite3_tokenizer_module const**ppModule);
 void sqlite3Fts3PorterTokenizerModule(sqlite3_tokenizer_module const**ppModule);
-#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+#ifndef SQLITE_DISABLE_FTS3_UNICODE
 void sqlite3Fts3UnicodeTokenizer(sqlite3_tokenizer_module const**ppModule);
 #endif
 #ifdef SQLITE_ENABLE_ICU
@@ -3733,7 +3768,7 @@ int sqlite3Fts3Init(sqlite3 *db){
   Fts3Hash *pHash = 0;
   const sqlite3_tokenizer_module *pSimple = 0;
   const sqlite3_tokenizer_module *pPorter = 0;
-#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+#ifndef SQLITE_DISABLE_FTS3_UNICODE
   const sqlite3_tokenizer_module *pUnicode = 0;
 #endif
 
@@ -3742,7 +3777,7 @@ int sqlite3Fts3Init(sqlite3 *db){
   sqlite3Fts3IcuTokenizerModule(&pIcu);
 #endif
 
-#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+#ifndef SQLITE_DISABLE_FTS3_UNICODE
   sqlite3Fts3UnicodeTokenizer(&pUnicode);
 #endif
 
@@ -3770,7 +3805,7 @@ int sqlite3Fts3Init(sqlite3 *db){
     if( sqlite3Fts3HashInsert(pHash, "simple", 7, (void *)pSimple)
      || sqlite3Fts3HashInsert(pHash, "porter", 7, (void *)pPorter) 
 
-#ifdef SQLITE_ENABLE_FTS4_UNICODE61
+#ifndef SQLITE_DISABLE_FTS3_UNICODE
      || sqlite3Fts3HashInsert(pHash, "unicode61", 10, (void *)pUnicode) 
 #endif
 #ifdef SQLITE_ENABLE_ICU

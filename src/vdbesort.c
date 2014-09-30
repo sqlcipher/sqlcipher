@@ -350,7 +350,6 @@ static int vdbeSorterIterInit(
       rc = sqlite3OsRead(
           pSorter->pTemp1, &pIter->aBuffer[iBuf], nRead, iStart
       );
-      assert( rc!=SQLITE_IOERR_SHORT_READ );
     }
 
     if( rc==SQLITE_OK ){
@@ -386,7 +385,7 @@ static int vdbeSorterIterInit(
 */
 static void vdbeSorterCompare(
   const VdbeCursor *pCsr,         /* Cursor object (for pKeyInfo) */
-  int nIgnore,                    /* Ignore the last nIgnore fields */
+  int nKeyCol,                    /* Num of columns. 0 means "all" */
   const void *pKey1, int nKey1,   /* Left side of comparison */
   const void *pKey2, int nKey2,   /* Right side of comparison */
   int *pRes                       /* OUT: Result of comparison */
@@ -400,10 +399,9 @@ static void vdbeSorterCompare(
     sqlite3VdbeRecordUnpack(pKeyInfo, nKey2, pKey2, r2);
   }
 
-  if( nIgnore ){
-    r2->nField = pKeyInfo->nField - nIgnore;
-    assert( r2->nField>0 );
-    for(i=0; i<r2->nField; i++){
+  if( nKeyCol ){
+    r2->nField = nKeyCol;
+    for(i=0; i<nKeyCol; i++){
       if( r2->aMem[i].flags & MEM_Null ){
         *pRes = -1;
         return;
@@ -505,22 +503,39 @@ static void vdbeSorterRecordFree(sqlite3 *db, SorterRecord *pRecord){
 }
 
 /*
+** Reset a sorting cursor back to its original empty state.
+*/
+void sqlite3VdbeSorterReset(sqlite3 *db, VdbeSorter *pSorter){
+  if( pSorter->aIter ){
+    int i;
+    for(i=0; i<pSorter->nTree; i++){
+      vdbeSorterIterZero(db, &pSorter->aIter[i]);
+    }
+    sqlite3DbFree(db, pSorter->aIter);
+    pSorter->aIter = 0;
+  }
+  if( pSorter->pTemp1 ){
+    sqlite3OsCloseFree(pSorter->pTemp1);
+    pSorter->pTemp1 = 0;
+  }
+  vdbeSorterRecordFree(db, pSorter->pRecord);
+  pSorter->pRecord = 0;
+  pSorter->iWriteOff = 0;
+  pSorter->iReadOff = 0;
+  pSorter->nInMemory = 0;
+  pSorter->nTree = 0;
+  pSorter->nPMA = 0;
+  pSorter->aTree = 0;
+}
+
+
+/*
 ** Free any cursor components allocated by sqlite3VdbeSorterXXX routines.
 */
 void sqlite3VdbeSorterClose(sqlite3 *db, VdbeCursor *pCsr){
   VdbeSorter *pSorter = pCsr->pSorter;
   if( pSorter ){
-    if( pSorter->aIter ){
-      int i;
-      for(i=0; i<pSorter->nTree; i++){
-        vdbeSorterIterZero(db, &pSorter->aIter[i]);
-      }
-      sqlite3DbFree(db, pSorter->aIter);
-    }
-    if( pSorter->pTemp1 ){
-      sqlite3OsCloseFree(pSorter->pTemp1);
-    }
-    vdbeSorterRecordFree(db, pSorter->pRecord);
+    sqlite3VdbeSorterReset(db, pSorter);
     sqlite3DbFree(db, pSorter->pUnpacked);
     sqlite3DbFree(db, pSorter);
     pCsr->pSorter = 0;
@@ -956,14 +971,55 @@ int sqlite3VdbeSorterNext(sqlite3 *db, const VdbeCursor *pCsr, int *pbEof){
 
   if( pSorter->aTree ){
     int iPrev = pSorter->aTree[1];/* Index of iterator to advance */
-    int i;                        /* Index of aTree[] to recalculate */
-
     rc = vdbeSorterIterNext(db, &pSorter->aIter[iPrev]);
-    for(i=(pSorter->nTree+iPrev)/2; rc==SQLITE_OK && i>0; i=i/2){
-      rc = vdbeSorterDoCompare(pCsr, i);
-    }
+    if( rc==SQLITE_OK ){
+      int i;                      /* Index of aTree[] to recalculate */
+      VdbeSorterIter *pIter1;     /* First iterator to compare */
+      VdbeSorterIter *pIter2;     /* Second iterator to compare */
+      u8 *pKey2;                  /* To pIter2->aKey, or 0 if record cached */
 
-    *pbEof = (pSorter->aIter[pSorter->aTree[1]].pFile==0);
+      /* Find the first two iterators to compare. The one that was just
+      ** advanced (iPrev) and the one next to it in the array.  */
+      pIter1 = &pSorter->aIter[(iPrev & 0xFFFE)];
+      pIter2 = &pSorter->aIter[(iPrev | 0x0001)];
+      pKey2 = pIter2->aKey;
+
+      for(i=(pSorter->nTree+iPrev)/2; i>0; i=i/2){
+        /* Compare pIter1 and pIter2. Store the result in variable iRes. */
+        int iRes;
+        if( pIter1->pFile==0 ){
+          iRes = +1;
+        }else if( pIter2->pFile==0 ){
+          iRes = -1;
+        }else{
+          vdbeSorterCompare(pCsr, 0, 
+              pIter1->aKey, pIter1->nKey, pKey2, pIter2->nKey, &iRes
+          );
+        }
+
+        /* If pIter1 contained the smaller value, set aTree[i] to its index.
+        ** Then set pIter2 to the next iterator to compare to pIter1. In this
+        ** case there is no cache of pIter2 in pSorter->pUnpacked, so set
+        ** pKey2 to point to the record belonging to pIter2.
+        **
+        ** Alternatively, if pIter2 contains the smaller of the two values,
+        ** set aTree[i] to its index and update pIter1. If vdbeSorterCompare()
+        ** was actually called above, then pSorter->pUnpacked now contains
+        ** a value equivalent to pIter2. So set pKey2 to NULL to prevent
+        ** vdbeSorterCompare() from decoding pIter2 again.  */
+        if( iRes<=0 ){
+          pSorter->aTree[i] = (int)(pIter1 - pSorter->aIter);
+          pIter2 = &pSorter->aIter[ pSorter->aTree[i ^ 0x0001] ];
+          pKey2 = pIter2->aKey;
+        }else{
+          if( pIter1->pFile ) pKey2 = 0;
+          pSorter->aTree[i] = (int)(pIter2 - pSorter->aIter);
+          pIter1 = &pSorter->aIter[ pSorter->aTree[i ^ 0x0001] ];
+        }
+
+      }
+      *pbEof = (pSorter->aIter[pSorter->aTree[1]].pFile==0);
+    }
   }else{
     SorterRecord *pFree = pSorter->pRecord;
     pSorter->pRecord = pFree->pNext;
@@ -1027,13 +1083,13 @@ int sqlite3VdbeSorterRowkey(const VdbeCursor *pCsr, Mem *pOut){
 int sqlite3VdbeSorterCompare(
   const VdbeCursor *pCsr,         /* Sorter cursor */
   Mem *pVal,                      /* Value to compare to current sorter key */
-  int nIgnore,                    /* Ignore this many fields at the end */
+  int nKeyCol,                    /* Only compare this many fields */
   int *pRes                       /* OUT: Result of comparison */
 ){
   VdbeSorter *pSorter = pCsr->pSorter;
   void *pKey; int nKey;           /* Sorter key to compare pVal with */
 
   pKey = vdbeSorterRowkey(pSorter, &nKey);
-  vdbeSorterCompare(pCsr, nIgnore, pVal->z, pVal->n, pKey, nKey, pRes);
+  vdbeSorterCompare(pCsr, nKeyCol, pVal->z, pVal->n, pKey, nKey, pRes);
   return SQLITE_OK;
 }
