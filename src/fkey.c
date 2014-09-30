@@ -225,7 +225,7 @@ int sqlite3FkLocateIndex(
   }
 
   for(pIdx=pParent->pIndex; pIdx; pIdx=pIdx->pNext){
-    if( pIdx->nKeyCol==nCol && pIdx->onError!=OE_None ){ 
+    if( pIdx->nKeyCol==nCol && IsUniqueIndex(pIdx) ){ 
       /* pIdx is a UNIQUE index (or a PRIMARY KEY) and has the right number
       ** of columns. If each indexed column corresponds to a foreign key
       ** column of pFKey, then this index is a winner.  */
@@ -233,8 +233,8 @@ int sqlite3FkLocateIndex(
       if( zKey==0 ){
         /* If zKey is NULL, then this foreign key is implicitly mapped to 
         ** the PRIMARY KEY of table pParent. The PRIMARY KEY index may be 
-        ** identified by the test (Index.autoIndex==2).  */
-        if( pIdx->autoIndex==2 ){
+        ** identified by the test.  */
+        if( IsPrimaryKeyIndex(pIdx) ){
           if( aiCol ){
             int i;
             for(i=0; i<nCol; i++) aiCol[i] = pFKey->aCol[i].iFrom;
