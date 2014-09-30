@@ -94,11 +94,10 @@
 #include <sys/time.h>
 #include <errno.h>
 #if !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0
-#include <sys/mman.h>
+# include <sys/mman.h>
 #endif
 
-
-#if SQLITE_ENABLE_LOCKING_STYLE
+#if SQLITE_ENABLE_LOCKING_STYLE || OS_VXWORKS
 # include <sys/ioctl.h>
 # if OS_VXWORKS
 #  include <semaphore.h>
@@ -318,11 +317,16 @@ static int posixOpen(const char *zFile, int flags, int mode){
 ** we are not running as root.
 */
 static int posixFchown(int fd, uid_t uid, gid_t gid){
+#if OS_VXWORKS
+  return 0;
+#else
   return geteuid() ? 0 : fchown(fd,uid,gid);
+#endif
 }
 
 /* Forward reference */
 static int openDirectory(const char*, int*);
+static int unixGetpagesize(void);
 
 /*
 ** Many system calls are accessed through pointer-to-functions so that
@@ -373,7 +377,7 @@ static struct unix_syscall {
   { "read",         (sqlite3_syscall_ptr)read,       0  },
 #define osRead      ((ssize_t(*)(int,void*,size_t))aSyscall[8].pCurrent)
 
-#if defined(USE_PREAD) || SQLITE_ENABLE_LOCKING_STYLE
+#if defined(USE_PREAD) || (SQLITE_ENABLE_LOCKING_STYLE && !OS_VXWORKS)
   { "pread",        (sqlite3_syscall_ptr)pread,      0  },
 #else
   { "pread",        (sqlite3_syscall_ptr)0,          0  },
@@ -390,7 +394,7 @@ static struct unix_syscall {
   { "write",        (sqlite3_syscall_ptr)write,      0  },
 #define osWrite     ((ssize_t(*)(int,const void*,size_t))aSyscall[11].pCurrent)
 
-#if defined(USE_PREAD) || SQLITE_ENABLE_LOCKING_STYLE
+#if defined(USE_PREAD) || (SQLITE_ENABLE_LOCKING_STYLE && !OS_VXWORKS)
   { "pwrite",       (sqlite3_syscall_ptr)pwrite,     0  },
 #else
   { "pwrite",       (sqlite3_syscall_ptr)0,          0  },
@@ -444,6 +448,9 @@ static struct unix_syscall {
   { "mremap",       (sqlite3_syscall_ptr)0,               0 },
 #endif
 #define osMremap ((void*(*)(void*,size_t,size_t,int,...))aSyscall[23].pCurrent)
+  { "getpagesize",  (sqlite3_syscall_ptr)unixGetpagesize, 0 },
+#define osGetpagesize ((int(*)(void))aSyscall[24].pCurrent)
+
 #endif
 
 }; /* End of the overrideable system calls */
@@ -756,16 +763,6 @@ static int sqliteErrorFromPosixError(int posixError, int sqliteIOErr) {
     /* else fall through */
   case EPERM: 
     return SQLITE_PERM;
-    
-  /* EDEADLK is only possible if a call to fcntl(F_SETLKW) is made. And
-  ** this module never makes such a call. And the code in SQLite itself 
-  ** asserts that SQLITE_IOERR_BLOCKED is never returned. For these reasons
-  ** this case is also commented out. If the system does set errno to EDEADLK,
-  ** the default SQLITE_IOERR_XXX code will be returned. */
-#if 0
-  case EDEADLK:
-    return SQLITE_IOERR_BLOCKED;
-#endif
     
 #if EOPNOTSUPP!=ENOTSUP
   case EOPNOTSUPP: 
@@ -1299,9 +1296,13 @@ static int findInodeInfo(
 ** Return TRUE if pFile has been renamed or unlinked since it was first opened.
 */
 static int fileHasMoved(unixFile *pFile){
+#if OS_VXWORKS
+  return pFile->pInode!=0 && pFile->pId!=pFile->pInode->fileId.pId;
+#else
   struct stat buf;
   return pFile->pInode!=0 &&
-         (osStat(pFile->zPath, &buf)!=0 || buf.st_ino!=pFile->pInode->fileId.ino);
+      (osStat(pFile->zPath, &buf)!=0 || buf.st_ino!=pFile->pInode->fileId.ino);
+#endif
 }
 
 
@@ -1915,6 +1916,13 @@ static int closeUnixFile(sqlite3_file *id){
     pFile->pId = 0;
   }
 #endif
+#ifdef SQLITE_UNLINK_AFTER_CLOSE
+  if( pFile->ctrlFlags & UNIXFILE_DELETE ){
+    osUnlink(pFile->zPath);
+    sqlite3_free(*(char**)&pFile->zPath);
+    pFile->zPath = 0;
+  }
+#endif
   OSTRACE(("CLOSE   %-3d\n", pFile->h));
   OpenCounter(-1);
   sqlite3_free(pFile->pUnused);
@@ -2437,7 +2445,6 @@ static int semCheckReservedLock(sqlite3_file *id, int *pResOut) {
   /* Otherwise see if some other process holds it. */
   if( !reserved ){
     sem_t *pSem = pFile->pInode->pSem;
-    struct stat statBuf;
 
     if( sem_trywait(pSem)==-1 ){
       int tErrno = errno;
@@ -2490,7 +2497,6 @@ static int semCheckReservedLock(sqlite3_file *id, int *pResOut) {
 */
 static int semLock(sqlite3_file *id, int eFileLock) {
   unixFile *pFile = (unixFile*)id;
-  int fd;
   sem_t *pSem = pFile->pInode->pSem;
   int rc = SQLITE_OK;
 
@@ -3953,8 +3959,25 @@ static int unixDeviceCharacteristics(sqlite3_file *id){
   return rc;
 }
 
-#ifndef SQLITE_OMIT_WAL
+#if !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0
 
+/*
+** Return the system page size.
+**
+** This function should not be called directly by other code in this file. 
+** Instead, it should be called via macro osGetpagesize().
+*/
+static int unixGetpagesize(void){
+#if defined(_BSD_SOURCE)
+  return getpagesize();
+#else
+  return (int)sysconf(_SC_PAGESIZE);
+#endif
+}
+
+#endif /* !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0 */
+
+#ifndef SQLITE_OMIT_WAL
 
 /*
 ** Object used to represent an shared memory buffer.  
@@ -4105,6 +4128,22 @@ static int unixShmSystemLock(
   return rc;        
 }
 
+/*
+** Return the minimum number of 32KB shm regions that should be mapped at
+** a time, assuming that each mapping must be an integer multiple of the
+** current system page-size.
+**
+** Usually, this is 1. The exception seems to be systems that are configured
+** to use 64KB pages - in this case each mapping must cover at least two
+** shm regions.
+*/
+static int unixShmRegionPerMap(void){
+  int shmsz = 32*1024;            /* SHM region size */
+  int pgsz = osGetpagesize();   /* System page size */
+  assert( ((pgsz-1)&pgsz)==0 );   /* Page size must be a power of 2 */
+  if( pgsz<shmsz ) return 1;
+  return pgsz/shmsz;
+}
 
 /*
 ** Purge the unixShmNodeList list of all entries with unixShmNode.nRef==0.
@@ -4116,10 +4155,11 @@ static void unixShmPurge(unixFile *pFd){
   unixShmNode *p = pFd->pInode->pShmNode;
   assert( unixMutexHeld() );
   if( p && p->nRef==0 ){
+    int nShmPerMap = unixShmRegionPerMap();
     int i;
     assert( p->pInode==pFd->pInode );
     sqlite3_mutex_free(p->mutex);
-    for(i=0; i<p->nRegion; i++){
+    for(i=0; i<p->nRegion; i+=nShmPerMap){
       if( p->h>=0 ){
         osMunmap(p->apRegion[i], p->szRegion);
       }else{
@@ -4326,6 +4366,8 @@ static int unixShmMap(
   unixShm *p;
   unixShmNode *pShmNode;
   int rc = SQLITE_OK;
+  int nShmPerMap = unixShmRegionPerMap();
+  int nReqRegion;
 
   /* If the shared-memory file has not yet been opened, open it now. */
   if( pDbFd->pShm==0 ){
@@ -4341,9 +4383,12 @@ static int unixShmMap(
   assert( pShmNode->h>=0 || pDbFd->pInode->bProcessLock==1 );
   assert( pShmNode->h<0 || pDbFd->pInode->bProcessLock==0 );
 
-  if( pShmNode->nRegion<=iRegion ){
+  /* Minimum number of regions required to be mapped. */
+  nReqRegion = ((iRegion+nShmPerMap) / nShmPerMap) * nShmPerMap;
+
+  if( pShmNode->nRegion<nReqRegion ){
     char **apNew;                      /* New apRegion[] array */
-    int nByte = (iRegion+1)*szRegion;  /* Minimum required file size */
+    int nByte = nReqRegion*szRegion;   /* Minimum required file size */
     struct stat sStat;                 /* Used by fstat() */
 
     pShmNode->szRegion = szRegion;
@@ -4392,17 +4437,19 @@ static int unixShmMap(
 
     /* Map the requested memory region into this processes address space. */
     apNew = (char **)sqlite3_realloc(
-        pShmNode->apRegion, (iRegion+1)*sizeof(char *)
+        pShmNode->apRegion, nReqRegion*sizeof(char *)
     );
     if( !apNew ){
       rc = SQLITE_IOERR_NOMEM;
       goto shmpage_out;
     }
     pShmNode->apRegion = apNew;
-    while(pShmNode->nRegion<=iRegion){
+    while( pShmNode->nRegion<nReqRegion ){
+      int nMap = szRegion*nShmPerMap;
+      int i;
       void *pMem;
       if( pShmNode->h>=0 ){
-        pMem = osMmap(0, szRegion,
+        pMem = osMmap(0, nMap,
             pShmNode->isReadonly ? PROT_READ : PROT_READ|PROT_WRITE, 
             MAP_SHARED, pShmNode->h, szRegion*(i64)pShmNode->nRegion
         );
@@ -4418,8 +4465,11 @@ static int unixShmMap(
         }
         memset(pMem, 0, szRegion);
       }
-      pShmNode->apRegion[pShmNode->nRegion] = pMem;
-      pShmNode->nRegion++;
+
+      for(i=0; i<nShmPerMap; i++){
+        pShmNode->apRegion[pShmNode->nRegion+i] = &((char*)pMem)[szRegion*i];
+      }
+      pShmNode->nRegion += nShmPerMap;
     }
   }
 
@@ -4634,19 +4684,6 @@ static void unixUnmapfile(unixFile *pFd){
 }
 
 /*
-** Return the system page size.
-*/
-static int unixGetPagesize(void){
-#if HAVE_MREMAP
-  return 512;
-#elif defined(_BSD_SOURCE)
-  return getpagesize();
-#else
-  return (int)sysconf(_SC_PAGESIZE);
-#endif
-}
-
-/*
 ** Attempt to set the size of the memory mapping maintained by file 
 ** descriptor pFd to nNew bytes. Any existing mapping is discarded.
 **
@@ -4682,8 +4719,12 @@ static void unixRemapfile(
   if( (pFd->ctrlFlags & UNIXFILE_RDONLY)==0 ) flags |= PROT_WRITE;
 
   if( pOrig ){
-    const int szSyspage = unixGetPagesize();
+#if HAVE_MREMAP
+    i64 nReuse = pFd->mmapSize;
+#else
+    const int szSyspage = osGetpagesize();
     i64 nReuse = (pFd->mmapSize & ~(szSyspage-1));
+#endif
     u8 *pReq = &pOrig[nReuse];
 
     /* Unmap any pages of the existing mapping that cannot be reused. */
@@ -5736,6 +5777,12 @@ static int unixOpen(
   if( isDelete ){
 #if OS_VXWORKS
     zPath = zName;
+#elif defined(SQLITE_UNLINK_AFTER_CLOSE)
+    zPath = sqlite3_mprintf("%s", zName);
+    if( zPath==0 ){
+      robust_close(p, fd, __LINE__);
+      return SQLITE_NOMEM;
+    }
 #else
     osUnlink(zName);
 #endif
@@ -5836,7 +5883,11 @@ static int unixDelete(
   UNUSED_PARAMETER(NotUsed);
   SimulateIOError(return SQLITE_IOERR_DELETE);
   if( osUnlink(zPath)==(-1) ){
-    if( errno==ENOENT ){
+    if( errno==ENOENT
+#if OS_VXWORKS
+        || errno==0x380003
+#endif
+    ){
       rc = SQLITE_IOERR_DELETE_NOENT;
     }else{
       rc = unixLogError(SQLITE_IOERR_DELETE, "unlink", zPath);
@@ -7429,7 +7480,7 @@ int sqlite3_os_init(void){
 
   /* Double-check that the aSyscall[] array has been constructed
   ** correctly.  See ticket [bb3a86e890c8e96ab] */
-  assert( ArraySize(aSyscall)==24 );
+  assert( ArraySize(aSyscall)==25 );
 
   /* Register all VFSes defined in the aVfs[] array */
   for(i=0; i<(sizeof(aVfs)/sizeof(sqlite3_vfs)); i++){

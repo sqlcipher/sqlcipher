@@ -84,18 +84,35 @@ void sqlite3VdbeSwap(Vdbe *pA, Vdbe *pB){
 }
 
 /*
-** Resize the Vdbe.aOp array so that it is at least one op larger than 
-** it was.
+** Resize the Vdbe.aOp array so that it is at least nOp elements larger 
+** than its current size. nOp is guaranteed to be less than or equal
+** to 1024/sizeof(Op).
 **
 ** If an out-of-memory error occurs while resizing the array, return
-** SQLITE_NOMEM. In this case Vdbe.aOp and Vdbe.nOpAlloc remain 
+** SQLITE_NOMEM. In this case Vdbe.aOp and Parse.nOpAlloc remain 
 ** unchanged (this is so that any opcodes already allocated can be 
 ** correctly deallocated along with the rest of the Vdbe).
 */
-static int growOpArray(Vdbe *v){
+static int growOpArray(Vdbe *v, int nOp){
   VdbeOp *pNew;
   Parse *p = v->pParse;
+
+  /* The SQLITE_TEST_REALLOC_STRESS compile-time option is designed to force
+  ** more frequent reallocs and hence provide more opportunities for 
+  ** simulated OOM faults.  SQLITE_TEST_REALLOC_STRESS is generally used
+  ** during testing only.  With SQLITE_TEST_REALLOC_STRESS grow the op array
+  ** by the minimum* amount required until the size reaches 512.  Normal
+  ** operation (without SQLITE_TEST_REALLOC_STRESS) is to double the current
+  ** size of the op array or add 1KB of space, whichever is smaller. */
+#ifdef SQLITE_TEST_REALLOC_STRESS
+  int nNew = (p->nOpAlloc>=512 ? p->nOpAlloc*2 : p->nOpAlloc+nOp);
+#else
   int nNew = (p->nOpAlloc ? p->nOpAlloc*2 : (int)(1024/sizeof(Op)));
+  UNUSED_PARAMETER(nOp);
+#endif
+
+  assert( nOp<=(1024/sizeof(Op)) );
+  assert( nNew>=(p->nOpAlloc+nOp) );
   pNew = sqlite3DbRealloc(p->db, v->aOp, nNew*sizeof(Op));
   if( pNew ){
     p->nOpAlloc = sqlite3DbMallocSize(p->db, pNew)/sizeof(Op);
@@ -139,7 +156,7 @@ int sqlite3VdbeAddOp3(Vdbe *p, int op, int p1, int p2, int p3){
   assert( p->magic==VDBE_MAGIC_INIT );
   assert( op>0 && op<0xff );
   if( p->pParse->nOpAlloc<=i ){
-    if( growOpArray(p) ){
+    if( growOpArray(p, 1) ){
       return 1;
     }
   }
@@ -276,7 +293,7 @@ void sqlite3VdbeResolveLabel(Vdbe *v, int x){
   int j = -1-x;
   assert( v->magic==VDBE_MAGIC_INIT );
   assert( j<p->nLabel );
-  if( j>=0 && p->aLabel ){
+  if( ALWAYS(j>=0) && p->aLabel ){
     p->aLabel[j] = v->nOp;
   }
   p->iFixedOp = v->nOp - 1;
@@ -499,7 +516,7 @@ static void resolveP2Values(Vdbe *p, int *pMaxFuncArgs){
   pParse->aLabel = 0;
   pParse->nLabel = 0;
   *pMaxFuncArgs = nMaxArgs;
-  assert( p->bIsReader!=0 || p->btreeMask==0 );
+  assert( p->bIsReader!=0 || DbMaskAllZero(p->btreeMask) );
 }
 
 /*
@@ -526,7 +543,7 @@ VdbeOp *sqlite3VdbeTakeOpArray(Vdbe *p, int *pnOp, int *pnMaxArg){
   assert( aOp && !p->db->mallocFailed );
 
   /* Check that sqlite3VdbeUsesBtree() was not called on this VM */
-  assert( p->btreeMask==0 );
+  assert( DbMaskAllZero(p->btreeMask) );
 
   resolveP2Values(p, pnMaxArg);
   *pnOp = p->nOp;
@@ -541,7 +558,7 @@ VdbeOp *sqlite3VdbeTakeOpArray(Vdbe *p, int *pnOp, int *pnMaxArg){
 int sqlite3VdbeAddOpList(Vdbe *p, int nOp, VdbeOpList const *aOp, int iLineno){
   int addr;
   assert( p->magic==VDBE_MAGIC_INIT );
-  if( p->nOp + nOp > p->pParse->nOpAlloc && growOpArray(p) ){
+  if( p->nOp + nOp > p->pParse->nOpAlloc && growOpArray(p, nOp) ){
     return 0;
   }
   addr = p->nOp;
@@ -726,7 +743,7 @@ void sqlite3VdbeLinkSubProgram(Vdbe *pVdbe, SubProgram *p){
 ** Change the opcode at addr into OP_Noop
 */
 void sqlite3VdbeChangeToNoop(Vdbe *p, int addr){
-  if( p->aOp ){
+  if( addr<p->nOp ){
     VdbeOp *pOp = &p->aOp[addr];
     sqlite3 *db = p->db;
     freeP4(db, pOp->p4type, pOp->p4.p);
@@ -783,7 +800,9 @@ void sqlite3VdbeChangeP4(Vdbe *p, int addr, const char *zP4, int n){
     addr = p->nOp - 1;
   }
   pOp = &p->aOp[addr];
-  assert( pOp->p4type==P4_NOTUSED || pOp->p4type==P4_INT32 );
+  assert( pOp->p4type==P4_NOTUSED
+       || pOp->p4type==P4_INT32
+       || pOp->p4type==P4_KEYINFO );
   freeP4(db, pOp->p4type, pOp->p4.p);
   pOp->p4.p = 0;
   if( n==P4_INT32 ){
@@ -1109,9 +1128,9 @@ static char *displayP4(Op *pOp, char *zTemp, int nTemp){
 void sqlite3VdbeUsesBtree(Vdbe *p, int i){
   assert( i>=0 && i<p->db->nDb && i<(int)sizeof(yDbMask)*8 );
   assert( i<(int)sizeof(p->btreeMask)*8 );
-  p->btreeMask |= ((yDbMask)1)<<i;
+  DbMaskSet(p->btreeMask, i);
   if( i!=1 && sqlite3BtreeSharable(p->db->aDb[i].pBt) ){
-    p->lockMask |= ((yDbMask)1)<<i;
+    DbMaskSet(p->lockMask, i);
   }
 }
 
@@ -1139,16 +1158,15 @@ void sqlite3VdbeUsesBtree(Vdbe *p, int i){
 */
 void sqlite3VdbeEnter(Vdbe *p){
   int i;
-  yDbMask mask;
   sqlite3 *db;
   Db *aDb;
   int nDb;
-  if( p->lockMask==0 ) return;  /* The common case */
+  if( DbMaskAllZero(p->lockMask) ) return;  /* The common case */
   db = p->db;
   aDb = db->aDb;
   nDb = db->nDb;
-  for(i=0, mask=1; i<nDb; i++, mask += mask){
-    if( i!=1 && (mask & p->lockMask)!=0 && ALWAYS(aDb[i].pBt!=0) ){
+  for(i=0; i<nDb; i++){
+    if( i!=1 && DbMaskTest(p->lockMask,i) && ALWAYS(aDb[i].pBt!=0) ){
       sqlite3BtreeEnter(aDb[i].pBt);
     }
   }
@@ -1161,16 +1179,15 @@ void sqlite3VdbeEnter(Vdbe *p){
 */
 void sqlite3VdbeLeave(Vdbe *p){
   int i;
-  yDbMask mask;
   sqlite3 *db;
   Db *aDb;
   int nDb;
-  if( p->lockMask==0 ) return;  /* The common case */
+  if( DbMaskAllZero(p->lockMask) ) return;  /* The common case */
   db = p->db;
   aDb = db->aDb;
   nDb = db->nDb;
-  for(i=0, mask=1; i<nDb; i++, mask += mask){
-    if( i!=1 && (mask & p->lockMask)!=0 && ALWAYS(aDb[i].pBt!=0) ){
+  for(i=0; i<nDb; i++){
+    if( i!=1 && DbMaskTest(p->lockMask,i) && ALWAYS(aDb[i].pBt!=0) ){
       sqlite3BtreeLeave(aDb[i].pBt);
     }
   }
@@ -2141,7 +2158,7 @@ static void checkActiveVdbeCnt(sqlite3 *db){
   int nRead = 0;
   p = db->pVdbe;
   while( p ){
-    if( p->magic==VDBE_MAGIC_RUN && p->pc>=0 ){
+    if( sqlite3_stmt_busy((sqlite3_stmt*)p) ){
       cnt++;
       if( p->readOnly==0 ) nWrite++;
       if( p->bIsReader ) nRead++;
@@ -2301,7 +2318,6 @@ int sqlite3VdbeHalt(Vdbe *p){
 
     /* Check for one of the special errors */
     mrc = p->rc & 0xff;
-    assert( p->rc!=SQLITE_IOERR_BLOCKED );  /* This error no longer exists */
     isSpecialError = mrc==SQLITE_NOMEM || mrc==SQLITE_IOERR
                      || mrc==SQLITE_INTERRUPT || mrc==SQLITE_FULL;
     if( isSpecialError ){
@@ -2733,7 +2749,7 @@ int sqlite3VdbeCursorMoveto(VdbeCursor *p){
     if( rc ) return rc;
     if( hasMoved ){
       p->cacheStatus = CACHE_STALE;
-      p->nullRow = 1;
+      if( hasMoved==2 ) p->nullRow = 1;
     }
   }
   return SQLITE_OK;
@@ -2786,7 +2802,7 @@ int sqlite3VdbeCursorMoveto(VdbeCursor *p){
 */
 u32 sqlite3VdbeSerialType(Mem *pMem, int file_format){
   int flags = pMem->flags;
-  int n;
+  u32 n;
 
   if( flags&MEM_Null ){
     return 0;
@@ -2816,11 +2832,11 @@ u32 sqlite3VdbeSerialType(Mem *pMem, int file_format){
     return 7;
   }
   assert( pMem->db->mallocFailed || flags&(MEM_Str|MEM_Blob) );
-  n = pMem->n;
+  assert( pMem->n>=0 );
+  n = (u32)pMem->n;
   if( flags & MEM_Zero ){
     n += pMem->u.nZero;
   }
-  assert( n>=0 );
   return ((n*2) + 12 + ((flags&MEM_Str)!=0));
 }
 
@@ -3403,10 +3419,13 @@ static i64 vdbeRecordDecodeInt(u32 serial_type, const u8 *aKey){
 ** Key1 and Key2 do not have to contain the same number of fields. If all 
 ** fields that appear in both keys are equal, then pPKey2->default_rc is 
 ** returned.
+**
+** If database corruption is discovered, set pPKey2->isCorrupt to non-zero
+** and return 0.
 */
 int sqlite3VdbeRecordCompare(
   int nKey1, const void *pKey1,   /* Left key */
-  const UnpackedRecord *pPKey2,   /* Right key */
+  UnpackedRecord *pPKey2,         /* Right key */
   int bSkip                       /* If true, skip the first field */
 ){
   u32 d1;                         /* Offset into aKey[] of next data element */
@@ -3432,7 +3451,10 @@ int sqlite3VdbeRecordCompare(
   }else{
     idx1 = getVarint32(aKey1, szHdr1);
     d1 = szHdr1;
-    if( d1>(unsigned)nKey1 ) return 1;  /* Corruption */
+    if( d1>(unsigned)nKey1 ){ 
+      pPKey2->isCorrupt = (u8)SQLITE_CORRUPT_BKPT;
+      return 0;  /* Corruption */
+    }
     i = 0;
   }
 
@@ -3509,7 +3531,8 @@ int sqlite3VdbeRecordCompare(
         testcase( (d1+mem1.n)==(unsigned)nKey1 );
         testcase( (d1+mem1.n+1)==(unsigned)nKey1 );
         if( (d1+mem1.n) > (unsigned)nKey1 ){
-          rc = 1;                /* Corruption */
+          pPKey2->isCorrupt = (u8)SQLITE_CORRUPT_BKPT;
+          return 0;                /* Corruption */
         }else if( pKeyInfo->aColl[i] ){
           mem1.enc = pKeyInfo->enc;
           mem1.db = pKeyInfo->db;
@@ -3535,7 +3558,8 @@ int sqlite3VdbeRecordCompare(
         testcase( (d1+nStr)==(unsigned)nKey1 );
         testcase( (d1+nStr+1)==(unsigned)nKey1 );
         if( (d1+nStr) > (unsigned)nKey1 ){
-          rc = 1;                /* Corruption */
+          pPKey2->isCorrupt = (u8)SQLITE_CORRUPT_BKPT;
+          return 0;                /* Corruption */
         }else{
           int nCmp = MIN(nStr, pRhs->n);
           rc = memcmp(&aKey1[d1], pRhs->z, nCmp);
@@ -3579,6 +3603,7 @@ int sqlite3VdbeRecordCompare(
   ** value.  */
   assert( CORRUPT_DB 
        || pPKey2->default_rc==vdbeRecordCompareDebug(nKey1, pKey1, pPKey2) 
+       || pKeyInfo->db->mallocFailed
   );
   return pPKey2->default_rc;
 }
@@ -3588,10 +3613,13 @@ int sqlite3VdbeRecordCompare(
 ** that (a) the first field of pPKey2 is an integer, and (b) the 
 ** size-of-header varint at the start of (pKey1/nKey1) fits in a single
 ** byte (i.e. is less than 128).
+**
+** To avoid concerns about buffer overreads, this routine is only used
+** on schemas where the maximum valid header size is 63 bytes or less.
 */
 static int vdbeRecordCompareInt(
   int nKey1, const void *pKey1, /* Left key */
-  const UnpackedRecord *pPKey2, /* Right key */
+  UnpackedRecord *pPKey2,       /* Right key */
   int bSkip                     /* Ignored */
 ){
   const u8 *aKey = &((const u8*)pKey1)[*(const u8*)pKey1 & 0x3F];
@@ -3604,6 +3632,7 @@ static int vdbeRecordCompareInt(
   UNUSED_PARAMETER(bSkip);
 
   assert( bSkip==0 );
+  assert( (*(u8*)pKey1)<=0x3F || CORRUPT_DB );
   switch( serial_type ){
     case 1: { /* 1-byte signed integer */
       lhs = ONE_BYTE_INT(aKey);
@@ -3688,7 +3717,7 @@ static int vdbeRecordCompareInt(
 */
 static int vdbeRecordCompareString(
   int nKey1, const void *pKey1, /* Left key */
-  const UnpackedRecord *pPKey2, /* Right key */
+  UnpackedRecord *pPKey2,       /* Right key */
   int bSkip
 ){
   const u8 *aKey1 = (const u8*)pKey1;
@@ -3709,7 +3738,10 @@ static int vdbeRecordCompareString(
     int szHdr = aKey1[0];
 
     nStr = (serial_type-12) / 2;
-    if( (szHdr + nStr) > nKey1 ) return 0;    /* Corruption */
+    if( (szHdr + nStr) > nKey1 ){
+      pPKey2->isCorrupt = (u8)SQLITE_CORRUPT_BKPT;
+      return 0;    /* Corruption */
+    }
     nCmp = MIN( pPKey2->aMem[0].n, nStr );
     res = memcmp(&aKey1[szHdr], pPKey2->aMem[0].z, nCmp);
 
@@ -3737,6 +3769,7 @@ static int vdbeRecordCompareString(
        || (res<0 && vdbeRecordCompareDebug(nKey1, pKey1, pPKey2)<0)
        || (res>0 && vdbeRecordCompareDebug(nKey1, pKey1, pPKey2)>0)
        || CORRUPT_DB
+       || pPKey2->pKeyInfo->db->mallocFailed
   );
   return res;
 }
@@ -3874,7 +3907,7 @@ idx_rowid_corruption:
 */
 int sqlite3VdbeIdxKeyCompare(
   VdbeCursor *pC,                  /* The cursor to compare against */
-  const UnpackedRecord *pUnpacked, /* Unpacked version of key */
+  UnpackedRecord *pUnpacked,       /* Unpacked version of key */
   int *res                         /* Write the comparison result here */
 ){
   i64 nCellKey = 0;
