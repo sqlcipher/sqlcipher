@@ -88,7 +88,7 @@ http://groups.google.com/group/sqlcipher
 Issues or support questions on using SQLCipher should be entered into the 
 GitHub Issue tracker:
 
-http://github.com/sjlombardo/sqlcipher/issues
+https://github.com/sqlcipher/sqlcipher/issues
 
 Please DO NOT post issues, support questions, or other problems to blog 
 posts about SQLCipher as we do not monitor them frequently.
