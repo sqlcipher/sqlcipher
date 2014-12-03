@@ -58,12 +58,24 @@ proc do_backcompat_test {rv bin1 bin2 script} {
   code1 { sqlite3 db test.db }
   code2 { sqlite3 db test.db }
 
+  foreach c {code1 code2} {
+    $c {
+      set v [split [db version] .]
+      if {[llength $v]==3} {lappend v 0}
+      set ::sqlite_libversion [format \
+        "%d%.2d%.2d%2d" [lindex $v 0] [lindex $v 1] [lindex $v 2] [lindex $v 3]
+      ]
+    }
+  }
+
   uplevel $script
 
   catch { code1 { db close } }
   catch { code2 { db close } }
   catch { close $::bc_chan2 }
   catch { close $::bc_chan1 }
+
+
 }
 
 array set ::incompatible [list]
@@ -200,6 +212,42 @@ do_allbackcompat_test {
 
   do_test backcompat-1.2.7 { sql1 { PRAGMA integrity_check } } {ok}
   do_test backcompat-1.2.8 { sql2 { PRAGMA integrity_check } } {ok}
+
+  do_test backcompat-2.1 {
+    sql1 {
+      CREATE TABLE t2(a UNIQUE, b PRIMARY KEY, c UNIQUE);
+      INSERT INTO t2 VALUES(1,9,5);
+      INSERT INTO t2 VALUES(5,5,1);
+      INSERT INTO t2 VALUES(9,1,9);
+      SELECT * FROM t2 ORDER BY a;
+    }
+  } {1 9 5 5 5 1 9 1 9}
+  do_test backcompat-2.2 {
+    sql2 {
+      SELECT * FROM sqlite_master WHERE rootpage=-1;
+      SELECT * FROM t2 ORDER BY a;
+    }
+  } {1 9 5 5 5 1 9 1 9}
+  do_test backcompat-2.3 {
+    sql1 {
+      SELECT * FROM t2 ORDER BY b;
+    }
+  } {9 1 9 5 5 1 1 9 5}
+  do_test backcompat-2.4 {
+    sql2 {
+      SELECT * FROM t2 ORDER BY b;
+    }
+  } {9 1 9 5 5 1 1 9 5}
+  do_test backcompat-2.5 {
+    sql1 {
+      SELECT * FROM t2 ORDER BY c;
+    }
+  } {5 5 1 1 9 5 9 1 9}
+  do_test backcompat-2.6 {
+    sql2 {
+      SELECT * FROM t2 ORDER BY c;
+    }
+  } {5 5 1 1 9 5 9 1 9}
 }
 foreach k [lsort [array names ::incompatible]] {
   puts "ERROR: Detected journal incompatibility with version $k"
@@ -344,6 +392,48 @@ ifcapable fts3 {
         8    "SELECT offsets(t1) FROM t1 WHERE t1 MATCH 'a*'"
       } {
         do_test backcompat-3.7 [list sql1 $q] [sql2 $q]
+      }
+
+      # Now test that an incremental merge can be started by one version
+      # and finished by another. And that the integrity-check still 
+      # passes.
+      do_test backcompat-3.8 {
+        sql1 { 
+          DROP TABLE IF EXISTS t1;
+          DROP TABLE IF EXISTS t2;
+          CREATE TABLE t1(docid, words);
+          CREATE VIRTUAL TABLE t2 USING fts3(words);
+        }
+        code1 [list source $testdir/genesis.tcl]
+        code1 { fts_kjv_genesis }
+        sql1 {
+          INSERT INTO t2 SELECT words FROM t1;
+          INSERT INTO t2 SELECT words FROM t1;
+          INSERT INTO t2 SELECT words FROM t1;
+          INSERT INTO t2 SELECT words FROM t1;
+          INSERT INTO t2 SELECT words FROM t1;
+          INSERT INTO t2 SELECT words FROM t1;
+          SELECT level, group_concat(idx, ' ') FROM t2_segdir GROUP BY level;
+        }
+      } {0 {0 1 2 3 4 5}}
+
+      if {[code1 { set ::sqlite_libversion }] >=3071200 
+       && [code2 { set ::sqlite_libversion }] >=3071200 
+      } {
+        do_test backcompat-3.9 {
+          sql1 { INSERT INTO t2(t2) VALUES('merge=100,4'); }
+          sql2 { INSERT INTO t2(t2) VALUES('merge=100,4'); }
+          sql1 { INSERT INTO t2(t2) VALUES('merge=100,4'); }
+          sql2 { INSERT INTO t2(t2) VALUES('merge=2500,4'); }
+          sql2 {
+            SELECT level, group_concat(idx, ' ') FROM t2_segdir GROUP BY level;
+          }
+        } {0 {0 1} 1 0}
+
+        do_test backcompat-3.10 {
+          sql1 { INSERT INTO t2(t2) VALUES('integrity-check') }
+          sql2 { INSERT INTO t2(t2) VALUES('integrity-check') }
+        } {}
       }
     }
   }

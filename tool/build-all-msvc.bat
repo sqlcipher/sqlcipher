@@ -147,6 +147,17 @@ IF NOT DEFINED CONFIGURATIONS (
 %_VECHO% Configurations = '%CONFIGURATIONS%'
 
 REM
+REM NOTE: If the command used to invoke NMAKE is not already set, use the
+REM       default.
+REM
+IF NOT DEFINED NMAKE_CMD (
+  SET NMAKE_CMD=nmake -B -f Makefile.msc
+)
+
+%_VECHO% NmakeCmd = '%NMAKE_CMD%'
+%_VECHO% NmakeArgs = '%NMAKE_ARGS%'
+
+REM
 REM NOTE: Setup environment variables to translate between the MSVC platform
 REM       names and the names to be used for the platform-specific binary
 REM       directories.
@@ -203,10 +214,18 @@ SET TOOLPATH=%gawk.exe_PATH%;%tclsh85.exe_PATH%
 %_VECHO% ToolPath = '%TOOLPATH%'
 
 REM
-REM NOTE: Check for MSVC 2012 because the Windows SDK directory handling is
-REM       slightly different for that version.
+REM NOTE: Check for MSVC 2012/2013 because the Windows SDK directory handling
+REM       is slightly different for those versions.
 REM
 IF "%VisualStudioVersion%" == "11.0" (
+  REM
+  REM NOTE: If the Windows SDK library path has already been set, do not set
+  REM       it to something else later on.
+  REM
+  IF NOT DEFINED NSDKLIBPATH (
+    SET SET_NSDKLIBPATH=1
+  )
+) ELSE IF "%VisualStudioVersion%" == "12.0" (
   REM
   REM NOTE: If the Windows SDK library path has already been set, do not set
   REM       it to something else later on.
@@ -230,6 +249,7 @@ GOTO set_vcvarsall_done
 :set_vcvarsall_phone
 SET VCVARSALL=%VCINSTALLDIR%\WPSDK\WP80\vcvarsphoneall.bat
 :set_vcvarsall_done
+SET VCVARSALL=%VCVARSALL:\\=\%
 
 REM
 REM NOTE: This is the outer loop.  There should be exactly one iteration per
@@ -244,7 +264,7 @@ FOR %%P IN (%PLATFORMS%) DO (
   CALL :fn_CopyVariable %%P_NAME PLATFORMNAME
 
   REM
-  REM NOTE: This is the inner loop.  There should be exactly one iteration.
+  REM NOTE: This is the second loop.  There should be exactly one iteration.
   REM       This loop is necessary because the PlatformName environment
   REM       variable was set above and that value is needed by some of the
   REM       commands contained in the inner loop.  If these commands were
@@ -257,9 +277,11 @@ FOR %%P IN (%PLATFORMS%) DO (
     REM       and/or Visual Studio.  This block may need to be updated in the
     REM       future to account for additional environment variables.
     REM
+    CALL :fn_UnsetVariable CommandPromptType
     CALL :fn_UnsetVariable DevEnvDir
     CALL :fn_UnsetVariable ExtensionSdkDir
     CALL :fn_UnsetVariable Framework35Version
+    CALL :fn_UnsetVariable Framework40Version
     CALL :fn_UnsetVariable FrameworkDir
     CALL :fn_UnsetVariable FrameworkDir32
     CALL :fn_UnsetVariable FrameworkVersion
@@ -275,18 +297,26 @@ FOR %%P IN (%PLATFORMS%) DO (
     CALL :fn_UnsetVariable WindowsSdkDir
     CALL :fn_UnsetVariable WindowsSdkDir_35
     CALL :fn_UnsetVariable WindowsSdkDir_old
+    CALL :fn_UnsetVariable WindowsSDK_ExecutablePath_x86
+    CALL :fn_UnsetVariable WindowsSDK_ExecutablePath_x64
 
     REM
     REM NOTE: Reset the PATH here to the absolute bare minimum required.
     REM
     SET PATH=%TOOLPATH%;%SystemRoot%\System32;%SystemRoot%
 
+    REM
+    REM NOTE: This is the inner loop.  There are normally two iterations, one
+    REM       for each supported build configuration, e.g. Debug or Retail.
+    REM
     FOR %%B IN (%CONFIGURATIONS%) DO (
       REM
       REM NOTE: When preparing the debug build, set the DEBUG and MEMDEBUG
       REM       environment variables to be picked up by the MSVC makefile
       REM       itself.
       REM
+      %_AECHO% Building the %%B configuration for platform %%P with name %%D...
+
       IF /I "%%B" == "Debug" (
         SET DEBUG=2
         SET MEMDEBUG=1
@@ -309,6 +339,10 @@ FOR %%P IN (%PLATFORMS%) DO (
       REM       4. Copy the "sqlite3.dll" and "sqlite3.lib" binaries for this
       REM          platform to the platform-specific directory beneath the
       REM          binary directory.
+      REM
+      REM       5. Unless prevented from doing so, copy the "sqlite3.pdb"
+      REM          symbols file for this platform to the platform-specific
+      REM          directory beneath the binary directory.
       REM
       "%ComSpec%" /C (
         REM
@@ -337,21 +371,36 @@ FOR %%P IN (%PLATFORMS%) DO (
         )
 
         REM
-        REM NOTE: When using MSVC 2012, the native SDK path cannot simply use
-        REM       the "lib" sub-directory beneath the location specified in the
-        REM       WindowsSdkDir environment variable because that location does
-        REM       not actually contain the necessary library files for x86.
-        REM       This must be done for each iteration because it relies upon
-        REM       the WindowsSdkDir environment variable being set by the batch
-        REM       file used to setup the MSVC environment.
+        REM NOTE: When using MSVC 2012 and/or 2013, the native SDK path cannot
+        REM       simply use the "lib" sub-directory beneath the location
+        REM       specified in the WindowsSdkDir environment variable because
+        REM       that location does not actually contain the necessary library
+        REM       files for x86.  This must be done for each iteration because
+        REM       it relies upon the WindowsSdkDir environment variable being
+        REM       set by the batch file used to setup the MSVC environment.
         REM
         IF DEFINED SET_NSDKLIBPATH (
+          REM
+          REM NOTE: The Windows Phone SDK has a slightly different directory
+          REM       structure and must be handled specially here.
+          REM
           IF DEFINED WindowsPhoneKitDir (
             CALL :fn_CopyVariable WindowsPhoneKitDir NSDKLIBPATH
             CALL :fn_AppendVariable NSDKLIBPATH \lib\x86
           ) ELSE IF DEFINED WindowsSdkDir (
             CALL :fn_CopyVariable WindowsSdkDir NSDKLIBPATH
-            CALL :fn_AppendVariable NSDKLIBPATH \lib\win8\um\x86
+
+            REM
+            REM NOTE: The Windows 8.1 SDK has a slightly different directory
+            REM       naming convention.
+            REM
+            IF DEFINED USE_WINV63_NSDKLIBPATH (
+              CALL :fn_AppendVariable NSDKLIBPATH \lib\winv6.3\um\x86
+            ) ELSE IF "%VisualStudioVersion%" == "12.0" (
+              CALL :fn_AppendVariable NSDKLIBPATH \..\8.0\lib\win8\um\x86
+            ) ELSE (
+              CALL :fn_AppendVariable NSDKLIBPATH \lib\win8\um\x86
+            )
           )
         )
 
@@ -362,7 +411,7 @@ FOR %%P IN (%PLATFORMS%) DO (
         REM       file, etc.
         REM
         IF NOT DEFINED NOCLEAN (
-          %__ECHO% nmake -f Makefile.msc clean
+          %__ECHO% %NMAKE_CMD% clean
 
           IF ERRORLEVEL 1 (
             ECHO Failed to clean for platform %%P.
@@ -374,6 +423,7 @@ FOR %%P IN (%PLATFORMS%) DO (
           REM       need to remove the build output for the files we are
           REM       specifically wanting to build for each platform.
           REM
+          %_AECHO% Cleaning final output files only...
           %__ECHO% DEL /Q *.lo sqlite3.dll sqlite3.lib sqlite3.pdb
         )
 
@@ -384,7 +434,7 @@ FOR %%P IN (%PLATFORMS%) DO (
         REM       Also, disable looking for and/or linking to the native Tcl
         REM       runtime library.
         REM
-        %__ECHO% nmake -f Makefile.msc sqlite3.dll XCOMPILE=1 USE_NATIVE_LIBPATHS=1 NO_TCL=1 %NMAKE_ARGS%
+        %__ECHO% %NMAKE_CMD% sqlite3.dll XCOMPILE=1 USE_NATIVE_LIBPATHS=1 NO_TCL=1 %NMAKE_ARGS%
 
         IF ERRORLEVEL 1 (
           ECHO Failed to build %%B "sqlite3.dll" for platform %%P.
@@ -462,9 +512,9 @@ GOTO no_errors
   GOTO :EOF
 
 :fn_CopyVariable
-  SETLOCAL
   IF NOT DEFINED %1 GOTO :EOF
   IF "%2" == "" GOTO :EOF
+  SETLOCAL
   SET __ECHO_CMD=ECHO %%%1%%
   FOR /F "delims=" %%V IN ('%__ECHO_CMD%') DO (
     SET VALUE=%%V

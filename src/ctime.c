@@ -117,7 +117,9 @@ static const char * const azCompileOpt[] = {
 #ifdef SQLITE_ENABLE_RTREE
   "ENABLE_RTREE",
 #endif
-#ifdef SQLITE_ENABLE_STAT3
+#if defined(SQLITE_ENABLE_STAT4)
+  "ENABLE_STAT4",
+#elif defined(SQLITE_ENABLE_STAT3)
   "ENABLE_STAT3",
 #endif
 #ifdef SQLITE_ENABLE_UNLOCK_NOTIFY
@@ -212,6 +214,9 @@ static const char * const azCompileOpt[] = {
 #endif
 #ifdef SQLITE_OMIT_COMPOUND_SELECT
   "OMIT_COMPOUND_SELECT",
+#endif
+#ifdef SQLITE_OMIT_CTE
+  "OMIT_CTE",
 #endif
 #ifdef SQLITE_OMIT_DATETIME_FUNCS
   "OMIT_DATETIME_FUNCS",
@@ -345,6 +350,9 @@ static const char * const azCompileOpt[] = {
 #ifdef SQLITE_SOUNDEX
   "SOUNDEX",
 #endif
+#ifdef SQLITE_SYSTEM_MALLOC
+  "SYSTEM_MALLOC",
+#endif
 #ifdef SQLITE_TCL
   "TCL",
 #endif
@@ -359,6 +367,9 @@ static const char * const azCompileOpt[] = {
 #endif
 #ifdef SQLITE_USE_ALLOCA
   "USE_ALLOCA",
+#endif
+#ifdef SQLITE_WIN32_MALLOC
+  "WIN32_MALLOC",
 #endif
 #ifdef SQLITE_ZERO_MALLOC
   "ZERO_MALLOC"

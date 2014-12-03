@@ -121,8 +121,10 @@ SRC = \
   $(TOP)/src/os.c \
   $(TOP)/src/os.h \
   $(TOP)/src/os_common.h \
+  $(TOP)/src/os_setup.h \
   $(TOP)/src/os_unix.c \
   $(TOP)/src/os_win.c \
+  $(TOP)/src/os_win.h \
   $(TOP)/src/pager.c \
   $(TOP)/src/pager.h \
   $(TOP)/src/parse.y \
@@ -163,7 +165,8 @@ SRC = \
   $(TOP)/src/wal.c \
   $(TOP)/src/wal.h \
   $(TOP)/src/walker.c \
-  $(TOP)/src/where.c
+  $(TOP)/src/where.c \
+  $(TOP)/src/whereInt.h
 
 # Source code for extensions
 #
@@ -207,6 +210,7 @@ SRC += \
   $(TOP)/ext/icu/sqliteicu.h \
   $(TOP)/ext/icu/icu.c
 SRC += \
+  $(TOP)/ext/rtree/sqlite3rtree.h \
   $(TOP)/ext/rtree/rtree.h \
   $(TOP)/ext/rtree/rtree.c
 
@@ -273,13 +277,16 @@ TESTSRC = \
 TESTSRC += \
   $(TOP)/ext/misc/amatch.c \
   $(TOP)/ext/misc/closure.c \
+  $(TOP)/ext/misc/fileio.c \
   $(TOP)/ext/misc/fuzzer.c \
   $(TOP)/ext/misc/ieee754.c \
   $(TOP)/ext/misc/nextchar.c \
   $(TOP)/ext/misc/percentile.c \
   $(TOP)/ext/misc/regexp.c \
   $(TOP)/ext/misc/spellfix.c \
-  $(TOP)/ext/misc/wholenumber.c
+  $(TOP)/ext/misc/totype.c \
+  $(TOP)/ext/misc/wholenumber.c \
+  $(TOP)/ext/misc/vfslog.c
 
 
 #TESTSRC += $(TOP)/ext/fts2/fts2_tokenizer.c
@@ -336,6 +343,8 @@ HDR = \
    opcodes.h \
    $(TOP)/src/os.h \
    $(TOP)/src/os_common.h \
+   $(TOP)/src/os_setup.h \
+   $(TOP)/src/os_win.h \
    $(TOP)/src/pager.h \
    $(TOP)/src/pcache.h \
    parse.h  \
@@ -344,7 +353,8 @@ HDR = \
    $(TOP)/src/sqliteInt.h  \
    $(TOP)/src/sqliteLimit.h \
    $(TOP)/src/vdbe.h \
-   $(TOP)/src/vdbeInt.h
+   $(TOP)/src/vdbeInt.h \
+   $(TOP)/src/whereInt.h
 
 # Header files used by extensions
 #
@@ -385,7 +395,7 @@ mptester$(EXE):	sqlite3.c $(TOP)/mptest/mptest.c
 		$(TLIBS) $(THREADLIB)
 
 sqlite3.o:	sqlite3.c
-	$(TCCX) -c sqlite3.c
+	$(TCCX) -I. -c sqlite3.c
 
 # This target creates a directory named "tsrc" and fills it with
 # copies of all of the C source code and header files needed to
@@ -398,7 +408,7 @@ target_source:	$(SRC) $(TOP)/tool/vdbe-compress.tcl
 	mkdir tsrc
 	cp -f $(SRC) tsrc
 	rm tsrc/sqlite.h.in tsrc/parse.y
-	tclsh $(TOP)/tool/vdbe-compress.tcl <tsrc/vdbe.c >vdbe.new
+	tclsh $(TOP)/tool/vdbe-compress.tcl $(OPTS) <tsrc/vdbe.c >vdbe.new
 	mv vdbe.new tsrc/vdbe.c
 	touch target_source
 
@@ -472,7 +482,7 @@ parse.c:	$(TOP)/src/parse.y lemon $(TOP)/addopcodes.awk
 	mv parse.h parse.h.temp
 	$(NAWK) -f $(TOP)/addopcodes.awk parse.h.temp >parse.h
 
-sqlite3.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest.uuid $(TOP)/VERSION
+sqlite3.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest.uuid $(TOP)/VERSION $(TOP)/ext/rtree/sqlite3rtree.h
 	tclsh $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3.h
 
 keywordhash.h:	$(TOP)/tool/mkkeywordhash.c
@@ -618,6 +628,40 @@ $(TEST_EXTENSION): $(TOP)/src/test_loadext.c
 extensiontest: testfixture$(EXE) $(TEST_EXTENSION)
 	./testfixture$(EXE) $(TOP)/test/loadext.test
 
+showdb$(EXE):	$(TOP)/tool/showdb.c sqlite3.o
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o showdb$(EXE) \
+		$(TOP)/tool/showdb.c sqlite3.o $(THREADLIB)
+
+showstat4$(EXE):	$(TOP)/tool/showstat4.c sqlite3.o
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o showstat4$(EXE) \
+		$(TOP)/tool/showstat4.c sqlite3.o $(THREADLIB)
+
+showjournal$(EXE):	$(TOP)/tool/showjournal.c sqlite3.o
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o showjournal$(EXE) \
+		$(TOP)/tool/showjournal.c sqlite3.o $(THREADLIB)
+
+showwal$(EXE):	$(TOP)/tool/showwal.c sqlite3.o
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o showwal$(EXE) \
+		$(TOP)/tool/showwal.c sqlite3.o $(THREADLIB)
+
+fts3view$(EXE):	$(TOP)/ext/fts3/tool/fts3view.c sqlite3.o
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o fts3view$(EXE) \
+		$(TOP)/ext/fts3/tool/fts3view.c sqlite3.o $(THREADLIB)
+
+rollback-test$(EXE):	$(TOP)/tool/rollback-test.c sqlite3.o
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o rollback-test$(EXE) \
+		$(TOP)/tool/rollback-test.c sqlite3.o $(THREADLIB)
+
+LogEst$(EXE):	$(TOP)/tool/logest.c sqlite3.h
+	$(TCC) -o LogEst$(EXE) $(TOP)/tool/logest.c
+
+wordcount$(EXE):	$(TOP)/test/wordcount.c sqlite3.c
+	$(TCC) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -o wordcount$(EXE) \
+		$(TOP)/test/wordcount.c sqlite3.c
+
+speedtest1$(EXE):	$(TOP)/test/speedtest1.c sqlite3.o
+	$(TCC) -I. -o speedtest1$(EXE) $(TOP)/test/speedtest1.c sqlite3.o $(THREADLIB)
+
 # This target will fail if the SQLite amalgamation contains any exported
 # symbols that do not begin with "sqlite3_". It is run as part of the
 # releasetest.tcl script.
@@ -651,7 +695,16 @@ clean:
 	rm -f fts3-testfixture fts3-testfixture.exe
 	rm -f testfixture testfixture.exe
 	rm -f threadtest3 threadtest3.exe
-	rm -f sqlite3.c fts?amal.c tclsqlite3.c
+	rm -f LogEst LogEst.exe
+	rm -f fts3view fts3view.exe
+	rm -f rollback-test rollback-test.exe
+	rm -f showdb showdb.exe
+	rm -f showjournal showjournal.exe
+	rm -f showstat4 showstat4.exe
+	rm -f showwal showwal.exe
+	rm -f speedtest1 speedtest1.exe
+	rm -f wordcount wordcount.exe
+	rm -f sqlite3.c sqlite3-*.c fts?amal.c tclsqlite3.c
 	rm -f sqlite3rc.h
 	rm -f shell.c sqlite3ext.h
 	rm -f sqlite3_analyzer sqlite3_analyzer.exe sqlite3_analyzer.c

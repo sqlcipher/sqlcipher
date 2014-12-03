@@ -1194,6 +1194,18 @@ do_test func-24.12 {
                           WHEN 'program' THEN null ELSE t1 END) FROM tbl1
   }
 } {,is,free,software}
+# Tests to verify ticket http://www.sqlite.org/src/tktview/55746f9e65f8587c0
+do_test func-24.13 {
+  execsql {
+    SELECT typeof(group_concat(x)) FROM (SELECT '' AS x);
+  }
+} {text}
+do_test func-24.14 {
+  execsql {
+    SELECT typeof(group_concat(x,''))
+      FROM (SELECT '' AS x UNION ALL SELECT '');
+  }
+} {text}
 
 
 # Use the test_isolation function to make sure that type conversions
@@ -1301,11 +1313,13 @@ do_test func-29.3 {
   db eval {SELECT typeof(+x) FROM t29 ORDER BY id}
 } {integer null real blob text}
 if {[permutation] != "mmap"} {
-  do_test func-29.4 {
-    set x [lindex [sqlite3_db_status db CACHE_MISS 1] 1]
-    if {$x>100} {set x many}
-    set x
-  } {many}
+  ifcapable !direct_read {
+    do_test func-29.4 {
+      set x [lindex [sqlite3_db_status db CACHE_MISS 1] 1]
+      if {$x>100} {set x many}
+      set x
+    } {many}
+  }
 }
 do_test func-29.5 {
   db close
@@ -1319,6 +1333,32 @@ do_test func-29.6 {
   set x
 } {1}
 
+# The OP_Column opcode has an optimization that avoids loading content
+# for fields with content-length=0 when the content offset is on an overflow
+# page.  Make sure the optimization works.
+#
+do_execsql_test func-29.10 {
+  CREATE TABLE t29b(a,b,c,d,e,f,g,h,i);
+  INSERT INTO t29b 
+   VALUES(1, hex(randomblob(2000)), null, 0, 1, '', zeroblob(0),'x',x'01');
+  SELECT typeof(c), typeof(d), typeof(e), typeof(f),
+         typeof(g), typeof(h), typeof(i) FROM t29b;
+} {null integer integer text blob text blob}
+do_execsql_test func-29.11 {
+  SELECT length(f), length(g), length(h), length(i) FROM t29b;
+} {0 0 1 1}
+do_execsql_test func-29.12 {
+  SELECT quote(f), quote(g), quote(h), quote(i) FROM t29b;
+} {'' X'' 'x' X'01'}
+
+# EVIDENCE-OF: R-29701-50711 The unicode(X) function returns the numeric
+# unicode code point corresponding to the first character of the string
+# X.
+#
+# EVIDENCE-OF: R-55469-62130 The char(X1,X2,...,XN) function returns a
+# string composed of characters having the unicode code point values of
+# integers X1 through XN, respectively.
+#
 do_execsql_test func-30.1 {SELECT unicode('$');} 36
 do_execsql_test func-30.2 [subst {SELECT unicode('\u00A2');}] 162
 do_execsql_test func-30.3 [subst {SELECT unicode('\u20AC');}] 8364
@@ -1335,4 +1375,9 @@ for {set i 65536} {$i<=0x10ffff} {incr i 139} {
   do_execsql_test func-30.5.$i {SELECT unicode(char($i))} $i
 }
 
+# Test char().
+#
+do_execsql_test func-31.1 { 
+  SELECT char(), length(char()), typeof(char()) 
+} {{} 0 text}
 finish_test

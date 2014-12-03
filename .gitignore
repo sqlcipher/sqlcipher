@@ -37,3 +37,4 @@ xcuserdata/*
 /sqlcipher.pc
 /sqlite3ext.h
 /libsqlcipher.la
+/.DS_Store

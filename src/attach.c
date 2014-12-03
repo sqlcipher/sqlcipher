@@ -38,10 +38,6 @@ static int resolveAttachExpr(NameContext *pName, Expr *pExpr)
   if( pExpr ){
     if( pExpr->op!=TK_ID ){
       rc = sqlite3ResolveExprNames(pName, pExpr);
-      if( rc==SQLITE_OK && !sqlite3ExprIsConstant(pExpr) ){
-        sqlite3ErrorMsg(pName->pParse, "invalid name: \"%s\"", pExpr->u.zToken);
-        return SQLITE_ERROR;
-      }
     }else{
       pExpr->op = TK_STRING;
     }
@@ -379,8 +375,7 @@ attach_end:
 void sqlite3Detach(Parse *pParse, Expr *pDbname){
   static const FuncDef detach_func = {
     1,                /* nArg */
-    SQLITE_UTF8,      /* iPrefEnc */
-    0,                /* flags */
+    SQLITE_UTF8,      /* funcFlags */
     0,                /* pUserData */
     0,                /* pNext */
     detachFunc,       /* xFunc */
@@ -401,8 +396,7 @@ void sqlite3Detach(Parse *pParse, Expr *pDbname){
 void sqlite3Attach(Parse *pParse, Expr *p, Expr *pDbname, Expr *pKey){
   static const FuncDef attach_func = {
     3,                /* nArg */
-    SQLITE_UTF8,      /* iPrefEnc */
-    0,                /* flags */
+    SQLITE_UTF8,      /* funcFlags */
     0,                /* pUserData */
     0,                /* pNext */
     attachFunc,       /* xFunc */
@@ -419,11 +413,8 @@ void sqlite3Attach(Parse *pParse, Expr *p, Expr *pDbname, Expr *pKey){
 /*
 ** Initialize a DbFixer structure.  This routine must be called prior
 ** to passing the structure to one of the sqliteFixAAAA() routines below.
-**
-** The return value indicates whether or not fixation is required.  TRUE
-** means we do need to fix the database references, FALSE means we do not.
 */
-int sqlite3FixInit(
+void sqlite3FixInit(
   DbFixer *pFix,      /* The fixer to be initialized */
   Parse *pParse,      /* Error messages will be written here */
   int iDb,            /* This is the database that must be used */
@@ -432,7 +423,6 @@ int sqlite3FixInit(
 ){
   sqlite3 *db;
 
-  if( NEVER(iDb<0) || iDb==1 ) return 0;
   db = pParse->db;
   assert( db->nDb>iDb );
   pFix->pParse = pParse;
@@ -440,7 +430,7 @@ int sqlite3FixInit(
   pFix->pSchema = db->aDb[iDb].pSchema;
   pFix->zType = zType;
   pFix->pName = pName;
-  return 1;
+  pFix->bVarOnly = (iDb==1);
 }
 
 /*
@@ -468,15 +458,17 @@ int sqlite3FixSrcList(
   if( NEVER(pList==0) ) return 0;
   zDb = pFix->zDb;
   for(i=0, pItem=pList->a; i<pList->nSrc; i++, pItem++){
-    if( pItem->zDatabase && sqlite3StrICmp(pItem->zDatabase, zDb) ){
-      sqlite3ErrorMsg(pFix->pParse,
-         "%s %T cannot reference objects in database %s",
-         pFix->zType, pFix->pName, pItem->zDatabase);
-      return 1;
+    if( pFix->bVarOnly==0 ){
+      if( pItem->zDatabase && sqlite3StrICmp(pItem->zDatabase, zDb) ){
+        sqlite3ErrorMsg(pFix->pParse,
+            "%s %T cannot reference objects in database %s",
+            pFix->zType, pFix->pName, pItem->zDatabase);
+        return 1;
+      }
+      sqlite3DbFree(pFix->pParse->db, pItem->zDatabase);
+      pItem->zDatabase = 0;
+      pItem->pSchema = pFix->pSchema;
     }
-    sqlite3DbFree(pFix->pParse->db, pItem->zDatabase);
-    pItem->zDatabase = 0;
-    pItem->pSchema = pFix->pSchema;
 #if !defined(SQLITE_OMIT_VIEW) || !defined(SQLITE_OMIT_TRIGGER)
     if( sqlite3FixSelect(pFix, pItem->pSelect) ) return 1;
     if( sqlite3FixExpr(pFix, pItem->pOn) ) return 1;
@@ -499,7 +491,19 @@ int sqlite3FixSelect(
     if( sqlite3FixExpr(pFix, pSelect->pWhere) ){
       return 1;
     }
+    if( sqlite3FixExprList(pFix, pSelect->pGroupBy) ){
+      return 1;
+    }
     if( sqlite3FixExpr(pFix, pSelect->pHaving) ){
+      return 1;
+    }
+    if( sqlite3FixExprList(pFix, pSelect->pOrderBy) ){
+      return 1;
+    }
+    if( sqlite3FixExpr(pFix, pSelect->pLimit) ){
+      return 1;
+    }
+    if( sqlite3FixExpr(pFix, pSelect->pOffset) ){
       return 1;
     }
     pSelect = pSelect->pPrior;
@@ -511,7 +515,15 @@ int sqlite3FixExpr(
   Expr *pExpr        /* The expression to be fixed to one database */
 ){
   while( pExpr ){
-    if( ExprHasAnyProperty(pExpr, EP_TokenOnly) ) break;
+    if( pExpr->op==TK_VARIABLE ){
+      if( pFix->pParse->db->init.busy ){
+        pExpr->op = TK_NULL;
+      }else{
+        sqlite3ErrorMsg(pFix->pParse, "%s cannot use variables", pFix->zType);
+        return 1;
+      }
+    }
+    if( ExprHasProperty(pExpr, EP_TokenOnly) ) break;
     if( ExprHasProperty(pExpr, EP_xIsSelect) ){
       if( sqlite3FixSelect(pFix, pExpr->x.pSelect) ) return 1;
     }else{

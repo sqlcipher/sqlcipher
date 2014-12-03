@@ -37,6 +37,13 @@ do_test index6-1.1 {
   }
 } {14 20 ok}
 
+# Make sure the count(*) optimization works correctly with
+# partial indices.  Ticket [a5c8ed66cae16243be6] 2013-10-03.
+#
+do_execsql_test index6-1.1.1 {
+  SELECT count(*) FROM t1;
+} {20}
+
 # Error conditions during parsing...
 #
 do_test index6-1.2 {
@@ -138,26 +145,27 @@ do_test index6-2.1 {
   execsql {
     CREATE TABLE t2(a,b);
     INSERT INTO t2(a,b) SELECT value, value FROM nums WHERE value<1000;
-    UPDATE t2 SET a=NULL WHERE b%5==0;
+    UPDATE t2 SET a=NULL WHERE b%2==0;
     CREATE INDEX t2a1 ON t2(a) WHERE a IS NOT NULL;
     SELECT count(*) FROM t2 WHERE a IS NOT NULL;
   }
-} {800}
+} {500}
 do_test index6-2.2 {
   execsql {
     EXPLAIN QUERY PLAN
     SELECT * FROM t2 WHERE a=5;
   }
 } {/.* TABLE t2 USING INDEX t2a1 .*/}
-ifcapable stat3 {
-  do_test index6-2.3stat3 {
+ifcapable stat4||stat3 {
+  execsql ANALYZE
+  do_test index6-2.3stat4 {
     execsql {
       EXPLAIN QUERY PLAN
       SELECT * FROM t2 WHERE a IS NOT NULL;
     }
   } {/.* TABLE t2 USING INDEX t2a1 .*/}
 } else {
-  do_test index6-2.3stat3 {
+  do_test index6-2.3stat4 {
     execsql {
       EXPLAIN QUERY PLAN
       SELECT * FROM t2 WHERE a IS NOT NULL AND a>0;
@@ -213,7 +221,7 @@ do_test index6-3.2 {
   catchsql {
     INSERT INTO t3(a,b) VALUES(150, 'test1');
   }
-} {1 {column a is not unique}}
+} {1 {UNIQUE constraint failed: t3.a}}
 do_test index6-3.3 {
   # can insert multiple rows with a==999 because such rows are not
   # part of the unique index.
@@ -240,5 +248,24 @@ do_execsql_test index6-5.0 {
   SELECT count(*) FROM t3 WHERE t3.b BETWEEN 5 AND 10;
   SELECT stat+0 FROM sqlite_stat1 WHERE idx='t3b';
 } {6 6}
+
+# Test case for ticket [2ea3e9fe6379fc3f6ce7e090ce483c1a3a80d6c9] from
+# 2014-04-13: Partial index causes assertion fault on UPDATE OR REPLACE.
+#
+do_execsql_test index6-6.0 {
+  CREATE TABLE t6(a,b);
+  CREATE UNIQUE INDEX t6ab ON t1(a,b);
+  CREATE INDEX t6b ON t6(b) WHERE b=1;
+  INSERT INTO t6(a,b) VALUES(123,456);
+  SELECT * FROM t6;
+} {123 456}
+do_execsql_test index6-6.1 {
+  UPDATE OR REPLACE t6 SET b=789;
+  SELECT * FROM t6;
+} {123 789}
+do_execsql_test index6-6.2 {
+  PRAGMA integrity_check;
+} {ok}
+
 
 finish_test

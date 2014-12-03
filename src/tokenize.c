@@ -270,6 +270,12 @@ int sqlite3GetToken(const unsigned char *z, int *tokenType){
       testcase( z[0]=='6' );  testcase( z[0]=='7' );  testcase( z[0]=='8' );
       testcase( z[0]=='9' );
       *tokenType = TK_INTEGER;
+#ifndef SQLITE_OMIT_HEX_INTEGER
+      if( z[0]=='0' && (z[1]=='x' || z[1]=='X') && sqlite3Isxdigit(z[2]) ){
+        for(i=3; sqlite3Isxdigit(z[i]); i++){}
+        return i;
+      }
+#endif
       for(i=0; sqlite3Isdigit(z[i]); i++){}
 #ifndef SQLITE_OMIT_FLOATING_POINT
       if( z[i]=='.' ){
@@ -303,24 +309,15 @@ int sqlite3GetToken(const unsigned char *z, int *tokenType){
       for(i=1; sqlite3Isdigit(z[i]); i++){}
       return i;
     }
-    case '#': {
-      for(i=1; sqlite3Isdigit(z[i]); i++){}
-      if( i>1 ){
-        /* Parameters of the form #NNN (where NNN is a number) are used
-        ** internally by sqlite3NestedParse.  */
-        *tokenType = TK_REGISTER;
-        return i;
-      }
-      /* Fall through into the next case if the '#' is not followed by
-      ** a digit. Try to match #AAAA where AAAA is a parameter name. */
-    }
 #ifndef SQLITE_OMIT_TCL_VARIABLE
     case '$':
 #endif
     case '@':  /* For compatibility with MS SQL Server */
+    case '#':
     case ':': {
       int n = 0;
-      testcase( z[0]=='$' );  testcase( z[0]=='@' );  testcase( z[0]==':' );
+      testcase( z[0]=='$' );  testcase( z[0]=='@' );
+      testcase( z[0]==':' );  testcase( z[0]=='#' );
       *tokenType = TK_VARIABLE;
       for(i=1; (c=z[i])!=0; i++){
         if( IdChar(c) ){
@@ -503,10 +500,10 @@ abort_parse:
     sqlite3DeleteTable(db, pParse->pNewTable);
   }
 
+  if( pParse->bFreeWith ) sqlite3WithDelete(db, pParse->pWith);
   sqlite3DeleteTrigger(db, pParse->pNewTrigger);
   for(i=pParse->nzVar-1; i>=0; i--) sqlite3DbFree(db, pParse->azVar[i]);
   sqlite3DbFree(db, pParse->azVar);
-  sqlite3DbFree(db, pParse->aAlias);
   while( pParse->pAinc ){
     AutoincInfo *p = pParse->pAinc;
     pParse->pAinc = p->pNext;
