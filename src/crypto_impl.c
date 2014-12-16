@@ -434,15 +434,15 @@ static int sqlcipher_cipher_ctx_set_keyspec(cipher_ctx *ctx, const unsigned char
   return SQLITE_OK;
 }
 
-static int sqlcipher_codec_get_store_pass(codec_ctx *ctx) {
+int sqlcipher_codec_get_store_pass(codec_ctx *ctx) {
   return ctx->read_ctx->store_pass;
 }
 
-static void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value) {
+void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value) {
   ctx->read_ctx->store_pass = value;
 }
 
-static void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
+void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
   *zKey = ctx->read_ctx->pass;
   *nKey = ctx->read_ctx->pass_sz;
 }
