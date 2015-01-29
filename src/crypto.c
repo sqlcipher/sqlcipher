@@ -186,6 +186,15 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       }
     }
   }else
+  if( sqlite3StrICmp(zLeft,"cipher_default_page_size")==0 ){
+    if( zRight ) {
+      sqlcipher_set_default_pagesize(atoi(zRight));
+    } else {
+      char *default_page_size = sqlite3_mprintf("%d", sqlcipher_get_default_pagesize());
+      codec_vdbe_return_static_string(pParse, "cipher_default_page_size", default_page_size);
+      sqlite3_free(default_page_size);
+    }
+  }else
   if( sqlite3StrICmp(zLeft,"cipher_default_use_hmac")==0 ){
     if( zRight ) {
       sqlcipher_set_default_use_hmac(sqlite3GetBoolean(zRight,1));

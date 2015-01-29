@@ -180,6 +180,9 @@ int sqlcipher_codec_ctx_set_pagesize(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_pagesize(codec_ctx *);
 int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);
 
+void sqlcipher_set_default_pagesize(int page_size);
+int sqlcipher_get_default_pagesize();
+
 void sqlcipher_set_default_kdf_iter(int iter);
 int sqlcipher_get_default_kdf_iter();
 
