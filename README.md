@@ -25,10 +25,11 @@ an iPhone data vault and password manager (http://getstrip.com).
 Building SQLCipher is almost the same as compiling a regular version of 
 SQLite with two small exceptions: 
 
- 1. You must define SQLITE_HAS_CODEC and SQLITE_TEMP_STORE=2 when building sqlcipher
+ 1. You *must* define SQLITE_HAS_CODEC and SQLITE_TEMP_STORE=2 when building sqlcipher. 
  2. You need to link against a OpenSSL's libcrypto 
  
-Example Static linking (replace /opt/local/lib with the path to libcrypto.a)
+Example Static linking (replace /opt/local/lib with the path to libcrypto.a). Note in this 
+example, --enable-tempstore=yes is setting SQLITE_TEMP_STORE=2 for the build.
 
 	$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 		LDFLAGS="/opt/local/lib/libcrypto.a"
