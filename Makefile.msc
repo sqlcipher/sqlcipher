@@ -664,6 +664,13 @@ LIBRESOBJS =
 # All of the source code files.
 #
 SRC = \
+	$(TOP)\src\crypto.c \
+	$(TOP)\src\crypto_cc.c \
+	$(TOP)\src\crypto_impl.c \
+	$(TOP)\src\crypto_libtomcrypt.c \
+	$(TOP)\src\crypto_openssl.c \
+	$(TOP)\src\crypto.h \
+	$(TOP)\src\sqlcipher.h \
   $(TOP)\src\alter.c \
   $(TOP)\src\analyze.c \
   $(TOP)\src\attach.c \

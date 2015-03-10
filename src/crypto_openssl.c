@@ -42,7 +42,7 @@ typedef struct {
   EVP_CIPHER *evp_cipher;
 } openssl_ctx;
 
-
+static int openssl_fips_status = 0;
 static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
 static sqlite3_mutex* openssl_rand_mutex = NULL;
@@ -78,6 +78,13 @@ static int sqlcipher_openssl_activate(void *ctx) {
   }
 
   if(openssl_init_count == 0 && openssl_external_init == 0)  {
+#ifdef SQLCIPHER_FIPS
+    openssl_fips_status = FIPS_mode_set(1);
+    if(!openssl_fips_status){
+      ERR_load_crypto_strings();
+      ERR_print_errors_fp(stdout);
+    }
+#endif
     /* if the library was not externally initialized, then should be now */
     OpenSSL_add_all_algorithms();
   } 
@@ -224,6 +231,10 @@ static int sqlcipher_openssl_ctx_free(void **ctx) {
   return SQLITE_OK;
 }
 
+static int sqlcipher_openssl_fips_status(void *ctx) {
+  return openssl_fips_status;
+}
+
 int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->activate = sqlcipher_openssl_activate;  
   p->deactivate = sqlcipher_openssl_deactivate;
@@ -243,6 +254,7 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->ctx_init = sqlcipher_openssl_ctx_init;
   p->ctx_free = sqlcipher_openssl_ctx_free;
   p->add_random = sqlcipher_openssl_add_random;
+  p->fips_status = sqlcipher_openssl_fips_status;
   return SQLITE_OK;
 }
 

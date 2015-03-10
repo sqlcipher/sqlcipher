@@ -1227,6 +1227,9 @@ static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint
   if( f ) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
 }
 
+int sqlcipher_codec_fips_status(codec_ctx *ctx) {
+  return ctx->read_ctx->provider->fips_status(ctx->read_ctx);
+}
 
 #endif
 /* END SQLCIPHER */

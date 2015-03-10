@@ -120,6 +120,10 @@ static int sqlcipher_cc_ctx_free(void **ctx) {
   return SQLITE_OK;
 }
 
+static int sqlcipher_cc_fips_status(void *ctx) {
+  return 0;
+}
+
 int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->random = sqlcipher_cc_random;
   p->get_provider_name = sqlcipher_cc_get_provider_name;
@@ -137,6 +141,7 @@ int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->ctx_init = sqlcipher_cc_ctx_init;
   p->ctx_free = sqlcipher_cc_ctx_free;
   p->add_random = sqlcipher_cc_add_random;
+  p->fips_status = sqlcipher_cc_fips_status;
   return SQLITE_OK;
 }
 

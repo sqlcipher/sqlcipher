@@ -89,6 +89,13 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
 
   CODEC_TRACE(("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
   
+  if( sqlite3StrICmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
+    if(ctx) {
+      char *fips_mode_status = sqlite3_mprintf("%d", sqlcipher_codec_fips_status(ctx));
+      codec_vdbe_return_static_string(pParse, "cipher_fips_status", fips_mode_status);
+      sqlite3_free(fips_mode_status);
+    }
+  } else
   if( sqlite3StrICmp(zLeft, "cipher_store_pass")==0 && zRight ) {
     sqlcipher_codec_set_store_pass(ctx, sqlite3GetBoolean(zRight, 1));
   } else
