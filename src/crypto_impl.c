@@ -36,7 +36,7 @@
 #include "sqlcipher.h"
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
-#if defined(__unix__) || defined(__APPLE__) 
+#if defined(__unix__) || defined(__APPLE__) || defined(_AIX)
 #include <sys/mman.h>
 #elif defined(_WIN32)
 # include <windows.h>
