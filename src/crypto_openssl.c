@@ -233,7 +233,11 @@ static int sqlcipher_openssl_ctx_free(void **ctx) {
 }
 
 static int sqlcipher_openssl_fips_status(void *ctx) {
+#ifdef SQLCIPHER_FIPS  
   return FIPS_mode();
+#else
+  return 0;
+#endif
 }
 
 int sqlcipher_openssl_setup(sqlcipher_provider *p) {
