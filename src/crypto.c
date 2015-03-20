@@ -478,7 +478,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
         sqlcipher_codec_key_copy(ctx, CIPHER_WRITE_CTX);
       } else {
         CODEC_TRACE(("sqlite3_rekey_v2: rollback\n"));
-        sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK);
+        sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK, 0);
       }
 
       sqlite3_mutex_leave(db->mutex);
