@@ -77,7 +77,7 @@ const unsigned char ebcdicToAscii[] = {
 ** end result.
 **
 ** Ticket #1066.  the SQL standard does not allow '$' in the
-** middle of identfiers.  But many SQL implementations do. 
+** middle of identifiers.  But many SQL implementations do. 
 ** SQLite will allow '$' in identifiers for compatibility.
 ** But the feature is undocumented.
 */
@@ -102,6 +102,7 @@ const char sqlite3IsEbcdicIdChar[] = {
 };
 #define IdChar(C)  (((c=C)>=0x42 && sqlite3IsEbcdicIdChar[c-0x40]))
 #endif
+int sqlite3IsIdChar(u8 c){ return IdChar(c); }
 
 
 /*
@@ -390,6 +391,9 @@ int sqlite3RunParser(Parse *pParse, const char *zSql, char **pzErrMsg){
   int mxSqlLen;                   /* Max length of an SQL string */
 
 
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( zSql==0 || pzErrMsg==0 ) return SQLITE_MISUSE_BKPT;
+#endif
   mxSqlLen = db->aLimit[SQLITE_LIMIT_SQL_LENGTH];
   if( db->nVdbeActive==0 ){
     db->u1.isInterrupted = 0;
@@ -398,7 +402,7 @@ int sqlite3RunParser(Parse *pParse, const char *zSql, char **pzErrMsg){
   pParse->zTail = zSql;
   i = 0;
   assert( pzErrMsg!=0 );
-  pEngine = sqlite3ParserAlloc((void*(*)(size_t))sqlite3Malloc);
+  pEngine = sqlite3ParserAlloc(sqlite3Malloc);
   if( pEngine==0 ){
     db->mallocFailed = 1;
     return SQLITE_NOMEM;

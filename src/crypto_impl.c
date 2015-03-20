@@ -36,7 +36,7 @@
 #include "sqlcipher.h"
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
-#if defined(__unix__) || defined(__APPLE__) 
+#if defined(__unix__) || defined(__APPLE__) || defined(_AIX)
 #include <sys/mman.h>
 #elif defined(_WIN32)
 # include <windows.h>
@@ -70,6 +70,7 @@ typedef struct {
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static int default_kdf_iter = PBKDF2_ITER;
+static int default_page_size = SQLITE_DEFAULT_PAGE_SIZE;
 static unsigned int sqlcipher_activate_count = 0;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
@@ -434,15 +435,15 @@ static int sqlcipher_cipher_ctx_set_keyspec(cipher_ctx *ctx, const unsigned char
   return SQLITE_OK;
 }
 
-static int sqlcipher_codec_get_store_pass(codec_ctx *ctx) {
+int sqlcipher_codec_get_store_pass(codec_ctx *ctx) {
   return ctx->read_ctx->store_pass;
 }
 
-static void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value) {
+void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value) {
   ctx->read_ctx->store_pass = value;
 }
 
-static void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
+void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
   *zKey = ctx->read_ctx->pass;
   *nKey = ctx->read_ctx->pass_sz;
 }
@@ -661,6 +662,14 @@ int sqlcipher_codec_ctx_get_pagesize(codec_ctx *ctx) {
   return ctx->page_sz;
 }
 
+void sqlcipher_set_default_pagesize(int page_size) {
+  default_page_size = page_size;
+}
+
+int sqlcipher_get_default_pagesize() {
+  return default_page_size;
+}
+
 int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
   int rc;
   codec_ctx *ctx;
@@ -691,7 +700,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
      in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
      cases where bytes 16 & 17 of the page header are a power of 2 as reported by John Lehman
   */
-  if((rc = sqlcipher_codec_ctx_set_pagesize(ctx, SQLITE_DEFAULT_PAGE_SIZE)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_pagesize(ctx, default_page_size)) != SQLITE_OK) return rc;
 
   if((rc = sqlcipher_cipher_ctx_init(&ctx->read_ctx)) != SQLITE_OK) return rc; 
   if((rc = sqlcipher_cipher_ctx_init(&ctx->write_ctx)) != SQLITE_OK) return rc; 
@@ -1218,6 +1227,9 @@ static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint
   if( f ) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
 }
 
+int sqlcipher_codec_fips_status(codec_ctx *ctx) {
+  return ctx->read_ctx->provider->fips_status(ctx->read_ctx);
+}
 
 #endif
 /* END SQLCIPHER */

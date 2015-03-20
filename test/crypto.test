@@ -1541,7 +1541,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {3.2.0}
+} {3.3.0}
 db close
 file delete -force test.db
 
@@ -2255,6 +2255,28 @@ do_test can-migrate-with-raw-hex-key {
 } {5}
 db close
 file delete -force test.db
+
+do_test attach_database_with_non_default_page_size {
+    sqlite_orig db test2.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size = 4096;
+        CREATE TABLE t1(a,b);
+        INSERT INTO t1(a,b) values('one for the money', 'two for the show');
+        INSERT INTO t1(a,b) values('three to get ready', 'now, go cat, go');
+    }
+    db close
+
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_page_size = 4096;
+        PRAGMA key = 'test';
+        ATTACH DATABASE 'test2.db' as test2 KEY 'test';
+        SELECT count(*) FROM test2.t1;
+    }
+} {2}
+db close
+file delete -force test.db test2.db
 
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test

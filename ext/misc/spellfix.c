@@ -356,7 +356,7 @@ static int substituteCost(char cPrev, char cFrom, char cTo){
 static int editdist1(const char *zA, const char *zB, int *pnMatch){
   int nA, nB;            /* Number of characters in zA[] and zB[] */
   int xA, xB;            /* Loop counters for zA[] and zB[] */
-  char cA, cB;           /* Current character of zA and zB */
+  char cA = 0, cB;       /* Current character of zA and zB */
   char cAprev, cBprev;   /* Previous character of zA and zB */
   char cAnext, cBnext;   /* Next character in zA and zB */
   int d;                 /* North-west cost value */
@@ -2736,12 +2736,22 @@ static int spellfix1Update(
       return SQLITE_NOMEM;
     }
     if( sqlite3_value_type(argv[0])==SQLITE_NULL ){
-      spellfix1DbExec(&rc, db,
-             "INSERT INTO \"%w\".\"%w_vocab\"(rank,langid,word,k1,k2) "
-             "VALUES(%d,%d,%Q,%Q,%Q)",
-             p->zDbName, p->zTableName,
-             iRank, iLang, zWord, zK1, zK2
-      );
+      if( sqlite3_value_type(argv[1])==SQLITE_NULL ){
+        spellfix1DbExec(&rc, db,
+               "INSERT INTO \"%w\".\"%w_vocab\"(rank,langid,word,k1,k2) "
+               "VALUES(%d,%d,%Q,%Q,%Q)",
+               p->zDbName, p->zTableName,
+               iRank, iLang, zWord, zK1, zK2
+        );
+      }else{
+        newRowid = sqlite3_value_int64(argv[1]);
+        spellfix1DbExec(&rc, db,
+               "INSERT INTO \"%w\".\"%w_vocab\"(id,rank,langid,word,k1,k2) "
+               "VALUES(%lld,%d,%d,%Q,%Q,%Q)",
+               p->zDbName, p->zTableName,
+               newRowid, iRank, iLang, zWord, zK1, zK2
+        );
+      }
       *pRowid = sqlite3_last_insert_rowid(db);
     }else{
       rowid = sqlite3_value_int64(argv[0]);

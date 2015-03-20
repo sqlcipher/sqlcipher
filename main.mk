@@ -46,7 +46,7 @@
 #
 TCCX =  $(TCC) $(OPTS) -I. -I$(TOP)/src -I$(TOP) 
 TCCX += -I$(TOP)/ext/rtree -I$(TOP)/ext/icu -I$(TOP)/ext/fts3
-TCCX += -I$(TOP)/ext/async
+TCCX += -I$(TOP)/ext/async -I$(TOP)/ext/userauth
 
 # Object files for the SQLite library.
 #
@@ -66,8 +66,8 @@ LIBOBJ+= vdbe.o parse.o \
          notify.o opcodes.o os.o os_unix.o os_win.o \
          pager.o pcache.o pcache1.o pragma.o prepare.o printf.o \
          random.o resolve.o rowset.o rtree.o select.o status.o \
-         table.o tokenize.o trigger.o \
-         update.o util.o vacuum.o \
+         table.o threads.o tokenize.o trigger.o \
+         update.o userauth.o util.o vacuum.o \
          vdbeapi.o vdbeaux.o vdbeblob.o vdbemem.o vdbesort.o \
 	 vdbetrace.o wal.o walker.o where.o utf.o vtab.o
 
@@ -112,6 +112,7 @@ SRC = \
   $(TOP)/src/mem3.c \
   $(TOP)/src/mem5.c \
   $(TOP)/src/memjournal.c \
+  $(TOP)/src/msvc.h \
   $(TOP)/src/mutex.c \
   $(TOP)/src/mutex.h \
   $(TOP)/src/mutex_noop.c \
@@ -146,6 +147,7 @@ SRC = \
   $(TOP)/src/sqliteLimit.h \
   $(TOP)/src/table.c \
   $(TOP)/src/tclsqlite.c \
+  $(TOP)/src/threads.c \
   $(TOP)/src/tokenize.c \
   $(TOP)/src/trigger.c \
   $(TOP)/src/utf.c \
@@ -213,7 +215,9 @@ SRC += \
   $(TOP)/ext/rtree/sqlite3rtree.h \
   $(TOP)/ext/rtree/rtree.h \
   $(TOP)/ext/rtree/rtree.c
-
+SRC += \
+  $(TOP)/ext/userauth/userauth.c \
+  $(TOP)/ext/userauth/sqlite3userauth.h
 
 # Generated source code files
 #
@@ -243,6 +247,7 @@ TESTSRC = \
   $(TOP)/src/test_autoext.c \
   $(TOP)/src/test_async.c \
   $(TOP)/src/test_backup.c \
+  $(TOP)/src/test_blob.c \
   $(TOP)/src/test_btree.c \
   $(TOP)/src/test_config.c \
   $(TOP)/src/test_demovfs.c \
@@ -277,6 +282,7 @@ TESTSRC = \
 TESTSRC += \
   $(TOP)/ext/misc/amatch.c \
   $(TOP)/ext/misc/closure.c \
+  $(TOP)/ext/misc/eval.c \
   $(TOP)/ext/misc/fileio.c \
   $(TOP)/ext/misc/fuzzer.c \
   $(TOP)/ext/misc/ieee754.c \
@@ -315,6 +321,7 @@ TESTSRC2 = \
   $(TOP)/src/pcache.c \
   $(TOP)/src/pcache1.c \
   $(TOP)/src/select.c \
+  $(TOP)/src/threads.c \
   $(TOP)/src/tokenize.c \
   $(TOP)/src/utf.c \
   $(TOP)/src/util.c \
@@ -339,6 +346,7 @@ HDR = \
    $(TOP)/src/hash.h \
    $(TOP)/src/hwtime.h \
    keywordhash.h \
+   $(TOP)/src/msvc.h \
    $(TOP)/src/mutex.h \
    opcodes.h \
    $(TOP)/src/os.h \
@@ -375,6 +383,8 @@ EXTHDR += \
   $(TOP)/ext/rtree/rtree.h
 EXTHDR += \
   $(TOP)/ext/icu/sqliteicu.h
+EXTHDR += \
+  $(TOP)/ext/userauth/sqlite3userauth.h
 
 # This is the default Makefile target.  The objects listed here
 # are what get build when you type just "make" with no arguments.
@@ -556,6 +566,9 @@ fts3_write.o:	$(TOP)/ext/fts3/fts3_write.c $(HDR) $(EXTHDR)
 rtree.o:	$(TOP)/ext/rtree/rtree.c $(HDR) $(EXTHDR)
 	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/rtree/rtree.c
 
+userauth.o:	$(TOP)/ext/userauth/userauth.c $(HDR) $(EXTHDR)
+	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/userauth/userauth.c
+
 
 # Rules for building test programs and for running tests
 #
@@ -614,9 +627,15 @@ test:	testfixture$(EXE) sqlite3$(EXE)
 # threadtest runs a few thread-safety tests that are implemented in C. This
 # target is invoked by the releasetest.tcl script.
 # 
-threadtest3$(EXE): sqlite3.o $(TOP)/test/threadtest3.c $(TOP)/test/tt3_checkpoint.c
-	$(TCCX) -O2 sqlite3.o $(TOP)/test/threadtest3.c \
-		-o threadtest3$(EXE) $(THREADLIB)
+THREADTEST3_SRC = $(TOP)/test/threadtest3.c    \
+                  $(TOP)/test/tt3_checkpoint.c \
+                  $(TOP)/test/tt3_index.c      \
+                  $(TOP)/test/tt3_vacuum.c      \
+                  $(TOP)/test/tt3_stress.c      \
+                  $(TOP)/test/tt3_lookaside1.c
+
+threadtest3$(EXE): sqlite3.o $(THREADTEST3_SRC)
+	$(TCCX) $(TOP)/test/threadtest3.c sqlite3.o -o $@ $(THREADLIB)
 
 threadtest: threadtest3$(EXE)
 	./threadtest3$(EXE)
@@ -671,7 +690,7 @@ checksymbols: sqlite3.o
 
 # Build the amalgamation-autoconf package.
 #
-dist: sqlite3.c
+amalgamation-tarball: sqlite3.c
 	TOP=$(TOP) sh $(TOP)/tool/mkautoconfamal.sh
 
 
