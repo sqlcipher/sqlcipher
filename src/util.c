@@ -17,7 +17,7 @@
 */
 #include "sqliteInt.h"
 #include <stdarg.h>
-#ifdef SQLITE_HAVE_ISNAN
+#if HAVE_ISNAN || SQLITE_HAVE_ISNAN
 # include <math.h>
 #endif
 
@@ -58,7 +58,7 @@ int sqlite3FaultSim(int iTest){
 */
 int sqlite3IsNaN(double x){
   int rc;   /* The value return */
-#if !defined(SQLITE_HAVE_ISNAN)
+#if !SQLITE_HAVE_ISNAN && !HAVE_ISNAN
   /*
   ** Systems that support the isnan() library function should probably
   ** make use of it by compiling with -DSQLITE_HAVE_ISNAN.  But we have
@@ -88,9 +88,9 @@ int sqlite3IsNaN(double x){
   volatile double y = x;
   volatile double z = y;
   rc = (y!=z);
-#else  /* if defined(SQLITE_HAVE_ISNAN) */
+#else  /* if HAVE_ISNAN */
   rc = isnan(x);
-#endif /* SQLITE_HAVE_ISNAN */
+#endif /* HAVE_ISNAN */
   testcase( rc );
   return rc;
 }
@@ -109,6 +109,15 @@ int sqlite3Strlen30(const char *z){
   if( z==0 ) return 0;
   while( *z2 ){ z2++; }
   return 0x3fffffff & (int)(z2 - z);
+}
+
+/*
+** Set the current error code to err_code and clear any prior error message.
+*/
+void sqlite3Error(sqlite3 *db, int err_code){
+  assert( db!=0 );
+  db->errCode = err_code;
+  if( db->pErr ) sqlite3ValueSetNull(db->pErr);
 }
 
 /*
@@ -132,18 +141,18 @@ int sqlite3Strlen30(const char *z){
 ** should be called with err_code set to SQLITE_OK and zFormat set
 ** to NULL.
 */
-void sqlite3Error(sqlite3 *db, int err_code, const char *zFormat, ...){
+void sqlite3ErrorWithMsg(sqlite3 *db, int err_code, const char *zFormat, ...){
   assert( db!=0 );
   db->errCode = err_code;
-  if( zFormat && (db->pErr || (db->pErr = sqlite3ValueNew(db))!=0) ){
+  if( zFormat==0 ){
+    sqlite3Error(db, err_code);
+  }else if( db->pErr || (db->pErr = sqlite3ValueNew(db))!=0 ){
     char *z;
     va_list ap;
     va_start(ap, zFormat);
     z = sqlite3VMPrintf(db, zFormat, ap);
     va_end(ap);
     sqlite3ValueSetStr(db->pErr, -1, z, SQLITE_UTF8, SQLITE_DYNAMIC);
-  }else if( db->pErr ){
-    sqlite3ValueSetNull(db->pErr);
   }
 }
 
@@ -157,12 +166,12 @@ void sqlite3Error(sqlite3 *db, int err_code, const char *zFormat, ...){
 **      %T      Insert a token
 **      %S      Insert the first element of a SrcList
 **
-** This function should be used to report any error that occurs whilst
+** This function should be used to report any error that occurs while
 ** compiling an SQL statement (i.e. within sqlite3_prepare()). The
 ** last thing the sqlite3_prepare() function does is copy the error
 ** stored by this function into the database handle using sqlite3Error().
-** Function sqlite3Error() should be used during statement execution
-** (sqlite3_step() etc.).
+** Functions sqlite3Error() or sqlite3ErrorWithMsg() should be used
+** during statement execution (sqlite3_step() etc.).
 */
 void sqlite3ErrorMsg(Parse *pParse, const char *zFormat, ...){
   char *zMsg;
@@ -195,7 +204,7 @@ void sqlite3ErrorMsg(Parse *pParse, const char *zFormat, ...){
 ** occur.
 **
 ** 2002-Feb-14: This routine is extended to remove MS-Access style
-** brackets from around identifers.  For example:  "[a-b-c]" becomes
+** brackets from around identifiers.  For example:  "[a-b-c]" becomes
 ** "a-b-c".
 */
 int sqlite3Dequote(char *z){
@@ -242,6 +251,11 @@ int sqlite3Dequote(char *z){
 */
 int sqlite3_stricmp(const char *zLeft, const char *zRight){
   register unsigned char *a, *b;
+  if( zLeft==0 ){
+    return zRight ? -1 : 0;
+  }else if( zRight==0 ){
+    return 1;
+  }
   a = (unsigned char *)zLeft;
   b = (unsigned char *)zRight;
   while( *a!=0 && UpperToLower[*a]==UpperToLower[*b]){ a++; b++; }
@@ -249,6 +263,11 @@ int sqlite3_stricmp(const char *zLeft, const char *zRight){
 }
 int sqlite3_strnicmp(const char *zLeft, const char *zRight, int N){
   register unsigned char *a, *b;
+  if( zLeft==0 ){
+    return zRight ? -1 : 0;
+  }else if( zRight==0 ){
+    return 1;
+  }
   a = (unsigned char *)zLeft;
   b = (unsigned char *)zRight;
   while( N-- > 0 && *a!=0 && UpperToLower[*a]==UpperToLower[*b]){ a++; b++; }
@@ -699,7 +718,7 @@ int sqlite3Atoi(const char *z){
 ** bit clear.  Except, if we get to the 9th byte, it stores the full
 ** 8 bits and is the last byte.
 */
-int sqlite3PutVarint(unsigned char *p, u64 v){
+static int SQLITE_NOINLINE putVarint64(unsigned char *p, u64 v){
   int i, j, n;
   u8 buf[10];
   if( v & (((u64)0xff000000)<<32) ){
@@ -723,28 +742,17 @@ int sqlite3PutVarint(unsigned char *p, u64 v){
   }
   return n;
 }
-
-/*
-** This routine is a faster version of sqlite3PutVarint() that only
-** works for 32-bit positive integers and which is optimized for
-** the common case of small integers.  A MACRO version, putVarint32,
-** is provided which inlines the single-byte case.  All code should use
-** the MACRO version as this function assumes the single-byte case has
-** already been handled.
-*/
-int sqlite3PutVarint32(unsigned char *p, u32 v){
-#ifndef putVarint32
-  if( (v & ~0x7f)==0 ){
-    p[0] = v;
+int sqlite3PutVarint(unsigned char *p, u64 v){
+  if( v<=0x7f ){
+    p[0] = v&0x7f;
     return 1;
   }
-#endif
-  if( (v & ~0x3fff)==0 ){
-    p[0] = (u8)((v>>7) | 0x80);
-    p[1] = (u8)(v & 0x7f);
+  if( v<=0x3fff ){
+    p[0] = ((v>>7)&0x7f)|0x80;
+    p[1] = v&0x7f;
     return 2;
   }
-  return sqlite3PutVarint(p, v);
+  return putVarint64(p,v);
 }
 
 /*
