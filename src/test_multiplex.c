@@ -406,7 +406,7 @@ static void multiplexControlFunc(
 ){
   int rc = SQLITE_OK;
   sqlite3 *db = sqlite3_context_db_handle(context);
-  int op;
+  int op = 0;
   int iVal;
 
   if( !db || argc!=2 ){ 
@@ -535,7 +535,7 @@ static int multiplexOpen(
     /* assign pointers to extra space allocated */
     memset(pGroup, 0, sz);
     pMultiplexOpen->pGroup = pGroup;
-    pGroup->bEnabled = -1;
+    pGroup->bEnabled = (unsigned char)-1;
     pGroup->bTruncate = sqlite3_uri_boolean(zUri, "truncate", 
                                    (flags & SQLITE_OPEN_MAIN_DB)==0);
     pGroup->szChunk = (int)sqlite3_uri_int64(zUri, "chunksize",
@@ -1002,6 +1002,26 @@ static int multiplexFileControl(sqlite3_file *pConn, int op, void *pArg){
       /* no-op these */
       rc = SQLITE_OK;
       break;
+    case SQLITE_FCNTL_PRAGMA: {
+      char **aFcntl = (char**)pArg;
+      if( aFcntl[1] && sqlite3_stricmp(aFcntl[1],"multiplex_truncate")==0 ){
+        if( aFcntl[2] && aFcntl[2][0] ){
+          if( sqlite3_stricmp(aFcntl[2], "on")==0
+           || sqlite3_stricmp(aFcntl[2], "1")==0 ){
+            pGroup->bTruncate = 1;
+          }else
+          if( sqlite3_stricmp(aFcntl[2], "off")==0
+           || sqlite3_stricmp(aFcntl[2], "0")==0 ){
+            pGroup->bTruncate = 0;
+          }
+        }
+        aFcntl[0] = sqlite3_mprintf(pGroup->bTruncate ? "on" : "off");
+        rc = SQLITE_OK;
+        break;
+      }
+      /* If the multiplexor does not handle the pragma, pass it through
+      ** into the default case. */
+    }
     default:
       pSubOpen = multiplexSubOpen(pGroup, 0, &rc, NULL, 0);
       if( pSubOpen ){

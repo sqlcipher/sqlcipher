@@ -61,15 +61,17 @@
 #define PragTyp_TABLE_INFO                    30
 #define PragTyp_TEMP_STORE                    31
 #define PragTyp_TEMP_STORE_DIRECTORY          32
-#define PragTyp_WAL_AUTOCHECKPOINT            33
-#define PragTyp_WAL_CHECKPOINT                34
-#define PragTyp_ACTIVATE_EXTENSIONS           35
-#define PragTyp_HEXKEY                        36
-#define PragTyp_KEY                           37
-#define PragTyp_REKEY                         38
-#define PragTyp_LOCK_STATUS                   39
-#define PragTyp_PARSER_TRACE                  40
+#define PragTyp_THREADS                       33
+#define PragTyp_WAL_AUTOCHECKPOINT            34
+#define PragTyp_WAL_CHECKPOINT                35
+#define PragTyp_ACTIVATE_EXTENSIONS           36
+#define PragTyp_HEXKEY                        37
+#define PragTyp_KEY                           38
+#define PragTyp_REKEY                         39
+#define PragTyp_LOCK_STATUS                   40
+#define PragTyp_PARSER_TRACE                  41
 #define PragFlag_NeedSchema           0x01
+#define PragFlag_ReadOnly             0x02
 static const struct sPragmaNames {
   const char *const zName;  /* Name of pragma */
   u8 ePragTyp;              /* PragTyp_XXX value */
@@ -86,7 +88,7 @@ static const struct sPragmaNames {
   { /* zName:     */ "application_id",
     /* ePragTyp:  */ PragTyp_HEADER_VALUE,
     /* ePragFlag: */ 0,
-    /* iArg:      */ 0 },
+    /* iArg:      */ BTREE_APPLICATION_ID },
 #endif
 #if !defined(SQLITE_OMIT_AUTOVACUUM)
   { /* zName:     */ "auto_vacuum",
@@ -152,6 +154,12 @@ static const struct sPragmaNames {
     /* ePragFlag: */ 0,
     /* iArg:      */ 0 },
 #endif
+#if !defined(SQLITE_OMIT_SCHEMA_VERSION_PRAGMAS)
+  { /* zName:     */ "data_version",
+    /* ePragTyp:  */ PragTyp_HEADER_VALUE,
+    /* ePragFlag: */ PragFlag_ReadOnly,
+    /* iArg:      */ BTREE_DATA_VERSION },
+#endif
 #if !defined(SQLITE_OMIT_SCHEMA_PRAGMAS)
   { /* zName:     */ "database_list",
     /* ePragTyp:  */ PragTyp_DATABASE_LIST,
@@ -207,8 +215,8 @@ static const struct sPragmaNames {
 #if !defined(SQLITE_OMIT_SCHEMA_VERSION_PRAGMAS)
   { /* zName:     */ "freelist_count",
     /* ePragTyp:  */ PragTyp_HEADER_VALUE,
-    /* ePragFlag: */ 0,
-    /* iArg:      */ 0 },
+    /* ePragFlag: */ PragFlag_ReadOnly,
+    /* iArg:      */ BTREE_FREE_PAGE_COUNT },
 #endif
 #if !defined(SQLITE_OMIT_FLAG_PRAGMAS)
   { /* zName:     */ "full_column_names",
@@ -360,7 +368,7 @@ static const struct sPragmaNames {
   { /* zName:     */ "schema_version",
     /* ePragTyp:  */ PragTyp_HEADER_VALUE,
     /* ePragFlag: */ 0,
-    /* iArg:      */ 0 },
+    /* iArg:      */ BTREE_SCHEMA_VERSION },
 #endif
 #if !defined(SQLITE_OMIT_PAGER_PRAGMAS)
   { /* zName:     */ "secure_delete",
@@ -418,11 +426,15 @@ static const struct sPragmaNames {
     /* ePragFlag: */ 0,
     /* iArg:      */ 0 },
 #endif
+  { /* zName:     */ "threads",
+    /* ePragTyp:  */ PragTyp_THREADS,
+    /* ePragFlag: */ 0,
+    /* iArg:      */ 0 },
 #if !defined(SQLITE_OMIT_SCHEMA_VERSION_PRAGMAS)
   { /* zName:     */ "user_version",
     /* ePragTyp:  */ PragTyp_HEADER_VALUE,
     /* ePragFlag: */ 0,
-    /* iArg:      */ 0 },
+    /* iArg:      */ BTREE_USER_VERSION },
 #endif
 #if !defined(SQLITE_OMIT_FLAG_PRAGMAS)
 #if defined(SQLITE_DEBUG)
@@ -465,7 +477,7 @@ static const struct sPragmaNames {
     /* iArg:      */ SQLITE_WriteSchema|SQLITE_RecoveryMode },
 #endif
 };
-/* Number of pragmas: 56 on by default, 69 total. */
+/* Number of pragmas: 58 on by default, 71 total. */
 /* End of the automatically generated pragma table.
 ***************************************************************************/
 
@@ -715,7 +727,7 @@ void sqlite3Pragma(
   Token *pId;            /* Pointer to <id> token */
   char *aFcntl[4];       /* Argument to SQLITE_FCNTL_PRAGMA */
   int iDb;               /* Database index for <database> */
-  int lwr, upr, mid;           /* Binary search bounds */
+  int lwr, upr, mid = 0;       /* Binary search bounds */
   int rc;                      /* return value form SQLITE_FCNTL_PRAGMA */
   sqlite3 *db = pParse->db;    /* The database connection */
   Db *pDb;                     /* The specific database being pragmaed */
@@ -1392,6 +1404,12 @@ void sqlite3Pragma(
         ** in auto-commit mode.  */
         mask &= ~(SQLITE_ForeignKeys);
       }
+#if SQLITE_USER_AUTHENTICATION
+      if( db->auth.authLevel==UAUTH_User ){
+        /* Do not allow non-admin users to modify the schema arbitrarily */
+        mask &= ~(SQLITE_WriteSchema);
+      }
+#endif
 
       if( sqlite3GetBoolean(zRight, 0) ){
         db->flags |= mask;
@@ -2069,7 +2087,8 @@ void sqlite3Pragma(
       ){
         for(pEnc=&encnames[0]; pEnc->zName; pEnc++){
           if( 0==sqlite3StrICmp(zRight, pEnc->zName) ){
-            ENC(pParse->db) = pEnc->enc ? pEnc->enc : SQLITE_UTF16NATIVE;
+            SCHEMA_ENC(db) = ENC(db) =
+                pEnc->enc ? pEnc->enc : SQLITE_UTF16NATIVE;
             break;
           }
         }
@@ -2114,24 +2133,9 @@ void sqlite3Pragma(
   ** applications for any purpose.
   */
   case PragTyp_HEADER_VALUE: {
-    int iCookie;   /* Cookie index. 1 for schema-cookie, 6 for user-cookie. */
+    int iCookie = aPragmaNames[mid].iArg;  /* Which cookie to read or write */
     sqlite3VdbeUsesBtree(v, iDb);
-    switch( zLeft[0] ){
-      case 'a': case 'A':
-        iCookie = BTREE_APPLICATION_ID;
-        break;
-      case 'f': case 'F':
-        iCookie = BTREE_FREE_PAGE_COUNT;
-        break;
-      case 's': case 'S':
-        iCookie = BTREE_SCHEMA_VERSION;
-        break;
-      default:
-        iCookie = BTREE_USER_VERSION;
-        break;
-    }
-
-    if( zRight && iCookie!=BTREE_FREE_PAGE_COUNT ){
+    if( zRight && (aPragmaNames[mid].mPragFlag & PragFlag_ReadOnly)==0 ){
       /* Write the specified cookie value */
       static const VdbeOpList setCookie[] = {
         { OP_Transaction,    0,  1,  0},    /* 0 */
@@ -2184,7 +2188,7 @@ void sqlite3Pragma(
 
 #ifndef SQLITE_OMIT_WAL
   /*
-  **   PRAGMA [database.]wal_checkpoint = passive|full|restart
+  **   PRAGMA [database.]wal_checkpoint = passive|full|restart|truncate
   **
   ** Checkpoint the database.
   */
@@ -2196,6 +2200,8 @@ void sqlite3Pragma(
         eMode = SQLITE_CHECKPOINT_FULL;
       }else if( sqlite3StrICmp(zRight, "restart")==0 ){
         eMode = SQLITE_CHECKPOINT_RESTART;
+      }else if( sqlite3StrICmp(zRight, "truncate")==0 ){
+        eMode = SQLITE_CHECKPOINT_TRUNCATE;
       }
     }
     sqlite3VdbeSetNumCols(v, 3);
@@ -2270,6 +2276,26 @@ void sqlite3Pragma(
       sqlite3_soft_heap_limit64(N);
     }
     returnSingleInt(pParse, "soft_heap_limit",  sqlite3_soft_heap_limit64(-1));
+    break;
+  }
+
+  /*
+  **   PRAGMA threads
+  **   PRAGMA threads = N
+  **
+  ** Configure the maximum number of worker threads.  Return the new
+  ** maximum, which might be less than requested.
+  */
+  case PragTyp_THREADS: {
+    sqlite3_int64 N;
+    if( zRight
+     && sqlite3DecOrHexToI64(zRight, &N)==SQLITE_OK
+     && N>=0
+    ){
+      sqlite3_limit(db, SQLITE_LIMIT_WORKER_THREADS, (int)(N&0x7fffffff));
+    }
+    returnSingleInt(pParse, "threads",
+                    sqlite3_limit(db, SQLITE_LIMIT_WORKER_THREADS, -1));
     break;
   }
 
