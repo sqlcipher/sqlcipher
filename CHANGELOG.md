@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ## [3.3.0] - 2015-03-25
 ### Added
-- Added FIPS API calls within the OpenSSL crpyto provider
+- Added FIPS API calls within the OpenSSL crypto provider
 - `PRAGMA cipher_default_page_size` - support for attaching non-default page sizes
 
 ### Changed
