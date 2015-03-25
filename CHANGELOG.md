@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased][unreleased]
 
+## [3.3.0] - 2015-03-25
+### Added
+- Added FIPS API calls within the OpenSSL crpyto provider
+- `PRAGMA cipher_default_page_size` - support for attaching non-default page sizes
+
+### Changed
+- Merged upstream SQLite 3.8.8.3
+
 ## [3.2.0] - 2014-09-30
 ### Added
 - Added PRAGMA cipher_store_pass
@@ -13,22 +21,22 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - 2014-04-23
 ### Added
-- Added PRAGMA cipher_profile
+- Added `PRAGMA cipher_profile`
 
 ### Changed
 - Merged upstream SQLite 3.8.4.3
 
 ## [3.0.1] - 2013-12-06
 ### Added
-- Add PRAGMA cipher_add_random to source external entropy
+- Add `PRAGMA cipher_add_random` to source external entropy
 
 ### Changed
-- Fix cipher_migrate to handle passphrases longer than 64 characters & raw keys
+- Fix `PRAGMA cipher_migrate` to handle passphrases longer than 64 characters & raw keys
 - Improvements to the libtomcrypt provider
 
 ## [3.0.0] - 2013-11-05
 ### Added
-- Added PRAGMA cipher_migrate to migrate older database file formats
+- Added `PRAGMA cipher_migrate` to migrate older database file formats
 
 ### Changed
 - Merged upstream SQLite 3.8.0.2
@@ -41,7 +49,8 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.2.0...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.0...prerelease
+[3.3.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.0.0...v3.0.1
