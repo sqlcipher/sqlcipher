@@ -1922,6 +1922,18 @@ do_test verify-pragma-cipher-page-size-changed {
 db close
 file delete -force test.db
 
+# verify invalid cipher does not cause segfault
+if_built_with_openssl verify-invalid-cipher-does_not_segfault {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher = 'junk';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
 # verify the pragma cipher
 # reports the default value
 if_built_with_openssl verify-pragma-cipher-default {
