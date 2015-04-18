@@ -153,10 +153,9 @@
 			files = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/sqlite3.c",
 			);
 			outputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/libsqlcipher.a",
+				"$(SRCROOT)/sqlite3.c",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
