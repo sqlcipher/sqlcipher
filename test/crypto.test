@@ -1923,7 +1923,7 @@ db close
 file delete -force test.db
 
 # verify invalid cipher does not cause segfault
-if_built_with_openssl verify-invalid-cipher-does_not_segfault {
+if_built_with_openssl verify-invalid-cipher-does-not-segfault {
     sqlite_orig db test.db
     execsql {
         PRAGMA key = 'test';
@@ -1931,6 +1931,18 @@ if_built_with_openssl verify-invalid-cipher-does_not_segfault {
         PRAGMA cipher;
     }
 } {AES-256-CBC}
+db close
+file delete -force test.db
+
+# verify setting cipher_store_pass before key
+# does not cause segfault
+do_test verify-cipher-store-pass-before-key-does-not-segfault {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_store_pass = 1;
+        PRAGMA key = 'test';
+    }
+} {}
 db close
 file delete -force test.db
 
