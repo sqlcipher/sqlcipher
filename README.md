@@ -22,7 +22,7 @@ an iPhone data vault and password manager (http://getstrip.com).
 
 ## Contributions
 
-We welcome contributions, to contribute to SQLCipher, a [contributor agreement](https://www.zetetic.net/contributions/) needs to be submitted.  All submissions should be based on the =prerelease= branch.
+We welcome contributions, to contribute to SQLCipher, a [contributor agreement](https://www.zetetic.net/contributions/) needs to be submitted.  All submissions should be based on the `prerelease` branch.
 
 ## Compiling
 
