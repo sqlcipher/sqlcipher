@@ -1158,11 +1158,9 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       db->nTotalChange = saved_nTotalChange;
       db->xTrace = saved_xTrace;
       db->autoCommit = 1;
-      if( pDb ){
-        sqlite3BtreeClose(pDb->pBt);
-        pDb->pBt = 0;
-        pDb->pSchema = 0;
-      }
+      sqlite3BtreeClose(pDb->pBt);
+      pDb->pBt = 0;
+      pDb->pSchema = 0;
       sqlite3ResetAllSchemasOfConnection(db);
       remove(migrated_db_filename);
       sqlite3_free(migrated_db_filename);
