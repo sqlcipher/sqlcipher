@@ -20,6 +20,10 @@ an iPhone data vault and password manager (http://getstrip.com).
 - Algorithms provided by the peer reviewed OpenSSL crypto library.
 - Configurable crypto providers
 
+## Contributions
+
+We welcome contributions, to contribute to SQLCipher, a [contributor agreement](https://www.zetetic.net/contributions/) needs to be submitted.  All submissions should be based on the `prerelease` branch.
+
 ## Compiling
 
 Building SQLCipher is almost the same as compiling a regular version of 
