@@ -823,11 +823,12 @@ static int tvfsShmOpen(sqlite3_file *pFile){
     if( 0==strcmp(pFd->zFilename, pBuffer->zFile) ) break;
   }
   if( !pBuffer ){
-    int nByte = sizeof(TestvfsBuffer) + (int)strlen(pFd->zFilename) + 1;
+    int szName = (int)strlen(pFd->zFilename);
+    int nByte = sizeof(TestvfsBuffer) + szName + 1;
     pBuffer = (TestvfsBuffer *)ckalloc(nByte);
     memset(pBuffer, 0, nByte);
     pBuffer->zFile = (char *)&pBuffer[1];
-    strcpy(pBuffer->zFile, pFd->zFilename);
+    memcpy(pBuffer->zFile, pFd->zFilename, szName+1);
     pBuffer->pNext = p->pBuffer;
     p->pBuffer = pBuffer;
   }
@@ -966,15 +967,14 @@ static void tvfsShmBarrier(sqlite3_file *pFile){
   TestvfsFd *pFd = tvfsGetFd(pFile);
   Testvfs *p = (Testvfs *)(pFd->pVfs->pAppData);
 
+  if( p->pScript && p->mask&TESTVFS_SHMBARRIER_MASK ){
+    const char *z = pFd->pShm ? pFd->pShm->zFile : "";
+    tvfsExecTcl(p, "xShmBarrier", Tcl_NewStringObj(z, -1), pFd->pShmId, 0, 0);
+  }
+
   if( p->isFullshm ){
     sqlite3OsShmBarrier(pFd->pReal);
     return;
-  }
-
-  if( p->pScript && p->mask&TESTVFS_SHMBARRIER_MASK ){
-    tvfsExecTcl(p, "xShmBarrier", 
-        Tcl_NewStringObj(pFd->pShm->zFile, -1), pFd->pShmId, 0, 0
-    );
   }
 }
 
@@ -1080,7 +1080,7 @@ static int testvfs_obj_cmd(
   switch( aSubcmd[i].eCmd ){
     case CMD_SHM: {
       Tcl_Obj *pObj;
-      int i, rc;
+      int rc;
       TestvfsBuffer *pBuffer;
       char *zName;
       if( objc!=3 && objc!=4 ){
@@ -1160,7 +1160,6 @@ static int testvfs_obj_cmd(
       };
       Tcl_Obj **apElem = 0;
       int nElem = 0;
-      int i;
       int mask = 0;
       if( objc!=3 ){
         Tcl_WrongNumArgs(interp, 2, objv, "LIST");
@@ -1531,7 +1530,7 @@ static int testvfs_cmd(
   return TCL_OK;
 
  bad_args:
-  Tcl_WrongNumArgs(interp, 1, objv, "VFSNAME ?-noshm BOOL? ?-default BOOL? ?-mxpathname INT? ?-szosfile INT? ?-iversion INT?");
+  Tcl_WrongNumArgs(interp, 1, objv, "VFSNAME ?-noshm BOOL? ?-fullshm BOOL? ?-default BOOL? ?-mxpathname INT? ?-szosfile INT? ?-iversion INT?");
   return TCL_ERROR;
 }
 

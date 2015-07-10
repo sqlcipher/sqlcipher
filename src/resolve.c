@@ -79,7 +79,7 @@ static void incrAggFunctionDepth(Expr *pExpr, int N){
 **     SELECT a+b, c+d FROM t1 ORDER BY (a+b) COLLATE nocase;
 **
 ** The nSubquery parameter specifies how many levels of subquery the
-** alias is removed from the original expression.  The usually value is
+** alias is removed from the original expression.  The usual value is
 ** zero but it might be more if the alias is contained within a subquery
 ** of the original expression.  The Expr.op2 field of TK_AGG_FUNCTION
 ** structures must be increased by the nSubquery amount.
@@ -99,7 +99,6 @@ static void resolveAlias(
   assert( iCol>=0 && iCol<pEList->nExpr );
   pOrig = pEList->a[iCol].pExpr;
   assert( pOrig!=0 );
-  assert( pOrig->flags & EP_Resolved );
   db = pParse->db;
   pDup = sqlite3ExprDup(db, pOrig, 0);
   if( pDup==0 ) return;
@@ -247,9 +246,10 @@ static int lookupName(
     testcase( pNC->ncFlags & NC_PartIdx );
     testcase( pNC->ncFlags & NC_IsCheck );
     if( (pNC->ncFlags & (NC_PartIdx|NC_IsCheck))!=0 ){
-      /* Silently ignore database qualifiers inside CHECK constraints and partial
-      ** indices.  Do not raise errors because that might break legacy and
-      ** because it does not hurt anything to just ignore the database name. */
+      /* Silently ignore database qualifiers inside CHECK constraints and
+      ** partial indices.  Do not raise errors because that might break
+      ** legacy and because it does not hurt anything to just ignore the
+      ** database name. */
       zDb = 0;
     }else{
       for(i=0; i<db->nDb; i++){
@@ -320,7 +320,8 @@ static int lookupName(
       if( pMatch ){
         pExpr->iTable = pMatch->iCursor;
         pExpr->pTab = pMatch->pTab;
-        assert( (pMatch->jointype & JT_RIGHT)==0 ); /* RIGHT JOIN not (yet) supported */
+        /* RIGHT JOIN not (yet) supported */
+        assert( (pMatch->jointype & JT_RIGHT)==0 );
         if( (pMatch->jointype & JT_LEFT)!=0 ){
           ExprSetProperty(pExpr, EP_CanBeNull);
         }
@@ -641,7 +642,8 @@ static int resolveExprStep(Walker *pWalker, Expr *pExpr){
       pExpr->affinity = SQLITE_AFF_INTEGER;
       break;
     }
-#endif /* defined(SQLITE_ENABLE_UPDATE_DELETE_LIMIT) && !defined(SQLITE_OMIT_SUBQUERY) */
+#endif /* defined(SQLITE_ENABLE_UPDATE_DELETE_LIMIT)
+          && !defined(SQLITE_OMIT_SUBQUERY) */
 
     /* A lone identifier is the name of a column.
     */
@@ -706,19 +708,20 @@ static int resolveExprStep(Walker *pWalker, Expr *pExpr){
           if( n==2 ){
             pExpr->iTable = exprProbability(pList->a[1].pExpr);
             if( pExpr->iTable<0 ){
-              sqlite3ErrorMsg(pParse, "second argument to likelihood() must be a "
-                                      "constant between 0.0 and 1.0");
+              sqlite3ErrorMsg(pParse,
+                "second argument to likelihood() must be a "
+                "constant between 0.0 and 1.0");
               pNC->nErr++;
             }
           }else{
-            /* EVIDENCE-OF: R-61304-29449 The unlikely(X) function is equivalent to
-            ** likelihood(X, 0.0625).
-            ** EVIDENCE-OF: R-01283-11636 The unlikely(X) function is short-hand for
-            ** likelihood(X,0.0625).
-            ** EVIDENCE-OF: R-36850-34127 The likely(X) function is short-hand for
-            ** likelihood(X,0.9375).
-            ** EVIDENCE-OF: R-53436-40973 The likely(X) function is equivalent to
-            ** likelihood(X,0.9375). */
+            /* EVIDENCE-OF: R-61304-29449 The unlikely(X) function is
+            ** equivalent to likelihood(X, 0.0625).
+            ** EVIDENCE-OF: R-01283-11636 The unlikely(X) function is
+            ** short-hand for likelihood(X,0.0625).
+            ** EVIDENCE-OF: R-36850-34127 The likely(X) function is short-hand
+            ** for likelihood(X,0.9375).
+            ** EVIDENCE-OF: R-53436-40973 The likely(X) function is equivalent
+            ** to likelihood(X,0.9375). */
             /* TUNING: unlikely() probability is 0.0625.  likely() is 0.9375 */
             pExpr->iTable = pDef->zName[0]=='u' ? 8388608 : 125829120;
           }             
@@ -735,7 +738,9 @@ static int resolveExprStep(Walker *pWalker, Expr *pExpr){
           return WRC_Prune;
         }
 #endif
-        if( pDef->funcFlags & SQLITE_FUNC_CONSTANT ) ExprSetProperty(pExpr,EP_Constant);
+        if( pDef->funcFlags & SQLITE_FUNC_CONSTANT ){
+          ExprSetProperty(pExpr,EP_ConstFunc);
+        }
       }
       if( is_agg && (pNC->ncFlags & NC_AllowAgg)==0 ){
         sqlite3ErrorMsg(pParse, "misuse of aggregate function %.*s()", nId,zId);
@@ -987,9 +992,11 @@ static int resolveCompoundOrderBy(
         if( pItem->pExpr==pE ){
           pItem->pExpr = pNew;
         }else{
-          assert( pItem->pExpr->op==TK_COLLATE );
-          assert( pItem->pExpr->pLeft==pE );
-          pItem->pExpr->pLeft = pNew;
+          Expr *pParent = pItem->pExpr;
+          assert( pParent->op==TK_COLLATE );
+          while( pParent->pLeft->op==TK_COLLATE ) pParent = pParent->pLeft;
+          assert( pParent->pLeft==pE );
+          pParent->pLeft = pNew;
         }
         sqlite3ExprDelete(db, pE);
         pItem->u.x.iOrderByCol = (u16)iCol;
@@ -1046,7 +1053,8 @@ int sqlite3ResolveOrderGroupBy(
         resolveOutOfRangeError(pParse, zType, i+1, pEList->nExpr);
         return 1;
       }
-      resolveAlias(pParse, pEList, pItem->u.x.iOrderByCol-1, pItem->pExpr, zType,0);
+      resolveAlias(pParse, pEList, pItem->u.x.iOrderByCol-1, pItem->pExpr,
+                   zType,0);
     }
   }
   return 0;
@@ -1179,6 +1187,20 @@ static int resolveSelectStep(Walker *pWalker, Select *p){
         sqlite3ResolveExprNames(&sNC, p->pOffset) ){
       return WRC_Abort;
     }
+
+    /* If the SF_Converted flags is set, then this Select object was
+    ** was created by the convertCompoundSelectToSubquery() function.
+    ** In this case the ORDER BY clause (p->pOrderBy) should be resolved
+    ** as if it were part of the sub-query, not the parent. This block
+    ** moves the pOrderBy down to the sub-query. It will be moved back
+    ** after the names have been resolved.  */
+    if( p->selFlags & SF_Converted ){
+      Select *pSub = p->pSrc->a[0].pSelect;
+      assert( p->pSrc->nSrc==1 && p->pOrderBy );
+      assert( pSub->pPrior && pSub->pOrderBy==0 );
+      pSub->pOrderBy = p->pOrderBy;
+      p->pOrderBy = 0;
+    }
   
     /* Recursively resolve names in all subqueries
     */
@@ -1261,12 +1283,30 @@ static int resolveSelectStep(Walker *pWalker, Select *p){
     sNC.pNext = 0;
     sNC.ncFlags |= NC_AllowAgg;
 
+    /* If this is a converted compound query, move the ORDER BY clause from 
+    ** the sub-query back to the parent query. At this point each term
+    ** within the ORDER BY clause has been transformed to an integer value.
+    ** These integers will be replaced by copies of the corresponding result
+    ** set expressions by the call to resolveOrderGroupBy() below.  */
+    if( p->selFlags & SF_Converted ){
+      Select *pSub = p->pSrc->a[0].pSelect;
+      p->pOrderBy = pSub->pOrderBy;
+      pSub->pOrderBy = 0;
+    }
+
     /* Process the ORDER BY clause for singleton SELECT statements.
     ** The ORDER BY clause for compounds SELECT statements is handled
     ** below, after all of the result-sets for all of the elements of
     ** the compound have been resolved.
+    **
+    ** If there is an ORDER BY clause on a term of a compound-select other
+    ** than the right-most term, then that is a syntax error.  But the error
+    ** is not detected until much later, and so we need to go ahead and
+    ** resolve those symbols on the incorrect ORDER BY for consistency.
     */
-    if( !isCompound && resolveOrderGroupBy(&sNC, p, p->pOrderBy, "ORDER") ){
+    if( isCompound<=nCompound  /* Defer right-most ORDER BY of a compound */
+     && resolveOrderGroupBy(&sNC, p, p->pOrderBy, "ORDER")
+    ){
       return WRC_Abort;
     }
     if( db->mallocFailed ){

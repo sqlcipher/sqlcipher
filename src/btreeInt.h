@@ -280,6 +280,7 @@ struct MemPage {
   u8 hdrOffset;        /* 100 for page 1.  0 otherwise */
   u8 childPtrSize;     /* 0 if leaf==1.  4 if leaf==0 */
   u8 max1bytePayload;  /* min(maxLocal,127) */
+  u8 bBusy;            /* Prevent endless loops on corrupt database files */
   u16 maxLocal;        /* Copy of BtShared.maxLocal or BtShared.maxLeaf */
   u16 minLocal;        /* Copy of BtShared.minLocal or BtShared.minLeaf */
   u16 cellOffset;      /* Index in aData of first cell pointer */
@@ -418,6 +419,9 @@ struct BtShared {
 #endif
   u8 inTransaction;     /* Transaction state */
   u8 max1bytePayload;   /* Maximum first byte of cell for a 1-byte payload */
+#ifdef SQLITE_HAS_CODEC
+  u8 optimalReserve;    /* Desired amount of reserved space per page */
+#endif
   u16 btsFlags;         /* Boolean parameters.  See BTS_* macros below */
   u16 maxLocal;         /* Maximum local payload in non-LEAFDATA tables */
   u16 minLocal;         /* Minimum local payload in non-LEAFDATA tables */
