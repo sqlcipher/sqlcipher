@@ -661,9 +661,9 @@ static int DbWalHandler(
 #if defined(SQLITE_TEST) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
 static void setTestUnlockNotifyVars(Tcl_Interp *interp, int iArg, int nArg){
   char zBuf[64];
-  sprintf(zBuf, "%d", iArg);
+  sqlite3_snprintf(sizeof(zBuf), zBuf, "%d", iArg);
   Tcl_SetVar(interp, "sqlite_unlock_notify_arg", zBuf, TCL_GLOBAL_ONLY);
-  sprintf(zBuf, "%d", nArg);
+  sqlite3_snprintf(sizeof(zBuf), zBuf, "%d", nArg);
   Tcl_SetVar(interp, "sqlite_unlock_notify_argcount", zBuf, TCL_GLOBAL_ONLY);
 }
 #else
@@ -1191,7 +1191,7 @@ static int dbPrepareAndBind(
         int n;
         u8 *data;
         const char *zType = (pVar->typePtr ? pVar->typePtr->name : "");
-        char c = zType[0];
+        c = zType[0];
         if( zVar[0]=='@' ||
            (c=='b' && strcmp(zType,"bytearray")==0 && pVar->bytes==0) ){
           /* Load a BLOB type if the Tcl variable is a bytearray and
@@ -2298,7 +2298,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       }
       Tcl_DecrRefCount(pRet);
     }else{
-      ClientData cd[2];
+      ClientData cd2[2];
       DbEvalContext *p;
       Tcl_Obj *pArray = 0;
       Tcl_Obj *pScript;
@@ -2312,42 +2312,57 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       p = (DbEvalContext *)Tcl_Alloc(sizeof(DbEvalContext));
       dbEvalInit(p, pDb, objv[2], pArray);
 
-      cd[0] = (void *)p;
-      cd[1] = (void *)pScript;
-      rc = DbEvalNextCmd(cd, interp, TCL_OK);
+      cd2[0] = (void *)p;
+      cd2[1] = (void *)pScript;
+      rc = DbEvalNextCmd(cd2, interp, TCL_OK);
     }
     break;
   }
 
   /*
-  **     $db function NAME [-argcount N] SCRIPT
+  **     $db function NAME [-argcount N] [-deterministic] SCRIPT
   **
   ** Create a new SQL function called NAME.  Whenever that function is
   ** called, invoke SCRIPT to evaluate the function.
   */
   case DB_FUNCTION: {
+    int flags = SQLITE_UTF8;
     SqlFunc *pFunc;
     Tcl_Obj *pScript;
     char *zName;
     int nArg = -1;
-    if( objc==6 ){
-      const char *z = Tcl_GetString(objv[3]);
+    int i;
+    if( objc<4 ){
+      Tcl_WrongNumArgs(interp, 2, objv, "NAME ?SWITCHES? SCRIPT");
+      return TCL_ERROR;
+    }
+    for(i=3; i<(objc-1); i++){
+      const char *z = Tcl_GetString(objv[i]);
       int n = strlen30(z);
       if( n>2 && strncmp(z, "-argcount",n)==0 ){
-        if( Tcl_GetIntFromObj(interp, objv[4], &nArg) ) return TCL_ERROR;
+        if( i==(objc-2) ){
+          Tcl_AppendResult(interp, "option requires an argument: ", z, 0);
+          return TCL_ERROR;
+        }
+        if( Tcl_GetIntFromObj(interp, objv[i+1], &nArg) ) return TCL_ERROR;
         if( nArg<0 ){
           Tcl_AppendResult(interp, "number of arguments must be non-negative",
                            (char*)0);
           return TCL_ERROR;
         }
+        i++;
+      }else
+      if( n>2 && strncmp(z, "-deterministic",n)==0 ){
+        flags |= SQLITE_DETERMINISTIC;
+      }else{
+        Tcl_AppendResult(interp, "bad option \"", z, 
+            "\": must be -argcount or -deterministic", 0
+        );
+        return TCL_ERROR;
       }
-      pScript = objv[5];
-    }else if( objc!=4 ){
-      Tcl_WrongNumArgs(interp, 2, objv, "NAME [-argcount N] SCRIPT");
-      return TCL_ERROR;
-    }else{
-      pScript = objv[3];
     }
+
+    pScript = objv[objc-1];
     zName = Tcl_GetStringFromObj(objv[2], 0);
     pFunc = findSqlFunc(pDb, zName);
     if( pFunc==0 ) return TCL_ERROR;
@@ -2357,7 +2372,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     pFunc->pScript = pScript;
     Tcl_IncrRefCount(pScript);
     pFunc->useEvalObjv = safeToUseEvalObjv(interp, pScript);
-    rc = sqlite3_create_function(pDb->db, zName, nArg, SQLITE_UTF8,
+    rc = sqlite3_create_function(pDb->db, zName, nArg, flags,
         pFunc, tclSqlFunc, 0, 0);
     if( rc!=SQLITE_OK ){
       rc = TCL_ERROR;
@@ -3429,7 +3444,7 @@ static void MD5DigestToBase10x8(unsigned char digest[16], char zDigest[50]){
   for(i=j=0; i<16; i+=2){
     x = digest[i]*256 + digest[i+1];
     if( i>0 ) zDigest[j++] = '-';
-    sprintf(&zDigest[j], "%05u", x);
+    sqlite3_snprintf(50-j, &zDigest[j], "%05u", x);
     j += 5;
   }
   zDigest[j] = 0;
@@ -3689,7 +3704,44 @@ static int db_last_stmt_ptr(
 
   return TCL_OK;
 }
-#endif
+#endif /* SQLITE_TEST */
+
+#if defined(SQLITE_TEST) || defined(SQLITE_ENABLE_DBSTAT_VTAB)
+/*
+** tclcmd:   register_dbstat_vtab DB
+**
+** Cause the dbstat virtual table to be available on the connection DB
+*/
+static int sqlite3RegisterDbstatCmd(
+  void *clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+#ifdef SQLITE_OMIT_VIRTUALTABLE
+  Tcl_AppendResult(interp, "dbstat not available because of "
+                           "SQLITE_OMIT_VIRTUALTABLE", (void*)0);
+  return TCL_ERROR;
+#else
+  struct SqliteDb { sqlite3 *db; };
+  char *zDb;
+  Tcl_CmdInfo cmdInfo;
+
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB");
+    return TCL_ERROR;
+  }
+
+  zDb = Tcl_GetString(objv[1]);
+  if( Tcl_GetCommandInfo(interp, zDb, &cmdInfo) ){
+    int sqlite3_dbstat_register(sqlite3*);
+    sqlite3* db = ((struct SqliteDb*)cmdInfo.objClientData)->db;
+    sqlite3_dbstat_register(db);
+  }
+  return TCL_OK;
+#endif /* SQLITE_OMIT_VIRTUALTABLE */
+}
+#endif /* defined(SQLITE_TEST) || defined(SQLITE_ENABLE_DBSTAT_VTAB) */
 
 /*
 ** Configure the interpreter passed as the first argument to have access
@@ -3713,11 +3765,10 @@ static void init_all(Tcl_Interp *interp){
   ** of virtual table dbstat (source file test_stat.c). This command is
   ** required for testfixture and sqlite3_analyzer, but not by the production
   ** Tcl extension.  */
-#if defined(SQLITE_TEST) || TCLSH==2
-  {
-    extern int SqlitetestStat_Init(Tcl_Interp*);
-    SqlitetestStat_Init(interp);
-  }
+#if defined(SQLITE_TEST) || defined(SQLITE_ENABLE_DBSTAT_VTAB)
+  Tcl_CreateObjCommand(
+      interp, "register_dbstat_vtab", sqlite3RegisterDbstatCmd, 0, 0
+  );
 #endif
 
 #ifdef SQLITE_TEST

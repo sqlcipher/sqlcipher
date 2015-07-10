@@ -27,6 +27,7 @@
 #define FTS3_MATCHINFO_LENGTH    'l'        /* nCol values */
 #define FTS3_MATCHINFO_LCS       's'        /* nCol values */
 #define FTS3_MATCHINFO_HITS      'x'        /* 3*nCol*nPhrase values */
+#define FTS3_MATCHINFO_LHITS     'y'        /* nCol*nPhrase values */
 
 /*
 ** The default value for the second argument to matchinfo(). 
@@ -682,8 +683,12 @@ static int fts3SnippetText(
       ** required. They are required if (a) this is not the first fragment,
       ** or (b) this fragment does not begin at position 0 of its column. 
       */
-      if( rc==SQLITE_OK && (iPos>0 || iFragment>0) ){
-        rc = fts3StringAppend(pOut, zEllipsis, -1);
+      if( rc==SQLITE_OK ){
+        if( iPos>0 || iFragment>0 ){
+          rc = fts3StringAppend(pOut, zEllipsis, -1);
+        }else if( iBegin ){
+          rc = fts3StringAppend(pOut, zDoc, iBegin);
+        }
       }
       if( rc!=SQLITE_OK || iCurrent<iPos ) continue;
     }
@@ -805,6 +810,51 @@ static int fts3ExprLocalHitsCb(
   return rc;
 }
 
+/*
+** fts3ExprIterate() callback used to gather information for the matchinfo
+** directive 'y'.
+*/
+static int fts3ExprLHitsCb(
+  Fts3Expr *pExpr,                /* Phrase expression node */
+  int iPhrase,                    /* Phrase number */
+  void *pCtx                      /* Pointer to MatchInfo structure */
+){
+  MatchInfo *p = (MatchInfo *)pCtx;
+  Fts3Table *pTab = (Fts3Table *)p->pCursor->base.pVtab;
+  int rc = SQLITE_OK;
+  int iStart = iPhrase * p->nCol;
+  Fts3Expr *pEof;                 /* Ancestor node already at EOF */
+  
+  /* This must be a phrase */
+  assert( pExpr->pPhrase );
+
+  /* Initialize all output integers to zero. */
+  memset(&p->aMatchinfo[iStart], 0, sizeof(u32) * p->nCol);
+
+  /* Check if this or any parent node is at EOF. If so, then all output
+  ** values are zero.  */
+  for(pEof=pExpr; pEof && pEof->bEof==0; pEof=pEof->pParent);
+
+  if( pEof==0 && pExpr->iDocid==p->pCursor->iPrevId ){
+    Fts3Phrase *pPhrase = pExpr->pPhrase;
+    char *pIter = pPhrase->doclist.pList;
+    int iCol = 0;
+
+    while( 1 ){
+      int nHit = fts3ColumnlistCount(&pIter);
+      if( (pPhrase->iColumn>=pTab->nColumn || pPhrase->iColumn==iCol) ){
+        p->aMatchinfo[iStart + iCol] = (u32)nHit;
+      }
+      assert( *pIter==0x00 || *pIter==0x01 );
+      if( *pIter!=0x01 ) break;
+      pIter++;
+      pIter += fts3GetVarint32(pIter, &iCol);
+    }
+  }
+
+  return rc;
+}
+
 static int fts3MatchinfoCheck(
   Fts3Table *pTab, 
   char cArg,
@@ -817,10 +867,11 @@ static int fts3MatchinfoCheck(
    || (cArg==FTS3_MATCHINFO_LENGTH && pTab->bHasDocsize)
    || (cArg==FTS3_MATCHINFO_LCS)
    || (cArg==FTS3_MATCHINFO_HITS)
+   || (cArg==FTS3_MATCHINFO_LHITS)
   ){
     return SQLITE_OK;
   }
-  *pzErr = sqlite3_mprintf("unrecognized matchinfo request: %c", cArg);
+  sqlite3Fts3ErrMsg(pzErr, "unrecognized matchinfo request: %c", cArg);
   return SQLITE_ERROR;
 }
 
@@ -838,6 +889,10 @@ static int fts3MatchinfoSize(MatchInfo *pInfo, char cArg){
     case FTS3_MATCHINFO_LENGTH:
     case FTS3_MATCHINFO_LCS:
       nVal = pInfo->nCol;
+      break;
+
+    case FTS3_MATCHINFO_LHITS:
+      nVal = pInfo->nCol * pInfo->nPhrase;
       break;
 
     default:
@@ -1094,6 +1149,10 @@ static int fts3MatchinfoValues(
         }
         break;
 
+      case FTS3_MATCHINFO_LHITS:
+        (void)fts3ExprIterate(pCsr->pExpr, fts3ExprLHitsCb, (void*)pInfo);
+        break;
+
       default: {
         Fts3Expr *pExpr;
         assert( zArg[i]==FTS3_MATCHINFO_HITS );
@@ -1249,7 +1308,7 @@ void sqlite3Fts3Snippet(
       */
       for(iRead=0; iRead<pTab->nColumn; iRead++){
         SnippetFragment sF = {0, 0, 0, 0};
-        int iS;
+        int iS = 0;
         if( iCol>=0 && iRead!=iCol ) continue;
 
         /* Find the best snippet of nFToken tokens in column iRead. */

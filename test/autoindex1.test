@@ -11,6 +11,9 @@
 # This file implements regression tests for SQLite library.  The
 # focus of this script is testing automatic index creation logic.
 #
+# EVIDENCE-OF: R-34271-33106 PRAGMA automatic_index; PRAGMA
+# automatic_index = boolean; Query, set, or clear the automatic indexing
+# capability.
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -509,5 +512,12 @@ do_execsql_test autoindex1-901 {
    WHERE t1.x IN (1,2,3);
 } {/USING AUTOMATIC COVERING INDEX/}
 
+# 2015-04-15:  A NULL CollSeq pointer in automatic index creation.
+#
+do_execsql_test autoindex1-920 {
+  CREATE TABLE t920(x);
+  INSERT INTO t920 VALUES(3),(4),(5);
+  SELECT * FROM t920,(SELECT 0 FROM t920),(VALUES(9)) WHERE 5 IN (x);
+} {5 0 9 5 0 9 5 0 9}
 
 finish_test

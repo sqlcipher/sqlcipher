@@ -409,28 +409,35 @@ cmd ::= select(X).  {
 %type oneselect {Select*}
 %destructor oneselect {sqlite3SelectDelete(pParse->db, $$);}
 
-select(A) ::= with(W) selectnowith(X). {
-  Select *p = X, *pNext, *pLoop;
-  if( p ){
-    int cnt = 0, mxSelect;
-    p->pWith = W;
+%include {
+  /*
+  ** For a compound SELECT statement, make sure p->pPrior->pNext==p for
+  ** all elements in the list.  And make sure list length does not exceed
+  ** SQLITE_LIMIT_COMPOUND_SELECT.
+  */
+  static void parserDoubleLinkSelect(Parse *pParse, Select *p){
     if( p->pPrior ){
-      u16 allValues = SF_Values;
-      pNext = 0;
+      Select *pNext = 0, *pLoop;
+      int mxSelect, cnt = 0;
       for(pLoop=p; pLoop; pNext=pLoop, pLoop=pLoop->pPrior, cnt++){
         pLoop->pNext = pNext;
         pLoop->selFlags |= SF_Compound;
-        allValues &= pLoop->selFlags;
       }
-      if( allValues ){
-        p->selFlags |= SF_AllValues;
-      }else if(
-        (mxSelect = pParse->db->aLimit[SQLITE_LIMIT_COMPOUND_SELECT])>0
-        && cnt>mxSelect
+      if( (p->selFlags & SF_MultiValue)==0 && 
+        (mxSelect = pParse->db->aLimit[SQLITE_LIMIT_COMPOUND_SELECT])>0 &&
+        cnt>mxSelect
       ){
         sqlite3ErrorMsg(pParse, "too many terms in compound SELECT");
       }
     }
+  }
+}
+
+select(A) ::= with(W) selectnowith(X). {
+  Select *p = X;
+  if( p ){
+    p->pWith = W;
+    parserDoubleLinkSelect(pParse, p);
   }else{
     sqlite3WithDelete(pParse->db, W);
   }
@@ -445,12 +452,14 @@ selectnowith(A) ::= selectnowith(X) multiselect_op(Y) oneselect(Z).  {
     SrcList *pFrom;
     Token x;
     x.n = 0;
+    parserDoubleLinkSelect(pParse, pRhs);
     pFrom = sqlite3SrcListAppendFromTerm(pParse,0,0,0,&x,pRhs,0,0);
     pRhs = sqlite3SelectNew(pParse,0,pFrom,0,0,0,0,0,0,0);
   }
   if( pRhs ){
     pRhs->op = (u8)Y;
     pRhs->pPrior = X;
+    pRhs->selFlags &= ~SF_MultiValue;
     if( Y!=TK_ALL ) pParse->hasCompound = 1;
   }else{
     sqlite3SelectDelete(pParse->db, X);
@@ -498,13 +507,16 @@ values(A) ::= VALUES LP nexprlist(X) RP. {
   A = sqlite3SelectNew(pParse,X,0,0,0,0,0,SF_Values,0,0);
 }
 values(A) ::= values(X) COMMA LP exprlist(Y) RP. {
-  Select *pRight = sqlite3SelectNew(pParse,Y,0,0,0,0,0,SF_Values,0,0);
+  Select *pRight, *pLeft = X;
+  pRight = sqlite3SelectNew(pParse,Y,0,0,0,0,0,SF_Values|SF_MultiValue,0,0);
+  if( ALWAYS(pLeft) ) pLeft->selFlags &= ~SF_MultiValue;
   if( pRight ){
     pRight->op = TK_ALL;
-    pRight->pPrior = X;
+    pLeft = X;
+    pRight->pPrior = pLeft;
     A = pRight;
   }else{
-    A = X;
+    A = pLeft;
   }
 }
 
@@ -860,7 +872,7 @@ expr(A) ::= VARIABLE(X).     {
   spanSet(&A, &X, &X);
 }
 expr(A) ::= expr(E) COLLATE ids(C). {
-  A.pExpr = sqlite3ExprAddCollateToken(pParse, E.pExpr, &C);
+  A.pExpr = sqlite3ExprAddCollateToken(pParse, E.pExpr, &C, 1);
   A.zStart = E.zStart;
   A.zEnd = &C.z[C.n];
 }
@@ -1078,7 +1090,7 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
       A.pExpr = sqlite3PExpr(pParse, TK_IN, X.pExpr, 0, 0);
       if( A.pExpr ){
         A.pExpr->x.pList = Y;
-        sqlite3ExprSetHeight(pParse, A.pExpr);
+        sqlite3ExprSetHeightAndFlags(pParse, A.pExpr);
       }else{
         sqlite3ExprListDelete(pParse->db, Y);
       }
@@ -1091,8 +1103,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
     A.pExpr = sqlite3PExpr(pParse, TK_SELECT, 0, 0, 0);
     if( A.pExpr ){
       A.pExpr->x.pSelect = X;
-      ExprSetProperty(A.pExpr, EP_xIsSelect);
-      sqlite3ExprSetHeight(pParse, A.pExpr);
+      ExprSetProperty(A.pExpr, EP_xIsSelect|EP_Subquery);
+      sqlite3ExprSetHeightAndFlags(pParse, A.pExpr);
     }else{
       sqlite3SelectDelete(pParse->db, X);
     }
@@ -1103,8 +1115,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
     A.pExpr = sqlite3PExpr(pParse, TK_IN, X.pExpr, 0, 0);
     if( A.pExpr ){
       A.pExpr->x.pSelect = Y;
-      ExprSetProperty(A.pExpr, EP_xIsSelect);
-      sqlite3ExprSetHeight(pParse, A.pExpr);
+      ExprSetProperty(A.pExpr, EP_xIsSelect|EP_Subquery);
+      sqlite3ExprSetHeightAndFlags(pParse, A.pExpr);
     }else{
       sqlite3SelectDelete(pParse->db, Y);
     }
@@ -1117,8 +1129,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
     A.pExpr = sqlite3PExpr(pParse, TK_IN, X.pExpr, 0, 0);
     if( A.pExpr ){
       A.pExpr->x.pSelect = sqlite3SelectNew(pParse, 0,pSrc,0,0,0,0,0,0,0);
-      ExprSetProperty(A.pExpr, EP_xIsSelect);
-      sqlite3ExprSetHeight(pParse, A.pExpr);
+      ExprSetProperty(A.pExpr, EP_xIsSelect|EP_Subquery);
+      sqlite3ExprSetHeightAndFlags(pParse, A.pExpr);
     }else{
       sqlite3SrcListDelete(pParse->db, pSrc);
     }
@@ -1130,8 +1142,8 @@ expr(A) ::= expr(W) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
     Expr *p = A.pExpr = sqlite3PExpr(pParse, TK_EXISTS, 0, 0, 0);
     if( p ){
       p->x.pSelect = Y;
-      ExprSetProperty(p, EP_xIsSelect);
-      sqlite3ExprSetHeight(pParse, p);
+      ExprSetProperty(p, EP_xIsSelect|EP_Subquery);
+      sqlite3ExprSetHeightAndFlags(pParse, p);
     }else{
       sqlite3SelectDelete(pParse->db, Y);
     }
@@ -1145,7 +1157,7 @@ expr(A) ::= CASE(C) case_operand(X) case_exprlist(Y) case_else(Z) END(E). {
   A.pExpr = sqlite3PExpr(pParse, TK_CASE, X, 0, 0);
   if( A.pExpr ){
     A.pExpr->x.pList = Z ? sqlite3ExprListAppend(pParse,Y,Z) : Y;
-    sqlite3ExprSetHeight(pParse, A.pExpr);
+    sqlite3ExprSetHeightAndFlags(pParse, A.pExpr);
   }else{
     sqlite3ExprListDelete(pParse->db, Y);
     sqlite3ExprDelete(pParse->db, Z);
@@ -1206,14 +1218,14 @@ uniqueflag(A) ::= .        {A = OE_None;}
 idxlist_opt(A) ::= .                         {A = 0;}
 idxlist_opt(A) ::= LP idxlist(X) RP.         {A = X;}
 idxlist(A) ::= idxlist(X) COMMA nm(Y) collate(C) sortorder(Z).  {
-  Expr *p = sqlite3ExprAddCollateToken(pParse, 0, &C);
+  Expr *p = sqlite3ExprAddCollateToken(pParse, 0, &C, 1);
   A = sqlite3ExprListAppend(pParse,X, p);
   sqlite3ExprListSetName(pParse,A,&Y,1);
   sqlite3ExprListCheckLength(pParse, A, "index");
   if( A ) A->a[A->nExpr-1].sortOrder = (u8)Z;
 }
 idxlist(A) ::= nm(Y) collate(C) sortorder(Z). {
-  Expr *p = sqlite3ExprAddCollateToken(pParse, 0, &C);
+  Expr *p = sqlite3ExprAddCollateToken(pParse, 0, &C, 1);
   A = sqlite3ExprListAppend(pParse,0, p);
   sqlite3ExprListSetName(pParse, A, &Y, 1);
   sqlite3ExprListCheckLength(pParse, A, "index");

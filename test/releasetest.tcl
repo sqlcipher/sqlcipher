@@ -14,16 +14,19 @@ optional) are:
     --config   CONFIGNAME              (Run only CONFIGNAME)
     --quick                            (Run "veryquick.test" only)
     --veryquick                        (Run "make smoketest" only)
+    --msvc                             (Use MSVC as the compiler)
     --buildonly                        (Just build testfixture - do not run)
     --dryrun                           (Print what would have happened)
     --info                             (Show diagnostic info)
+    --with-tcl=DIR                     (Use TCL build at DIR)
 
 The default value for --srcdir is the parent of the directory holding
 this script.
 
 The script determines the default value for --platform using the
-$tcl_platform(os) and $tcl_platform(machine) variables. Supported
-platforms are "Linux-x86", "Linux-x86_64" and "Darwin-i386".
+$tcl_platform(os) and $tcl_platform(machine) variables.  Supported
+platforms are "Linux-x86", "Linux-x86_64", "Darwin-i386",
+"Darwin-x86_64", "Windows NT-intel", and "Windows NT-amd64".
 
 Every test begins with a fresh run of the configure script at the top
 of the SQLite source tree.
@@ -105,6 +108,13 @@ array set ::Configs [strip_comments {
     -DSQLITE_ENABLE_MEMSYS5=1
     -DSQLITE_ENABLE_MEMSYS3=1
     -DSQLITE_ENABLE_COLUMN_METADATA=1
+    -DSQLITE_ENABLE_STAT4
+    -DSQLITE_MAX_ATTACHED=125
+  }
+  "Fast-One" {
+    -O6
+    -DSQLITE_ENABLE_FTS4=1
+    -DSQLITE_ENABLE_RTREE=1
     -DSQLITE_ENABLE_STAT4
     -DSQLITE_MAX_ATTACHED=125
   }
@@ -197,6 +207,8 @@ array set ::Configs [strip_comments {
   Fail2 {-O0}
   Fail3 {-O0}
   Fail4 {-O0}
+  FuzzFail1 {-O0}
+  FuzzFail2 {-O0}
 }]
 
 array set ::Platforms [strip_comments {
@@ -212,6 +224,7 @@ array set ::Platforms [strip_comments {
     "No-lookaside"            test
     "Devkit"                  test
     "Sanitize"                {QUICKTEST_OMIT=func4.test,nan.test test}
+    "Fast-One"                fuzzoomtest
     "Valgrind"                valgrindtest
     "Default"                 "threadtest fulltest"
     "Device-One"              fulltest
@@ -238,6 +251,10 @@ array set ::Platforms [strip_comments {
     "Default"                 "mptest fulltestonly"
     "Have-Not"                test
   }
+  "Windows NT-amd64" {
+    "Default"                 "mptest fulltestonly"
+    "Have-Not"                test
+  }
 
   # The Failure-Detection platform runs various tests that deliberately
   # fail.  This is used as a test of this script to verify that this script
@@ -249,6 +266,8 @@ array set ::Platforms [strip_comments {
     Fail2     "TEST_FAILURE=2 valgrindtest"
     Fail3     "TEST_FAILURE=3 valgrindtest"
     Fail4     "TEST_FAILURE=4 test"
+    FuzzFail1 "TEST_FAILURE=5 test"
+    FuzzFail2 "TEST_FAILURE=5 valgrindtest"
   }
 }]
 
@@ -296,6 +315,13 @@ proc count_tests_and_errors {logfile rcVar errmsgVar} {
         set errmsg $msg
       }
     }
+    if {[regexp {fatal error +(.*)} $line all msg]} {
+      incr ::NERRCASE
+      if {$rc==0} {
+        set rc 1
+        set errmsg $msg
+      }
+    }
     if {[regexp {ERROR SUMMARY: (\d+) errors.*} $line all cnt] && $cnt>0} {
       incr ::NERRCASE
       if {$rc==0} {
@@ -314,7 +340,13 @@ proc count_tests_and_errors {logfile rcVar errmsgVar} {
     }
   }
   close $fd
-  if {!$seen} {
+  if {$::BUILDONLY} {
+    if {$rc==0} {
+      set errmsg "Build complete"
+    } else {
+      set errmsg "Build failed"
+    }
+  } elseif {!$seen} {
     set rc 1
     set errmsg "Test did not complete"
     if {[file readable core]} {
@@ -329,10 +361,10 @@ proc run_test_suite {name testtarget config} {
   # CFLAGS. The makefile will pass OPTS to both gcc and lemon, but
   # CFLAGS is only passed to gcc.
   #
-  set cflags "-g"
+  set cflags [expr {$::MSVC ? "-Zi" : "-g"}]
   set opts ""
   set title ${name}($testtarget)
-  set configOpts ""
+  set configOpts $::WITHTCL
 
   regsub -all {#[^\n]*\n} $config \n config
   foreach arg $config {
@@ -349,7 +381,14 @@ proc run_test_suite {name testtarget config} {
 
   set cflags [join $cflags " "]
   set opts   [join $opts " "]
-  append opts " -DSQLITE_NO_SYNC=1 -DHAVE_USLEEP"
+  append opts " -DSQLITE_NO_SYNC=1"
+
+  # Some configurations already set HAVE_USLEEP; in that case, skip it.
+  #
+  if {![regexp { -DHAVE_USLEEP$} $opts]
+         && ![regexp { -DHAVE_USLEEP[ =]+} $opts]} {
+    append opts " -DHAVE_USLEEP=1"
+  }
 
   # Set the sub-directory to use.
   #
@@ -390,10 +429,10 @@ proc run_test_suite {name testtarget config} {
     if {$rc} {
       puts " FAIL $tm"
       incr ::NERR
-      if {$errmsg!=""} {puts "     $errmsg"}
     } else {
       puts " Ok   $tm"
     }
+    if {$errmsg!=""} {puts "     $errmsg"}
   }
 }
 
@@ -401,6 +440,7 @@ proc run_test_suite {name testtarget config} {
 # the current platform, which may be Windows (via MinGW, etc).
 #
 proc configureCommand {opts} {
+  if {$::MSVC} return [list]; # This is not needed for MSVC.
   set result [list trace_cmd exec]
   if {$::tcl_platform(platform)=="windows"} {
     lappend result sh
@@ -414,7 +454,14 @@ proc configureCommand {opts} {
 # specified targets, compiler flags, and options.
 #
 proc makeCommand { targets cflags opts } {
-  set result [list trace_cmd exec make clean]
+  set result [list trace_cmd exec]
+  if {$::MSVC} {
+    set nmakeDir [file nativename $::SRCDIR]
+    set nmakeFile [file join $nmakeDir Makefile.msc]
+    lappend result nmake /f $nmakeFile TOP=$nmakeDir clean
+  } else {
+    lappend result make clean
+  }
   foreach target $targets {
     lappend result $target
   }
@@ -443,10 +490,12 @@ proc trace_cmd {args} {
 proc process_options {argv} {
   set ::SRCDIR    [file normalize [file dirname [file dirname $::argv0]]]
   set ::QUICK     0
+  set ::MSVC      0
   set ::BUILDONLY 0
   set ::DRYRUN    0
   set ::EXEC      exec
   set ::TRACE     0
+  set ::WITHTCL   {}
   set config {}
   set platform $::tcl_platform(os)-$::tcl_platform(machine)
 
@@ -476,6 +525,10 @@ proc process_options {argv} {
         set config [lindex $argv $i]
       }
 
+      -msvc {
+        set ::MSVC 1
+      }
+
       -buildonly {
         set ::BUILDONLY 1
       }
@@ -494,6 +547,7 @@ proc process_options {argv} {
         puts "   --platform [list $platform]"
         puts "   --config [list $config]"
         if {$::QUICK}     {puts "   --quick"}
+        if {$::MSVC}      {puts "   --msvc"}
         if {$::BUILDONLY} {puts "   --buildonly"}
         if {$::DRYRUN}    {puts "   --dryrun"}
         if {$::TRACE}     {puts "   --trace"}
@@ -507,7 +561,19 @@ proc process_options {argv} {
         }
         exit
       }
-      -g -
+
+      -g {
+        if {$::MSVC} {
+          lappend ::EXTRACONFIG -Zi
+        } else {
+          lappend ::EXTRACONFIG [lindex $argv $i]
+        }
+      }
+
+      -with-tcl=* {
+        set ::WITHTCL -$x
+      }
+
       -D* -
       -O* -
       -enable-* -
@@ -547,6 +613,7 @@ proc process_options {argv} {
   puts -nonewline "Flags:"
   if {$::DRYRUN} {puts -nonewline " --dryrun"}
   if {$::BUILDONLY} {puts -nonewline " --buildonly"}
+  if {$::MSVC} {puts -nonewline " --msvc"}
   switch -- $::QUICK {
      1 {puts -nonewline " --quick"}
      2 {puts -nonewline " --veryquick"}
@@ -570,12 +637,20 @@ proc main {argv} {
   set ::SQLITE_VERSION {}
   set STARTTIME [clock seconds]
   foreach {zConfig target} $::CONFIGLIST {
+    if {$::MSVC && ($zConfig eq "Sanitize" || "checksymbols" in $target
+           || "valgrindtest" in $target)} {
+      puts "Skipping $zConfig / $target for MSVC..."
+      continue
+    }
     if {$target ne "checksymbols"} {
       switch -- $::QUICK {
          1 {set target test}
          2 {set target smoketest}
       }
-      if {$::BUILDONLY} {set target testfixture}
+      if {$::BUILDONLY} {
+        set target testfixture
+        if {$::MSVC} {append target .exe}
+      }
     }
     set config_options [concat $::Configs($zConfig) $::EXTRACONFIG]
 
@@ -586,10 +661,11 @@ proc main {argv} {
     # it and run veryquick.test. If it did not include the SQLITE_DEBUG option
     # add it and run veryquick.test.
     if {$target!="checksymbols" && $target!="valgrindtest"
-           && !$::BUILDONLY && $::QUICK<2} {
+           && $target!="fuzzoomtest" && !$::BUILDONLY && $::QUICK<2} {
       set debug_idx [lsearch -glob $config_options -DSQLITE_DEBUG*]
       set xtarget $target
       regsub -all {fulltest[a-z]*} $xtarget test xtarget
+      regsub -all {fuzzoomtest} $xtarget fuzztest xtarget
       if {$debug_idx < 0} {
         incr NTEST
         append config_options " -DSQLITE_DEBUG=1"

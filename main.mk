@@ -53,7 +53,7 @@ TCCX += -I$(TOP)/ext/async -I$(TOP)/ext/userauth
 LIBOBJ+= vdbe.o parse.o \
          alter.o analyze.o attach.o auth.o \
          backup.o bitvec.o btmutex.o btree.o build.o \
-         callback.o complete.o ctime.o date.o delete.o expr.o fault.o fkey.o \
+         callback.o complete.o ctime.o date.o dbstat.o delete.o expr.o fault.o fkey.o \
          fts3.o fts3_aux.o fts3_expr.o fts3_hash.o fts3_icu.o fts3_porter.o \
          fts3_snippet.o fts3_tokenizer.o fts3_tokenizer1.o \
          fts3_tokenize_vtab.o \
@@ -91,6 +91,7 @@ SRC = \
   $(TOP)/src/complete.c \
   $(TOP)/src/ctime.c \
   $(TOP)/src/date.c \
+  $(TOP)/src/dbstat.c \
   $(TOP)/src/delete.c \
   $(TOP)/src/expr.c \
   $(TOP)/src/fault.c \
@@ -133,6 +134,7 @@ SRC = \
   $(TOP)/src/pcache.h \
   $(TOP)/src/pcache1.c \
   $(TOP)/src/pragma.c \
+  $(TOP)/src/pragma.h \
   $(TOP)/src/prepare.c \
   $(TOP)/src/printf.c \
   $(TOP)/src/random.c \
@@ -164,6 +166,7 @@ SRC = \
   $(TOP)/src/vdbetrace.c \
   $(TOP)/src/vdbeInt.h \
   $(TOP)/src/vtab.c \
+  $(TOP)/src/vxworks.h \
   $(TOP)/src/wal.c \
   $(TOP)/src/wal.h \
   $(TOP)/src/walker.c \
@@ -268,7 +271,6 @@ TESTSRC = \
   $(TOP)/src/test_rtree.c \
   $(TOP)/src/test_schema.c \
   $(TOP)/src/test_server.c \
-  $(TOP)/src/test_stat.c \
   $(TOP)/src/test_sqllog.c \
   $(TOP)/src/test_superlock.c \
   $(TOP)/src/test_syscall.c \
@@ -304,6 +306,7 @@ TESTSRC2 = \
   $(TOP)/src/btree.c \
   $(TOP)/src/build.c \
   $(TOP)/src/date.c \
+  $(TOP)/src/dbstat.c \
   $(TOP)/src/expr.c \
   $(TOP)/src/func.c \
   $(TOP)/src/insert.c \
@@ -356,12 +359,14 @@ HDR = \
    $(TOP)/src/pager.h \
    $(TOP)/src/pcache.h \
    parse.h  \
+   $(TOP)/src/pragma.h \
    sqlite3.h  \
    $(TOP)/src/sqlite3ext.h \
    $(TOP)/src/sqliteInt.h  \
    $(TOP)/src/sqliteLimit.h \
    $(TOP)/src/vdbe.h \
    $(TOP)/src/vdbeInt.h \
+   $(TOP)/src/vxworks.h \
    $(TOP)/src/whereInt.h
 
 # Header files used by extensions
@@ -400,9 +405,30 @@ sqlite3$(EXE):	$(TOP)/src/shell.c libsqlite3.a sqlite3.h
 		$(TOP)/src/shell.c                                  \
 		libsqlite3.a $(LIBREADLINE) $(TLIBS) $(THREADLIB)
 
+sqldiff$(EXE):	$(TOP)/tool/sqldiff.c sqlite3.c sqlite3.h
+	$(TCCX) -o sqldiff$(EXE) -DSQLITE_THREADSAFE=0 \
+		$(TOP)/tool/sqldiff.c	sqlite3.c $(TLIBS) $(THREADLIB)
+
+fuzzershell$(EXE):	$(TOP)/tool/fuzzershell.c sqlite3.c sqlite3.h
+	$(TCCX) -o fuzzershell$(EXE) -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION\
+		$(TOP)/tool/fuzzershell.c	sqlite3.c $(TLIBS) $(THREADLIB)
+
 mptester$(EXE):	sqlite3.c $(TOP)/mptest/mptest.c
 	$(TCCX) -o $@ -I. $(TOP)/mptest/mptest.c sqlite3.c \
 		$(TLIBS) $(THREADLIB)
+
+MPTEST1=./mptester$(EXE) mptest.db $(TOP)/mptest/crash01.test --repeat 20
+MPTEST2=./mptester$(EXE) mptest.db $(TOP)/mptest/multiwrite01.test --repeat 20
+mptest:	mptester$(EXE)
+	rm -f mptest.db
+	$(MPTEST1) --journalmode DELETE
+	$(MPTEST2) --journalmode WAL
+	$(MPTEST1) --journalmode WAL
+	$(MPTEST2) --journalmode PERSIST
+	$(MPTEST1) --journalmode PERSIST
+	$(MPTEST2) --journalmode TRUNCATE
+	$(MPTEST1) --journalmode TRUNCATE
+	$(MPTEST2) --journalmode DELETE
 
 sqlite3.o:	sqlite3.c
 	$(TCCX) -I. -c sqlite3.c
@@ -576,9 +602,10 @@ tclsqlite3:	$(TOP)/src/tclsqlite.c libsqlite3.a
 	$(TCCX) $(TCL_FLAGS) -DTCLSH=1 -o tclsqlite3 \
 		$(TOP)/src/tclsqlite.c libsqlite3.a $(LIBTCL) $(THREADLIB)
 
-sqlite3_analyzer.c: sqlite3.c $(TOP)/src/test_stat.c $(TOP)/src/tclsqlite.c $(TOP)/tool/spaceanal.tcl
+sqlite3_analyzer.c: sqlite3.c $(TOP)/src/tclsqlite.c $(TOP)/tool/spaceanal.tcl
 	echo "#define TCLSH 2" > $@
-	cat sqlite3.c $(TOP)/src/test_stat.c $(TOP)/src/tclsqlite.c >> $@
+	echo "#define SQLITE_ENABLE_DBSTAT_VTAB 1" >> $@
+	cat sqlite3.c $(TOP)/src/tclsqlite.c >> $@
 	echo "static const char *tclsh_main_loop(void){" >> $@
 	echo "static const char *zMainloop = " >> $@
 	$(NAWK) -f $(TOP)/tool/tostr.awk $(TOP)/tool/spaceanal.tcl >> $@
@@ -608,20 +635,33 @@ fts3-testfixture$(EXE): sqlite3.c fts3amal.c $(TESTSRC) $(TOP)/src/tclsqlite.c
 		$(TESTSRC) $(TOP)/src/tclsqlite.c sqlite3.c fts3amal.c       \
 		-o testfixture$(EXE) $(LIBTCL) $(THREADLIB)
 
-fulltest:	testfixture$(EXE) sqlite3$(EXE)
+fulltest:	testfixture$(EXE) sqlite3$(EXE) fuzztest
 	./testfixture$(EXE) $(TOP)/test/all.test
 
-soaktest:	testfixture$(EXE) sqlite3$(EXE)
+soaktest:	testfixture$(EXE) sqlite3$(EXE) fuzzoomtest
 	./testfixture$(EXE) $(TOP)/test/all.test -soak=1
 
-fulltestonly:	testfixture$(EXE) sqlite3$(EXE)
+fulltestonly:	testfixture$(EXE) sqlite3$(EXE) fuzztest
 	./testfixture$(EXE) $(TOP)/test/full.test
 
 queryplantest:	testfixture$(EXE) sqlite3$(EXE)
 	./testfixture$(EXE) $(TOP)/test/permutations.test queryplanner
 
-test:	testfixture$(EXE) sqlite3$(EXE)
+fuzztest:	fuzzershell$(EXE)
+	./fuzzershell$(EXE) $(TOP)/test/fuzzdata1.txt $(TOP)/test/fuzzdata2.txt
+
+fuzzoomtest:	fuzzershell$(EXE)
+	./fuzzershell$(EXE) -f $(TOP)/test/fuzzdata1.txt --oom
+
+test:	testfixture$(EXE) sqlite3$(EXE) fuzztest
 	./testfixture$(EXE) $(TOP)/test/veryquick.test
+
+# Run a test using valgrind.  This can take a really long time
+# because valgrind is so much slower than a native machine.
+#
+valgrindtest:	testfixture$(EXE) sqlite3$(EXE) fuzzershell$(EXE)
+	valgrind -v ./fuzzershell$(EXE) -f $(TOP)/test/fuzzdata1.txt
+	OMIT_MISUSE=1 valgrind -v ./testfixture$(EXE) $(TOP)/test/permutations.test valgrind
 
 # The next two rules are used to support the "threadtest" target. Building
 # threadtest runs a few thread-safety tests that are implemented in C. This
