@@ -186,8 +186,11 @@ static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int
 
 static int sqlcipher_openssl_set_cipher(void *ctx, const char *cipher_name) {
   openssl_ctx *o_ctx = (openssl_ctx *)ctx;
-  o_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
-  return SQLITE_OK;
+  EVP_CIPHER* cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
+  if(cipher != NULL) {
+    o_ctx->evp_cipher = cipher;
+  }
+  return cipher != NULL ? SQLITE_OK : SQLITE_ERROR;
 }
 
 static const char* sqlcipher_openssl_get_cipher(void *ctx) {
