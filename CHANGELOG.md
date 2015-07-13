@@ -57,7 +57,7 @@ All notable changes to this project will be documented in this file.
 - Change KDF iteration length from 4,000 to 64,000
 
 [unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.1...prerelease
-[3.3.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.0...v3.3.1
+[3.3.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.0...v3.3.1
 [3.3.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.0.1...v3.1.0
