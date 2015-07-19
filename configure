@@ -796,6 +796,7 @@ BUILD_EXEEXT
 TEMP_STORE
 ALLOWRELEASE
 XTHREADCONNECT
+SQLCIPHER_CODEC
 SQLITE_THREADSAFE
 BUILD_CC
 VERSION_NUMBER
@@ -893,6 +894,7 @@ with_gnu_ld
 enable_libtool_lock
 enable_largefile
 enable_threadsafe
+enable_sqlcipher_codec
 with_crypto_lib
 enable_cross_thread_connections
 enable_releasemode
@@ -1537,6 +1539,8 @@ Optional Features:
   --disable-libtool-lock  avoid locking (might break parallel builds)
   --disable-largefile     omit support for large files
   --disable-threadsafe    Disable mutexing
+  --disable-sqlcipher-codec
+                          Disable sqlcipher codec
   --enable-cross-thread-connections
                           Allow connection sharing across threads
   --enable-releasemode    Support libtool link to release mode
@@ -3917,13 +3921,13 @@ if ${lt_cv_nm_interface+:} false; then :
 else
   lt_cv_nm_interface="BSD nm"
   echo "int some_variable = 0;" > conftest.$ac_ext
-  (eval echo "\"\$as_me:3920: $ac_compile\"" >&5)
+  (eval echo "\"\$as_me:3924: $ac_compile\"" >&5)
   (eval "$ac_compile" 2>conftest.err)
   cat conftest.err >&5
-  (eval echo "\"\$as_me:3923: $NM \\\"conftest.$ac_objext\\\"\"" >&5)
+  (eval echo "\"\$as_me:3927: $NM \\\"conftest.$ac_objext\\\"\"" >&5)
   (eval "$NM \"conftest.$ac_objext\"" 2>conftest.err > conftest.out)
   cat conftest.err >&5
-  (eval echo "\"\$as_me:3926: output\"" >&5)
+  (eval echo "\"\$as_me:3930: output\"" >&5)
   cat conftest.out >&5
   if $GREP 'External.*some_variable' conftest.out > /dev/null; then
     lt_cv_nm_interface="MS dumpbin"
@@ -5129,7 +5133,7 @@ ia64-*-hpux*)
   ;;
 *-*-irix6*)
   # Find out which ABI we are using.
-  echo '#line 5132 "configure"' > conftest.$ac_ext
+  echo '#line 5136 "configure"' > conftest.$ac_ext
   if { { eval echo "\"\$as_me\":${as_lineno-$LINENO}: \"$ac_compile\""; } >&5
   (eval $ac_compile) 2>&5
   ac_status=$?
@@ -6654,11 +6658,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:6657: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:6661: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>conftest.err)
    ac_status=$?
    cat conftest.err >&5
-   echo "$as_me:6661: \$? = $ac_status" >&5
+   echo "$as_me:6665: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s "$ac_outfile"; then
      # The compiler can only warn and ignore the option if not recognized
      # So say no if there are warnings other than the usual output.
@@ -6993,11 +6997,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:6996: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:7000: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>conftest.err)
    ac_status=$?
    cat conftest.err >&5
-   echo "$as_me:7000: \$? = $ac_status" >&5
+   echo "$as_me:7004: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s "$ac_outfile"; then
      # The compiler can only warn and ignore the option if not recognized
      # So say no if there are warnings other than the usual output.
@@ -7098,11 +7102,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:7101: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:7105: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>out/conftest.err)
    ac_status=$?
    cat out/conftest.err >&5
-   echo "$as_me:7105: \$? = $ac_status" >&5
+   echo "$as_me:7109: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s out/conftest2.$ac_objext
    then
      # The compiler can only warn and ignore the option if not recognized
@@ -7153,11 +7157,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:7156: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:7160: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>out/conftest.err)
    ac_status=$?
    cat out/conftest.err >&5
-   echo "$as_me:7160: \$? = $ac_status" >&5
+   echo "$as_me:7164: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s out/conftest2.$ac_objext
    then
      # The compiler can only warn and ignore the option if not recognized
@@ -9533,7 +9537,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 9536 "configure"
+#line 9540 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -9629,7 +9633,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 9632 "configure"
+#line 9636 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -10020,7 +10024,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -10066,7 +10070,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -10090,7 +10094,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -10135,7 +10139,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -10159,7 +10163,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -10558,6 +10562,29 @@ fi
 fi
 
 ##########
+# Do we want to support sqlcipher codec
+#
+# Check whether --enable-sqlcipher-codec was given.
+if test "${enable_sqlcipher_codec+set}" = set; then :
+  enableval=$enable_sqlcipher_codec;
+else
+  enable_codec=yes
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to support sqlcipher codec" >&5
+$as_echo_n "checking whether to support sqlcipher codec... " >&6; }
+if test "$enable_codec" = "no"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+  CFLAGS+=" -DSQLITE_HAS_CODEC"
+  BUILD_CFLAGS+=" -DSQLITE_HAS_CODEC"
+fi
+
+
+##########
 # Which crypto library do we use
 #
 
@@ -10737,11 +10764,12 @@ fi
 ##########
 # Do we want temporary databases in memory
 #
+# Default to always for sqlcipher
 # Check whether --enable-tempstore was given.
 if test "${enable_tempstore+set}" = set; then :
   enableval=$enable_tempstore;
 else
-  enable_tempstore=no
+  enable_tempstore=always
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to use an in-ram database for temporary tables" >&5

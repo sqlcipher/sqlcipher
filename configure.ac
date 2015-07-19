@@ -198,6 +198,21 @@ if test "$SQLITE_THREADSAFE" = "1"; then
 fi
 
 ##########
+# Do we want to support sqlcipher codec
+#
+AC_ARG_ENABLE(sqlcipher-codec,
+AC_HELP_STRING([--disable-sqlcipher-codec],[Disable sqlcipher codec]),,enable_codec=yes)
+AC_MSG_CHECKING([whether to support sqlcipher codec])
+if test "$enable_codec" = "no"; then
+  AC_MSG_RESULT([no])
+else
+  AC_MSG_RESULT([yes])
+  CFLAGS+=" -DSQLITE_HAS_CODEC"
+  BUILD_CFLAGS+=" -DSQLITE_HAS_CODEC"
+fi
+AC_SUBST(SQLCIPHER_CODEC)
+
+##########
 # Which crypto library do we use
 #
 AC_ARG_WITH([crypto-lib],
@@ -263,8 +278,9 @@ AC_SUBST(ALLOWRELEASE)
 ##########
 # Do we want temporary databases in memory
 #
+# Default to always for sqlcipher
 AC_ARG_ENABLE(tempstore, 
-AC_HELP_STRING([--enable-tempstore],[Use an in-ram database for temporary tables (never,no,yes,always)]),,enable_tempstore=no)
+AC_HELP_STRING([--enable-tempstore],[Use an in-ram database for temporary tables (never,no,yes,always)]),,enable_tempstore=always)
 AC_MSG_CHECKING([whether to use an in-ram database for temporary tables])
 case "$enable_tempstore" in
   never ) 
