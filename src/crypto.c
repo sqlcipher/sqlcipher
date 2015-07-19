@@ -31,6 +31,10 @@
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 
+#if !defined(TEMP_STORE_OPTIONAL) && (!defined(SQLITE_TEMP_STORE) || (SQLITE_TEMP_STORE != 3))
+#error "SQLITE_TEMP_STORE must be set to 3 [always] (define TEMP_STORE_OPTIONAL to override)"
+#endif
+
 #include <assert.h>
 #include "sqliteInt.h"
 #include "btreeInt.h"
