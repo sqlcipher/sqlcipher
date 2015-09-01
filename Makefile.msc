@@ -358,6 +358,8 @@ CORE_COMPILE_OPTS = $(CORE_CCONV_OPTS)
 !ENDIF
 !ENDIF
 
+CORE_COMPILE_OPTS = $(CORE_COMPILE_OPTS) $(EXTRA_COMPILE_OPTS)
+
 # These are the additional targets that the core library should depend on
 # when linking.
 #
@@ -721,6 +723,8 @@ LTLIBOPTS = /NOLOGO /MACHINE:$(PLATFORM)
 LTLINKOPTS = /NOLOGO
 LTLIBOPTS = /NOLOGO
 !ENDIF
+
+LTLINKOPTS = $(LTLINKOPTS) $(EXTRA_LTLINK_OPTS)
 
 # When compiling for use in the WinRT environment, the following
 # linker option must be used to mark the executable as runnable
