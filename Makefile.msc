@@ -239,14 +239,14 @@ CRTLIBPATH = $(CRTLIBPATH:\\=\)
 # For example, to use the x86 compiler when cross-compiling for x64, a command
 # line similar to the following could be used (all on one line):
 #
-#     nmake /f Makefile.msc sqlite3.dll
+#     nmake /f Makefile.msc sqlcipher.dll
 #           XCOMPILE=1 USE_NATIVE_LIBPATHS=1
 #
 # Alternatively, the full path and file name to the compiler binary for the
 # platform the compilation process is taking place may be specified (all on
 # one line):
 #
-#     nmake /f Makefile.msc sqlite3.dll
+#     nmake /f Makefile.msc sqlcipher.dll
 #           "NCC=""%VCINSTALLDIR%\bin\cl.exe"""
 #           USE_NATIVE_LIBPATHS=1
 #
@@ -358,6 +358,8 @@ CORE_COMPILE_OPTS = $(CORE_CCONV_OPTS)
 !ENDIF
 !ENDIF
 
+CORE_COMPILE_OPTS = $(CORE_COMPILE_OPTS) $(EXTRA_COMPILE_OPTS)
+
 # These are the additional targets that the core library should depend on
 # when linking.
 #
@@ -365,7 +367,7 @@ CORE_COMPILE_OPTS = $(CORE_CCONV_OPTS)
 !IF $(DYNAMIC_SHELL)!=0
 CORE_LINK_DEP =
 !ELSE
-CORE_LINK_DEP = sqlite3.def
+CORE_LINK_DEP = sqlcipher.def
 !ENDIF
 !ENDIF
 
@@ -375,7 +377,7 @@ CORE_LINK_DEP = sqlite3.def
 !IF $(DYNAMIC_SHELL)!=0
 CORE_LINK_OPTS =
 !ELSE
-CORE_LINK_OPTS = /DEF:sqlite3.def
+CORE_LINK_OPTS = /DEF:sqlcipher.def
 !ENDIF
 !ENDIF
 
@@ -393,9 +395,9 @@ SHELL_COMPILE_OPTS = $(SHELL_CCONV_OPTS)
 #
 !IFNDEF SHELL_CORE_DEP
 !IF $(DYNAMIC_SHELL)!=0
-SHELL_CORE_DEP = sqlite3.dll
+SHELL_CORE_DEP = sqlcipher.dll
 !ELSE
-SHELL_CORE_DEP = libsqlite3.lib
+SHELL_CORE_DEP = libsqlcipher.lib
 !ENDIF
 !ENDIF
 
@@ -403,9 +405,9 @@ SHELL_CORE_DEP = libsqlite3.lib
 #
 !IFNDEF SHELL_CORE_LIB
 !IF $(DYNAMIC_SHELL)!=0
-SHELL_CORE_LIB = sqlite3.lib
+SHELL_CORE_LIB = sqlcipher.lib
 !ELSE
-SHELL_CORE_LIB = libsqlite3.lib
+SHELL_CORE_LIB = libsqlcipher.lib
 !ENDIF
 !ENDIF
 
@@ -721,6 +723,8 @@ LTLIBOPTS = /NOLOGO /MACHINE:$(PLATFORM)
 LTLINKOPTS = /NOLOGO
 LTLIBOPTS = /NOLOGO
 !ENDIF
+
+LTLINKOPTS = $(LTLINKOPTS) $(EXTRA_LTLINK_OPTS)
 
 # When compiling for use in the WinRT environment, the following
 # linker option must be used to mark the executable as runnable
@@ -1182,15 +1186,15 @@ EXTHDR = $(EXTHDR) \
 # This is the default Makefile target.  The objects listed here
 # are what get build when you type just "make" with no arguments.
 #
-all:	dll libsqlite3.lib sqlite3.exe libtclsqlite3.lib
+all:	dll libsqlcipher.lib sqlcipher.exe
 
-libsqlite3.lib:	$(LIBOBJ)
+libsqlcipher.lib:	$(LIBOBJ)
 	$(LTLIB) $(LTLIBOPTS) /OUT:$@ $(LIBOBJ) $(TLIBS)
 
-libtclsqlite3.lib:	tclsqlite.lo libsqlite3.lib
-	$(LTLIB) $(LTLIBOPTS) $(LTLIBPATHS) /OUT:$@ tclsqlite.lo libsqlite3.lib $(LIBTCL:tcl=tclstub) $(TLIBS)
+libtclsqlite3.lib:	tclsqlite.lo libsqlcipher.lib
+	$(LTLIB) $(LTLIBOPTS) $(LTLIBPATHS) /OUT:$@ tclsqlite.lo libsqlcipher.lib $(LIBTCL:tcl=tclstub) $(TLIBS)
 
-sqlite3.exe:	$(TOP)\src\shell.c $(SHELL_CORE_DEP) $(LIBRESOBJS) sqlite3.h
+sqlcipher.exe:	$(TOP)\src\shell.c $(SHELL_CORE_DEP) $(LIBRESOBJS) sqlite3.h
 	$(LTLINK) $(SHELL_COMPILE_OPTS) $(READLINE_FLAGS) $(TOP)\src\shell.c \
 		/link /pdb:sqlite3sh.pdb $(LTLINKOPTS) $(SHELL_LINK_OPTS) $(LTLIBPATHS) $(LIBRESOBJS) $(LIBREADLINE) $(LTLIBS) $(TLIBS)
 
@@ -1617,7 +1621,7 @@ rtree.lo:	$(TOP)\ext\rtree\rtree.c $(HDR) $(EXTHDR)
 # Rules to build the 'testfixture' application.
 #
 # If using the amalgamation, use sqlite3.c directly to build the test
-# fixture.  Otherwise link against libsqlite3.lib.  (This distinction is
+# fixture.  Otherwise link against libsqlcipher.lib.  (This distinction is
 # necessary because the test fixture requires non-API symbols which are
 # hidden when the library is built via the amalgamation).
 #
@@ -1642,16 +1646,16 @@ testfixture.exe:	$(TESTFIXTURE_SRC) $(LIBRESOBJS) $(HDR)
 extensiontest: testfixture.exe testloadext.dll
 	.\testfixture.exe $(TOP)\test\loadext.test
 
-fulltest:	testfixture.exe sqlite3.exe fuzztest
+fulltest:	testfixture.exe sqlcipher.exe fuzztest
 	.\testfixture.exe $(TOP)\test\all.test
 
-soaktest:	testfixture.exe sqlite3.exe fuzzoomtest
+soaktest:	testfixture.exe sqlcipher.exe fuzzoomtest
 	.\testfixture.exe $(TOP)\test\all.test -soak=1
 
-fulltestonly:	testfixture.exe sqlite3.exe fuzztest
+fulltestonly:	testfixture.exe sqlcipher.exe fuzztest
 	.\testfixture.exe $(TOP)\test\full.test
 
-queryplantest:	testfixture.exe sqlite3.exe
+queryplantest:	testfixture.exe sqlcipher.exe
 	.\testfixture.exe $(TOP)\test\permutations.test queryplanner
 
 fuzztest:	fuzzershell.exe
@@ -1660,7 +1664,7 @@ fuzztest:	fuzzershell.exe
 fuzzoomtest:	fuzzershell.exe
 	.\fuzzershell.exe -f $(TOP)\test\fuzzdata1.txt --oom
 
-test:	testfixture.exe sqlite3.exe fuzztest
+test:	testfixture.exe sqlcipher.exe fuzztest
 	.\testfixture.exe $(TOP)\test\veryquick.test
 
 smoketest:	testfixture.exe
@@ -1738,7 +1742,7 @@ clean:
 	del /Q LogEst.exe fts3view.exe rollback-test.exe showdb.exe 2>NUL
 	del /Q showjournal.exe showstat4.exe showwal.exe speedtest1.exe 2>NUL
 	del /Q mptester.exe wordcount.exe 2>NUL
-	del /Q sqlite3.exe sqlite3.dll sqlite3.def 2>NUL
+	del /Q sqlcipher.exe sqlcipher.dll sqlcipher.def 2>NUL
 	del /Q sqlite3.c sqlite3-*.c 2>NUL
 	del /Q sqlite3rc.h 2>NUL
 	del /Q shell.c sqlite3ext.h 2>NUL
@@ -1747,13 +1751,13 @@ clean:
 
 # Dynamic link library section.
 #
-dll: sqlite3.dll
+dll: sqlcipher.dll
 
-sqlite3.def: libsqlite3.lib
-	echo EXPORTS > sqlite3.def
-	dumpbin /all libsqlite3.lib \
+sqlcipher.def: libsqlcipher.lib
+	echo EXPORTS > sqlcipher.def
+	dumpbin /all libsqlcipher.lib \
 		| $(NAWK) "/ 1 _?sqlite3_/ { sub(/^.* _?/,\"\");print }" \
-		| sort >> sqlite3.def
+		| sort >> sqlcipher.def
 
-sqlite3.dll: $(LIBOBJ) $(LIBRESOBJS) $(CORE_LINK_DEP)
+sqlcipher.dll: $(LIBOBJ) $(LIBRESOBJS) $(CORE_LINK_DEP)
 	$(LD) $(LDFLAGS) $(LTLINKOPTS) $(LTLIBPATHS) /DLL $(CORE_LINK_OPTS) /OUT:$@ $(LIBOBJ) $(LIBRESOBJS) $(LTLIBS) $(TLIBS)
