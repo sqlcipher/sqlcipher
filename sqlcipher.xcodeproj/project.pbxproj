@@ -29,6 +29,14 @@
 		4C0041CF1BFC3D4000ED2AD5 /* SQLCipher.h in Headers */ = {isa = PBXBuildFile; fileRef = 4C0041A91BFC3A7E00ED2AD5 /* SQLCipher.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		4C0041E11BFC3F0800ED2AD5 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C0041E01BFC3F0800ED2AD5 /* Security.framework */; };
 		4C0041E21BFC3F5A00ED2AD5 /* SQLCipher.h in Headers */ = {isa = PBXBuildFile; fileRef = 4C0041A91BFC3A7E00ED2AD5 /* SQLCipher.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		4C0041FA1BFC46A600ED2AD5 /* sqlite3.h in Headers */ = {isa = PBXBuildFile; fileRef = 4C0041F91BFC46A600ED2AD5 /* sqlite3.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		4C0041FB1BFC46A600ED2AD5 /* sqlite3.h in Headers */ = {isa = PBXBuildFile; fileRef = 4C0041F91BFC46A600ED2AD5 /* sqlite3.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		4C0041FC1BFC46A600ED2AD5 /* sqlite3.h in Headers */ = {isa = PBXBuildFile; fileRef = 4C0041F91BFC46A600ED2AD5 /* sqlite3.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		4C0041FD1BFC46A600ED2AD5 /* sqlite3.h in Headers */ = {isa = PBXBuildFile; fileRef = 4C0041F91BFC46A600ED2AD5 /* sqlite3.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		4C0041FE1BFC474700ED2AD5 /* sqlite3.c in Sources */ = {isa = PBXBuildFile; fileRef = 9069D0A20FCE1A4D0042E34C /* sqlite3.c */; };
+		4C0041FF1BFC474700ED2AD5 /* sqlite3.c in Sources */ = {isa = PBXBuildFile; fileRef = 9069D0A20FCE1A4D0042E34C /* sqlite3.c */; };
+		4C0042001BFC474700ED2AD5 /* sqlite3.c in Sources */ = {isa = PBXBuildFile; fileRef = 9069D0A20FCE1A4D0042E34C /* sqlite3.c */; };
+		4C0042011BFC474800ED2AD5 /* sqlite3.c in Sources */ = {isa = PBXBuildFile; fileRef = 9069D0A20FCE1A4D0042E34C /* sqlite3.c */; };
 		9069D0A30FCE1A4D0042E34C /* sqlite3.c in Sources */ = {isa = PBXBuildFile; fileRef = 9069D0A20FCE1A4D0042E34C /* sqlite3.c */; };
 /* End PBXBuildFile section */
 
@@ -82,6 +90,7 @@
 		4C0041D01BFC3D9A00ED2AD5 /* Info-tvOS.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "Info-tvOS.plist"; path = "macosx/Info-tvOS.plist"; sourceTree = "<group>"; };
 		4C0041D61BFC3E2500ED2AD5 /* SQLCipher.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SQLCipher.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		4C0041E01BFC3F0800ED2AD5 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS2.0.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
+		4C0041F91BFC46A600ED2AD5 /* sqlite3.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = sqlite3.h; sourceTree = "<group>"; };
 		9069D0A20FCE1A4D0042E34C /* sqlite3.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = sqlite3.c; sourceTree = "<group>"; };
 		D2AAC046055464E500DB518D /* libsqlcipher.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libsqlcipher.a; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -144,6 +153,7 @@
 			isa = PBXGroup;
 			children = (
 				9069D0A20FCE1A4D0042E34C /* sqlite3.c */,
+				4C0041F91BFC46A600ED2AD5 /* sqlite3.h */,
 			);
 			name = Source;
 			sourceTree = "<group>";
@@ -188,6 +198,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0041FA1BFC46A600ED2AD5 /* sqlite3.h in Headers */,
 				4C0041AB1BFC3A7E00ED2AD5 /* SQLCipher.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -196,6 +207,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0041FB1BFC46A600ED2AD5 /* sqlite3.h in Headers */,
 				4C0041BD1BFC3C8300ED2AD5 /* SQLCipher.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -204,6 +216,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0041FC1BFC46A600ED2AD5 /* sqlite3.h in Headers */,
 				4C0041CF1BFC3D4000ED2AD5 /* SQLCipher.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -212,6 +225,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0041FD1BFC46A600ED2AD5 /* sqlite3.h in Headers */,
 				4C0041E21BFC3F5A00ED2AD5 /* SQLCipher.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -419,6 +433,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0041FE1BFC474700ED2AD5 /* sqlite3.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -426,6 +441,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0041FF1BFC474700ED2AD5 /* sqlite3.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -433,6 +449,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0042001BFC474700ED2AD5 /* sqlite3.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -440,6 +457,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C0042011BFC474800ED2AD5 /* sqlite3.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -638,10 +656,17 @@
 					"$(inherited)",
 				);
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = YES;
+				GCC_WARN_ABOUT_INVALID_OFFSETOF_MACRO = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_CHECK_SWITCH_STATEMENTS = YES;
+				GCC_WARN_MISSING_PARENTHESES = YES;
+				GCC_WARN_TYPECHECK_CALLS_TO_PRINTF = YES;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VALUE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
 				INFOPLIST_FILE = macosx/Info.plist;
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 8.0;
@@ -653,6 +678,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -703,10 +734,17 @@
 				GCC_C_LANGUAGE_STANDARD = gnu99;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = YES;
+				GCC_WARN_ABOUT_INVALID_OFFSETOF_MACRO = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_CHECK_SWITCH_STATEMENTS = YES;
+				GCC_WARN_MISSING_PARENTHESES = YES;
+				GCC_WARN_TYPECHECK_CALLS_TO_PRINTF = YES;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VALUE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
 				INFOPLIST_FILE = macosx/Info.plist;
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 8.0;
@@ -718,6 +756,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -788,6 +832,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -854,6 +904,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -920,6 +976,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -984,6 +1046,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -1053,6 +1121,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -1118,6 +1192,12 @@
 					"-DSQLITE_TEMP_STORE=2",
 					"-DSQLITE_THREADSAFE",
 					"-DSQLCIPHER_CRYPTO_CC",
+					"-Wno-ambiguous-macro",
+					"-Wno-#warnings",
+					"-Wno-conversion",
+					"-Wno-unused-const-variable",
+					"-Wno-unused-function",
+					"-Wno-unreachable-code",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.zetetic.SQLCipher;
 				PRODUCT_NAME = SQLCipher;
@@ -1188,6 +1268,7 @@
 				4C00419F1BFC382500ED2AD5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		4C0041B61BFC3B2200ED2AD5 /* Build configuration list for PBXNativeTarget "SQLCipher OSX" */ = {
 			isa = XCConfigurationList;
@@ -1196,6 +1277,7 @@
 				4C0041B81BFC3B2200ED2AD5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		4C0041C81BFC3CC000ED2AD5 /* Build configuration list for PBXNativeTarget "SQLCipher tvOS" */ = {
 			isa = XCConfigurationList;
@@ -1204,6 +1286,7 @@
 				4C0041CA1BFC3CC000ED2AD5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		4C0041DB1BFC3E2600ED2AD5 /* Build configuration list for PBXNativeTarget "SQLCipher watchOS" */ = {
 			isa = XCConfigurationList;
@@ -1212,6 +1295,7 @@
 				4C0041DD1BFC3E2600ED2AD5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		9069D0900FCE18970042E34C /* Build configuration list for PBXAggregateTarget "amalgamation" */ = {
 			isa = XCConfigurationList;
