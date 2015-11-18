@@ -14,9 +14,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "4C0041B01BFC3B2200ED2AD5"
-               BuildableName = "SQLCipher.framework"
-               BlueprintName = "SQLCipher OSX"
+               BlueprintIdentifier = "4C0041C21BFC3CC000ED2AD5"
+               BuildableName = "SQLCipher tvOS.framework"
+               BlueprintName = "SQLCipher tvOS"
                ReferencedContainer = "container:sqlcipher.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -45,9 +45,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4C0041B01BFC3B2200ED2AD5"
-            BuildableName = "SQLCipher.framework"
-            BlueprintName = "SQLCipher OSX"
+            BlueprintIdentifier = "4C0041C21BFC3CC000ED2AD5"
+            BuildableName = "SQLCipher tvOS.framework"
+            BlueprintName = "SQLCipher tvOS"
             ReferencedContainer = "container:sqlcipher.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -63,9 +63,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4C0041B01BFC3B2200ED2AD5"
-            BuildableName = "SQLCipher.framework"
-            BlueprintName = "SQLCipher OSX"
+            BlueprintIdentifier = "4C0041C21BFC3CC000ED2AD5"
+            BuildableName = "SQLCipher tvOS.framework"
+            BlueprintName = "SQLCipher tvOS"
             ReferencedContainer = "container:sqlcipher.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
