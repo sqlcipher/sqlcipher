@@ -160,6 +160,19 @@ static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
     } 
 }
 
+static int cipher_isHex(const unsigned char *hex, int sz){
+  int i;
+  for(i = 0; i < sz; i++) {
+    unsigned char c = hex[i];
+    if ((c < '0' || c > '9') &&
+        (c < 'A' || c > 'F') &&
+        (c < 'a' || c > 'f')) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 /* extensions defined in crypto_impl.c */
 typedef struct codec_ctx codec_ctx;
 
