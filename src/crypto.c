@@ -132,6 +132,11 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
                                               sqlcipher_codec_get_cipher_provider(ctx));
     }
   } else
+  if( sqlite3StrICmp(zLeft, "cipher_provider_version")==0 && !zRight){
+    if(ctx) { codec_vdbe_return_static_string(pParse, "cipher_provider_version",
+                                              sqlcipher_codec_get_provider_version(ctx));
+    }
+  } else
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else

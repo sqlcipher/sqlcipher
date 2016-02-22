@@ -131,6 +131,10 @@ static const char* sqlcipher_openssl_get_provider_name(void *ctx) {
   return "openssl";
 }
 
+static const char* sqlcipher_openssl_get_provider_version(void *ctx) {
+  return OPENSSL_VERSION_TEXT;
+}
+
 /* generate a defined number of random bytes */
 static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   int rc = 0;
@@ -263,6 +267,7 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->ctx_free = sqlcipher_openssl_ctx_free;
   p->add_random = sqlcipher_openssl_add_random;
   p->fips_status = sqlcipher_openssl_fips_status;
+  p->get_provider_version = sqlcipher_openssl_get_provider_version;
   return SQLITE_OK;
 }
 

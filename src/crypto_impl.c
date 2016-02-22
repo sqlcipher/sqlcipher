@@ -1229,5 +1229,9 @@ int sqlcipher_codec_fips_status(codec_ctx *ctx) {
   return ctx->read_ctx->provider->fips_status(ctx->read_ctx);
 }
 
+const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
+  return ctx->read_ctx->provider->get_provider_version(ctx->read_ctx);
+}
+
 #endif
 /* END SQLCIPHER */

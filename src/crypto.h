@@ -240,7 +240,7 @@ static int sqlcipher_codec_get_store_pass(codec_ctx *ctx);
 static void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey);
 static void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value);
 int sqlcipher_codec_fips_status(codec_ctx *ctx);
-
+const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx);
 #endif
 #endif
 /* END SQLCIPHER */
