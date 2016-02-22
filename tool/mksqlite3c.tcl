@@ -113,8 +113,9 @@ foreach hdr {
    pcache.h
    pragma.h
    rtree.h
-   sqlite3ext.h
    sqlite3.h
+   sqlite3ext.h
+   sqlite3rbu.h
    sqliteicu.h
    sqliteInt.h
    sqliteLimit.h
@@ -189,6 +190,10 @@ proc copy_file {filename} {
           copy_file tsrc/$hdr
           section_comment "Continuing where we left off in $tail"
           if {$linemacros} {puts $out "#line [expr {$ln+1}] \"$filename\""}
+        } else {
+          # Comment out the entire line, replacing any nested comment
+          # begin/end markers with the harmless substring "**".
+          puts $out "/* [string map [list /* ** */ **] $line] */"
         }
       } elseif {![info exists seen_hdr($hdr)]} {
         if {![regexp {/\*\s+amalgamator:\s+dontcache\s+\*/} $line]} {
@@ -208,7 +213,8 @@ proc copy_file {filename} {
       puts $out "#if 0"
     } elseif {!$linemacros && [regexp {^#line} $line]} {
       # Skip #line directives.
-    } elseif {$addstatic && ![regexp {^(static|typedef)} $line]} {
+    } elseif {$addstatic
+               && ![regexp {^(static|typedef|SQLITE_PRIVATE)} $line]} {
       # Skip adding the SQLITE_PRIVATE or SQLITE_API keyword before
       # functions if this header file does not need it.
       if {![info exists varonly_hdr($tail)]
@@ -216,7 +222,7 @@ proc copy_file {filename} {
         regsub {^SQLITE_API } $line {} line
         # Add the SQLITE_PRIVATE or SQLITE_API keyword before functions.
         # so that linkage can be modified at compile-time.
-        if {[regexp {^sqlite3_} $funcname]} {
+        if {[regexp {^sqlite3(_|rbu_)} $funcname]} {
           set line SQLITE_API
           append line " " [string trim $rettype]
           if {[string index $rettype end] ne "*"} {
@@ -297,6 +303,7 @@ foreach file {
    mutex_w32.c
    malloc.c
    printf.c
+   treeview.c
    random.c
    threads.c
    utf.c
@@ -351,6 +358,8 @@ foreach file {
    update.c
    vacuum.c
    vtab.c
+   wherecode.c
+   whereexpr.c
    where.c
 
    parse.c
@@ -378,7 +387,10 @@ foreach file {
    icu.c
 
    fts3_icu.c
+   sqlite3rbu.c
    dbstat.c
+   json1.c
+   fts5.c
 } {
   copy_file tsrc/$file
 }
