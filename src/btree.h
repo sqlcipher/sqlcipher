@@ -63,6 +63,7 @@ int sqlite3BtreeOpen(
 
 int sqlite3BtreeClose(Btree*);
 int sqlite3BtreeSetCacheSize(Btree*,int);
+int sqlite3BtreeSetSpillSize(Btree*,int);
 #if SQLITE_MAX_MMAP_SIZE>0
   int sqlite3BtreeSetMmapLimit(Btree*,sqlite3_int64);
 #endif
@@ -150,8 +151,37 @@ int sqlite3BtreeNewDb(Btree *p);
 #define BTREE_DATA_VERSION        15  /* A virtual meta-value */
 
 /*
-** Values that may be OR'd together to form the second argument of an
-** sqlite3BtreeCursorHints() call.
+** Kinds of hints that can be passed into the sqlite3BtreeCursorHint()
+** interface.
+**
+** BTREE_HINT_RANGE  (arguments: Expr*, Mem*)
+**
+**     The first argument is an Expr* (which is guaranteed to be constant for
+**     the lifetime of the cursor) that defines constraints on which rows
+**     might be fetched with this cursor.  The Expr* tree may contain
+**     TK_REGISTER nodes that refer to values stored in the array of registers
+**     passed as the second parameter.  In other words, if Expr.op==TK_REGISTER
+**     then the value of the node is the value in Mem[pExpr.iTable].  Any
+**     TK_COLUMN node in the expression tree refers to the Expr.iColumn-th
+**     column of the b-tree of the cursor.  The Expr tree will not contain
+**     any function calls nor subqueries nor references to b-trees other than
+**     the cursor being hinted.
+**
+**     The design of the _RANGE hint is aid b-tree implementations that try
+**     to prefetch content from remote machines - to provide those
+**     implementations with limits on what needs to be prefetched and thereby
+**     reduce network bandwidth.
+**
+** Note that BTREE_HINT_FLAGS with BTREE_BULKLOAD is the only hint used by
+** standard SQLite.  The other hints are provided for extentions that use
+** the SQLite parser and code generator but substitute their own storage
+** engine.
+*/
+#define BTREE_HINT_RANGE 0       /* Range constraints on queries */
+
+/*
+** Values that may be OR'd together to form the argument to the
+** BTREE_HINT_FLAGS hint for sqlite3BtreeCursorHint():
 **
 ** The BTREE_BULKLOAD flag is set on index cursors when the index is going
 ** to be filled with content that is already in sorted order.
@@ -165,6 +195,32 @@ int sqlite3BtreeNewDb(Btree *p);
 #define BTREE_BULKLOAD 0x00000001  /* Used to full index in sorted order */
 #define BTREE_SEEK_EQ  0x00000002  /* EQ seeks only - no range seeks */
 
+/* 
+** Flags passed as the third argument to sqlite3BtreeCursor().
+**
+** For read-only cursors the wrFlag argument is always zero. For read-write
+** cursors it may be set to either (BTREE_WRCSR|BTREE_FORDELETE) or just
+** (BTREE_WRCSR). If the BTREE_FORDELETE bit is set, then the cursor will
+** only be used by SQLite for the following:
+**
+**   * to seek to and then delete specific entries, and/or
+**
+**   * to read values that will be used to create keys that other
+**     BTREE_FORDELETE cursors will seek to and delete.
+**
+** The BTREE_FORDELETE flag is an optimization hint.  It is not used by
+** by this, the native b-tree engine of SQLite, but it is available to
+** alternative storage engines that might be substituted in place of this
+** b-tree system.  For alternative storage engines in which a delete of
+** the main table row automatically deletes corresponding index rows,
+** the FORDELETE flag hint allows those alternative storage engines to
+** skip a lot of work.  Namely:  FORDELETE cursors may treat all SEEK
+** and DELETE operations as no-ops, and any READ operation against a
+** FORDELETE cursor may return a null row: 0x01 0x00.
+*/
+#define BTREE_WRCSR     0x00000004     /* read-write cursor */
+#define BTREE_FORDELETE 0x00000008     /* Cursor is for seek/delete only */
+
 int sqlite3BtreeCursor(
   Btree*,                              /* BTree containing table to open */
   int iTable,                          /* Index of root page */
@@ -174,6 +230,10 @@ int sqlite3BtreeCursor(
 );
 int sqlite3BtreeCursorSize(void);
 void sqlite3BtreeCursorZero(BtCursor*);
+void sqlite3BtreeCursorHintFlags(BtCursor*, unsigned);
+#ifdef SQLITE_ENABLE_CURSOR_HINTS
+void sqlite3BtreeCursorHint(BtCursor*, int, ...);
+#endif
 
 int sqlite3BtreeCloseCursor(BtCursor*);
 int sqlite3BtreeMovetoUnpacked(
@@ -185,7 +245,12 @@ int sqlite3BtreeMovetoUnpacked(
 );
 int sqlite3BtreeCursorHasMoved(BtCursor*);
 int sqlite3BtreeCursorRestore(BtCursor*, int*);
-int sqlite3BtreeDelete(BtCursor*);
+int sqlite3BtreeDelete(BtCursor*, u8 flags);
+
+/* Allowed flags for the 2nd argument to sqlite3BtreeDelete() */
+#define BTREE_SAVEPOSITION 0x02  /* Leave cursor pointing at NEXT or PREV */
+#define BTREE_AUXDELETE    0x04  /* not the primary delete operation */
+
 int sqlite3BtreeInsert(BtCursor*, const void *pKey, i64 nKey,
                                   const void *pData, int nData,
                                   int nZero, int bias, int seekResult);
@@ -208,10 +273,7 @@ int sqlite3BtreePutData(BtCursor*, u32 offset, u32 amt, void*);
 void sqlite3BtreeIncrblobCursor(BtCursor *);
 void sqlite3BtreeClearCursor(BtCursor *);
 int sqlite3BtreeSetVersion(Btree *pBt, int iVersion);
-void sqlite3BtreeCursorHints(BtCursor *, unsigned int mask);
-#ifdef SQLITE_DEBUG
 int sqlite3BtreeCursorHasHint(BtCursor*, unsigned int mask);
-#endif
 int sqlite3BtreeIsReadonly(Btree *pBt);
 int sqlite3HeaderSizeBtree(void);
 
@@ -240,15 +302,17 @@ void sqlite3BtreeCursorList(Btree*);
 #ifndef SQLITE_OMIT_SHARED_CACHE
   void sqlite3BtreeEnter(Btree*);
   void sqlite3BtreeEnterAll(sqlite3*);
+  int sqlite3BtreeSharable(Btree*);
+  void sqlite3BtreeEnterCursor(BtCursor*);
 #else
 # define sqlite3BtreeEnter(X) 
 # define sqlite3BtreeEnterAll(X)
+# define sqlite3BtreeSharable(X) 0
+# define sqlite3BtreeEnterCursor(X)
 #endif
 
 #if !defined(SQLITE_OMIT_SHARED_CACHE) && SQLITE_THREADSAFE
-  int sqlite3BtreeSharable(Btree*);
   void sqlite3BtreeLeave(Btree*);
-  void sqlite3BtreeEnterCursor(BtCursor*);
   void sqlite3BtreeLeaveCursor(BtCursor*);
   void sqlite3BtreeLeaveAll(sqlite3*);
 #ifndef NDEBUG
@@ -259,9 +323,7 @@ void sqlite3BtreeCursorList(Btree*);
 #endif
 #else
 
-# define sqlite3BtreeSharable(X) 0
 # define sqlite3BtreeLeave(X)
-# define sqlite3BtreeEnterCursor(X)
 # define sqlite3BtreeLeaveCursor(X)
 # define sqlite3BtreeLeaveAll(X)
 

@@ -849,4 +849,146 @@ do_execsql_test 14.1 {
   WITH x AS (SELECT * FROM t) SELECT 0 EXCEPT SELECT 0 ORDER BY 1 COLLATE binary;
 } {}
 
+# 2015-05-27:  Do not allow rowid usage within a CTE
+#
+do_catchsql_test 15.1 {
+  WITH RECURSIVE
+    d(x) AS (VALUES(1) UNION ALL SELECT rowid+1 FROM d WHERE rowid<10)
+  SELECT x FROM d;
+} {1 {no such column: rowid}}
+
+# 2015-07-05:  Do not allow aggregate recursive queries
+#
+do_catchsql_test 16.1 {
+  WITH RECURSIVE
+    i(x) AS (VALUES(1) UNION SELECT count(*) FROM i)
+  SELECT * FROM i;
+} {1 {recursive aggregate queries not supported}}
+
+#-------------------------------------------------------------------------
+do_execsql_test 17.1 {
+  WITH x(a) AS (
+    WITH y(b) AS (SELECT 10)
+    SELECT 9 UNION ALL SELECT * FROM y
+  )
+  SELECT * FROM x
+} {9 10}
+
+do_execsql_test 17.2 {
+  WITH x AS (
+    WITH y(b) AS (SELECT 10)
+    SELECT * FROM y UNION ALL SELECT * FROM y
+  )
+  SELECT * FROM x
+} {10 10}
+
+do_test 17.2 {
+  db eval {
+    WITH x AS (
+        WITH y(b) AS (SELECT 10)
+        SELECT * FROM y UNION ALL SELECT * FROM y
+    )
+    SELECT * FROM x
+  } A {
+    # no op
+  }
+  set A(*)
+} {b}
+
+do_catchsql_test 17.3 {
+  WITH i AS (
+    WITH j AS (SELECT 5)
+    SELECT 5 FROM i UNION SELECT 8 FROM i
+  )
+  SELECT * FROM i;
+} {1 {circular reference: i}}
+
+do_catchsql_test 17.4 {
+  WITH i AS (
+    WITH j AS (SELECT 5)
+    SELECT 5 FROM t1 UNION SELECT 8 FROM t11
+  )
+  SELECT * FROM i;
+} {1 {no such table: t11}}
+
+do_execsql_test 17.5 {
+  WITH 
+  x1 AS (SELECT 10),
+  x2 AS (SELECT * FROM x1),
+  x3 AS (
+    WITH x1 AS (SELECT 11)
+    SELECT * FROM x2 UNION ALL SELECT * FROM x2
+  )
+  SELECT * FROM x3;
+} {10 10}
+
+do_execsql_test 17.6 {
+  WITH 
+  x1 AS (SELECT 10),
+  x2 AS (SELECT * FROM x1),
+  x3 AS (
+    WITH x1 AS (SELECT 11)
+    SELECT * FROM x2 UNION ALL SELECT * FROM x1
+  )
+  SELECT * FROM x3;
+} {10 11}
+
+do_execsql_test 17.7 {
+  WITH 
+  x1 AS (SELECT 10),
+  x2 AS (SELECT * FROM x1),
+  x3 AS (
+    WITH 
+      x1 AS ( SELECT 11 ),
+      x4 AS ( SELECT * FROM x2 )
+    SELECT * FROM x4 UNION ALL SELECT * FROM x1
+  )
+  SELECT * FROM x3;
+} {10 11}
+
+do_execsql_test 17.8 {
+  WITH 
+  x1 AS (SELECT 10),
+  x2 AS (SELECT * FROM x1),
+  x3 AS (
+    WITH 
+      x1 AS ( SELECT 11 ),
+      x4 AS ( SELECT * FROM x2 )
+    SELECT * FROM x4 UNION ALL SELECT * FROM x1
+  )
+  SELECT * FROM x3;
+} {10 11}
+
+do_execsql_test 17.9 {
+  WITH 
+  x1 AS (SELECT 10),
+  x2 AS (SELECT 11),
+  x3 AS (
+    SELECT * FROM x1 UNION ALL SELECT * FROM x2
+  ),
+  x4 AS (
+    WITH 
+    x1 AS (SELECT 12),
+    x2 AS (SELECT 13)
+    SELECT * FROM x3
+  )
+  SELECT * FROM x4;
+} {10 11}
+
+# Added to test a fix to a faulty assert() discovered by libFuzzer.
+#
+do_execsql_test 18.1 {
+  WITH xyz(x) AS (VALUES(NULL) UNION SELECT round(1<x) FROM xyz ORDER BY 1)
+  SELECT quote(x) FROM xyz;
+} {NULL}
+do_execsql_test 18.2 {
+  WITH xyz(x) AS (
+    SELECT printf('%d', 5) * NULL
+    UNION SELECT round(1<1+x) 
+    FROM xyz ORDER BY 1
+  )
+  SELECT 1 FROM xyz;
+} 1
+
+
 finish_test
