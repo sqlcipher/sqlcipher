@@ -239,7 +239,8 @@ static void printfFunc(
     x.nUsed = 0;
     x.apArg = argv+1;
     sqlite3StrAccumInit(&str, db, 0, 0, db->aLimit[SQLITE_LIMIT_LENGTH]);
-    sqlite3XPrintf(&str, SQLITE_PRINTF_SQLFUNC, zFormat, &x);
+    str.printfFlags = SQLITE_PRINTF_SQLFUNC;
+    sqlite3XPrintf(&str, zFormat, &x);
     n = str.nChar;
     sqlite3_result_text(context, sqlite3StrAccumFinish(&str), n,
                         SQLITE_DYNAMIC);
@@ -567,25 +568,23 @@ static void total_changes(
 ** A structure defining how to do GLOB-style comparisons.
 */
 struct compareInfo {
-  u8 matchAll;
-  u8 matchOne;
-  u8 matchSet;
-  u8 noCase;
+  u8 matchAll;          /* "*" or "%" */
+  u8 matchOne;          /* "?" or "_" */
+  u8 matchSet;          /* "[" or 0 */
+  u8 noCase;            /* true to ignore case differences */
 };
 
 /*
 ** For LIKE and GLOB matching on EBCDIC machines, assume that every
-** character is exactly one byte in size.  Also, all characters are
-** able to participate in upper-case-to-lower-case mappings in EBCDIC
-** whereas only characters less than 0x80 do in ASCII.
+** character is exactly one byte in size.  Also, provde the Utf8Read()
+** macro for fast reading of the next character in the common case where
+** the next character is ASCII.
 */
 #if defined(SQLITE_EBCDIC)
 # define sqlite3Utf8Read(A)        (*((*A)++))
-# define GlobUpperToLower(A)       A = sqlite3UpperToLower[A]
-# define GlobUpperToLowerAscii(A)  A = sqlite3UpperToLower[A]
+# define Utf8Read(A)               (*(A++))
 #else
-# define GlobUpperToLower(A)       if( A<=0x7f ){ A = sqlite3UpperToLower[A]; }
-# define GlobUpperToLowerAscii(A)  A = sqlite3UpperToLower[A]
+# define Utf8Read(A)               (A[0]<0x80?*(A++):sqlite3Utf8Read(&A))
 #endif
 
 static const struct compareInfo globInfo = { '*', '?', '[', 0 };
@@ -627,7 +626,7 @@ static const struct compareInfo likeInfoAlt = { '%', '_',   0, 0 };
 **      Ec        Where E is the "esc" character and c is any other
 **                character, including '%', '_', and esc, match exactly c.
 **
-** The comments through this routine usually assume glob matching.
+** The comments within this routine usually assume glob matching.
 **
 ** This routine is usually quick, but can be N**2 in the worst case.
 */
@@ -635,29 +634,20 @@ static int patternCompare(
   const u8 *zPattern,              /* The glob pattern */
   const u8 *zString,               /* The string to compare against the glob */
   const struct compareInfo *pInfo, /* Information about how to do the compare */
-  u32 esc                          /* The escape character */
+  u32 matchOther                   /* The escape char (LIKE) or '[' (GLOB) */
 ){
   u32 c, c2;                       /* Next pattern and input string chars */
   u32 matchOne = pInfo->matchOne;  /* "?" or "_" */
   u32 matchAll = pInfo->matchAll;  /* "*" or "%" */
-  u32 matchOther;                  /* "[" or the escape character */
   u8 noCase = pInfo->noCase;       /* True if uppercase==lowercase */
   const u8 *zEscaped = 0;          /* One past the last escaped input char */
   
-  /* The GLOB operator does not have an ESCAPE clause.  And LIKE does not
-  ** have the matchSet operator.  So we either have to look for one or
-  ** the other, never both.  Hence the single variable matchOther is used
-  ** to store the one we have to look for.
-  */
-  matchOther = esc ? esc : pInfo->matchSet;
-
-  while( (c = sqlite3Utf8Read(&zPattern))!=0 ){
+  while( (c = Utf8Read(zPattern))!=0 ){
     if( c==matchAll ){  /* Match "*" */
       /* Skip over multiple "*" characters in the pattern.  If there
       ** are also "?" characters, skip those as well, but consume a
       ** single character of the input string for each "?" skipped */
-      while( (c=sqlite3Utf8Read(&zPattern)) == matchAll
-               || c == matchOne ){
+      while( (c=Utf8Read(zPattern)) == matchAll || c == matchOne ){
         if( c==matchOne && sqlite3Utf8Read(&zString)==0 ){
           return 0;
         }
@@ -665,7 +655,7 @@ static int patternCompare(
       if( c==0 ){
         return 1;   /* "*" at the end of the pattern matches */
       }else if( c==matchOther ){
-        if( esc ){
+        if( pInfo->matchSet==0 ){
           c = sqlite3Utf8Read(&zPattern);
           if( c==0 ) return 0;
         }else{
@@ -673,7 +663,7 @@ static int patternCompare(
           ** recursive search in this case, but it is an unusual case. */
           assert( matchOther<0x80 );  /* '[' is a single-byte character */
           while( *zString
-                 && patternCompare(&zPattern[-1],zString,pInfo,esc)==0 ){
+                 && patternCompare(&zPattern[-1],zString,pInfo,matchOther)==0 ){
             SQLITE_SKIP_UTF8(zString);
           }
           return *zString!=0;
@@ -699,18 +689,18 @@ static int patternCompare(
         }
         while( (c2 = *(zString++))!=0 ){
           if( c2!=c && c2!=cx ) continue;
-          if( patternCompare(zPattern,zString,pInfo,esc) ) return 1;
+          if( patternCompare(zPattern,zString,pInfo,matchOther) ) return 1;
         }
       }else{
-        while( (c2 = sqlite3Utf8Read(&zString))!=0 ){
+        while( (c2 = Utf8Read(zString))!=0 ){
           if( c2!=c ) continue;
-          if( patternCompare(zPattern,zString,pInfo,esc) ) return 1;
+          if( patternCompare(zPattern,zString,pInfo,matchOther) ) return 1;
         }
       }
       return 0;
     }
     if( c==matchOther ){
-      if( esc ){
+      if( pInfo->matchSet==0 ){
         c = sqlite3Utf8Read(&zPattern);
         if( c==0 ) return 0;
         zEscaped = zPattern;
@@ -748,7 +738,7 @@ static int patternCompare(
         continue;
       }
     }
-    c2 = sqlite3Utf8Read(&zString);
+    c2 = Utf8Read(zString);
     if( c==c2 ) continue;
     if( noCase && c<0x80 && c2<0x80 && sqlite3Tolower(c)==sqlite3Tolower(c2) ){
       continue;
@@ -763,7 +753,14 @@ static int patternCompare(
 ** The sqlite3_strglob() interface.
 */
 int sqlite3_strglob(const char *zGlobPattern, const char *zString){
-  return patternCompare((u8*)zGlobPattern, (u8*)zString, &globInfo, 0)==0;
+  return patternCompare((u8*)zGlobPattern, (u8*)zString, &globInfo, '[')==0;
+}
+
+/*
+** The sqlite3_strlike() interface.
+*/
+int sqlite3_strlike(const char *zPattern, const char *zStr, unsigned int esc){
+  return patternCompare((u8*)zPattern, (u8*)zStr, &likeInfoNorm, esc)==0;
 }
 
 /*
@@ -794,10 +791,22 @@ static void likeFunc(
   sqlite3_value **argv
 ){
   const unsigned char *zA, *zB;
-  u32 escape = 0;
+  u32 escape;
   int nPat;
   sqlite3 *db = sqlite3_context_db_handle(context);
+  struct compareInfo *pInfo = sqlite3_user_data(context);
 
+#ifdef SQLITE_LIKE_DOESNT_MATCH_BLOBS
+  if( sqlite3_value_type(argv[0])==SQLITE_BLOB
+   || sqlite3_value_type(argv[1])==SQLITE_BLOB
+  ){
+#ifdef SQLITE_TEST
+    sqlite3_like_count++;
+#endif
+    sqlite3_result_int(context, 0);
+    return;
+  }
+#endif
   zB = sqlite3_value_text(argv[0]);
   zA = sqlite3_value_text(argv[1]);
 
@@ -825,13 +834,13 @@ static void likeFunc(
       return;
     }
     escape = sqlite3Utf8Read(&zEsc);
+  }else{
+    escape = pInfo->matchSet;
   }
   if( zA && zB ){
-    struct compareInfo *pInfo = sqlite3_user_data(context);
 #ifdef SQLITE_TEST
     sqlite3_like_count++;
 #endif
-    
     sqlite3_result_int(context, patternCompare(zB, zA, pInfo, escape));
   }
 }
@@ -1125,16 +1134,14 @@ static void zeroblobFunc(
   sqlite3_value **argv
 ){
   i64 n;
-  sqlite3 *db = sqlite3_context_db_handle(context);
+  int rc;
   assert( argc==1 );
   UNUSED_PARAMETER(argc);
   n = sqlite3_value_int64(argv[0]);
-  testcase( n==db->aLimit[SQLITE_LIMIT_LENGTH] );
-  testcase( n==db->aLimit[SQLITE_LIMIT_LENGTH]+1 );
-  if( n>db->aLimit[SQLITE_LIMIT_LENGTH] ){
-    sqlite3_result_error_toobig(context);
-  }else{
-    sqlite3_result_zeroblob(context, (int)n); /* IMP: R-00293-64994 */
+  if( n<0 ) n = 0;
+  rc = sqlite3_result_zeroblob64(context, n); /* IMP: R-00293-64994 */
+  if( rc ){
+    sqlite3_result_error_code(context, rc);
   }
 }
 
@@ -1608,7 +1615,7 @@ void sqlite3RegisterBuiltinFunctions(sqlite3 *db){
   int rc = sqlite3_overload_function(db, "MATCH", 2);
   assert( rc==SQLITE_NOMEM || rc==SQLITE_OK );
   if( rc==SQLITE_NOMEM ){
-    db->mallocFailed = 1;
+    sqlite3OomFault(db);
   }
 }
 
@@ -1742,15 +1749,15 @@ void sqlite3RegisterGlobalFunctions(void){
     VFUNCTION(random,            0, 0, 0, randomFunc       ),
     VFUNCTION(randomblob,        1, 0, 0, randomBlob       ),
     FUNCTION(nullif,             2, 0, 1, nullifFunc       ),
-    FUNCTION(sqlite_version,     0, 0, 0, versionFunc      ),
-    FUNCTION(sqlite_source_id,   0, 0, 0, sourceidFunc     ),
+    DFUNCTION(sqlite_version,    0, 0, 0, versionFunc      ),
+    DFUNCTION(sqlite_source_id,  0, 0, 0, sourceidFunc     ),
     FUNCTION(sqlite_log,         2, 0, 0, errlogFunc       ),
 #if SQLITE_USER_AUTHENTICATION
     FUNCTION(sqlite_crypt,       2, 0, 0, sqlite3CryptFunc ),
 #endif
 #ifndef SQLITE_OMIT_COMPILEOPTION_DIAGS
-    FUNCTION(sqlite_compileoption_used,1, 0, 0, compileoptionusedFunc  ),
-    FUNCTION(sqlite_compileoption_get, 1, 0, 0, compileoptiongetFunc  ),
+    DFUNCTION(sqlite_compileoption_used,1, 0, 0, compileoptionusedFunc  ),
+    DFUNCTION(sqlite_compileoption_get, 1, 0, 0, compileoptiongetFunc  ),
 #endif /* SQLITE_OMIT_COMPILEOPTION_DIAGS */
     FUNCTION(quote,              1, 0, 0, quoteFunc        ),
     VFUNCTION(last_insert_rowid, 0, 0, 0, last_insert_rowid),
@@ -1762,8 +1769,8 @@ void sqlite3RegisterGlobalFunctions(void){
     FUNCTION(soundex,            1, 0, 0, soundexFunc      ),
   #endif
   #ifndef SQLITE_OMIT_LOAD_EXTENSION
-    FUNCTION(load_extension,     1, 0, 0, loadExt          ),
-    FUNCTION(load_extension,     2, 0, 0, loadExt          ),
+    VFUNCTION(load_extension,    1, 0, 0, loadExt          ),
+    VFUNCTION(load_extension,    2, 0, 0, loadExt          ),
   #endif
     AGGREGATE(sum,               1, 0, 0, sumStep,         sumFinalize    ),
     AGGREGATE(total,             1, 0, 0, sumStep,         totalFinalize    ),

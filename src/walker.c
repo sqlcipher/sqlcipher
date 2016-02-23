@@ -36,9 +36,8 @@
 ** The return value from this routine is WRC_Abort to abandon the tree walk
 ** and WRC_Continue to continue.
 */
-int sqlite3WalkExpr(Walker *pWalker, Expr *pExpr){
+static SQLITE_NOINLINE int walkExpr(Walker *pWalker, Expr *pExpr){
   int rc;
-  if( pExpr==0 ) return WRC_Continue;
   testcase( ExprHasProperty(pExpr, EP_TokenOnly) );
   testcase( ExprHasProperty(pExpr, EP_Reduced) );
   rc = pWalker->xExprCallback(pWalker, pExpr);
@@ -53,6 +52,9 @@ int sqlite3WalkExpr(Walker *pWalker, Expr *pExpr){
     }
   }
   return rc & WRC_Abort;
+}
+int sqlite3WalkExpr(Walker *pWalker, Expr *pExpr){
+  return pExpr ? walkExpr(pWalker,pExpr) : WRC_Continue;
 }
 
 /*
@@ -103,6 +105,11 @@ int sqlite3WalkSelectFrom(Walker *pWalker, Select *p){
   if( ALWAYS(pSrc) ){
     for(i=pSrc->nSrc, pItem=pSrc->a; i>0; i--, pItem++){
       if( sqlite3WalkSelect(pWalker, pItem->pSelect) ){
+        return WRC_Abort;
+      }
+      if( pItem->fg.isTabFunc
+       && sqlite3WalkExprList(pWalker, pItem->u1.pFuncArg)
+      ){
         return WRC_Abort;
       }
     }

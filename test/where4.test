@@ -19,6 +19,7 @@
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
+set testprefix where4
 
 ifcapable !tclvar||!bloblit {
   finish_test
@@ -57,6 +58,10 @@ proc count sql {
 do_test where4-1.1 {
   count {SELECT rowid FROM t1 WHERE w IS NULL}
 } {7 2}
+do_test where4-1.1b {
+  unset -nocomplain null
+  count {SELECT rowid FROM t1 WHERE w IS $null}
+} {7 2}
 do_test where4-1.2 {
   count {SELECT rowid FROM t1 WHERE +w IS NULL}
 } {7 6}
@@ -86,7 +91,7 @@ do_test where4-1.10 {
 } {6 2}
 do_test where4-1.11 {
   count {SELECT rowid FROM t1 WHERE w=x'78' AND x IS NULL AND y=123}
-} {1}
+} {0}
 do_test where4-1.12 {
   count {SELECT rowid FROM t1 WHERE w=x'78' AND x IS NULL AND y=x'7A'}
 } {6 2}
@@ -131,7 +136,7 @@ do_test where4-3.1 {
     INSERT INTO t2 VALUES(1);
     INSERT INTO t2 VALUES(2);
     INSERT INTO t2 VALUES(3);
-    CREATE TABLE t3(x,y,UNIQUE(x,y));
+    CREATE TABLE t3(x,y,UNIQUE("x",'y' ASC)); -- Goofy syntax allowed
     INSERT INTO t3 VALUES(1,11);
     INSERT INTO t3 VALUES(2,NULL);
  
@@ -141,6 +146,17 @@ do_test where4-3.1 {
 do_test where4-3.2 {
   execsql {
     SELECT * FROM t2 LEFT JOIN t3 ON a=x WHERE y IS NULL;
+  }
+} {2 2 {} 3 {} {}}
+do_test where4-3.3 {
+  execsql {
+    SELECT * FROM t2 LEFT JOIN t3 ON a=x WHERE NULL is y;
+  }
+} {2 2 {} 3 {} {}}
+do_test where4-3.4 {
+  unset -nocomplain null
+  execsql {
+    SELECT * FROM t2 LEFT JOIN t3 ON a=x WHERE y IS $null;
   }
 } {2 2 {} 3 {} {}}
 
@@ -184,7 +200,8 @@ do_test where4-4.4 {
 ifcapable subquery {
 do_test where4-5.1 {
   execsql {
-    CREATE TABLE t4(x,y,z,PRIMARY KEY(x,y));
+    -- Allow the 'x' syntax for backwards compatibility
+    CREATE TABLE t4(x,y,z,PRIMARY KEY('x' ASC, "y" ASC));
   }
   execsql {
     SELECT *
@@ -269,5 +286,22 @@ do_test where4-7.2 {
 } {{}}
 
 }; #ifcapable subquery
+
+#-------------------------------------------------------------------------
+# Verify that "IS ?" with a NULL bound to the variable also functions
+# correctly.
+
+unset -nocomplain null
+
+do_execsql_test 8.1 {
+  CREATE TABLE u9(a UNIQUE, b);
+  INSERT INTO u9 VALUES(NULL, 1);
+  INSERT INTO u9 VALUES(NULL, 2);
+}
+do_execsql_test 8.2 { SELECT * FROM u9 WHERE a IS NULL  } {{} 1 {} 2}
+do_execsql_test 8.2 { SELECT * FROM u9 WHERE a IS $null } {{} 1 {} 2}
+
+
+
 
 finish_test
