@@ -45,9 +45,9 @@
 
 #ifndef CIPHER_VERSION
 #ifdef SQLCIPHER_FIPS
-#define CIPHER_VERSION "3.3.1 FIPS"
+#define CIPHER_VERSION "3.4.0 FIPS"
 #else
-#define CIPHER_VERSION "3.3.1"
+#define CIPHER_VERSION "3.4.0"
 #endif
 #endif
 
