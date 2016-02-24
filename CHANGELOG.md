@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased][unreleased]
 
+## [3.4.0] - 2016-02-??
+### Added
+- Added `PRAGMA cipher_provider_version`
+
+### Changed
+- Merged upstream SQLite 3.11.0
+
 ## [3.3.1] - 2015-07-13
 ### Changed
 - Merge upstream SQLite 3.8.10.2
@@ -20,7 +27,7 @@ All notable changes to this project will be documented in this file.
 
 ## [3.2.0] - 2014-09-30
 ### Added
-- Added PRAGMA cipher_store_pass
+- Added `PRAGMA cipher_store_pass`
 
 ### Changed
 - Merged upstream SQLite 3.8.6
@@ -35,7 +42,7 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.1] - 2013-12-06
 ### Added
-- Add `PRAGMA cipher_add_random` to source external entropy
+- Added `PRAGMA cipher_add_random` to source external entropy
 
 ### Changed
 - Fix `PRAGMA cipher_migrate` to handle passphrases longer than 64 characters & raw keys
@@ -50,13 +57,14 @@ All notable changes to this project will be documented in this file.
 - Remove usage of VirtualLock/Unlock on WinRT and Windows Phone
 - Ignore HMAC read during Btree file copy
 - Fix lib naming for pkg-config
-- Use _v2 version of sqlite3_key and sqlite3_rekey
+- Use _v2 version of `sqlite3_key` and `sqlite3_rekey`
 - Update xcodeproj file
 
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.1...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.0...prerelease
+[3.4.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.0...v3.3.1
 [3.3.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.1.0...v3.2.0
@@ -81,6 +89,3 @@ All notable changes to this project will be documented in this file.
 [1.1.2]: https://github.com/sqlcipher/sqlcipher/compare/v1.1.1...v1.1.1
 [1.1.1]: https://github.com/sqlcipher/sqlcipher/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/sqlcipher/sqlcipher/compare/617ed01...v1.1.0
-
-
-
