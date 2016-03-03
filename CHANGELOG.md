@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Merged upstream SQLite 3.11.0
 
+### Deprecated
+- Deprecated `PRAGMA cipher` command
+
 ## [3.3.1] - 2015-07-13
 ### Changed
 - Merge upstream SQLite 3.8.10.2
