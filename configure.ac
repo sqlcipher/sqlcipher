@@ -69,19 +69,6 @@
 #        The filename extension for executables on the
 #        target platform.  "" for Unix and ".exe" for windows.
 #
-# The generated configure script will make an attempt to guess
-# at all of the above parameters.  You can override any of
-# the guesses by setting the environment variable named
-# "config_AAAA" where "AAAA" is the name of the parameter
-# described above.  (Exception: srcdir cannot be set this way.)
-# If you have a file that sets one or more of these environment
-# variables, you can invoke configure as follows:
-#
-#           configure --with-hints=FILE
-#
-# where FILE is the name of the file that sets the environment
-# variables.  FILE should be an absolute pathname.
-#
 # This configure.in file is easy to reuse on other projects.  Just
 # change the argument to AC_INIT().  And disable any features that
 # you don't need (for example BLT) by erasing or commenting out
@@ -98,17 +85,11 @@ AC_MSG_ERROR([configure script is out of date:
 please regen with autoconf])
 fi
 
-dnl Put the RCS revision string after AC_INIT so that it will also
-dnl show in in configure.
-# The following RCS revision string applies to configure.in
-# $Revision: 1.56 $
-
 #########
 # Programs needed
 #
 AC_PROG_LIBTOOL
 AC_PROG_INSTALL
-AC_PROG_AWK
 
 #########
 # Enable large file support (if special flags are necessary)
@@ -127,7 +108,7 @@ AC_CHECK_HEADERS([sys/types.h stdlib.h stdint.h inttypes.h malloc.h])
 #########
 # Figure out whether or not we have these functions
 #
-AC_CHECK_FUNCS([usleep fdatasync localtime_r gmtime_r localtime_s utime malloc_usable_size])
+AC_CHECK_FUNCS([fdatasync gmtime_r isnan localtime_r localtime_s malloc_usable_size strchrnul usleep utime])
 
 #########
 # By default, we use the amalgamation (this may be changed below...)
@@ -180,41 +161,6 @@ AC_MSG_NOTICE(Version number set to $VERSION_NUMBER)
 AC_SUBST(VERSION_NUMBER)
 
 #########
-# Check to see if the --with-hints=FILE option is used.  If there is none,
-# then check for a files named "$host.hints" and ../$hosts.hints where
-# $host is the hostname of the build system.  If still no hints are
-# found, try looking in $system.hints and ../$system.hints where
-# $system is the result of uname -s.
-#
-AC_ARG_WITH(hints,
-  AC_HELP_STRING([--with-hints=FILE],[Read configuration options from FILE]),
-  hints=$withval)
-if test "$hints" = ""; then
-  host=`hostname | sed 's/\..*//'`
-  if test -r $host.hints; then
-    hints=$host.hints
-  else
-     if test -r ../$host.hints; then
-       hints=../$host.hints
-     fi
-  fi
-fi
-if test "$hints" = ""; then
-  sys=`uname -s`
-  if test -r $sys.hints; then
-    hints=$sys.hints
-  else
-     if test -r ../$sys.hints; then
-       hints=../$sys.hints
-     fi
-  fi
-fi
-if test "$hints" != ""; then
-  AC_MSG_RESULT(reading hints from $hints)
-  . $hints
-fi
-
-#########
 # Locate a compiler for the build machine.  This compiler should
 # generate command-line programs that run on the build machine.
 #
@@ -235,7 +181,7 @@ AC_SUBST(BUILD_CC)
 # Do we want to support multithreaded use of sqlite
 #
 AC_ARG_ENABLE(threadsafe, 
-AC_HELP_STRING([--enable-threadsafe],[Support threadsafe operation]),,enable_threadsafe=yes)
+AC_HELP_STRING([--disable-threadsafe],[Disable mutexing]),,enable_threadsafe=yes)
 AC_MSG_CHECKING([whether to support threadsafe operation])
 if test "$enable_threadsafe" = "no"; then
   SQLITE_THREADSAFE=0
@@ -248,6 +194,7 @@ AC_SUBST(SQLITE_THREADSAFE)
 
 if test "$SQLITE_THREADSAFE" = "1"; then
   AC_SEARCH_LIBS(pthread_create, pthread)
+  AC_SEARCH_LIBS(pthread_mutexattr_init, pthread)
 fi
 
 ##########
@@ -420,6 +367,20 @@ if test "${use_tcl}" = "yes" ; then
       fi
     fi
 
+    # On ubuntu 14.10, $auto_path on tclsh is not quite correct.
+    # So try again after applying corrections.
+    if test x"${ac_cv_c_tclconfig}" = x ; then
+      if test x"$cross_compiling" = xno; then
+        for i in `echo 'puts stdout $auto_path' | ${TCLSH_CMD} | sed 's,/tcltk/tcl,/tcl,g'`
+        do
+          if test -f "$i/tclConfig.sh" ; then
+            ac_cv_c_tclconfig="$i"
+            break
+          fi
+        done
+      fi
+    fi
+
     # then check for a private Tcl installation
     if test x"${ac_cv_c_tclconfig}" = x ; then
       for i in \
@@ -530,6 +491,7 @@ if test "${use_tcl}" = "yes" ; then
     AC_SUBST(TCL_STUB_LIB_FILE)
     AC_SUBST(TCL_STUB_LIB_FLAG)
     AC_SUBST(TCL_STUB_LIB_SPEC)
+    AC_SUBST(TCL_SHLIB_SUFFIX)
   fi
 fi
 if test "${use_tcl}" = "no" ; then
@@ -546,11 +508,24 @@ AC_SUBST(HAVE_TCL)
 TARGET_READLINE_LIBS=""
 TARGET_READLINE_INC=""
 TARGET_HAVE_READLINE=0
+TARGET_HAVE_EDITLINE=0
+AC_ARG_ENABLE([editline],
+	[AC_HELP_STRING([--enable-editline],[enable BSD editline support])],
+	[with_editline=$enableval],
+	[with_editline=auto])
 AC_ARG_ENABLE([readline],
-	[AC_HELP_STRING([--disable-readline],[disable readline support [default=detect]])],
+	[AC_HELP_STRING([--disable-readline],[disable readline support])],
 	[with_readline=$enableval],
 	[with_readline=auto])
 
+if test x"$with_editline" != xno; then
+        sLIBS=$LIBS
+        LIBS=""
+	TARGET_HAVE_EDITLINE=1
+	AC_SEARCH_LIBS(readline,edit,[with_readline=no],[TARGET_HAVE_EDITLINE=0])
+        TARGET_READLINE_LIBS=$LIBS
+        LIBS=$sLIBS
+fi
 if test x"$with_readline" != xno; then
 	found="yes"
 
@@ -605,6 +580,7 @@ fi
 AC_SUBST(TARGET_READLINE_LIBS)
 AC_SUBST(TARGET_READLINE_INC)
 AC_SUBST(TARGET_HAVE_READLINE)
+AC_SUBST(TARGET_HAVE_EDITLINE)
 
 ##########
 # Figure out what C libraries are required to compile programs
@@ -635,14 +611,55 @@ AC_SUBST(USE_AMALGAMATION)
 
 #########
 # See whether we should allow loadable extensions
-AC_ARG_ENABLE(load-extension, AC_HELP_STRING([--enable-load-extension],
-      [Enable loading of external extensions]),
-      [use_loadextension=$enableval],[use_loadextension=no])
+AC_ARG_ENABLE(load-extension, AC_HELP_STRING([--disable-load-extension],
+      [Disable loading of external extensions]),
+      [use_loadextension=$enableval],[use_loadextension=yes])
 if test "${use_loadextension}" = "yes" ; then
   OPT_FEATURE_FLAGS=""
   AC_SEARCH_LIBS(dlopen, dl)
 else
   OPT_FEATURE_FLAGS="-DSQLITE_OMIT_LOAD_EXTENSION=1"
+fi
+
+#########
+# See whether we should enable Full Text Search extensions
+AC_ARG_ENABLE(fts3, AC_HELP_STRING([--enable-fts3],
+      [Enable the FTS3 extension]),
+      [enable_fts3=yes],[enable_fts3=no])
+if test "${enable_fts3}" = "yes" ; then
+  OPT_FEATURE_FLAGS+=" -DSQLITE_ENABLE_FTS3"
+fi
+AC_ARG_ENABLE(fts4, AC_HELP_STRING([--enable-fts4],
+      [Enable the FTS4 extension]),
+      [enable_fts4=yes],[enable_fts4=no])
+if test "${enable_fts4}" = "yes" ; then
+  OPT_FEATURE_FLAGS+=" -DSQLITE_ENABLE_FTS4"
+  AC_SEARCH_LIBS([log],[m])
+fi
+AC_ARG_ENABLE(fts5, AC_HELP_STRING([--enable-fts5],
+      [Enable the FTS5 extension]),
+      [enable_fts5=yes],[enable_fts5=no])
+if test "${enable_fts5}" = "yes" ; then
+  OPT_FEATURE_FLAGS+=" -DSQLITE_ENABLE_FTS5"
+  AC_SEARCH_LIBS([log],[m])
+fi
+
+#########
+# See whether we should enable JSON1
+AC_ARG_ENABLE(json1, AC_HELP_STRING([--enable-json1],
+      [Enable the JSON1 extension]),
+      [enable_json1=yes],[enable_json1=no])
+if test "${enable_json1}" = "yes" ; then
+  OPT_FEATURE_FLAGS+=" -DSQLITE_ENABLE_JSON1"
+fi
+
+#########
+# See whether we should enable RTREE
+AC_ARG_ENABLE(rtree, AC_HELP_STRING([--enable-rtree],
+      [Enable the RTREE extension]),
+      [enable_rtree=yes],[enable_rtree=no])
+if test "${enable_rtree}" = "yes" ; then
+  OPT_FEATURE_FLAGS+=" -DSQLITE_ENABLE_RTREE"
 fi
 
 #########

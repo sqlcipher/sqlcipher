@@ -40,15 +40,19 @@
 */
 struct sqlite3_mutex {
   pthread_mutex_t mutex;     /* Mutex controlling the lock */
-#if SQLITE_MUTEX_NREF
+#if SQLITE_MUTEX_NREF || defined(SQLITE_ENABLE_API_ARMOR)
   int id;                    /* Mutex type */
+#endif
+#if SQLITE_MUTEX_NREF
   volatile int nRef;         /* Number of entrances */
   volatile pthread_t owner;  /* Thread that is within this mutex */
   int trace;                 /* True to trace changes */
 #endif
 };
 #if SQLITE_MUTEX_NREF
-#define SQLITE3_MUTEX_INITIALIZER { PTHREAD_MUTEX_INITIALIZER, 0, 0, (pthread_t)0, 0 }
+#define SQLITE3_MUTEX_INITIALIZER {PTHREAD_MUTEX_INITIALIZER,0,0,(pthread_t)0,0}
+#elif defined(SQLITE_ENABLE_API_ARMOR)
+#define SQLITE3_MUTEX_INITIALIZER { PTHREAD_MUTEX_INITIALIZER, 0 }
 #else
 #define SQLITE3_MUTEX_INITIALIZER { PTHREAD_MUTEX_INITIALIZER }
 #endif
@@ -79,6 +83,19 @@ static int pthreadMutexNotheld(sqlite3_mutex *p){
 #endif
 
 /*
+** Try to provide a memory barrier operation, needed for initialization
+** and also for the implementation of xShmBarrier in the VFS in cases
+** where SQLite is compiled without mutexes.
+*/
+void sqlite3MemoryBarrier(void){
+#if defined(SQLITE_MEMORY_BARRIER)
+  SQLITE_MEMORY_BARRIER;
+#elif defined(__GNUC__) && GCC_VERSION>=4001000
+  __sync_synchronize();
+#endif
+}
+
+/*
 ** Initialize and deinitialize the mutex subsystem.
 */
 static int pthreadMutexInit(void){ return SQLITE_OK; }
@@ -96,10 +113,16 @@ static int pthreadMutexEnd(void){ return SQLITE_OK; }
 ** <li>  SQLITE_MUTEX_RECURSIVE
 ** <li>  SQLITE_MUTEX_STATIC_MASTER
 ** <li>  SQLITE_MUTEX_STATIC_MEM
-** <li>  SQLITE_MUTEX_STATIC_MEM2
+** <li>  SQLITE_MUTEX_STATIC_OPEN
 ** <li>  SQLITE_MUTEX_STATIC_PRNG
 ** <li>  SQLITE_MUTEX_STATIC_LRU
 ** <li>  SQLITE_MUTEX_STATIC_PMEM
+** <li>  SQLITE_MUTEX_STATIC_APP1
+** <li>  SQLITE_MUTEX_STATIC_APP2
+** <li>  SQLITE_MUTEX_STATIC_APP3
+** <li>  SQLITE_MUTEX_STATIC_VFS1
+** <li>  SQLITE_MUTEX_STATIC_VFS2
+** <li>  SQLITE_MUTEX_STATIC_VFS3
 ** </ul>
 **
 ** The first two constants cause sqlite3_mutex_alloc() to create
@@ -133,6 +156,12 @@ static sqlite3_mutex *pthreadMutexAlloc(int iType){
     SQLITE3_MUTEX_INITIALIZER,
     SQLITE3_MUTEX_INITIALIZER,
     SQLITE3_MUTEX_INITIALIZER,
+    SQLITE3_MUTEX_INITIALIZER,
+    SQLITE3_MUTEX_INITIALIZER,
+    SQLITE3_MUTEX_INITIALIZER,
+    SQLITE3_MUTEX_INITIALIZER,
+    SQLITE3_MUTEX_INITIALIZER,
+    SQLITE3_MUTEX_INITIALIZER,
     SQLITE3_MUTEX_INITIALIZER
   };
   sqlite3_mutex *p;
@@ -152,32 +181,30 @@ static sqlite3_mutex *pthreadMutexAlloc(int iType){
         pthread_mutex_init(&p->mutex, &recursiveAttr);
         pthread_mutexattr_destroy(&recursiveAttr);
 #endif
-#if SQLITE_MUTEX_NREF
-        p->id = iType;
-#endif
       }
       break;
     }
     case SQLITE_MUTEX_FAST: {
       p = sqlite3MallocZero( sizeof(*p) );
       if( p ){
-#if SQLITE_MUTEX_NREF
-        p->id = iType;
-#endif
         pthread_mutex_init(&p->mutex, 0);
       }
       break;
     }
     default: {
-      assert( iType-2 >= 0 );
-      assert( iType-2 < ArraySize(staticMutexes) );
-      p = &staticMutexes[iType-2];
-#if SQLITE_MUTEX_NREF
-      p->id = iType;
+#ifdef SQLITE_ENABLE_API_ARMOR
+      if( iType-2<0 || iType-2>=ArraySize(staticMutexes) ){
+        (void)SQLITE_MISUSE_BKPT;
+        return 0;
+      }
 #endif
+      p = &staticMutexes[iType-2];
       break;
     }
   }
+#if SQLITE_MUTEX_NREF || defined(SQLITE_ENABLE_API_ARMOR)
+  if( p ) p->id = iType;
+#endif
   return p;
 }
 
@@ -189,9 +216,18 @@ static sqlite3_mutex *pthreadMutexAlloc(int iType){
 */
 static void pthreadMutexFree(sqlite3_mutex *p){
   assert( p->nRef==0 );
-  assert( p->id==SQLITE_MUTEX_FAST || p->id==SQLITE_MUTEX_RECURSIVE );
-  pthread_mutex_destroy(&p->mutex);
-  sqlite3_free(p);
+#if SQLITE_ENABLE_API_ARMOR
+  if( p->id==SQLITE_MUTEX_FAST || p->id==SQLITE_MUTEX_RECURSIVE )
+#endif
+  {
+    pthread_mutex_destroy(&p->mutex);
+    sqlite3_free(p);
+  }
+#ifdef SQLITE_ENABLE_API_ARMOR
+  else{
+    (void)SQLITE_MISUSE_BKPT;
+  }
+#endif
 }
 
 /*

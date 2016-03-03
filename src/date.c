@@ -16,7 +16,7 @@
 ** sqlite3RegisterDateTimeFunctions() found at the bottom of the file.
 ** All other code has file scope.
 **
-** SQLite processes all times and dates as Julian Day numbers.  The
+** SQLite processes all times and dates as julian day numbers.  The
 ** dates and times are stored as the number of days since noon
 ** in Greenwich on November 24, 4714 B.C. according to the Gregorian
 ** calendar system. 
@@ -24,14 +24,14 @@
 ** 1970-01-01 00:00:00 is JD 2440587.5
 ** 2000-01-01 00:00:00 is JD 2451544.5
 **
-** This implemention requires years to be expressed as a 4-digit number
+** This implementation requires years to be expressed as a 4-digit number
 ** which means that only dates between 0000-01-01 and 9999-12-31 can
 ** be represented, even though julian day numbers allow a much wider
 ** range of dates.
 **
 ** The Gregorian calendar system is used for all dates and times,
 ** even those that predate the Gregorian calendar.  Historians usually
-** use the Julian calendar for dates prior to 1582-10-15 and for some
+** use the julian calendar for dates prior to 1582-10-15 and for some
 ** dates afterwards, depending on locale.  Beware of this difference.
 **
 ** The conversion algorithms are implemented based on descriptions
@@ -65,38 +65,54 @@ struct DateTime {
   char validHMS;     /* True (1) if h,m,s are valid */
   char validJD;      /* True (1) if iJD is valid */
   char validTZ;      /* True (1) if tz is valid */
+  char tzSet;        /* Timezone was set explicitly */
 };
 
 
 /*
-** Convert zDate into one or more integers.  Additional arguments
-** come in groups of 5 as follows:
+** Convert zDate into one or more integers according to the conversion
+** specifier zFormat.
 **
-**       N       number of digits in the integer
-**       min     minimum allowed value of the integer
-**       max     maximum allowed value of the integer
-**       nextC   first character after the integer
-**       pVal    where to write the integers value.
+** zFormat[] contains 4 characters for each integer converted, except for
+** the last integer which is specified by three characters.  The meaning
+** of a four-character format specifiers ABCD is:
 **
-** Conversions continue until one with nextC==0 is encountered.
+**    A:   number of digits to convert.  Always "2" or "4".
+**    B:   minimum value.  Always "0" or "1".
+**    C:   maximum value, decoded as:
+**           a:  12
+**           b:  14
+**           c:  24
+**           d:  31
+**           e:  59
+**           f:  9999
+**    D:   the separator character, or \000 to indicate this is the
+**         last number to convert.
+**
+** Example:  To translate an ISO-8601 date YYYY-MM-DD, the format would
+** be "40f-21a-20c".  The "40f-" indicates the 4-digit year followed by "-".
+** The "21a-" indicates the 2-digit month followed by "-".  The "20c" indicates
+** the 2-digit day which is the last integer in the set.
+**
 ** The function returns the number of successful conversions.
 */
-static int getDigits(const char *zDate, ...){
+static int getDigits(const char *zDate, const char *zFormat, ...){
+  /* The aMx[] array translates the 3rd character of each format
+  ** spec into a max size:    a   b   c   d   e     f */
+  static const u16 aMx[] = { 12, 14, 24, 31, 59, 9999 };
   va_list ap;
-  int val;
-  int N;
-  int min;
-  int max;
-  int nextC;
-  int *pVal;
   int cnt = 0;
-  va_start(ap, zDate);
+  char nextC;
+  va_start(ap, zFormat);
   do{
-    N = va_arg(ap, int);
-    min = va_arg(ap, int);
-    max = va_arg(ap, int);
-    nextC = va_arg(ap, int);
-    pVal = va_arg(ap, int*);
+    char N = zFormat[0] - '0';
+    char min = zFormat[1] - '0';
+    int val = 0;
+    u16 max;
+
+    assert( zFormat[2]>='a' && zFormat[2]<='f' );
+    max = aMx[zFormat[2] - 'a'];
+    nextC = zFormat[3];
     val = 0;
     while( N-- ){
       if( !sqlite3Isdigit(*zDate) ){
@@ -105,12 +121,13 @@ static int getDigits(const char *zDate, ...){
       val = val*10 + *zDate - '0';
       zDate++;
     }
-    if( val<min || val>max || (nextC!=0 && nextC!=*zDate) ){
+    if( val<(int)min || val>(int)max || (nextC!=0 && nextC!=*zDate) ){
       goto end_getDigits;
     }
-    *pVal = val;
+    *va_arg(ap,int*) = val;
     zDate++;
     cnt++;
+    zFormat += 4;
   }while( nextC );
 end_getDigits:
   va_end(ap);
@@ -151,13 +168,14 @@ static int parseTimezone(const char *zDate, DateTime *p){
     return c!=0;
   }
   zDate++;
-  if( getDigits(zDate, 2, 0, 14, ':', &nHr, 2, 0, 59, 0, &nMn)!=2 ){
+  if( getDigits(zDate, "20b:20e", &nHr, &nMn)!=2 ){
     return 1;
   }
   zDate += 5;
   p->tz = sgn*(nMn + nHr*60);
 zulu_time:
   while( sqlite3Isspace(*zDate) ){ zDate++; }
+  p->tzSet = 1;
   return *zDate!=0;
 }
 
@@ -171,13 +189,13 @@ zulu_time:
 static int parseHhMmSs(const char *zDate, DateTime *p){
   int h, m, s;
   double ms = 0.0;
-  if( getDigits(zDate, 2, 0, 24, ':', &h, 2, 0, 59, 0, &m)!=2 ){
+  if( getDigits(zDate, "20c:20e", &h, &m)!=2 ){
     return 1;
   }
   zDate += 5;
   if( *zDate==':' ){
     zDate++;
-    if( getDigits(zDate, 2, 0, 59, 0, &s)!=1 ){
+    if( getDigits(zDate, "20e", &s)!=1 ){
       return 1;
     }
     zDate += 2;
@@ -265,7 +283,7 @@ static int parseYyyyMmDd(const char *zDate, DateTime *p){
   }else{
     neg = 0;
   }
-  if( getDigits(zDate,4,0,9999,'-',&Y,2,1,12,'-',&M,2,1,31,0,&D)!=3 ){
+  if( getDigits(zDate, "40f-21a-21d", &Y, &M, &D)!=3 ){
     return 1;
   }
   zDate += 10;
@@ -304,7 +322,7 @@ static int setDateTimeToCurrent(sqlite3_context *context, DateTime *p){
 }
 
 /*
-** Attempt to parse the given string into a Julian Day Number.  Return
+** Attempt to parse the given string into a julian day number.  Return
 ** the number of errors.
 **
 ** The following are acceptable forms for the input string:
@@ -355,7 +373,7 @@ static void computeYMD(DateTime *p){
     A = Z + 1 + A - (A/4);
     B = A + 1524;
     C = (int)((B - 122.1)/365.25);
-    D = (36525*C)/100;
+    D = (36525*(C&32767))/100;
     E = (int)((B-D)/30.6001);
     X1 = (int)(30.6001*E);
     p->D = B - D - X1;
@@ -412,8 +430,9 @@ static void clearYMD_HMS_TZ(DateTime *p){
 ** already, check for an MSVC build environment that provides 
 ** localtime_s().
 */
-#if !defined(HAVE_LOCALTIME_R) && !defined(HAVE_LOCALTIME_S) && \
-     defined(_MSC_VER) && defined(_CRT_INSECURE_DEPRECATE)
+#if !HAVE_LOCALTIME_R && !HAVE_LOCALTIME_S \
+    && defined(_MSC_VER) && defined(_CRT_INSECURE_DEPRECATE)
+#undef  HAVE_LOCALTIME_S
 #define HAVE_LOCALTIME_S 1
 #endif
 
@@ -433,8 +452,7 @@ static void clearYMD_HMS_TZ(DateTime *p){
 */
 static int osLocaltime(time_t *t, struct tm *pTm){
   int rc;
-#if (!defined(HAVE_LOCALTIME_R) || !HAVE_LOCALTIME_R) \
-      && (!defined(HAVE_LOCALTIME_S) || !HAVE_LOCALTIME_S)
+#if !HAVE_LOCALTIME_R && !HAVE_LOCALTIME_S
   struct tm *pX;
 #if SQLITE_THREADSAFE>0
   sqlite3_mutex *mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
@@ -451,7 +469,7 @@ static int osLocaltime(time_t *t, struct tm *pTm){
 #ifndef SQLITE_OMIT_BUILTIN_TEST
   if( sqlite3GlobalConfig.bLocaltimeFault ) return 1;
 #endif
-#if defined(HAVE_LOCALTIME_R) && HAVE_LOCALTIME_R
+#if HAVE_LOCALTIME_R
   rc = localtime_r(t, pTm)==0;
 #else
   rc = localtime_s(pTm, t);
@@ -590,13 +608,18 @@ static int parseModifier(sqlite3_context *pCtx, const char *zMod, DateTime *p){
       }
 #ifndef SQLITE_OMIT_LOCALTIME
       else if( strcmp(z, "utc")==0 ){
-        sqlite3_int64 c1;
-        computeJD(p);
-        c1 = localtimeOffset(p, pCtx, &rc);
-        if( rc==SQLITE_OK ){
-          p->iJD -= c1;
-          clearYMD_HMS_TZ(p);
-          p->iJD += c1 - localtimeOffset(p, pCtx, &rc);
+        if( p->tzSet==0 ){
+          sqlite3_int64 c1;
+          computeJD(p);
+          c1 = localtimeOffset(p, pCtx, &rc);
+          if( rc==SQLITE_OK ){
+            p->iJD -= c1;
+            clearYMD_HMS_TZ(p);
+            p->iJD += c1 - localtimeOffset(p, pCtx, &rc);
+          }
+          p->tzSet = 1;
+        }else{
+          rc = SQLITE_OK;
         }
       }
 #endif
@@ -875,7 +898,7 @@ static void dateFunc(
 **   %f  ** fractional seconds  SS.SSS
 **   %H  hour 00-24
 **   %j  day of year 000-366
-**   %J  ** Julian day number
+**   %J  ** julian day number
 **   %m  month 01-12
 **   %M  minute 00-59
 **   %s  seconds since 1970-01-01
@@ -895,8 +918,10 @@ static void strftimeFunc(
   size_t i,j;
   char *z;
   sqlite3 *db;
-  const char *zFmt = (const char*)sqlite3_value_text(argv[0]);
+  const char *zFmt;
   char zBuf[100];
+  if( argc==0 ) return;
+  zFmt = (const char*)sqlite3_value_text(argv[0]);
   if( zFmt==0 || isDate(context, argc-1, argv+1, &x) ) return;
   db = sqlite3_context_db_handle(context);
   for(i=0, n=1; zFmt[i]; i++, n++){
@@ -942,7 +967,7 @@ static void strftimeFunc(
     sqlite3_result_error_toobig(context);
     return;
   }else{
-    z = sqlite3DbMallocRaw(db, (int)n);
+    z = sqlite3DbMallocRawNN(db, (int)n);
     if( z==0 ){
       sqlite3_result_error_nomem(context);
       return;
@@ -1090,7 +1115,7 @@ static void currentTimeFunc(
   iT = sqlite3StmtCurrentTime(context);
   if( iT<=0 ) return;
   t = iT/1000 - 10000*(sqlite3_int64)21086676;
-#ifdef HAVE_GMTIME_R
+#if HAVE_GMTIME_R
   pTm = gmtime_r(&t, &sNow);
 #else
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
@@ -1113,14 +1138,14 @@ static void currentTimeFunc(
 void sqlite3RegisterDateTimeFunctions(void){
   static SQLITE_WSD FuncDef aDateTimeFuncs[] = {
 #ifndef SQLITE_OMIT_DATETIME_FUNCS
-    FUNCTION(julianday,        -1, 0, 0, juliandayFunc ),
-    FUNCTION(date,             -1, 0, 0, dateFunc      ),
-    FUNCTION(time,             -1, 0, 0, timeFunc      ),
-    FUNCTION(datetime,         -1, 0, 0, datetimeFunc  ),
-    FUNCTION(strftime,         -1, 0, 0, strftimeFunc  ),
-    FUNCTION(current_time,      0, 0, 0, ctimeFunc     ),
-    FUNCTION(current_timestamp, 0, 0, 0, ctimestampFunc),
-    FUNCTION(current_date,      0, 0, 0, cdateFunc     ),
+    DFUNCTION(julianday,        -1, 0, 0, juliandayFunc ),
+    DFUNCTION(date,             -1, 0, 0, dateFunc      ),
+    DFUNCTION(time,             -1, 0, 0, timeFunc      ),
+    DFUNCTION(datetime,         -1, 0, 0, datetimeFunc  ),
+    DFUNCTION(strftime,         -1, 0, 0, strftimeFunc  ),
+    DFUNCTION(current_time,      0, 0, 0, ctimeFunc     ),
+    DFUNCTION(current_timestamp, 0, 0, 0, ctimestampFunc),
+    DFUNCTION(current_date,      0, 0, 0, cdateFunc     ),
 #else
     STR_FUNCTION(current_time,      0, "%H:%M:%S",          0, currentTimeFunc),
     STR_FUNCTION(current_date,      0, "%Y-%m-%d",          0, currentTimeFunc),

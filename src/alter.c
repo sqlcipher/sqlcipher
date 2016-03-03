@@ -116,6 +116,7 @@ static void renameParentFunc(
   int token;                      /* Type of token */
 
   UNUSED_PARAMETER(NotUsed);
+  if( zInput==0 || zOld==0 ) return;
   for(z=zInput; *z; z=z+n){
     n = sqlite3GetToken(z, &token);
     if( token==TK_REFERENCES ){
@@ -125,6 +126,7 @@ static void renameParentFunc(
         n = sqlite3GetToken(z, &token);
       }while( token==TK_SPACE );
 
+      if( token==TK_ILLEGAL ) break;
       zParent = sqlite3DbStrNDup(db, (const char *)z, n);
       if( zParent==0 ) break;
       sqlite3Dequote(zParent);
@@ -173,8 +175,8 @@ static void renameTriggerFunc(
   UNUSED_PARAMETER(NotUsed);
 
   /* The principle used to locate the table name in the CREATE TRIGGER 
-  ** statement is that the table name is the first token that is immediatedly
-  ** preceded by either TK_ON or TK_DOT and immediatedly followed by one
+  ** statement is that the table name is the first token that is immediately
+  ** preceded by either TK_ON or TK_DOT and immediately followed by one
   ** of TK_WHEN, TK_BEGIN or TK_FOR.
   */
   if( zSql ){
@@ -489,7 +491,7 @@ void sqlite3AlterRenameTable(
 #ifndef SQLITE_OMIT_VIRTUALTABLE
   if( pVTab ){
     int i = ++pParse->nMem;
-    sqlite3VdbeAddOp4(v, OP_String8, 0, i, 0, zName, 0);
+    sqlite3VdbeLoadString(v, i, zName);
     sqlite3VdbeAddOp4(v, OP_VRename, i, 0, 0,(const char*)pVTab, P4_VTAB);
     sqlite3MayAbort(pParse);
   }
@@ -586,33 +588,6 @@ exit_rename_table:
   db->flags = savedDbFlags;
 }
 
-
-/*
-** Generate code to make sure the file format number is at least minFormat.
-** The generated code will increase the file format number if necessary.
-*/
-void sqlite3MinimumFileFormat(Parse *pParse, int iDb, int minFormat){
-  Vdbe *v;
-  v = sqlite3GetVdbe(pParse);
-  /* The VDBE should have been allocated before this routine is called.
-  ** If that allocation failed, we would have quit before reaching this
-  ** point */
-  if( ALWAYS(v) ){
-    int r1 = sqlite3GetTempReg(pParse);
-    int r2 = sqlite3GetTempReg(pParse);
-    int j1;
-    sqlite3VdbeAddOp3(v, OP_ReadCookie, iDb, r1, BTREE_FILE_FORMAT);
-    sqlite3VdbeUsesBtree(v, iDb);
-    sqlite3VdbeAddOp2(v, OP_Integer, minFormat, r2);
-    j1 = sqlite3VdbeAddOp3(v, OP_Ge, r2, 0, r1);
-    sqlite3VdbeChangeP5(v, SQLITE_NOTNULL); VdbeCoverage(v);
-    sqlite3VdbeAddOp3(v, OP_SetCookie, iDb, BTREE_FILE_FORMAT, r2);
-    sqlite3VdbeJumpHere(v, j1);
-    sqlite3ReleaseTempReg(pParse, r1);
-    sqlite3ReleaseTempReg(pParse, r2);
-  }
-}
-
 /*
 ** This function is called after an "ALTER TABLE ... ADD" statement
 ** has been parsed. Argument pColDef contains the text of the new
@@ -631,9 +606,11 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
   Column *pCol;             /* The new column */
   Expr *pDflt;              /* Default value for the new column */
   sqlite3 *db;              /* The database connection; */
+  Vdbe *v = pParse->pVdbe;  /* The prepared statement under construction */
 
   db = pParse->db;
   if( pParse->nErr || db->mallocFailed ) return;
+  assert( v!=0 );
   pNew = pParse->pNewTable;
   assert( pNew );
 
@@ -689,8 +666,11 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
   */
   if( pDflt ){
     sqlite3_value *pVal = 0;
-    if( sqlite3ValueFromExpr(db, pDflt, SQLITE_UTF8, SQLITE_AFF_NONE, &pVal) ){
-      db->mallocFailed = 1;
+    int rc;
+    rc = sqlite3ValueFromExpr(db, pDflt, SQLITE_UTF8, SQLITE_AFF_BLOB, &pVal);
+    assert( rc==SQLITE_OK || rc==SQLITE_NOMEM );
+    if( rc!=SQLITE_OK ){
+      assert( db->mallocFailed == 1 );
       return;
     }
     if( !pVal ){
@@ -720,11 +700,16 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
     db->flags = savedDbFlags;
   }
 
-  /* If the default value of the new column is NULL, then set the file
+  /* If the default value of the new column is NULL, then the file
   ** format to 2. If the default value of the new column is not NULL,
-  ** the file format becomes 3.
+  ** the file format be 3.  Back when this feature was first added
+  ** in 2006, we went to the trouble to upgrade the file format to the
+  ** minimum support values.  But 10-years on, we can assume that all
+  ** extent versions of SQLite support file-format 4, so we always and
+  ** unconditionally upgrade to 4.
   */
-  sqlite3MinimumFileFormat(pParse, iDb, pDflt ? 3 : 2);
+  sqlite3VdbeAddOp3(v, OP_SetCookie, iDb, BTREE_FILE_FORMAT, 
+                    SQLITE_MAX_FILE_FORMAT);
 
   /* Reload the schema of the modified table. */
   reloadTableSchema(pParse, pTab, pTab->zName);
@@ -798,7 +783,7 @@ void sqlite3AlterBeginAddColumn(Parse *pParse, SrcList *pSrc){
   pNew->aCol = (Column*)sqlite3DbMallocZero(db, sizeof(Column)*nAlloc);
   pNew->zName = sqlite3MPrintf(db, "sqlite_altertab_%s", pTab->zName);
   if( !pNew->aCol || !pNew->zName ){
-    db->mallocFailed = 1;
+    assert( db->mallocFailed );
     goto exit_begin_add_column;
   }
   memcpy(pNew->aCol, pTab->aCol, sizeof(Column)*pNew->nCol);

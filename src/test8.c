@@ -206,8 +206,8 @@ static int getColumnNames(
     zSpace = (char *)(&aCol[nCol]);
     for(ii=0; ii<nCol; ii++){
       aCol[ii] = zSpace;
-      zSpace += sprintf(zSpace, "%s", sqlite3_column_name(pStmt, ii));
-      zSpace++;
+      sqlite3_snprintf(nBytes, zSpace, "%s", sqlite3_column_name(pStmt,ii));
+      zSpace += (int)strlen(zSpace) + 1;
     }
     assert( (zSpace-nBytes)==(char *)aCol );
   }
@@ -648,12 +648,12 @@ static int echoRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
 ** indeed the hash of the supplied idxStr.
 */
 static int hashString(const char *zString){
-  int val = 0;
+  u32 val = 0;
   int ii;
   for(ii=0; zString[ii]; ii++){
     val = (val << 3) + (int)zString[ii];
   }
-  return val;
+  return (int)(val&0x7fffffff);
 }
 
 /* 
@@ -746,6 +746,34 @@ static void string_concat(char **pzStr, char *zAppend, int doFree, int *pRc){
 }
 
 /*
+** This function returns a pointer to an sqlite3_malloc()ed buffer 
+** containing the select-list (the thing between keywords SELECT and FROM)
+** to query the underlying real table with for the scan described by
+** argument pIdxInfo.
+**
+** If the current SQLite version is earlier than 3.10.0, this is just "*"
+** (select all columns). Or, for version 3.10.0 and greater, the list of
+** columns identified by the pIdxInfo->colUsed mask.
+*/
+static char *echoSelectList(echo_vtab *pTab, sqlite3_index_info *pIdxInfo){
+  char *zRet = 0;
+  if( sqlite3_libversion_number()<3010000 ){
+    zRet = sqlite3_mprintf(", *");
+  }else{
+    int i;
+    for(i=0; i<pTab->nCol; i++){
+      if( pIdxInfo->colUsed & ((sqlite3_uint64)1 << (i>=63 ? 63 : i)) ){
+        zRet = sqlite3_mprintf("%z, %s", zRet, pTab->aCol[i]);
+      }else{
+        zRet = sqlite3_mprintf("%z, NULL", zRet);
+      }
+      if( !zRet ) break;
+    }
+  }
+  return zRet;
+}
+
+/*
 ** The echo module implements the subset of query constraints and sort
 ** orders that may take advantage of SQLite indices on the underlying
 ** real table. For example, if the real table is declared as:
@@ -770,6 +798,7 @@ static void string_concat(char **pzStr, char *zAppend, int doFree, int *pRc){
 static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
   int ii;
   char *zQuery = 0;
+  char *zCol = 0;
   char *zNew;
   int nArg = 0;
   const char *zSep = "WHERE";
@@ -777,11 +806,11 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
   sqlite3_stmt *pStmt = 0;
   Tcl_Interp *interp = pVtab->interp;
 
-  int nRow;
+  int nRow = 0;
   int useIdx = 0;
   int rc = SQLITE_OK;
   int useCost = 0;
-  double cost;
+  double cost = 0;
   int isIgnoreUsable = 0;
   if( Tcl_GetVar(interp, "echo_module_ignore_usable", TCL_GLOBAL_ONLY) ){
     isIgnoreUsable = 1;
@@ -817,10 +846,11 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
     }
   }
 
-  zQuery = sqlite3_mprintf("SELECT rowid, * FROM %Q", pVtab->zTableName);
-  if( !zQuery ){
-    return SQLITE_NOMEM;
-  }
+  zCol = echoSelectList(pVtab, pIdxInfo);
+  if( !zCol ) return SQLITE_NOMEM;
+  zQuery = sqlite3_mprintf("SELECT rowid%z FROM %Q", zCol, pVtab->zTableName);
+  if( !zQuery ) return SQLITE_NOMEM;
+
   for(ii=0; ii<pIdxInfo->nConstraint; ii++){
     const struct sqlite3_index_constraint *pConstraint;
     struct sqlite3_index_constraint_usage *pUsage;
@@ -833,7 +863,7 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
 
     iCol = pConstraint->iColumn;
     if( iCol<0 || pVtab->aIndex[iCol] ){
-      char *zCol = iCol>=0 ? pVtab->aCol[iCol] : "rowid";
+      char *zNewCol = iCol>=0 ? pVtab->aCol[iCol] : "rowid";
       char *zOp = 0;
       useIdx = 1;
       switch( pConstraint->op ){
@@ -848,13 +878,26 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
         case SQLITE_INDEX_CONSTRAINT_GE:
           zOp = ">="; break;
         case SQLITE_INDEX_CONSTRAINT_MATCH:
+          /* Purposely translate the MATCH operator into a LIKE, which
+          ** will be used by the next block of code to construct a new
+          ** query.  It should also be noted here that the next block
+          ** of code requires the first letter of this operator to be
+          ** in upper-case to trigger the special MATCH handling (i.e.
+          ** wrapping the bound parameter with literal '%'s).
+          */
           zOp = "LIKE"; break;
+        case SQLITE_INDEX_CONSTRAINT_LIKE:
+          zOp = "like"; break;
+        case SQLITE_INDEX_CONSTRAINT_GLOB:
+          zOp = "glob"; break;
+        case SQLITE_INDEX_CONSTRAINT_REGEXP:
+          zOp = "regexp"; break;
       }
       if( zOp[0]=='L' ){
         zNew = sqlite3_mprintf(" %s %s LIKE (SELECT '%%'||?||'%%')", 
-                               zSep, zCol);
+                               zSep, zNewCol);
       } else {
-        zNew = sqlite3_mprintf(" %s %s %s ?", zSep, zCol, zOp);
+        zNew = sqlite3_mprintf(" %s %s %s ?", zSep, zNewCol, zOp);
       }
       string_concat(&zQuery, zNew, 1, &rc);
 
@@ -872,9 +915,9 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
         pIdxInfo->aOrderBy->iColumn<0 ||
         pVtab->aIndex[pIdxInfo->aOrderBy->iColumn]) ){
     int iCol = pIdxInfo->aOrderBy->iColumn;
-    char *zCol = iCol>=0 ? pVtab->aCol[iCol] : "rowid";
+    char *zNewCol = iCol>=0 ? pVtab->aCol[iCol] : "rowid";
     char *zDir = pIdxInfo->aOrderBy->desc?"DESC":"ASC";
-    zNew = sqlite3_mprintf(" ORDER BY %s %s", zCol, zDir);
+    zNew = sqlite3_mprintf(" ORDER BY %s %s", zNewCol, zDir);
     string_concat(&zQuery, zNew, 1, &rc);
     pIdxInfo->orderByConsumed = 1;
   }
@@ -927,7 +970,7 @@ int echoUpdate(
   sqlite3 *db = pVtab->db;
   int rc = SQLITE_OK;
 
-  sqlite3_stmt *pStmt;
+  sqlite3_stmt *pStmt = 0;
   char *z = 0;               /* SQL statement to execute */
   int bindArgZero = 0;       /* True to bind apData[0] to sql var no. nData */
   int bindArgOne = 0;        /* True to bind apData[1] to sql var no. 1 */

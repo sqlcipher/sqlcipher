@@ -142,7 +142,7 @@ int sqlite3CheckCollSeq(Parse *pParse, CollSeq *pColl){
 **
 ** Each pointer stored in the sqlite3.aCollSeq hash table contains an
 ** array of three CollSeq structures. The first is the collation sequence
-** prefferred for UTF-8, the second UTF-16le, and the third UTF-16be.
+** preferred for UTF-8, the second UTF-16le, and the third UTF-16be.
 **
 ** Stored immediately after the three collation sequences is a copy of
 ** the collation sequence name. A pointer to this string is stored in
@@ -154,11 +154,11 @@ static CollSeq *findCollSeqEntry(
   int create            /* Create a new entry if true */
 ){
   CollSeq *pColl;
-  int nName = sqlite3Strlen30(zName);
-  pColl = sqlite3HashFind(&db->aCollSeq, zName, nName);
+  pColl = sqlite3HashFind(&db->aCollSeq, zName);
 
   if( 0==pColl && create ){
-    pColl = sqlite3DbMallocZero(db, 3*sizeof(*pColl) + nName + 1 );
+    int nName = sqlite3Strlen30(zName);
+    pColl = sqlite3DbMallocZero(db, 3*sizeof(*pColl) + nName + 1);
     if( pColl ){
       CollSeq *pDel = 0;
       pColl[0].zName = (char*)&pColl[3];
@@ -169,7 +169,7 @@ static CollSeq *findCollSeqEntry(
       pColl[2].enc = SQLITE_UTF16BE;
       memcpy(pColl[0].zName, zName, nName);
       pColl[0].zName[nName] = 0;
-      pDel = sqlite3HashInsert(&db->aCollSeq, pColl[0].zName, nName, pColl);
+      pDel = sqlite3HashInsert(&db->aCollSeq, pColl[0].zName, pColl);
 
       /* If a malloc() failure occurred in sqlite3HashInsert(), it will 
       ** return the pColl pointer to be deleted (because it wasn't added
@@ -177,7 +177,7 @@ static CollSeq *findCollSeqEntry(
       */
       assert( pDel==0 || pDel==pColl );
       if( pDel!=0 ){
-        db->mallocFailed = 1;
+        sqlite3OomFault(db);
         sqlite3DbFree(db, pDel);
         pColl = 0;
       }
@@ -243,8 +243,8 @@ CollSeq *sqlite3FindCollSeq(
 ** 5: UTF16 byte order conversion required - argument count matches exactly
 ** 6: Perfect match:  encoding and argument count match exactly.
 **
-** If nArg==(-2) then any function with a non-null xStep or xFunc is
-** a perfect match and any function with both xStep and xFunc NULL is
+** If nArg==(-2) then any function with a non-null xSFunc is
+** a perfect match and any function with xSFunc NULL is
 ** a non-match.
 */
 #define FUNC_PERFECT_MATCH 6  /* The score for a perfect match */
@@ -256,7 +256,7 @@ static int matchQuality(
   int match;
 
   /* nArg of -2 is a special case */
-  if( nArg==(-2) ) return (p->xFunc==0 && p->xStep==0) ? 0 : FUNC_PERFECT_MATCH;
+  if( nArg==(-2) ) return (p->xSFunc==0) ? 0 : FUNC_PERFECT_MATCH;
 
   /* Wrong number of arguments means "no match" */
   if( p->nArg!=nArg && p->nArg>=0 ) return 0;
@@ -334,7 +334,7 @@ void sqlite3FuncDefInsert(
 ** no matching function previously existed.
 **
 ** If nArg is -2, then the first valid function found is returned.  A
-** function is valid if either xFunc or xStep is non-zero.  The nArg==(-2)
+** function is valid if xSFunc is non-zero.  The nArg==(-2)
 ** case is used to see if zName is a valid function name for some number
 ** of arguments.  If nArg is -2, then createFlag must be 0.
 **
@@ -411,7 +411,7 @@ FuncDef *sqlite3FindFunction(
     sqlite3FuncDefInsert(&db->aFunc, pBest);
   }
 
-  if( pBest && (pBest->xStep || pBest->xFunc || createFlag) ){
+  if( pBest && (pBest->xSFunc || createFlag) ){
     return pBest;
   }
   return 0;
@@ -447,9 +447,9 @@ void sqlite3SchemaClear(void *p){
   sqlite3HashClear(&temp1);
   sqlite3HashClear(&pSchema->fkeyHash);
   pSchema->pSeqTab = 0;
-  if( pSchema->flags & DB_SchemaLoaded ){
+  if( pSchema->schemaFlags & DB_SchemaLoaded ){
     pSchema->iGeneration++;
-    pSchema->flags &= ~DB_SchemaLoaded;
+    pSchema->schemaFlags &= ~DB_SchemaLoaded;
   }
 }
 
@@ -465,7 +465,7 @@ Schema *sqlite3SchemaGet(sqlite3 *db, Btree *pBt){
     p = (Schema *)sqlite3DbMallocZero(0, sizeof(Schema));
   }
   if( !p ){
-    db->mallocFailed = 1;
+    sqlite3OomFault(db);
   }else if ( 0==p->file_format ){
     sqlite3HashInit(&p->tblHash);
     sqlite3HashInit(&p->idxHash);

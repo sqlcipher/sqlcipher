@@ -445,6 +445,49 @@ file delete -force test.db
 file delete -force test2.db
 
 # attach an encrypted database
+# without specifying key, verify it attaches
+# correctly when PRAGMA cipher_store_pass = 1
+# is set.
+do_test attach-database-with-default-key-using-cipher-store-pass {
+ 
+    sqlite_orig db1 test.db  
+    execsql {
+        PRAGMA key = 'testkey';
+        CREATE TABLE t1(a,b);
+        INSERT INTO t1(a,b) VALUES('foo', 'bar');        
+    } db1
+    db1 close
+
+    sqlite_orig db2 test2.db
+    execsql {
+      PRAGMA key = 'testkey';
+      CREATE TABLE t2(a,b);
+      INSERT INTO t2 VALUES ('test1', 'test2'); 
+    } db2
+    db2 close
+
+    sqlite_orig db1 test.db
+    execsql {
+        PRAGMA key = 'testkey';
+        PRAGMA cipher_store_pass = 1;
+        ATTACH DATABASE 'test2.db' as db2;
+        SELECT sqlcipher_export('db2');
+        DETACH DATABASE db2;
+    } db1
+    db1 close
+
+    sqlite_orig db2 test2.db  
+    execsql {
+        PRAGMA key = 'testkey';
+        SELECT * FROM t1;
+    } db2
+
+} {foo bar}
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an encrypted database
 # where both database have the same
 # key explicitly
 setup test.db "'testkey'"
@@ -1498,7 +1541,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {3.1.0}
+} {3.3.1}
 db close
 file delete -force test.db
 
@@ -1879,6 +1922,30 @@ do_test verify-pragma-cipher-page-size-changed {
 db close
 file delete -force test.db
 
+# verify invalid cipher does not cause segfault
+if_built_with_openssl verify-invalid-cipher-does-not-segfault {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher = 'junk';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
+# verify setting cipher_store_pass before key
+# does not cause segfault
+do_test verify-cipher-store-pass-before-key-does-not-segfault {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_store_pass = 1;
+        PRAGMA key = 'test';
+    }
+} {}
+db close
+file delete -force test.db
+
 # verify the pragma cipher
 # reports the default value
 if_built_with_openssl verify-pragma-cipher-default {
@@ -2212,6 +2279,28 @@ do_test can-migrate-with-raw-hex-key {
 } {5}
 db close
 file delete -force test.db
+
+do_test attach_database_with_non_default_page_size {
+    sqlite_orig db test2.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size = 4096;
+        CREATE TABLE t1(a,b);
+        INSERT INTO t1(a,b) values('one for the money', 'two for the show');
+        INSERT INTO t1(a,b) values('three to get ready', 'now, go cat, go');
+    }
+    db close
+
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_page_size = 4096;
+        PRAGMA key = 'test';
+        ATTACH DATABASE 'test2.db' as test2 KEY 'test';
+        SELECT count(*) FROM test2.t1;
+    }
+} {2}
+db close
+file delete -force test.db test2.db
 
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test

@@ -109,7 +109,7 @@ static void attachFunc(
   ** hash tables.
   */
   if( db->aDb==db->aDbStatic ){
-    aNew = sqlite3DbMallocRaw(db, sizeof(db->aDb[0])*3 );
+    aNew = sqlite3DbMallocRawNN(db, sizeof(db->aDb[0])*3 );
     if( aNew==0 ) return;
     memcpy(aNew, db->aDb, sizeof(db->aDb[0])*2);
   }else{
@@ -127,7 +127,7 @@ static void attachFunc(
   flags = db->openFlags;
   rc = sqlite3ParseUri(db->pVfs->zName, zFile, &flags, &pVfs, &zPath, &zErr);
   if( rc!=SQLITE_OK ){
-    if( rc==SQLITE_NOMEM ) db->mallocFailed = 1;
+    if( rc==SQLITE_NOMEM ) sqlite3OomFault(db);
     sqlite3_result_error(context, zErr, -1);
     sqlite3_free(zErr);
     return;
@@ -150,13 +150,16 @@ static void attachFunc(
         "attached databases must use the same text encoding as main database");
       rc = SQLITE_ERROR;
     }
+    sqlite3BtreeEnter(aNew->pBt);
     pPager = sqlite3BtreePager(aNew->pBt);
     sqlite3PagerLockingMode(pPager, db->dfltLockMode);
     sqlite3BtreeSecureDelete(aNew->pBt,
                              sqlite3BtreeSecureDelete(db->aDb[0].pBt,-1) );
 #ifndef SQLITE_OMIT_PAGER_PRAGMAS
-    sqlite3BtreeSetPagerFlags(aNew->pBt, 3 | (db->flags & PAGER_FLAGS_MASK));
+    sqlite3BtreeSetPagerFlags(aNew->pBt,
+                      PAGER_SYNCHRONOUS_FULL | (db->flags & PAGER_FLAGS_MASK));
 #endif
+    sqlite3BtreeLeave(aNew->pBt);
   }
   aNew->safety_level = 3;
   aNew->zName = sqlite3DbStrDup(db, zName);
@@ -189,7 +192,7 @@ static void attachFunc(
       case SQLITE_NULL:
         /* No key specified.  Use the key from the main database */
         sqlite3CodecGetKey(db, 0, (void**)&zKey, &nKey);
-        if( nKey>0 || sqlite3BtreeGetReserve(db->aDb[0].pBt)>0 ){
+        if( nKey>0 || sqlite3BtreeGetOptimalReserve(db->aDb[0].pBt)>0 ){
           rc = sqlite3CodecAttach(db, db->nDb-1, zKey, nKey);
         }
         break;
@@ -207,6 +210,15 @@ static void attachFunc(
     rc = sqlite3Init(db, &zErrDyn);
     sqlite3BtreeLeaveAll(db);
   }
+#ifdef SQLITE_USER_AUTHENTICATION
+  if( rc==SQLITE_OK ){
+    u8 newAuth = 0;
+    rc = sqlite3UserAuthCheckLogin(db, zName, &newAuth);
+    if( newAuth<db->auth.authLevel ){
+      rc = SQLITE_AUTH_USER;
+    }
+  }
+#endif
   if( rc ){
     int iDb = db->nDb - 1;
     assert( iDb>=2 );
@@ -218,7 +230,7 @@ static void attachFunc(
     sqlite3ResetAllSchemasOfConnection(db);
     db->nDb = iDb;
     if( rc==SQLITE_NOMEM || rc==SQLITE_IOERR_NOMEM ){
-      db->mallocFailed = 1;
+      sqlite3OomFault(db);
       sqlite3DbFree(db, zErrDyn);
       zErrDyn = sqlite3MPrintf(db, "out of memory");
     }else if( zErrDyn==0 ){
@@ -287,7 +299,7 @@ static void detachFunc(
   sqlite3BtreeClose(pDb->pBt);
   pDb->pBt = 0;
   pDb->pSchema = 0;
-  sqlite3ResetAllSchemasOfConnection(db);
+  sqlite3CollapseDatabaseArray(db);
   return;
 
 detach_error:
@@ -321,7 +333,6 @@ static void codeAttach(
       SQLITE_OK!=(rc = resolveAttachExpr(&sName, pDbname)) ||
       SQLITE_OK!=(rc = resolveAttachExpr(&sName, pKey))
   ){
-    pParse->nErr++;
     goto attach_end;
   }
 
@@ -349,11 +360,11 @@ static void codeAttach(
 
   assert( v || db->mallocFailed );
   if( v ){
-    sqlite3VdbeAddOp3(v, OP_Function, 0, regArgs+3-pFunc->nArg, regArgs+3);
+    sqlite3VdbeAddOp4(v, OP_Function0, 0, regArgs+3-pFunc->nArg, regArgs+3,
+                      (char *)pFunc, P4_FUNCDEF);
     assert( pFunc->nArg==-1 || (pFunc->nArg&0xff)==pFunc->nArg );
     sqlite3VdbeChangeP5(v, (u8)(pFunc->nArg));
-    sqlite3VdbeChangeP4(v, -1, (char *)pFunc, P4_FUNCDEF);
-
+ 
     /* Code an OP_Expire. For an ATTACH statement, set P1 to true (expire this
     ** statement only). For DETACH, set it to false (expire all existing
     ** statements).
@@ -378,8 +389,7 @@ void sqlite3Detach(Parse *pParse, Expr *pDbname){
     SQLITE_UTF8,      /* funcFlags */
     0,                /* pUserData */
     0,                /* pNext */
-    detachFunc,       /* xFunc */
-    0,                /* xStep */
+    detachFunc,       /* xSFunc */
     0,                /* xFinalize */
     "sqlite_detach",  /* zName */
     0,                /* pHash */
@@ -399,8 +409,7 @@ void sqlite3Attach(Parse *pParse, Expr *p, Expr *pDbname, Expr *pKey){
     SQLITE_UTF8,      /* funcFlags */
     0,                /* pUserData */
     0,                /* pNext */
-    attachFunc,       /* xFunc */
-    0,                /* xStep */
+    attachFunc,       /* xSFunc */
     0,                /* xFinalize */
     "sqlite_attach",  /* zName */
     0,                /* pHash */

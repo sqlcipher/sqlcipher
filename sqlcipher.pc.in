@@ -10,4 +10,4 @@ Description: SQL database engine
 Version: @PACKAGE_VERSION@
 Libs: -L${libdir} -lsqlcipher
 Libs.private: @LIBS@
-Cflags: -I${includedir}
+Cflags: -I${includedir}/sqlcipher
