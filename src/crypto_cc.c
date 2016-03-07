@@ -52,11 +52,12 @@ static const char* sqlcipher_cc_get_provider_name(void *ctx) {
 
 static const char* sqlcipher_cc_get_provider_version(void *ctx) {
 #if TARGET_OS_MAC
+  CFTypeRef version;
   CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.security"));
   if(bundle == NULL) {
     return "unknown";
   }
-  CFTypeRef version = CFBundleGetValueForInfoDictionaryKey(bundle, CFSTR("CFBundleShortVersionString"));
+  version = CFBundleGetValueForInfoDictionaryKey(bundle, CFSTR("CFBundleShortVersionString"));
   return CFStringGetCStringPtr(version, kCFStringEncodingUTF8);
 #else
   return "unknown";
