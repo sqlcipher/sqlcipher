@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased][unreleased]
 
-## [3.4.0] - 2016-02-??
+## [3.4.0] - 2016-04-05
 ### Added
 - Added `PRAGMA cipher_provider_version`
 
