@@ -885,12 +885,12 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       if(ctx->read_ctx->provider->random(ctx->read_ctx->provider_ctx, ctx->kdf_salt, FILE_HEADER_SZ) != SQLITE_OK) return SQLITE_ERROR;
       ctx->need_kdf_salt = 0;
     }
-    if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
+    if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, c_ctx->key_sz * 2)) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, n, c_ctx->key);
-    } else if (c_ctx->pass_sz == (((c_ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
+    } else if (c_ctx->pass_sz == (((c_ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, (c_ctx->key_sz + ctx->kdf_salt_sz) * 2)) { 
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 
       cipher_hex2bin(z, (c_ctx->key_sz * 2), c_ctx->key);
@@ -1158,11 +1158,9 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       db->nTotalChange = saved_nTotalChange;
       db->xTrace = saved_xTrace;
       db->autoCommit = 1;
-      if( pDb ){
-        sqlite3BtreeClose(pDb->pBt);
-        pDb->pBt = 0;
-        pDb->pSchema = 0;
-      }
+      sqlite3BtreeClose(pDb->pBt);
+      pDb->pBt = 0;
+      pDb->pSchema = 0;
       sqlite3ResetAllSchemasOfConnection(db);
       remove(migrated_db_filename);
       sqlite3_free(migrated_db_filename);
@@ -1229,6 +1227,10 @@ static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint
 
 int sqlcipher_codec_fips_status(codec_ctx *ctx) {
   return ctx->read_ctx->provider->fips_status(ctx->read_ctx);
+}
+
+const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
+  return ctx->read_ctx->provider->get_provider_version(ctx->read_ctx);
 }
 
 #endif

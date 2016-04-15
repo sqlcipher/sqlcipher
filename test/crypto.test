@@ -1541,7 +1541,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {3.3.0}
+} {3.3.1}
 db close
 file delete -force test.db
 
@@ -1919,6 +1919,30 @@ do_test verify-pragma-cipher-page-size-changed {
         PRAGMA cipher_page_size;
     }
 } {4096}
+db close
+file delete -force test.db
+
+# verify invalid cipher does not cause segfault
+if_built_with_openssl verify-invalid-cipher-does-not-segfault {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher = 'junk';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
+# verify setting cipher_store_pass before key
+# does not cause segfault
+do_test verify-cipher-store-pass-before-key-does-not-segfault {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_store_pass = 1;
+        PRAGMA key = 'test';
+    }
+} {}
 db close
 file delete -force test.db
 

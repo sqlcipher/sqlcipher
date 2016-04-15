@@ -231,6 +231,7 @@
 /* Forward declarations */
 typedef struct MemPage MemPage;
 typedef struct BtLock BtLock;
+typedef struct CellInfo CellInfo;
 
 /*
 ** This is a magic string that appears at the beginning of every
@@ -275,11 +276,11 @@ struct MemPage {
   u8 nOverflow;        /* Number of overflow cell bodies in aCell[] */
   u8 intKey;           /* True if table b-trees.  False for index b-trees */
   u8 intKeyLeaf;       /* True if the leaf of an intKey table */
-  u8 noPayload;        /* True if internal intKey page (thus w/o data) */
   u8 leaf;             /* True if a leaf page */
   u8 hdrOffset;        /* 100 for page 1.  0 otherwise */
   u8 childPtrSize;     /* 0 if leaf==1.  4 if leaf==0 */
   u8 max1bytePayload;  /* min(maxLocal,127) */
+  u8 bBusy;            /* Prevent endless loops on corrupt database files */
   u16 maxLocal;        /* Copy of BtShared.maxLocal or BtShared.maxLeaf */
   u16 minLocal;        /* Copy of BtShared.minLocal or BtShared.minLeaf */
   u16 cellOffset;      /* Index in aData of first cell pointer */
@@ -293,7 +294,10 @@ struct MemPage {
   u8 *aData;           /* Pointer to disk image of the page data */
   u8 *aDataEnd;        /* One byte past the end of usable data */
   u8 *aCellIdx;        /* The cell index area */
+  u8 *aDataOfst;       /* Same as aData for leaves.  aData+4 for interior */
   DbPage *pDbPage;     /* Pager page handle */
+  u16 (*xCellSize)(MemPage*,u8*);             /* cellSizePtr method */
+  void (*xParseCell)(MemPage*,u8*,CellInfo*); /* btreeParseCell method */
   Pgno pgno;           /* Page number for this page */
 };
 
@@ -349,6 +353,7 @@ struct Btree {
   u8 inTrans;        /* TRANS_NONE, TRANS_READ or TRANS_WRITE */
   u8 sharable;       /* True if we can share pBt with another db */
   u8 locked;         /* True if db currently has pBt locked */
+  u8 hasIncrblobCur; /* True if there are one or more Incrblob cursors */
   int wantToLock;    /* Number of nested calls to sqlite3BtreeEnter() */
   int nBackup;       /* Number of backup operations reading this btree */
   u32 iDataVersion;  /* Combines with pBt->pPager->iDataVersion */
@@ -418,6 +423,9 @@ struct BtShared {
 #endif
   u8 inTransaction;     /* Transaction state */
   u8 max1bytePayload;   /* Maximum first byte of cell for a 1-byte payload */
+#ifdef SQLITE_HAS_CODEC
+  u8 optimalReserve;    /* Desired amount of reserved space per page */
+#endif
   u16 btsFlags;         /* Boolean parameters.  See BTS_* macros below */
   u16 maxLocal;         /* Maximum local payload in non-LEAFDATA tables */
   u16 minLocal;         /* Minimum local payload in non-LEAFDATA tables */
@@ -456,13 +464,11 @@ struct BtShared {
 ** about a cell.  The parseCellPtr() function fills in this structure
 ** based on information extract from the raw disk page.
 */
-typedef struct CellInfo CellInfo;
 struct CellInfo {
   i64 nKey;      /* The key for INTKEY tables, or nPayload otherwise */
   u8 *pPayload;  /* Pointer to the start of payload */
   u32 nPayload;  /* Bytes of payload */
   u16 nLocal;    /* Amount of payload held locally, not on overflow */
-  u16 iOverflow; /* Offset to overflow page number.  Zero if no overflow */
   u16 nSize;     /* Size of the cell content on the main b-tree page */
 };
 
@@ -499,8 +505,7 @@ struct CellInfo {
 struct BtCursor {
   Btree *pBtree;            /* The Btree to which this cursor belongs */
   BtShared *pBt;            /* The BtShared this cursor points to */
-  BtCursor *pNext, *pPrev;  /* Forms a linked list of all cursors */
-  struct KeyInfo *pKeyInfo; /* Argument passed to comparison function */
+  BtCursor *pNext;          /* Forms a linked list of all cursors */
   Pgno *aOverflow;          /* Cache of overflow page locations */
   CellInfo info;            /* A parse of the cell we are pointing at */
   i64 nKey;                 /* Size of pKey, or last integer key */
@@ -510,9 +515,16 @@ struct BtCursor {
   int skipNext;    /* Prev() is noop if negative. Next() is noop if positive.
                    ** Error code if eState==CURSOR_FAULT */
   u8 curFlags;              /* zero or more BTCF_* flags defined below */
+  u8 curPagerFlags;         /* Flags to send to sqlite3PagerGet() */
   u8 eState;                /* One of the CURSOR_XXX constants (see below) */
-  u8 hints;                             /* As configured by CursorSetHints() */
-  i16 iPage;                            /* Index of current page in apPage */
+  u8 hints;                 /* As configured by CursorSetHints() */
+  /* All fields above are zeroed when the cursor is allocated.  See
+  ** sqlite3BtreeCursorZero().  Fields that follow must be manually
+  ** initialized. */
+  i8 iPage;                 /* Index of current page in apPage */
+  u8 curIntKey;             /* Value of apPage[0]->intKey */
+  struct KeyInfo *pKeyInfo; /* Argument passed to comparison function */
+  void *padding1;           /* Make object size a multiple of 16 */
   u16 aiIdx[BTCURSOR_MAX_DEPTH];        /* Current index in apPage[i] */
   MemPage *apPage[BTCURSOR_MAX_DEPTH];  /* Pages from root to current page */
 };
@@ -525,6 +537,7 @@ struct BtCursor {
 #define BTCF_ValidOvfl    0x04   /* True if aOverflow is valid */
 #define BTCF_AtLast       0x08   /* Cursor is pointing ot the last entry */
 #define BTCF_Incrblob     0x10   /* True if an incremental I/O handle */
+#define BTCF_Multiple     0x20   /* Maybe another cursor on the same btree */
 
 /*
 ** Potential values for BtCursor.eState.
@@ -667,6 +680,7 @@ struct IntegrityCk {
   const char *zPfx; /* Error message prefix */
   int v1, v2;       /* Values for up to two %d fields in zPfx */
   StrAccum errMsg;  /* Accumulate the error message text here */
+  u32 *heap;        /* Min-heap used for analyzing cell coverage */
 };
 
 /*
@@ -676,3 +690,20 @@ struct IntegrityCk {
 #define put2byte(p,v) ((p)[0] = (u8)((v)>>8), (p)[1] = (u8)(v))
 #define get4byte sqlite3Get4byte
 #define put4byte sqlite3Put4byte
+
+/*
+** get2byteAligned(), unlike get2byte(), requires that its argument point to a
+** two-byte aligned address.  get2bytea() is only used for accessing the
+** cell addresses in a btree header.
+*/
+#if SQLITE_BYTEORDER==4321
+# define get2byteAligned(x)  (*(u16*)(x))
+#elif SQLITE_BYTEORDER==1234 && !defined(SQLITE_DISABLE_INTRINSIC) \
+    && GCC_VERSION>=4008000
+# define get2byteAligned(x)  __builtin_bswap16(*(u16*)(x))
+#elif SQLITE_BYTEORDER==1234 && !defined(SQLITE_DISABLE_INTRINSIC) \
+    && defined(_MSC_VER) && _MSC_VER>=1300
+# define get2byteAligned(x)  _byteswap_ushort(*(u16*)(x))
+#else
+# define get2byteAligned(x)  ((x)[0]<<8 | (x)[1])
+#endif

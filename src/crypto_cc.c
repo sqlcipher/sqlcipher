@@ -35,6 +35,7 @@
 #include "sqlcipher.h"
 #include <CommonCrypto/CommonCrypto.h>
 #include <Security/SecRandom.h>
+#include <CoreFoundation/CoreFoundation.h>
 
 static int sqlcipher_cc_add_random(void *ctx, void *buffer, int length) {
   return SQLITE_OK;
@@ -47,6 +48,20 @@ static int sqlcipher_cc_random (void *ctx, void *buffer, int length) {
 
 static const char* sqlcipher_cc_get_provider_name(void *ctx) {
   return "commoncrypto";
+}
+
+static const char* sqlcipher_cc_get_provider_version(void *ctx) {
+#if TARGET_OS_MAC
+  CFTypeRef version;
+  CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.security"));
+  if(bundle == NULL) {
+    return "unknown";
+  }
+  version = CFBundleGetValueForInfoDictionaryKey(bundle, CFSTR("CFBundleShortVersionString"));
+  return CFStringGetCStringPtr(version, kCFStringEncodingUTF8);
+#else
+  return "unknown";
+#endif
 }
 
 static int sqlcipher_cc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
@@ -142,6 +157,7 @@ int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->ctx_free = sqlcipher_cc_ctx_free;
   p->add_random = sqlcipher_cc_add_random;
   p->fips_status = sqlcipher_cc_fips_status;
+  p->get_provider_version = sqlcipher_cc_get_provider_version;
   return SQLITE_OK;
 }
 

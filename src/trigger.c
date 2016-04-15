@@ -193,7 +193,6 @@ void sqlite3BeginTrigger(
   /* Do not create a trigger on a system table */
   if( sqlite3StrNICmp(pTab->zName, "sqlite_", 7)==0 ){
     sqlite3ErrorMsg(pParse, "cannot create trigger on system table");
-    pParse->nErr++;
     goto trigger_cleanup;
   }
 
@@ -288,8 +287,7 @@ void sqlite3FinishTrigger(
     pStepList->pTrig = pTrig;
     pStepList = pStepList->pNext;
   }
-  nameToken.z = pTrig->zName;
-  nameToken.n = sqlite3Strlen30(nameToken.z);
+  sqlite3TokenInit(&nameToken, pTrig->zName);
   sqlite3FixInit(&sFix, pParse, iDb, "trigger", &nameToken);
   if( sqlite3FixTriggerStep(&sFix, pTrig->step_list) 
    || sqlite3FixExpr(&sFix, pTrig->pWhen) 
@@ -325,7 +323,7 @@ void sqlite3FinishTrigger(
     assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
     pTrig = sqlite3HashInsert(pHash, zName, pTrig);
     if( pTrig ){
-      db->mallocFailed = 1;
+      sqlite3OomFault(db);
     }else if( pLink->pSchema==pLink->pTabSchema ){
       Table *pTab;
       pTab = sqlite3HashFind(&pLink->pTabSchema->tblHash, pLink->table);
@@ -373,12 +371,12 @@ static TriggerStep *triggerStepAllocate(
 ){
   TriggerStep *pTriggerStep;
 
-  pTriggerStep = sqlite3DbMallocZero(db, sizeof(TriggerStep) + pName->n);
+  pTriggerStep = sqlite3DbMallocZero(db, sizeof(TriggerStep) + pName->n + 1);
   if( pTriggerStep ){
     char *z = (char*)&pTriggerStep[1];
     memcpy(z, pName->z, pName->n);
-    pTriggerStep->target.z = z;
-    pTriggerStep->target.n = pName->n;
+    sqlite3Dequote(z);
+    pTriggerStep->zTarget = z;
     pTriggerStep->op = op;
   }
   return pTriggerStep;
@@ -560,31 +558,12 @@ void sqlite3DropTriggerPtr(Parse *pParse, Trigger *pTrigger){
   */
   assert( pTable!=0 );
   if( (v = sqlite3GetVdbe(pParse))!=0 ){
-    int base;
-    static const int iLn = VDBE_OFFSET_LINENO(2);
-    static const VdbeOpList dropTrigger[] = {
-      { OP_Rewind,     0, ADDR(9),  0},
-      { OP_String8,    0, 1,        0}, /* 1 */
-      { OP_Column,     0, 1,        2},
-      { OP_Ne,         2, ADDR(8),  1},
-      { OP_String8,    0, 1,        0}, /* 4: "trigger" */
-      { OP_Column,     0, 0,        2},
-      { OP_Ne,         2, ADDR(8),  1},
-      { OP_Delete,     0, 0,        0},
-      { OP_Next,       0, ADDR(1),  0}, /* 8 */
-    };
-
-    sqlite3BeginWriteOperation(pParse, 0, iDb);
-    sqlite3OpenMasterTable(pParse, iDb);
-    base = sqlite3VdbeAddOpList(v,  ArraySize(dropTrigger), dropTrigger, iLn);
-    sqlite3VdbeChangeP4(v, base+1, pTrigger->zName, P4_TRANSIENT);
-    sqlite3VdbeChangeP4(v, base+4, "trigger", P4_STATIC);
+    sqlite3NestedParse(pParse,
+       "DELETE FROM %Q.%s WHERE name=%Q AND type='trigger'",
+       db->aDb[iDb].zName, SCHEMA_TABLE(iDb), pTrigger->zName
+    );
     sqlite3ChangeCookie(pParse, iDb);
-    sqlite3VdbeAddOp2(v, OP_Close, 0, 0);
     sqlite3VdbeAddOp4(v, OP_DropTrigger, iDb, 0, 0, pTrigger->zName, 0);
-    if( pParse->nMem<3 ){
-      pParse->nMem = 3;
-    }
   }
 }
 
@@ -661,7 +640,7 @@ Trigger *sqlite3TriggersExist(
 }
 
 /*
-** Convert the pStep->target token into a SrcList and return a pointer
+** Convert the pStep->zTarget string into a SrcList and return a pointer
 ** to that SrcList.
 **
 ** This routine adds a specific database name, if needed, to the target when
@@ -674,17 +653,17 @@ static SrcList *targetSrcList(
   Parse *pParse,       /* The parsing context */
   TriggerStep *pStep   /* The trigger containing the target token */
 ){
+  sqlite3 *db = pParse->db;
   int iDb;             /* Index of the database to use */
   SrcList *pSrc;       /* SrcList to be returned */
 
-  pSrc = sqlite3SrcListAppend(pParse->db, 0, &pStep->target, 0);
+  pSrc = sqlite3SrcListAppend(db, 0, 0, 0);
   if( pSrc ){
     assert( pSrc->nSrc>0 );
-    assert( pSrc->a!=0 );
-    iDb = sqlite3SchemaToIndex(pParse->db, pStep->pTrig->pSchema);
+    pSrc->a[pSrc->nSrc-1].zName = sqlite3DbStrDup(db, pStep->zTarget);
+    iDb = sqlite3SchemaToIndex(db, pStep->pTrig->pSchema);
     if( iDb==0 || iDb>=2 ){
-      sqlite3 *db = pParse->db;
-      assert( iDb<pParse->db->nDb );
+      assert( iDb<db->nDb );
       pSrc->a[pSrc->nSrc-1].zDatabase = sqlite3DbStrDup(db, db->aDb[iDb].zName);
     }
   }
@@ -796,6 +775,7 @@ static void transferParseError(Parse *pTo, Parse *pFrom){
   if( pTo->nErr==0 ){
     pTo->zErrMsg = pFrom->zErrMsg;
     pTo->nErr = pFrom->nErr;
+    pTo->rc = pFrom->rc;
   }else{
     sqlite3DbFree(pFrom->db, pFrom->zErrMsg);
   }
@@ -971,8 +951,8 @@ void sqlite3CodeRowTriggerDirect(
   if( pPrg ){
     int bRecursive = (p->zName && 0==(pParse->db->flags&SQLITE_RecTriggers));
 
-    sqlite3VdbeAddOp3(v, OP_Program, reg, ignoreJump, ++pParse->nMem);
-    sqlite3VdbeChangeP4(v, -1, (const char *)pPrg->pProgram, P4_SUBPROGRAM);
+    sqlite3VdbeAddOp4(v, OP_Program, reg, ignoreJump, ++pParse->nMem,
+                      (const char *)pPrg->pProgram, P4_SUBPROGRAM);
     VdbeComment(
         (v, "Call: %s.%s", (p->zName?p->zName:"fkey"), onErrorText(orconf)));
 

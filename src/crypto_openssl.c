@@ -131,6 +131,10 @@ static const char* sqlcipher_openssl_get_provider_name(void *ctx) {
   return "openssl";
 }
 
+static const char* sqlcipher_openssl_get_provider_version(void *ctx) {
+  return OPENSSL_VERSION_TEXT;
+}
+
 /* generate a defined number of random bytes */
 static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   int rc = 0;
@@ -186,8 +190,11 @@ static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int
 
 static int sqlcipher_openssl_set_cipher(void *ctx, const char *cipher_name) {
   openssl_ctx *o_ctx = (openssl_ctx *)ctx;
-  o_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
-  return SQLITE_OK;
+  EVP_CIPHER* cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
+  if(cipher != NULL) {
+    o_ctx->evp_cipher = cipher;
+  }
+  return cipher != NULL ? SQLITE_OK : SQLITE_ERROR;
 }
 
 static const char* sqlcipher_openssl_get_cipher(void *ctx) {
@@ -260,6 +267,7 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->ctx_free = sqlcipher_openssl_ctx_free;
   p->add_random = sqlcipher_openssl_add_random;
   p->fips_status = sqlcipher_openssl_fips_status;
+  p->get_provider_version = sqlcipher_openssl_get_provider_version;
   return SQLITE_OK;
 }
 

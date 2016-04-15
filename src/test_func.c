@@ -166,9 +166,7 @@ static void test_agg_errmsg16_final(sqlite3_context *ctx){
   const void *z;
   sqlite3 * db = sqlite3_context_db_handle(ctx);
   sqlite3_aggregate_context(ctx, 2048);
-  sqlite3BeginBenignMalloc();
   z = sqlite3_errmsg16(db);
-  sqlite3EndBenignMalloc();
   sqlite3_result_text16(ctx, z, -1, SQLITE_TRANSIENT);
 #endif
 }
@@ -462,7 +460,7 @@ static void real2hex(
 }
 
 /*
-** tclcmd: test_extract(record, field)
+**     test_extract(record, field)
 **
 ** This function implements an SQL user-function that accepts a blob
 ** containing a formatted database record as the first argument. The
@@ -509,7 +507,7 @@ static void test_extract(
 }
 
 /*
-** tclcmd: test_decode(record)
+**      test_decode(record)
 **
 ** This function implements an SQL user-function that accepts a blob
 ** containing a formatted database record as its only argument. It returns
@@ -600,12 +598,53 @@ static void test_decode(
   Tcl_DecrRefCount(pRet);
 }
 
+/*
+**       test_zeroblob(N)
+**
+** The implementation of scalar SQL function "test_zeroblob()". This is
+** similar to the built-in zeroblob() function, except that it does not
+** check that the integer parameter is within range before passing it
+** to sqlite3_result_zeroblob().
+*/
+static void test_zeroblob(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  int nZero = sqlite3_value_int(argv[0]);
+  sqlite3_result_zeroblob(context, nZero);
+}
+
+/*         test_getsubtype(V)
+**
+** Return the subtype for value V.
+*/
+static void test_getsubtype(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  sqlite3_result_int(context, (int)sqlite3_value_subtype(argv[0]));
+}
+
+/*         test_setsubtype(V, T)
+**
+** Return the value V with its subtype changed to T
+*/
+static void test_setsubtype(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  sqlite3_result_value(context, argv[0]);
+  sqlite3_result_subtype(context, (unsigned int)sqlite3_value_int(argv[1]));
+}
 
 static int registerTestFunctions(sqlite3 *db){
   static const struct {
      char *zName;
      signed char nArg;
-     unsigned char eTextRep; /* 1: UTF-16.  0: UTF-8 */
+     unsigned int eTextRep; /* 1: UTF-16.  0: UTF-8 */
      void (*xFunc)(sqlite3_context*,int,sqlite3_value **);
   } aFuncs[] = {
     { "randstr",               2, SQLITE_UTF8, randStr    },
@@ -626,6 +665,9 @@ static int registerTestFunctions(sqlite3 *db){
     { "real2hex",              1, SQLITE_UTF8, real2hex},
     { "test_decode",           1, SQLITE_UTF8, test_decode},
     { "test_extract",          2, SQLITE_UTF8, test_extract},
+    { "test_zeroblob",  1, SQLITE_UTF8|SQLITE_DETERMINISTIC, test_zeroblob},
+    { "test_getsubtype",       1, SQLITE_UTF8, test_getsubtype},
+    { "test_setsubtype",       2, SQLITE_UTF8, test_setsubtype},
   };
   int i;
 

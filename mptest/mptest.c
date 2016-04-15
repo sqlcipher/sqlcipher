@@ -41,16 +41,27 @@
 #else
 # include <unistd.h>
 #endif
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include <ctype.h>
+
+#define ISSPACE(X) isspace((unsigned char)(X))
+#define ISDIGIT(X) isdigit((unsigned char)(X))
 
 /* The suffix to append to the child command lines, if any */
 #if defined(_WIN32)
 # define GETPID (int)GetCurrentProcessId
 #else
 # define GETPID getpid
+#endif
+
+/* The directory separator character(s) */
+#if defined(_WIN32)
+# define isDirSep(c) (((c) == '/') || ((c) == '\\'))
+#else
+# define isDirSep(c) ((c) == '/')
 #endif
 
 /* Mark a parameter as unused to suppress compiler warnings */
@@ -180,10 +191,10 @@ int strglob(const char *zGlob, const char *z){
       }
       if( c2==0 || (seen ^ invert)==0 ) return 0;
     }else if( c=='#' ){
-      if( (z[0]=='-' || z[0]=='+') && isdigit(z[1]) ) z++;
-      if( !isdigit(z[0]) ) return 0;
+      if( (z[0]=='-' || z[0]=='+') && ISDIGIT(z[1]) ) z++;
+      if( !ISDIGIT(z[0]) ) return 0;
       z++;
-      while( isdigit(z[0]) ){ z++; }
+      while( ISDIGIT(z[0]) ){ z++; }
     }else{
       if( c!=(*(z++)) ) return 0;
     }
@@ -282,7 +293,7 @@ static void logMessage(const char *zFormat, ...){
 */
 static int clipLength(const char *z){
   int n = (int)strlen(z);
-  while( n>0 && isspace(z[n-1]) ){ n--; }
+  while( n>0 && ISSPACE(z[n-1]) ){ n--; }
   return n;
 }
 
@@ -412,9 +423,9 @@ static void stringAppend(String *p, const char *z, int n){
   if( n<0 ) n = (int)strlen(z);
   if( p->n+n>=p->nAlloc ){
     int nAlloc = p->nAlloc*2 + n + 100;
-    char *z = sqlite3_realloc(p->z, nAlloc);
-    if( z==0 ) fatalError("out of memory");
-    p->z = z;
+    char *zNew = sqlite3_realloc(p->z, nAlloc);
+    if( zNew==0 ) fatalError("out of memory");
+    p->z = zNew;
     p->nAlloc = nAlloc;
   }
   memcpy(p->z+p->n, z, n);
@@ -437,7 +448,7 @@ static void stringAppendTerm(String *p, const char *z){
     stringAppend(p, "nil", 3);
     return;
   }
-  for(i=0; z[i] && !isspace(z[i]); i++){}
+  for(i=0; z[i] && !ISSPACE(z[i]); i++){}
   if( i>0 && z[i]==0 ){
     stringAppend(p, z, i);
     return;
@@ -692,7 +703,7 @@ static char *readFile(const char *zFilename){
 */
 static int tokenLength(const char *z, int *pnLine){
   int n = 0;
-  if( isspace(z[0]) || (z[0]=='/' && z[1]=='*') ){
+  if( ISSPACE(z[0]) || (z[0]=='/' && z[1]=='*') ){
     int inC = 0;
     int c;
     if( z[0]=='/' ){
@@ -701,7 +712,7 @@ static int tokenLength(const char *z, int *pnLine){
     }
     while( (c = z[n++])!=0 ){
       if( c=='\n' ) (*pnLine)++;
-      if( isspace(c) ) continue;
+      if( ISSPACE(c) ) continue;
       if( inC && c=='*' && z[n]=='/' ){
         n++;
         inC = 0;
@@ -727,7 +738,7 @@ static int tokenLength(const char *z, int *pnLine){
     }
   }else{
     int c;
-    for(n=1; (c = z[n])!=0 && !isspace(c) && c!='"' && c!='\'' && c!=';'; n++){}
+    for(n=1; (c = z[n])!=0 && !ISSPACE(c) && c!='"' && c!='\'' && c!=';'; n++){}
   }
   return n;
 }
@@ -741,7 +752,7 @@ static int extractToken(const char *zIn, int nIn, char *zOut, int nOut){
     zOut[0] = 0;
     return 0;
   }
-  for(i=0; i<nIn && i<nOut-1 && !isspace(zIn[i]); i++){ zOut[i] = zIn[i]; }
+  for(i=0; i<nIn && i<nOut-1 && !ISSPACE(zIn[i]); i++){ zOut[i] = zIn[i]; }
   zOut[i] = 0;
   return i;
 }
@@ -751,7 +762,7 @@ static int extractToken(const char *zIn, int nIn, char *zOut, int nOut){
 */
 static int findEnd(const char *z, int *pnLine){
   int n = 0;
-  while( z[n] && (strncmp(z+n,"--end",5) || !isspace(z[n+5])) ){
+  while( z[n] && (strncmp(z+n,"--end",5) || !ISSPACE(z[n+5])) ){
     n += tokenLength(z+n, pnLine);
   }
   return n;
@@ -766,12 +777,12 @@ static int findEndif(const char *z, int stopAtElse, int *pnLine){
   int n = 0;
   while( z[n] ){
     int len = tokenLength(z+n, pnLine);
-    if( (strncmp(z+n,"--endif",7)==0 && isspace(z[n+7]))
-     || (stopAtElse && strncmp(z+n,"--else",6)==0 && isspace(z[n+6]))
+    if( (strncmp(z+n,"--endif",7)==0 && ISSPACE(z[n+7]))
+     || (stopAtElse && strncmp(z+n,"--else",6)==0 && ISSPACE(z[n+6]))
     ){
       return n+len;
     }
-    if( strncmp(z+n,"--if",4)==0 && isspace(z[n+4]) ){
+    if( strncmp(z+n,"--if",4)==0 && ISSPACE(z[n+4]) ){
       int skip = findEndif(z+n+len, 0, pnLine);
       n += skip + len;
     }else{
@@ -824,7 +835,7 @@ static void waitForClient(int iClient, int iTimeout, char *zErrPrefix){
 */
 static char *filenameTail(char *z){
   int i, j;
-  for(i=j=0; z[i]; i++) if( z[i]=='/' ) j = i+1;
+  for(i=j=0; z[i]; i++) if( isDirSep(z[i]) ) j = i+1;
   return z+j;
 }
 
@@ -881,7 +892,7 @@ static void runScript(
   while( (c = zScript[ii])!=0 ){
     prevLine = lineno;
     len = tokenLength(zScript+ii, &lineno);
-    if( isspace(c) || (c=='/' && zScript[ii+1]=='*') ){
+    if( ISSPACE(c) || (c=='/' && zScript[ii+1]=='*') ){
       ii += len;
       continue;
     }
@@ -902,7 +913,7 @@ static void runScript(
     if( g.iTrace>=2 ) logMessage("%.*s", len, zScript+ii);
     n = extractToken(zScript+ii+2, len-2, zCmd, sizeof(zCmd));
     for(nArg=0; n<len-2 && nArg<MX_ARG; nArg++){
-      while( n<len-2 && isspace(zScript[ii+2+n]) ){ n++; }
+      while( n<len-2 && ISSPACE(zScript[ii+2+n]) ){ n++; }
       if( n>=len-2 ) break;
       n += extractToken(zScript+ii+2+n, len-2-n,
                         azArg[nArg], sizeof(azArg[nArg]));
@@ -969,7 +980,7 @@ static void runScript(
     if( strcmp(zCmd, "match")==0 ){
       int jj;
       char *zAns = zScript+ii;
-      for(jj=7; jj<len-1 && isspace(zAns[jj]); jj++){}
+      for(jj=7; jj<len-1 && ISSPACE(zAns[jj]); jj++){}
       zAns += jj;
       if( len-jj-1!=sResult.n || strncmp(sResult.z, zAns, len-jj-1) ){
         errorMessage("line %d of %s:\nExpected [%.*s]\n     Got [%s]",
@@ -991,7 +1002,7 @@ static void runScript(
       char *zAns = zScript+ii;
       char *zCopy;
       int isGlob = (zCmd[0]=='g');
-      for(jj=9-3*isGlob; jj<len-1 && isspace(zAns[jj]); jj++){}
+      for(jj=9-3*isGlob; jj<len-1 && ISSPACE(zAns[jj]); jj++){}
       zAns += jj;
       zCopy = sqlite3_mprintf("%.*s", len-jj-1, zAns);
       if( (sqlite3_strglob(zCopy, sResult.z)==0)^isGlob ){
@@ -1021,9 +1032,9 @@ static void runScript(
       char *zNewFile, *zNewScript;
       char *zToDel = 0;
       zNewFile = azArg[0];
-      if( zNewFile[0]!='/' ){
+      if( !isDirSep(zNewFile[0]) ){
         int k;
-        for(k=(int)strlen(zFilename)-1; k>=0 && zFilename[k]!='/'; k--){}
+        for(k=(int)strlen(zFilename)-1; k>=0 && !isDirSep(zFilename[k]); k--){}
         if( k>0 ){
           zNewFile = zToDel = sqlite3_mprintf("%.*s/%s", k,zFilename,zNewFile);
         }
@@ -1043,7 +1054,7 @@ static void runScript(
     */
     if( strcmp(zCmd, "print")==0 ){
       int jj;
-      for(jj=7; jj<len && isspace(zScript[ii+jj]); jj++){}
+      for(jj=7; jj<len && ISSPACE(zScript[ii+jj]); jj++){}
       logMessage("%.*s", len-jj, zScript+ii+jj);
     }else
 
@@ -1055,7 +1066,7 @@ static void runScript(
     if( strcmp(zCmd, "if")==0 ){
       int jj, rc;
       sqlite3_stmt *pStmt;
-      for(jj=4; jj<len && isspace(zScript[ii+jj]); jj++){}
+      for(jj=4; jj<len && ISSPACE(zScript[ii+jj]); jj++){}
       pStmt = prepareSql("SELECT %.*s", len-jj, zScript+ii+jj);
       rc = sqlite3_step(pStmt);
       if( rc!=SQLITE_ROW || sqlite3_column_int(pStmt, 0)==0 ){
@@ -1231,9 +1242,22 @@ static void usage(const char *argv0){
   int i;
   const char *zTail = argv0;
   for(i=0; argv0[i]; i++){
-    if( argv0[i]=='/' ) zTail = argv0+i+1;
+    if( isDirSep(argv0[i]) ) zTail = argv0+i+1;
   }
   fprintf(stderr,"Usage: %s DATABASE ?OPTIONS? ?SCRIPT?\n", zTail);
+  fprintf(stderr,
+    "Options:\n"
+    "   --errlog FILENAME           Write errors to FILENAME\n"
+    "   --journalmode MODE          Use MODE as the journal_mode\n"
+    "   --log FILENAME              Log messages to FILENAME\n"
+    "   --quiet                     Suppress unnecessary output\n"
+    "   --vfs NAME                  Use NAME as the VFS\n"
+    "   --repeat N                  Repeat the test N times\n"
+    "   --sqltrace                  Enable SQL tracing\n"
+    "   --sync                      Enable synchronous disk writes\n"
+    "   --timeout MILLISEC          Busy timeout is MILLISEC\n"
+    "   --trace BOOLEAN             Enable or disable tracing\n"
+  );
   exit(1);
 }
 
@@ -1252,7 +1276,7 @@ static void unrecognizedArguments(
   exit(1);
 }
 
-int main(int argc, char **argv){
+int SQLITE_CDECL main(int argc, char **argv){
   const char *zClient;
   int iClient;
   int n, i;
@@ -1262,6 +1286,11 @@ int main(int argc, char **argv){
   int taskId;
   const char *zTrace;
   const char *zCOption;
+  const char *zJMode;
+  const char *zNRep;
+  int nRep = 1, iRep;
+  int iTmout = 0;              /* Default: no timeout */
+  const char *zTmout;
 
   g.argv0 = argv[0];
   g.iTrace = 1;
@@ -1277,6 +1306,10 @@ int main(int argc, char **argv){
   }
   n = argc-2;
   sqlite3_snprintf(sizeof(g.zName), g.zName, "%05d.mptest", GETPID());
+  zJMode = findOption(argv+2, &n, "journalmode", 1);
+  zNRep = findOption(argv+2, &n, "repeat", 1);
+  if( zNRep ) nRep = atoi(zNRep);
+  if( nRep<1 ) nRep = 1;
   g.zVfs = findOption(argv+2, &n, "vfs", 1);
   zClient = findOption(argv+2, &n, "client", 1);
   g.zErrLog = findOption(argv+2, &n, "errlog", 1);
@@ -1284,6 +1317,8 @@ int main(int argc, char **argv){
   zTrace = findOption(argv+2, &n, "trace", 1);
   if( zTrace ) g.iTrace = atoi(zTrace);
   if( findOption(argv+2, &n, "quiet", 0)!=0 ) g.iTrace = 0;
+  zTmout = findOption(argv+2, &n, "timeout", 1);
+  if( zTmout ) iTmout = atoi(zTmout);
   g.bSqlTrace = findOption(argv+2, &n, "sqltrace", 0)!=0;
   g.bSync = findOption(argv+2, &n, "sync", 0)!=0;
   if( g.zErrLog ){
@@ -1304,7 +1339,11 @@ int main(int argc, char **argv){
     sqlite3_snprintf(sizeof(g.zName), g.zName, "%05d.client%02d",
                      GETPID(), iClient);
   }else{
+    int nTry = 0;
     if( g.iTrace>0 ){
+      printf("BEGIN: %s", argv[0]);
+      for(i=1; i<argc; i++) printf(" %s", argv[i]);
+      printf("\n");
       printf("With SQLite " SQLITE_VERSION " " SQLITE_SOURCE_ID "\n" );
       for(i=0; (zCOption = sqlite3_compileoption_get(i))!=0; i++){
         printf("-DSQLITE_%s\n", zCOption);
@@ -1312,11 +1351,34 @@ int main(int argc, char **argv){
       fflush(stdout);
     }
     iClient =  0;
-    unlink(g.zDbFile);
+    do{
+      if( (nTry%5)==4 ) printf("... %strying to unlink '%s'\n",
+                               nTry>5 ? "still " : "", g.zDbFile);
+      rc = unlink(g.zDbFile);
+      if( rc && errno==ENOENT ) rc = 0;
+    }while( rc!=0 && (++nTry)<60 && sqlite3_sleep(1000)>0 );
+    if( rc!=0 ){
+      fatalError("unable to unlink '%s' after %d attempts\n",
+                 g.zDbFile, nTry);
+    }
     openFlags |= SQLITE_OPEN_CREATE;
   }
   rc = sqlite3_open_v2(g.zDbFile, &g.db, openFlags, g.zVfs);
   if( rc ) fatalError("cannot open [%s]", g.zDbFile);
+  if( iTmout>0 ) sqlite3_busy_timeout(g.db, iTmout);
+  
+  if( zJMode ){
+#if defined(_WIN32)
+    if( sqlite3_stricmp(zJMode,"persist")==0
+     || sqlite3_stricmp(zJMode,"truncate")==0
+    ){
+      printf("Changing journal mode to DELETE from %s", zJMode);
+      zJMode = "DELETE";
+    }
+#endif
+    runSql("PRAGMA journal_mode=%Q;", zJMode);
+  }
+  if( !g.bSync ) trySql("PRAGMA synchronous=OFF");
   sqlite3_enable_load_extension(g.db, 1);
   sqlite3_busy_handler(g.db, busyHandler, 0);
   sqlite3_create_function(g.db, "vfsname", 0, SQLITE_UTF8, 0,
@@ -1325,7 +1387,6 @@ int main(int argc, char **argv){
                           evalFunc, 0, 0);
   g.iTimeout = DEFAULT_TIMEOUT;
   if( g.bSqlTrace ) sqlite3_trace(g.db, sqlTraceCallback, 0);
-  if( !g.bSync ) trySql("PRAGMA synchronous=OFF");
   if( iClient>0 ){
     if( n>0 ) unrecognizedArguments(argv[0], n, argv+2);
     if( g.iTrace ) logMessage("start-client");
@@ -1349,6 +1410,9 @@ int main(int argc, char **argv){
     }
     if( n>1 ) unrecognizedArguments(argv[0], n, argv+2);
     runSql(
+      "DROP TABLE IF EXISTS task;\n"
+      "DROP TABLE IF EXISTS counters;\n"
+      "DROP TABLE IF EXISTS client;\n"
       "CREATE TABLE task(\n"
       "  id INTEGER PRIMARY KEY,\n"
       "  name TEXT,\n"
@@ -1364,10 +1428,12 @@ int main(int argc, char **argv){
       "CREATE TABLE client(id INTEGER PRIMARY KEY, wantHalt);\n"
     );
     zScript = readFile(argv[2]);
-    if( g.iTrace ) logMessage("begin script [%s]\n", argv[2]);
-    runScript(0, 0, zScript, argv[2]);
+    for(iRep=1; iRep<=nRep; iRep++){
+      if( g.iTrace ) logMessage("begin script [%s] cycle %d\n", argv[2], iRep);
+      runScript(0, 0, zScript, argv[2]);
+      if( g.iTrace ) logMessage("end script [%s] cycle %d\n", argv[2], iRep);
+    }
     sqlite3_free(zScript);
-    if( g.iTrace ) logMessage("end script [%s]\n", argv[2]);
     waitForClient(0, 2000, "during shutdown...\n");
     trySql("UPDATE client SET wantHalt=1");
     sqlite3_sleep(10);
@@ -1391,11 +1457,14 @@ int main(int argc, char **argv){
     }
     sqlite3_finalize(pStmt);
   }
-  sqlite3_close(g.db);  
+  sqlite3_close(g.db);
   maybeClose(g.pLog);
   maybeClose(g.pErrLog);
   if( iClient==0 ){
     printf("Summary: %d errors out of %d tests\n", g.nError, g.nTest);
+    printf("END: %s", argv[0]);
+    for(i=1; i<argc; i++) printf(" %s", argv[i]);
+    printf("\n");
   }
   return g.nError>0;
 }

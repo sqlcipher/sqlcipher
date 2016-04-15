@@ -56,9 +56,6 @@ ifcapable !vtab||!schema_pragmas {
 # We cannot create a virtual table if the module has not been registered.
 #
 do_test vtab1-1.1.1 {
-  explain {
-    CREATE VIRTUAL TABLE t1 USING echo;
-  }
   catchsql {
     CREATE VIRTUAL TABLE t1 USING echo;
   }
@@ -396,7 +393,7 @@ do_test vtab1-3.7 {
     SELECT rowid, * FROM t1;
   }
 } {1 1 2 3 2 4 5 6}
-do_test vtab1-3.8 {
+do_test vtab1-3.8.1 {
   execsql {
     SELECT a AS d, b AS e, c AS f FROM t1;
   }
@@ -407,14 +404,14 @@ do_test vtab1-3.8 {
 # in test8.c) to make sure the xBestIndex() and xFilter() methods were
 # called correctly.
 #
-do_test vtab1-3.8 {
+do_test vtab1-3.8.2 {
   set echo_module ""
   execsql {
     SELECT * FROM t1;
   }
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal'} \
-        xFilter    {SELECT rowid, * FROM 'treal'} ]
+} [list xBestIndex {SELECT rowid, a, b, c FROM 'treal'} \
+        xFilter    {SELECT rowid, a, b, c FROM 'treal'} ]
 do_test vtab1-3.9 {
   set echo_module ""
   execsql {
@@ -423,8 +420,8 @@ do_test vtab1-3.9 {
 } {4 5 6}
 do_test vtab1-3.10 {
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal' WHERE b = ?}   \
-        xFilter    {SELECT rowid, * FROM 'treal' WHERE b = ?} 5 ]
+} [list xBestIndex {SELECT rowid, a, b, c FROM 'treal' WHERE b = ?}   \
+        xFilter    {SELECT rowid, a, b, c FROM 'treal' WHERE b = ?} 5 ]
 do_test vtab1-3.10 {
   set echo_module ""
   execsql {
@@ -433,8 +430,9 @@ do_test vtab1-3.10 {
 } {4 5 6}
 do_test vtab1-3.11 {
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal' WHERE b >= ? AND b <= ?}      \
-        xFilter    {SELECT rowid, * FROM 'treal' WHERE b >= ? AND b <= ?} 5 10 ]
+} [list xBestIndex {SELECT rowid, a, b, c FROM 'treal' WHERE b >= ? AND b <= ?}\
+        xFilter    {SELECT rowid, a, b, c FROM 'treal' WHERE b >= ? AND b <= ?}\
+        5 10 ]
 do_test vtab1-3.12 {
   set echo_module ""
   execsql {
@@ -443,8 +441,9 @@ do_test vtab1-3.12 {
 } {1 2 3 4 5 6}
 do_test vtab1-3.13 {
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal' WHERE b >= ? AND b <= ?}      \
-        xFilter    {SELECT rowid, * FROM 'treal' WHERE b >= ? AND b <= ?} 2 10 ]
+} [list xBestIndex {SELECT rowid, a, b, c FROM 'treal' WHERE b >= ? AND b <= ?}\
+        xFilter    {SELECT rowid, a, b, c FROM 'treal' WHERE b >= ? AND b <= ?}\
+        2 10 ]
 
 # Add a function for the MATCH operator. Everything always matches!
 #proc test_match {lhs rhs} {
@@ -462,8 +461,8 @@ do_test vtab1-3.12 {
 } {1 {unable to use function MATCH in the requested context}}
 do_test vtab1-3.13 {
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal'} \
-        xFilter    {SELECT rowid, * FROM 'treal'}]
+} [list xBestIndex {SELECT rowid, a, b, c FROM 'treal'} \
+        xFilter    {SELECT rowid, a, b, c FROM 'treal'}]
 ifcapable subquery {
 # The echo module uses a subquery internally to implement the MATCH operator.
 do_test vtab1-3.14 {
@@ -475,9 +474,9 @@ do_test vtab1-3.14 {
 do_test vtab1-3.15 {
   set echo_module
 } [list xBestIndex \
-        {SELECT rowid, * FROM 'treal' WHERE b LIKE (SELECT '%'||?||'%')}  \
+        {SELECT rowid, a, b, c FROM 'treal' WHERE b LIKE (SELECT '%'||?||'%')} \
         xFilter \
-        {SELECT rowid, * FROM 'treal' WHERE b LIKE (SELECT '%'||?||'%')} \
+        {SELECT rowid, a, b, c FROM 'treal' WHERE b LIKE (SELECT '%'||?||'%')} \
         string ]
 }; #ifcapable subquery
 
@@ -508,8 +507,8 @@ do_test vtab1-4.1 {
 } {2 5 nosort}
 do_test vtab1-4.2 {
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal' ORDER BY b ASC} \
-        xFilter    {SELECT rowid, * FROM 'treal' ORDER BY b ASC} ]
+} [list xBestIndex {SELECT rowid, NULL, b, NULL FROM 'treal' ORDER BY b ASC} \
+        xFilter    {SELECT rowid, NULL, b, NULL FROM 'treal' ORDER BY b ASC} ]
 do_test vtab1-4.3 {
   set echo_module ""
   cksort {
@@ -518,8 +517,8 @@ do_test vtab1-4.3 {
 } {5 2 nosort}
 do_test vtab1-4.4 {
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal' ORDER BY b DESC} \
-        xFilter    {SELECT rowid, * FROM 'treal' ORDER BY b DESC} ]
+} [list xBestIndex {SELECT rowid, NULL, b, NULL FROM 'treal' ORDER BY b DESC} \
+        xFilter    {SELECT rowid, NULL, b, NULL FROM 'treal' ORDER BY b DESC} ]
 do_test vtab1-4.3 {
   set echo_module ""
   cksort {
@@ -528,8 +527,8 @@ do_test vtab1-4.3 {
 } {2 5 sort}
 do_test vtab1-4.4 {
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'treal'} \
-        xFilter    {SELECT rowid, * FROM 'treal'} ]
+} [list xBestIndex {SELECT rowid, NULL, b, NULL FROM 'treal'} \
+        xFilter    {SELECT rowid, NULL, b, NULL FROM 'treal'} ]
 
 execsql {
   DROP TABLE t1;
@@ -578,9 +577,9 @@ do_test vtab1-5-2 {
 do_test vtab1-5-3 {
   filter $echo_module
 } [list \
-  xFilter {SELECT rowid, * FROM 't1'} \
-  xFilter {SELECT rowid, * FROM 't2'} \
-  xFilter {SELECT rowid, * FROM 't2'} \
+  xFilter {SELECT rowid, a, b, c FROM 't1'} \
+  xFilter {SELECT rowid, d, e, f FROM 't2'} \
+  xFilter {SELECT rowid, d, e, f FROM 't2'} \
 ]
 do_test vtab1-5-4 {
   set echo_module ""
@@ -594,9 +593,9 @@ do_test vtab1-5-4 {
 do_test vtab1-5-5 {
   filter $echo_module
 } [list \
-  xFilter {SELECT rowid, * FROM 't1'} \
-  xFilter {SELECT rowid, * FROM 't2'} \
-  xFilter {SELECT rowid, * FROM 't2'} \
+  xFilter {SELECT rowid, a, b, c FROM 't1'} \
+  xFilter {SELECT rowid, d, e, f FROM 't2'} \
+  xFilter {SELECT rowid, d, e, f FROM 't2'} \
 ]
 do_test vtab1-5-6 {
   execsql {
@@ -618,9 +617,9 @@ do_test vtab1-5-6 {
 do_test vtab1-5-7 {
   filter $::echo_module
 } [list \
-  xFilter {SELECT rowid, * FROM 't1'}             \
-  xFilter {SELECT rowid, * FROM 't2' WHERE d = ?} \
-  xFilter {SELECT rowid, * FROM 't2' WHERE d = ?} \
+  xFilter {SELECT rowid, a, b, c FROM 't1'}             \
+  xFilter {SELECT rowid, d, e, f FROM 't2' WHERE d = ?} \
+  xFilter {SELECT rowid, d, e, f FROM 't2' WHERE d = ?} \
 ]
 
 execsql {
@@ -970,8 +969,8 @@ do_test vtab1.10-5 {
   }
   set echo_module
 } [list \
-  xBestIndex {SELECT rowid, * FROM 'r'} \
-  xFilter {SELECT rowid, * FROM 'r'}    \
+  xBestIndex {SELECT rowid, a, b, c FROM 'r'} \
+  xFilter {SELECT rowid, a, b, c FROM 'r'}    \
 ]
 proc match_func {args} {return ""}
 do_test vtab1.10-6 {
@@ -982,8 +981,8 @@ do_test vtab1.10-6 {
   }
   set echo_module
 } [list \
-  xBestIndex {SELECT rowid, * FROM 'r'} \
-  xFilter {SELECT rowid, * FROM 'r'}    \
+  xBestIndex {SELECT rowid, a, b, c FROM 'r'} \
+  xFilter {SELECT rowid, a, b, c FROM 'r'}    \
 ]
 
 
@@ -1085,9 +1084,20 @@ do_test vtab1.13-3 {
     SELECT * FROM echo_c WHERE b IS NULL 
   }
 } {15 {} 16}
-do_test vtab1.13-3 {
+do_test vtab1.13-4 {
+  unset -nocomplain null
+  execsql { 
+    SELECT * FROM echo_c WHERE b IS $null
+  }
+} {15 {} 16}
+do_test vtab1.13-5 {
   execsql { 
     SELECT * FROM echo_c WHERE b IS NULL AND a = 15;
+  }
+} {15 {} 16}
+do_test vtab1.13-6 {
+  execsql { 
+    SELECT * FROM echo_c WHERE NULL IS b AND a IS 15;
   }
 } {15 {} 16}
 
@@ -1145,13 +1155,15 @@ do_test vtab1-14.2 {
   set echo_module ""
   execsql { SELECT * FROM echo_c WHERE rowid = 1 }
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'c' WHERE rowid = ?} xFilter {SELECT rowid, * FROM 'c' WHERE rowid = ?} 1]
+} [list xBestIndex {SELECT rowid, a, b, c FROM 'c' WHERE rowid = ?} \
+        xFilter {SELECT rowid, a, b, c FROM 'c' WHERE rowid = ?} 1]
 
 do_test vtab1-14.3 {
   set echo_module ""
   execsql { SELECT * FROM echo_c WHERE a = 1 }
   set echo_module
-} [list xBestIndex {SELECT rowid, * FROM 'c' WHERE a = ?} xFilter {SELECT rowid, * FROM 'c' WHERE a = ?} 1]
+} [list xBestIndex {SELECT rowid, a, b, c FROM 'c' WHERE a = ?} \
+        xFilter {SELECT rowid, a, b, c FROM 'c' WHERE a = ?} 1]
 
 #do_test vtab1-14.4 {
 #  set echo_module ""
@@ -1292,16 +1304,16 @@ do_execsql_test 18.1.0 {
 
 foreach {tn sql res filter} {
   1.1 "SELECT a FROM e6 WHERE b>'James'" {4 1 5}
-    {xFilter {SELECT rowid, * FROM 't6' WHERE b > ?} James}
+    {xFilter {SELECT rowid, a, b FROM 't6' WHERE b > ?} James}
 
   1.2 "SELECT a FROM e6 WHERE b>='J' AND b<'K'" {3 4}
-    {xFilter {SELECT rowid, * FROM 't6' WHERE b >= ? AND b < ?} J K}
+    {xFilter {SELECT rowid, a, b FROM 't6' WHERE b >= ? AND b < ?} J K}
 
   1.3 "SELECT a FROM e6 WHERE b LIKE 'J%'" {3 4}
-    {xFilter {SELECT rowid, * FROM 't6'}}
+    {xFilter {SELECT rowid, a, b FROM 't6' WHERE b like ?} J%}
 
   1.4 "SELECT a FROM e6 WHERE b LIKE 'j%'" {3 4}
-    {xFilter {SELECT rowid, * FROM 't6'}}
+    {xFilter {SELECT rowid, a, b FROM 't6' WHERE b like ?} j%}
 } {
   set echo_module {}
   do_execsql_test 18.$tn.1 $sql $res
@@ -1311,10 +1323,10 @@ foreach {tn sql res filter} {
 do_execsql_test 18.2.0 {  PRAGMA case_sensitive_like = ON }
 foreach {tn sql res filter} {
   2.1 "SELECT a FROM e6 WHERE b LIKE 'J%'" {3 4}
-    {xFilter {SELECT rowid, * FROM 't6'}}
+    {xFilter {SELECT rowid, a, b FROM 't6' WHERE b like ?} J%}
 
   2.2 "SELECT a FROM e6 WHERE b LIKE 'j%'" {}
-    {xFilter {SELECT rowid, * FROM 't6'}}
+    {xFilter {SELECT rowid, a, b FROM 't6' WHERE b like ?} j%}
 } {
   set echo_module {}
   do_execsql_test 18.$tn.1 $sql $res
@@ -1435,6 +1447,97 @@ ifcapable fts3 {
   do_test 22.4.2 {
     sqlite3_finalize $stmt
   } {SQLITE_OK}
+}
+
+
+#-------------------------------------------------------------------------
+# The following tests verify that a DROP TABLE command on a virtual
+# table does not cause other operations to crash.
+#
+#   23.1: Dropping a vtab while a SELECT is running on it.
+#
+#   23.2: Dropping a vtab while a SELECT that will, but has not yet,
+#         open a cursor on the vtab, is running. In this case the
+#         DROP TABLE succeeds and the SELECT hits an error.
+#   
+#   23.3: Dropping a vtab from within a user-defined-function callback
+#         in the middle of an "INSERT INTO vtab SELECT ..." statement.
+#
+reset_db
+load_static_extension db wholenumber
+load_static_extension db eval
+register_echo_module db
+
+do_test 23.1 {
+  execsql { CREATE VIRTUAL TABLE t1 USING wholenumber }
+  set res ""
+  db eval { SELECT value FROM t1 WHERE value<10 } {
+    if {$value == 5} {
+      set res [catchsql { DROP TABLE t1 }]
+    }
+  }
+  set res
+} {1 {database table is locked}}
+
+do_test 23.2 {
+  execsql { 
+    CREATE TABLE t2(value);
+    INSERT INTO t2 VALUES(1), (2), (3);
+  }
+
+  set res2 [list [catch {
+    db eval {
+      SELECT value FROM t2 UNION ALL 
+      SELECT value FROM t1 WHERE value<10
+    } {
+      if {$value == 2} { set res1 [catchsql { DROP TABLE t1 }] }
+    }
+  } msg] $msg]
+  list $res1 $res2
+} {{0 {}} {1 {database table is locked}}}
+
+do_test 23.3.1 {
+  execsql { CREATE VIRTUAL TABLE t1e USING echo(t2) }
+  execsql { INSERT INTO t1e SELECT 4 }
+  catchsql { INSERT INTO t1e SELECT eval('DROP TABLE t1e') }
+} {1 {database table is locked}}
+do_execsql_test 23.3.2 { SELECT * FROM t1e } {1 2 3 4}
+
+#-------------------------------------------------------------------------
+# At one point SQL like this:
+#
+#   SAVEPOINT xyz;       -- Opens SQL transaction
+#     INSERT INTO vtab   -- Write to virtual table
+#     ROLLBACK TO xyz;
+#   RELEASE xyz;
+#
+# was not invoking the xRollbackTo() callback for the ROLLBACK TO 
+# operation. Which meant that virtual tables like FTS3 would incorrectly 
+# commit the results of the INSERT as part of the "RELEASE xyz" command.
+#
+# The following tests check that this has been fixed.
+#
+ifcapable fts3 {
+  do_execsql_test 24.0 {
+    CREATE VIRTUAL TABLE t4 USING fts3();
+    SAVEPOINT a;
+    INSERT INTO t4 VALUES('a b c');
+    ROLLBACK TO a;
+    RELEASE a;
+    SELECT * FROM t4;
+  } {}
+
+  do_execsql_test 24.1 { SELECT * FROM t4 WHERE t4 MATCH 'b' } {}
+  do_execsql_test 24.2 { INSERT INTO t4(t4) VALUES('integrity-check') } {}
+
+  do_execsql_test 24.3 {
+    SAVEPOINT a;
+    CREATE VIRTUAL TABLE t5 USING fts3();
+    SAVEPOINT b;
+    ROLLBACK TO a;
+    SAVEPOINT c;
+    RELEASE a;
+  }
 }
 
 finish_test

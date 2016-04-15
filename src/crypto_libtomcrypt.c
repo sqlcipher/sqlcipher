@@ -124,6 +124,10 @@ static const char* sqlcipher_ltc_get_provider_name(void *ctx) {
   return "libtomcrypt";
 }
 
+static const char* sqlcipher_ltc_get_provider_version(void *ctx) {
+  return SCRYPT;
+}
+
 static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
 #ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
   sqlite3_mutex_enter(ltc_rand_mutex);
@@ -251,6 +255,7 @@ int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->ctx_free = sqlcipher_ltc_ctx_free;
   p->add_random = sqlcipher_ltc_add_random;
   p->fips_status = sqlcipher_ltc_fips_status;
+  p->get_provider_version = sqlcipher_ltc_get_provider_version;
   return SQLITE_OK;
 }
 

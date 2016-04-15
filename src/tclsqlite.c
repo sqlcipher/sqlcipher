@@ -153,6 +153,7 @@ struct SqliteDb {
   IncrblobChannel *pIncrblob;/* Linked list of open incrblob channels */
   int nStep, nSort, nIndex;  /* Statistics for most recent operation */
   int nTransaction;          /* Number of nested [transaction] methods */
+  int openFlags;             /* Flags used to open.  (SQLITE_OPEN_URI) */
 #ifdef SQLITE_TEST
   int bLegacyPrepare;        /* True to use sqlite3_prepare() */
 #endif
@@ -661,9 +662,9 @@ static int DbWalHandler(
 #if defined(SQLITE_TEST) && defined(SQLITE_ENABLE_UNLOCK_NOTIFY)
 static void setTestUnlockNotifyVars(Tcl_Interp *interp, int iArg, int nArg){
   char zBuf[64];
-  sprintf(zBuf, "%d", iArg);
+  sqlite3_snprintf(sizeof(zBuf), zBuf, "%d", iArg);
   Tcl_SetVar(interp, "sqlite_unlock_notify_arg", zBuf, TCL_GLOBAL_ONLY);
-  sprintf(zBuf, "%d", nArg);
+  sqlite3_snprintf(sizeof(zBuf), zBuf, "%d", nArg);
   Tcl_SetVar(interp, "sqlite_unlock_notify_argcount", zBuf, TCL_GLOBAL_ONLY);
 }
 #else
@@ -1191,7 +1192,7 @@ static int dbPrepareAndBind(
         int n;
         u8 *data;
         const char *zType = (pVar->typePtr ? pVar->typePtr->name : "");
-        char c = zType[0];
+        c = zType[0];
         if( zVar[0]=='@' ||
            (c=='b' && strcmp(zType,"bytearray")==0 && pVar->bytes==0) ){
           /* Load a BLOB type if the Tcl variable is a bytearray and
@@ -1750,7 +1751,8 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       Tcl_WrongNumArgs(interp, 2, objv, "?DATABASE? FILENAME");
       return TCL_ERROR;
     }
-    rc = sqlite3_open(zDestFile, &pDest);
+    rc = sqlite3_open_v2(zDestFile, &pDest,
+               SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE| pDb->openFlags, 0);
     if( rc!=SQLITE_OK ){
       Tcl_AppendResult(interp, "cannot open target database: ",
            sqlite3_errmsg(pDest), (char*)0);
@@ -2298,7 +2300,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       }
       Tcl_DecrRefCount(pRet);
     }else{
-      ClientData cd[2];
+      ClientData cd2[2];
       DbEvalContext *p;
       Tcl_Obj *pArray = 0;
       Tcl_Obj *pScript;
@@ -2312,42 +2314,57 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       p = (DbEvalContext *)Tcl_Alloc(sizeof(DbEvalContext));
       dbEvalInit(p, pDb, objv[2], pArray);
 
-      cd[0] = (void *)p;
-      cd[1] = (void *)pScript;
-      rc = DbEvalNextCmd(cd, interp, TCL_OK);
+      cd2[0] = (void *)p;
+      cd2[1] = (void *)pScript;
+      rc = DbEvalNextCmd(cd2, interp, TCL_OK);
     }
     break;
   }
 
   /*
-  **     $db function NAME [-argcount N] SCRIPT
+  **     $db function NAME [-argcount N] [-deterministic] SCRIPT
   **
   ** Create a new SQL function called NAME.  Whenever that function is
   ** called, invoke SCRIPT to evaluate the function.
   */
   case DB_FUNCTION: {
+    int flags = SQLITE_UTF8;
     SqlFunc *pFunc;
     Tcl_Obj *pScript;
     char *zName;
     int nArg = -1;
-    if( objc==6 ){
-      const char *z = Tcl_GetString(objv[3]);
+    int i;
+    if( objc<4 ){
+      Tcl_WrongNumArgs(interp, 2, objv, "NAME ?SWITCHES? SCRIPT");
+      return TCL_ERROR;
+    }
+    for(i=3; i<(objc-1); i++){
+      const char *z = Tcl_GetString(objv[i]);
       int n = strlen30(z);
       if( n>2 && strncmp(z, "-argcount",n)==0 ){
-        if( Tcl_GetIntFromObj(interp, objv[4], &nArg) ) return TCL_ERROR;
+        if( i==(objc-2) ){
+          Tcl_AppendResult(interp, "option requires an argument: ", z, 0);
+          return TCL_ERROR;
+        }
+        if( Tcl_GetIntFromObj(interp, objv[i+1], &nArg) ) return TCL_ERROR;
         if( nArg<0 ){
           Tcl_AppendResult(interp, "number of arguments must be non-negative",
                            (char*)0);
           return TCL_ERROR;
         }
+        i++;
+      }else
+      if( n>2 && strncmp(z, "-deterministic",n)==0 ){
+        flags |= SQLITE_DETERMINISTIC;
+      }else{
+        Tcl_AppendResult(interp, "bad option \"", z, 
+            "\": must be -argcount or -deterministic", 0
+        );
+        return TCL_ERROR;
       }
-      pScript = objv[5];
-    }else if( objc!=4 ){
-      Tcl_WrongNumArgs(interp, 2, objv, "NAME [-argcount N] SCRIPT");
-      return TCL_ERROR;
-    }else{
-      pScript = objv[3];
     }
+
+    pScript = objv[objc-1];
     zName = Tcl_GetStringFromObj(objv[2], 0);
     pFunc = findSqlFunc(pDb, zName);
     if( pFunc==0 ) return TCL_ERROR;
@@ -2357,7 +2374,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     pFunc->pScript = pScript;
     Tcl_IncrRefCount(pScript);
     pFunc->useEvalObjv = safeToUseEvalObjv(interp, pScript);
-    rc = sqlite3_create_function(pDb->db, zName, nArg, SQLITE_UTF8,
+    rc = sqlite3_create_function(pDb->db, zName, nArg, flags,
         pFunc, tclSqlFunc, 0, 0);
     if( rc!=SQLITE_OK ){
       rc = TCL_ERROR;
@@ -2598,7 +2615,8 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       Tcl_WrongNumArgs(interp, 2, objv, "?DATABASE? FILENAME");
       return TCL_ERROR;
     }
-    rc = sqlite3_open_v2(zSrcFile, &pSrc, SQLITE_OPEN_READONLY, 0);
+    rc = sqlite3_open_v2(zSrcFile, &pSrc,
+                         SQLITE_OPEN_READONLY | pDb->openFlags, 0);
     if( rc!=SQLITE_OK ){
       Tcl_AppendResult(interp, "cannot open source database: ",
            sqlite3_errmsg(pSrc), (char*)0);
@@ -2961,6 +2979,10 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       Tcl_AppendResult(interp,sqlite3_libversion(), (char*)0);
       return TCL_OK;
     }
+    if( strcmp(zArg,"-sourceid")==0 ){
+      Tcl_AppendResult(interp,sqlite3_sourceid(), (char*)0);
+      return TCL_OK;
+    }
     if( strcmp(zArg,"-has-codec")==0 ){
 #ifdef SQLITE_HAS_CODEC
       Tcl_AppendResult(interp,"1",(char*)0);
@@ -3069,6 +3091,7 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     return TCL_ERROR;
   }
   p->maxStmt = NUM_PREPARED_STMTS;
+  p->openFlags = flags & SQLITE_OPEN_URI;
   p->interp = interp;
   zArg = Tcl_GetStringFromObj(objv[1], 0);
   if( DbUseNre() ){
@@ -3128,9 +3151,13 @@ EXTERN int Sqlite3_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
 EXTERN int Tclsqlite3_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
 
 /* Because it accesses the file-system and uses persistent state, SQLite
-** is not considered appropriate for safe interpreters.  Hence, we deliberately
-** omit the _SafeInit() interfaces.
+** is not considered appropriate for safe interpreters.  Hence, we cause
+** the _SafeInit() interfaces return TCL_ERROR.
 */
+EXTERN int Sqlite3_SafeInit(Tcl_Interp *interp){ return TCL_ERROR; }
+EXTERN int Sqlite3_SafeUnload(Tcl_Interp *interp, int flags){return TCL_ERROR;}
+
+
 
 #ifndef SQLITE_3_SUFFIX_ONLY
 int Sqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp); }
@@ -3429,7 +3456,7 @@ static void MD5DigestToBase10x8(unsigned char digest[16], char zDigest[50]){
   for(i=j=0; i<16; i+=2){
     x = digest[i]*256 + digest[i+1];
     if( i>0 ) zDigest[j++] = '-';
-    sprintf(&zDigest[j], "%05u", x);
+    sqlite3_snprintf(50-j, &zDigest[j], "%05u", x);
     j += 5;
   }
   zDigest[j] = 0;
@@ -3689,7 +3716,7 @@ static int db_last_stmt_ptr(
 
   return TCL_OK;
 }
-#endif
+#endif /* SQLITE_TEST */
 
 /*
 ** Configure the interpreter passed as the first argument to have access
@@ -3707,17 +3734,6 @@ static void init_all(Tcl_Interp *interp){
 
 #if defined(SQLITE_TEST) || defined(SQLITE_TCLMD5)
   Md5_Init(interp);
-#endif
-
-  /* Install the [register_dbstat_vtab] command to access the implementation
-  ** of virtual table dbstat (source file test_stat.c). This command is
-  ** required for testfixture and sqlite3_analyzer, but not by the production
-  ** Tcl extension.  */
-#if defined(SQLITE_TEST) || TCLSH==2
-  {
-    extern int SqlitetestStat_Init(Tcl_Interp*);
-    SqlitetestStat_Init(interp);
-  }
 #endif
 
 #ifdef SQLITE_TEST
@@ -3756,7 +3772,8 @@ static void init_all(Tcl_Interp *interp){
     extern int Sqlitemultiplex_Init(Tcl_Interp*);
     extern int SqliteSuperlock_Init(Tcl_Interp*);
     extern int SqlitetestSyscall_Init(Tcl_Interp*);
-
+    extern int Fts5tcl_Init(Tcl_Interp *);
+    extern int SqliteRbu_Init(Tcl_Interp*);
 #if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
     extern int Sqlitetestfts3_Init(Tcl_Interp *interp);
 #endif
@@ -3799,6 +3816,8 @@ static void init_all(Tcl_Interp *interp){
     Sqlitemultiplex_Init(interp);
     SqliteSuperlock_Init(interp);
     SqlitetestSyscall_Init(interp);
+    Fts5tcl_Init(interp);
+    SqliteRbu_Init(interp);
 
 #if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
     Sqlitetestfts3_Init(interp);

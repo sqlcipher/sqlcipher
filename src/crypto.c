@@ -79,6 +79,7 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
 } 
 
 int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
+  char *pragma_cipher_deprecated_msg = "PRAGMA cipher command is deprecated, please remove from usage.";
   struct Db *pDb = &db->aDb[iDb];
   codec_ctx *ctx = NULL;
   int rc;
@@ -97,12 +98,16 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     }
   } else
   if( sqlite3StrICmp(zLeft, "cipher_store_pass")==0 && zRight ) {
-    sqlcipher_codec_set_store_pass(ctx, sqlite3GetBoolean(zRight, 1));
+    if(ctx) {
+      sqlcipher_codec_set_store_pass(ctx, sqlite3GetBoolean(zRight, 1));
+    }
   } else
   if( sqlite3StrICmp(zLeft, "cipher_store_pass")==0 && !zRight ) {
-    char *store_pass_value = sqlite3_mprintf("%d", sqlcipher_codec_get_store_pass(ctx));
-    codec_vdbe_return_static_string(pParse, "cipher_store_pass", store_pass_value);
-    sqlite3_free(store_pass_value);
+    if(ctx){
+      char *store_pass_value = sqlite3_mprintf("%d", sqlcipher_codec_get_store_pass(ctx));
+      codec_vdbe_return_static_string(pParse, "cipher_store_pass", store_pass_value);
+      sqlite3_free(store_pass_value);
+    }
   }
   if( sqlite3StrICmp(zLeft, "cipher_profile")== 0 && zRight ){
       char *profile_status = sqlite3_mprintf("%d", sqlcipher_cipher_profile(db, zRight));
@@ -128,6 +133,11 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
                                               sqlcipher_codec_get_cipher_provider(ctx));
     }
   } else
+  if( sqlite3StrICmp(zLeft, "cipher_provider_version")==0 && !zRight){
+    if(ctx) { codec_vdbe_return_static_string(pParse, "cipher_provider_version",
+                                              sqlcipher_codec_get_provider_version(ctx));
+    }
+  } else
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
     codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
   }else
@@ -135,6 +145,9 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if(ctx) {
       if( zRight ) {
         sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+        codec_vdbe_return_static_string(pParse, "cipher", pragma_cipher_deprecated_msg);
+        sqlite3_log(SQLITE_WARNING, pragma_cipher_deprecated_msg);
+        return SQLITE_ERROR;
       }else {
         codec_vdbe_return_static_string(pParse, "cipher",
           sqlcipher_codec_ctx_get_cipher(ctx, 2));
@@ -457,7 +470,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       sqlite3PagerPagecount(pPager, &page_count);
       for(pgno = 1; rc == SQLITE_OK && pgno <= (unsigned int)page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
         if(!sqlite3pager_is_mj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
-          rc = sqlite3PagerGet(pPager, pgno, &page);
+          rc = sqlite3PagerGet(pPager, pgno, &page, 0);
           if(rc == SQLITE_OK) { /* write page see pager_incr_changecounter for example */
             rc = sqlite3PagerWrite(page);
             if(rc == SQLITE_OK) {
