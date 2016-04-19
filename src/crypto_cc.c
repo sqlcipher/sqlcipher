@@ -89,7 +89,7 @@ static int sqlcipher_cc_cipher(void *ctx, int mode, unsigned char *key, int key_
   CCCryptorFinal(cryptor, out, in_sz - csz, &tmp_csz);
   csz += tmp_csz;
   CCCryptorRelease(cryptor);
-  assert(size == csz);
+  assert(in_sz == csz);
 
   return SQLITE_OK; 
 }
