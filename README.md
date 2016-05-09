@@ -26,7 +26,7 @@ SQLite with two small exceptions:
  2. If compiling against the default OpenSSL crypto provider, you will need to link libcrypto
  
 Example Static linking (replace /opt/local/lib with the path to libcrypto.a). Note in this 
-example, --enable-tempstore=yes is setting SQLITE_TEMP_STORE=2 for the build.
+example, `--enable-tempstore=yes` is setting `SQLITE_TEMP_STORE=2` for the build.
 
 	$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 		LDFLAGS="/opt/local/lib/libcrypto.a"
@@ -53,9 +53,9 @@ key data without key derivation.
 
 	PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
 
-To encrypt a database programatically you can use the sqlite3_key function. 
-The data provided in pKey is converted to an encryption key according to the 
-same rules as PRAGMA key. 
+To encrypt a database programatically you can use the `sqlite3_key` function. 
+The data provided in `pKey` is converted to an encryption key according to the 
+same rules as `PRAGMA key`. 
 
 	int sqlite3_key(sqlite3 *db, const void *pKey, int nKey);
 
