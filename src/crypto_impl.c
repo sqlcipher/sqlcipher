@@ -1210,10 +1210,16 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
   }else if( strcmp(destination, "off")==0 ){
     f = 0;
   }else{
+#ifdef SQLITE_CODEC_SAFE_OPEN
+    if( fopen_s(&f, destination, "wb")!=0 ){
+      return SQLITE_ERROR;
+    }
+#else
     f = fopen(destination, "wb");
     if( f==0 ){
       return SQLITE_ERROR;
     }
+#endif
   }
   sqlite3_profile(db, sqlcipher_profile_callback, f);
   return SQLITE_OK;
