@@ -33,6 +33,9 @@
 /* Define to 1 if you have the `crypto' library (-lcrypto). */
 #undef HAVE_LIBCRYPTO
 
+/* Define to 1 if you have the `sodium' library (-lsodium). */
+#undef HAVE_LIBSODIUM
+
 /* Define to 1 if you have the `tomcrypt' library (-ltomcrypt). */
 #undef HAVE_LIBTOMCRYPT
 

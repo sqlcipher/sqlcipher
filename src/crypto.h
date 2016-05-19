@@ -37,7 +37,8 @@
 
 #if !defined (SQLCIPHER_CRYPTO_CC) \
    && !defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT) \
-   && !defined (SQLCIPHER_CRYPTO_OPENSSL)
+   && !defined (SQLCIPHER_CRYPTO_OPENSSL) \
+   && !defined (SQLCIPHER_CRYPTO_SODIUM)
 #define SQLCIPHER_CRYPTO_OPENSSL
 #endif
 
