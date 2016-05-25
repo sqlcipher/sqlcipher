@@ -67,11 +67,6 @@ typedef struct {
   void *provider_ctx;
 } cipher_ctx;
 
-typedef struct {
-  sqlite3_file *file;
-  char *filename;
-} profile_ctx;
-
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static int default_kdf_iter = PBKDF2_ITER;
@@ -79,7 +74,6 @@ static int default_page_size = SQLITE_DEFAULT_PAGE_SIZE;
 static unsigned int sqlcipher_activate_count = 0;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
-static profile_ctx *profile = NULL;
 
 struct codec_ctx {
   int kdf_salt_sz;
@@ -1211,54 +1205,27 @@ int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int random_sz
 }
 
 int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
-  int rc;
-  sqlite3_vfs *pVfs;
-  if(profile == NULL){
-    profile = sqlcipher_malloc(sizeof(profile_ctx));
-  }
-  if(strcmp(destination, "off") == 0){
-    if(profile != NULL && profile->filename != NULL){
-      if(strcmp(profile->filename, "/dev/stdout") != 0 &&
-         strcmp(profile->filename, "/dev/stderr") != 0) {
-        sqlite3OsCloseFree(profile->file);
-      }
-      sqlcipher_free(profile, sizeof(profile));
-      profile = NULL;
-    }
-  } else {
-    if(strcmp(destination,"stdout")==0){
-      profile->filename = "/dev/stdout";
-    } else if(strcmp(destination, "stderr")==0){
-      profile->filename = "/dev/stderr";
-    } else {
-      profile->filename = (char*)destination;
-    }
-    pVfs = sqlite3_vfs_find(0);
-    rc = sqlite3OsOpenMalloc(pVfs, profile->filename, &(profile->file),
-                             (SQLITE_OPEN_CREATE|SQLITE_OPEN_READWRITE), 0);
-    if(rc){
+  FILE *f;
+  if( strcmp(destination,"stdout")==0 ){
+    f = stdout;
+  }else if( strcmp(destination, "stderr")==0 ){
+    f = stderr;
+  }else if( strcmp(destination, "off")==0 ){
+    f = 0;
+  }else{
+    f = fopen(destination, "wb");
+    if( f==0 ){
       return SQLITE_ERROR;
     }
   }
-  sqlite3_profile(db, sqlcipher_profile_callback, profile);
+  sqlite3_profile(db, sqlcipher_profile_callback, f);
   return SQLITE_OK;
 }
 
 static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint64 run_time){
-  i64 log_file_sz = 0;
-  double elapsed = 0.0;
-  char *log_message = 0;
-  int log_message_sz = 0;
-  profile_ctx *pro = (profile_ctx*)file;
-  CODEC_TRACE(("sqlcipher_profile_callback entered file:%p, sql:%s runtime:%llu\n", file, sql, run_time));
-  if(pro != NULL && pro->file != NULL) {
-    elapsed = run_time/1000000.0;
-    log_message = sqlite3_mprintf("Elapsed time:%.3f ms - %s\n", elapsed, sql);
-    log_message_sz = sqlite3Strlen30(log_message);
-    sqlite3OsFileSize(pro->file, &log_file_sz);
-    sqlite3OsWrite(pro->file, log_message, log_message_sz, log_file_sz);
-    sqlite3_free(log_message);
-  }
+  FILE *f = (FILE*)file;
+  double elapsed = run_time/1000000.0;
+  if( f ) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
 }
 
 int sqlcipher_codec_fips_status(codec_ctx *ctx) {
