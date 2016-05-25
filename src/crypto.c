@@ -143,11 +143,11 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "cipher")==0 ){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
+        rc = sqlcipher_codec_ctx_set_cipher(ctx, zRight, 2); // change cipher for both
         char *pragma_cipher_deprecated_msg = "PRAGMA cipher command is deprecated, please remove from usage.";
         codec_vdbe_return_static_string(pParse, "cipher", pragma_cipher_deprecated_msg);
         sqlite3_log(SQLITE_WARNING, pragma_cipher_deprecated_msg);
-        return SQLITE_ERROR;
+        return rc;
       }else {
         codec_vdbe_return_static_string(pParse, "cipher",
           sqlcipher_codec_ctx_get_cipher(ctx, 2));

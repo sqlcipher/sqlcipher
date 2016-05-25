@@ -614,7 +614,7 @@ do_test non-standard-kdf-and-ciphers {
     SELECT count(*) FROM t1;
   } 
 
-} {2}
+} {{PRAGMA cipher command is deprecated, please remove from usage.} 2}
 db close
 file delete -force test.db
 
@@ -649,7 +649,7 @@ do_test rekey-from-cbc-to-ecb-no-iv {
     SELECT count(*) FROM t1;
   } 
 
-} {1001}
+} {{PRAGMA cipher command is deprecated, please remove from usage.} 1001}
 db close
 file delete -force test.db
 
@@ -1069,7 +1069,7 @@ do_test attached-database-pragmas {
     PRAGMA cipher_use_hmac = OFF;
     SELECT count(*) FROM t1;
   }
-} {1000}
+} {{PRAGMA cipher command is deprecated, please remove from usage.} 1000}
 db close
 file delete -force test.db
 file delete -force test2.db
@@ -1541,7 +1541,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {3.3.1}
+} {3.4.0}
 db close
 file delete -force test.db
 
@@ -1922,18 +1922,6 @@ do_test verify-pragma-cipher-page-size-changed {
 db close
 file delete -force test.db
 
-# verify invalid cipher does not cause segfault
-if_built_with_openssl verify-invalid-cipher-does-not-segfault {
-    sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
-        PRAGMA cipher = 'junk';
-        PRAGMA cipher;
-    }
-} {AES-256-CBC}
-db close
-file delete -force test.db
-
 # verify setting cipher_store_pass before key
 # does not cause segfault
 do_test verify-cipher-store-pass-before-key-does-not-segfault {
@@ -1967,7 +1955,7 @@ if_built_with_openssl verify-pragma-cipher-changed {
         PRAGMA cipher = 'AES-256-ECB';
         PRAGMA cipher;
     }
-} {AES-256-ECB}
+} {{PRAGMA cipher command is deprecated, please remove from usage.} AES-256-ECB}
 db close
 file delete -force test.db
 
@@ -2301,6 +2289,27 @@ do_test attach_database_with_non_default_page_size {
 } {2}
 db close
 file delete -force test.db test2.db
+
+if_built_with_openssl wont-write-database-with-invalid-cipher {
+    sqlite_orig db test.db
+    catchsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher = 'foobar';
+        CREATE TABLE t1(a,b);
+    }
+} {1 {SQL logic error or missing database}}
+db close
+file delete -force test.db
+
+if_built_with_openssl wont-write-database-with-invalid-cipher-2 {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher = 'foobar';
+    }
+} {{PRAGMA cipher command is deprecated, please remove from usage.}}
+db close
+file delete -force test.db
 
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test

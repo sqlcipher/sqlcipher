@@ -494,8 +494,11 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
 
-  c_ctx->provider->set_cipher(c_ctx->provider_ctx, cipher_name);
-
+  rc = c_ctx->provider->set_cipher(c_ctx->provider_ctx, cipher_name);
+  if(rc != SQLITE_OK){
+    sqlcipher_codec_ctx_set_error(ctx, rc);
+    return rc;
+  }
   c_ctx->key_sz = c_ctx->provider->get_key_sz(c_ctx->provider_ctx);
   c_ctx->iv_sz = c_ctx->provider->get_iv_sz(c_ctx->provider_ctx);
   c_ctx->block_sz = c_ctx->provider->get_block_sz(c_ctx->provider_ctx);
