@@ -1206,17 +1206,22 @@ int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int random_sz
 
 int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
   FILE *f;
-  if( strcmp(destination,"stdout")==0 ){
+  if(sqlite3StrICmp(destination, "stdout") == 0){
     f = stdout;
-  }else if( strcmp(destination, "stderr")==0 ){
+  }else if(sqlite3StrICmp(destination, "stderr") == 0){
     f = stderr;
-  }else if( strcmp(destination, "off")==0 ){
+  }else if(sqlite3StrICmp(destination, "off") == 0){
     f = 0;
   }else{
-    f = fopen(destination, "wb");
-    if( f==0 ){
-      return SQLITE_ERROR;
-    }
+#if defined(_WIN32) && (__STDC_VERSION__ > 199901L)
+    if(fopen_s(&f, destination, "a") != 0){
+#else
+    f = fopen(destination, "a");
+    if(f == 0){
+#endif    
+    return SQLITE_ERROR;
+  }	
+
   }
   sqlite3_profile(db, sqlcipher_profile_callback, f);
   return SQLITE_OK;
@@ -1225,7 +1230,7 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
 static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint64 run_time){
   FILE *f = (FILE*)file;
   double elapsed = run_time/1000000.0;
-  if( f ) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
+  if(f) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
 }
 
 int sqlcipher_codec_fips_status(codec_ctx *ctx) {
