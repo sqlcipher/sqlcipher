@@ -1213,7 +1213,7 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
   }else if(sqlite3StrICmp(destination, "off") == 0){
     f = 0;
   }else{
-#if defined(_WIN32) && (__STDC_VERSION__ > 199901L)
+#if defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT)
     if(fopen_s(&f, destination, "a") != 0){
 #else
     f = fopen(destination, "a");
