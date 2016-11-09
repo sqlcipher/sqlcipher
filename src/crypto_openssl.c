@@ -117,6 +117,8 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
        is called by SQLCipher internally. This should prevent SQLCipher from 
        "cleaning up" openssl when it was initialized externally by the program */
       EVP_cleanup();
+    } else {
+      openssl_external_init = 0;
     }
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
     sqlite3_mutex_free(openssl_rand_mutex);
