@@ -587,14 +587,15 @@ sqlcipher.pc: $(TOP)/sqlcipher.pc.in
 
 libsqlcipher.la:	$(LIBOBJ)
 	$(LTLINK) -o $@ $(LIBOBJ) $(TLIBS) \
-		${ALLOWRELEASE} -rpath "$(libdir)" -version-info "8:6:8"
+		${ALLOWRELEASE} -rpath "$(libdir)" -version-info "8:6:8" -no-undefined
 
 libtclsqlite3.la:	tclsqlite.lo libsqlcipher.la
 	$(LTLINK) -o $@ tclsqlite.lo \
 		libsqlcipher.la @TCL_STUB_LIB_SPEC@ $(TLIBS) \
 		-rpath "$(TCLLIBDIR)" \
 		-version-info "8:6:8" \
-		-avoid-version
+		-avoid-version \
+		-no-undefined
 
 sqlcipher$(TEXE):	$(TOP)/src/shell.c libsqlcipher.la sqlite3.h
 	$(LTLINK) $(READLINE_FLAGS) $(SHELL_OPT) \
