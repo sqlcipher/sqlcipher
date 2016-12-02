@@ -76,10 +76,6 @@
 #  define NTDDI_WINBLUE                     0x06030000
 #endif
 
-#ifndef NTDDI_WINTHRESHOLD
-#  define NTDDI_WINTHRESHOLD                0x06040000
-#endif
-
 /*
 ** Check to see if the GetVersionEx[AW] functions are deprecated on the
 ** target system.  GetVersionEx was first deprecated in Win8.1.
@@ -89,19 +85,6 @@
 #    define SQLITE_WIN32_GETVERSIONEX   0   /* GetVersionEx() is deprecated */
 #  else
 #    define SQLITE_WIN32_GETVERSIONEX   1   /* GetVersionEx() is current */
-#  endif
-#endif
-
-/*
-** Check to see if the CreateFileMappingA function is supported on the
-** target system.  It is unavailable when using "mincore.lib" on Win10.
-** When compiling for Windows 10, always assume "mincore.lib" is in use.
-*/
-#ifndef SQLITE_WIN32_CREATEFILEMAPPINGA
-#  if defined(NTDDI_VERSION) && NTDDI_VERSION >= NTDDI_WINTHRESHOLD
-#    define SQLITE_WIN32_CREATEFILEMAPPINGA   0
-#  else
-#    define SQLITE_WIN32_CREATEFILEMAPPINGA   1
 #  endif
 #endif
 
@@ -511,9 +494,8 @@ static struct win_syscall {
 #define osCreateFileW ((HANDLE(WINAPI*)(LPCWSTR,DWORD,DWORD, \
         LPSECURITY_ATTRIBUTES,DWORD,DWORD,HANDLE))aSyscall[5].pCurrent)
 
-#if !SQLITE_OS_WINRT && defined(SQLITE_WIN32_HAS_ANSI) && \
-        (!defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0) && \
-        SQLITE_WIN32_CREATEFILEMAPPINGA
+#if (!SQLITE_OS_WINRT && defined(SQLITE_WIN32_HAS_ANSI) && \
+        (!defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0))
   { "CreateFileMappingA",      (SYSCALL)CreateFileMappingA,      0 },
 #else
   { "CreateFileMappingA",      (SYSCALL)0,                       0 },
@@ -743,7 +725,8 @@ static struct win_syscall {
 
 #define osGetTickCount ((DWORD(WINAPI*)(VOID))aSyscall[33].pCurrent)
 
-#if defined(SQLITE_WIN32_HAS_ANSI) && SQLITE_WIN32_GETVERSIONEX
+#if defined(SQLITE_WIN32_HAS_ANSI) && defined(SQLITE_WIN32_GETVERSIONEX) && \
+        SQLITE_WIN32_GETVERSIONEX
   { "GetVersionExA",           (SYSCALL)GetVersionExA,           0 },
 #else
   { "GetVersionExA",           (SYSCALL)0,                       0 },
@@ -753,7 +736,7 @@ static struct win_syscall {
         LPOSVERSIONINFOA))aSyscall[34].pCurrent)
 
 #if !SQLITE_OS_WINRT && defined(SQLITE_WIN32_HAS_WIDE) && \
-        SQLITE_WIN32_GETVERSIONEX
+        defined(SQLITE_WIN32_GETVERSIONEX) && SQLITE_WIN32_GETVERSIONEX
   { "GetVersionExW",           (SYSCALL)GetVersionExW,           0 },
 #else
   { "GetVersionExW",           (SYSCALL)0,                       0 },
@@ -1364,7 +1347,7 @@ DWORD sqlite3Win32Wait(HANDLE hObject){
 ** the LockFileEx() API.
 */
 
-#if !SQLITE_WIN32_GETVERSIONEX
+#if !defined(SQLITE_WIN32_GETVERSIONEX) || !SQLITE_WIN32_GETVERSIONEX
 # define osIsNT()  (1)
 #elif SQLITE_OS_WINCE || SQLITE_OS_WINRT || !defined(SQLITE_WIN32_HAS_ANSI)
 # define osIsNT()  (1)
@@ -1385,7 +1368,7 @@ int sqlite3_win32_is_nt(void){
   **       kernel.
   */
   return 1;
-#elif SQLITE_WIN32_GETVERSIONEX
+#elif defined(SQLITE_WIN32_GETVERSIONEX) && SQLITE_WIN32_GETVERSIONEX
   if( osInterlockedCompareExchange(&sqlite3_os_type, 0, 0)==0 ){
 #if defined(SQLITE_WIN32_HAS_ANSI)
     OSVERSIONINFOA sInfo;
@@ -2619,7 +2602,7 @@ static int winWrite(
            "offset=%lld, lock=%d\n", osGetCurrentProcessId(), pFile,
            pFile->h, pBuf, amt, offset, pFile->locktype));
 
-#if defined(SQLITE_MMAP_READWRITE) && SQLITE_MAX_MMAP_SIZE>0
+#if SQLITE_MAX_MMAP_SIZE>0
   /* Deal with as much of this write request as possible by transfering
   ** data from the memory mapping using memcpy().  */
   if( offset<pFile->mmapSize ){
@@ -3032,12 +3015,6 @@ static int winLock(sqlite3_file *id, int locktype){
     return SQLITE_OK;
   }
 
-  /* Do not allow any kind of write-lock on a read-only database
-  */
-  if( (pFile->ctrlFlags & WINFILE_RDONLY)!=0 && locktype>=RESERVED_LOCK ){
-    return SQLITE_IOERR_LOCK;
-  }
-
   /* Make sure the locking sequence is correct
   */
   assert( pFile->locktype!=NO_LOCK || locktype==SHARED_LOCK );
@@ -3167,7 +3144,7 @@ static int winCheckReservedLock(sqlite3_file *id, int *pResOut){
     res = 1;
     OSTRACE(("TEST-WR-LOCK file=%p, result=%d (local)\n", pFile->h, res));
   }else{
-    res = winLockFile(&pFile->h, SQLITE_LOCKFILEEX_FLAGS,RESERVED_BYTE,0,1,0);
+    res = winLockFile(&pFile->h, SQLITE_LOCKFILEEX_FLAGS,RESERVED_BYTE, 0, 1, 0);
     if( res ){
       winUnlockFile(&pFile->h, RESERVED_BYTE, 0, 1, 0);
     }
@@ -3407,14 +3384,14 @@ static SYSTEM_INFO winSysInfo;
 **   winShmLeaveMutex()
 */
 static void winShmEnterMutex(void){
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1));
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 static void winShmLeaveMutex(void){
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1));
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 #ifndef NDEBUG
 static int winShmMutexHeld(void) {
-  return sqlite3_mutex_held(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1));
+  return sqlite3_mutex_held(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
 }
 #endif
 
@@ -3867,8 +3844,8 @@ static void winShmBarrier(
   sqlite3_file *fd          /* Database holding the shared memory */
 ){
   UNUSED_PARAMETER(fd);
-  sqlite3MemoryBarrier();   /* compiler-defined memory barrier */
-  winShmEnterMutex();       /* Also mutex, for redundancy */
+  /* MemoryBarrier(); // does not work -- do not know why not */
+  winShmEnterMutex();
   winShmLeaveMutex();
 }
 
@@ -3969,7 +3946,7 @@ static int winShmMap(
       hMap = osCreateFileMappingW(pShmNode->hFile.h,
           NULL, PAGE_READWRITE, 0, nByte, NULL
       );
-#elif defined(SQLITE_WIN32_HAS_ANSI) && SQLITE_WIN32_CREATEFILEMAPPINGA
+#elif defined(SQLITE_WIN32_HAS_ANSI)
       hMap = osCreateFileMappingA(pShmNode->hFile.h,
           NULL, PAGE_READWRITE, 0, nByte, NULL
       );
@@ -4113,19 +4090,17 @@ static int winMapfile(winFile *pFd, sqlite3_int64 nByte){
     DWORD flags = FILE_MAP_READ;
 
     winUnmapfile(pFd);
-#ifdef SQLITE_MMAP_READWRITE
     if( (pFd->ctrlFlags & WINFILE_RDONLY)==0 ){
       protect = PAGE_READWRITE;
       flags |= FILE_MAP_WRITE;
     }
-#endif
 #if SQLITE_OS_WINRT
     pFd->hMap = osCreateFileMappingFromApp(pFd->h, NULL, protect, nMap, NULL);
 #elif defined(SQLITE_WIN32_HAS_WIDE)
     pFd->hMap = osCreateFileMappingW(pFd->h, NULL, protect,
                                 (DWORD)((nMap>>32) & 0xffffffff),
                                 (DWORD)(nMap & 0xffffffff), NULL);
-#elif defined(SQLITE_WIN32_HAS_ANSI) && SQLITE_WIN32_CREATEFILEMAPPINGA
+#elif defined(SQLITE_WIN32_HAS_ANSI)
     pFd->hMap = osCreateFileMappingA(pFd->h, NULL, protect,
                                 (DWORD)((nMap>>32) & 0xffffffff),
                                 (DWORD)(nMap & 0xffffffff), NULL);
@@ -5436,14 +5411,14 @@ static int winRandomness(sqlite3_vfs *pVfs, int nBuf, char *zBuf){
     UUID id;
     memset(&id, 0, sizeof(UUID));
     osUuidCreate(&id);
-    memcpy(&zBuf[n], &id, sizeof(UUID));
+    memcpy(zBuf, &id, sizeof(UUID));
     n += sizeof(UUID);
   }
   if( sizeof(UUID)<=nBuf-n ){
     UUID id;
     memset(&id, 0, sizeof(UUID));
     osUuidCreateSequential(&id);
-    memcpy(&zBuf[n], &id, sizeof(UUID));
+    memcpy(zBuf, &id, sizeof(UUID));
     n += sizeof(UUID);
   }
 #endif

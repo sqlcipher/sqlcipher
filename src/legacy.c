@@ -90,7 +90,7 @@ int sqlite3_exec(
           for(i=0; i<nCol; i++){
             azVals[i] = (char *)sqlite3_column_text(pStmt, i);
             if( !azVals[i] && sqlite3_column_type(pStmt, i)!=SQLITE_NULL ){
-              sqlite3OomFault(db);
+              db->mallocFailed = 1;
               goto exec_out;
             }
           }

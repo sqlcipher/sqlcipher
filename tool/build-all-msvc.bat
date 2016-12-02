@@ -29,9 +29,9 @@ REM source tree for SQLite and "C:\Temp" represents the final destination
 REM directory for the generated output files.
 REM
 REM Please note that the SQLite build process performed by the Makefile
-REM associated with this batch script requires a Tcl shell to be present
-REM in a directory contained in the PATH environment variable unless a
-REM pre-existing amalgamation file is used.
+REM associated with this batch script requires both Gawk ^(gawk.exe^) and Tcl
+REM 8.5 ^(tclsh85.exe^) to be present in a directory contained in the PATH
+REM environment variable unless a pre-existing amalgamation file is used.
 REM
 REM There are several environment variables that may be set to modify the
 REM behavior of this batch script and its associated Makefile.  The list of
@@ -94,10 +94,6 @@ REM its other arguments.  This is used to specify additional NMAKE options, for
 REM example:
 REM
 REM                        SET NMAKE_ARGS=FOR_WINRT=1
-REM
-REM Using the above command before running this tool will cause the compiled
-REM binaries to target the WinRT environment, which provides a subset of the
-REM Win32 API.
 REM
 SETLOCAL
 
@@ -236,22 +232,25 @@ REM NOTE: Check for the external tools needed during the build process ^(i.e.
 REM       those that do not get compiled as part of the build process itself^)
 REM       along the PATH.
 REM
-IF DEFINED TCLSH_CMD (
-  SET TCLSH_FILE=%TCLSH_CMD%
-) ELSE (
-  SET TCLSH_FILE=tclsh85.exe
-)
-
-FOR %%T IN (%TCLSH_FILE%) DO (
+FOR %%T IN (gawk.exe tclsh85.exe) DO (
   SET %%T_PATH=%%~dp$PATH:T
 )
 
 REM
-REM NOTE: A Tcl shell executable is required during the SQLite build process
-REM       unless a pre-existing amalgamation file is used.
+REM NOTE: The Gawk executable "gawk.exe" is required during the SQLite build
+REM       process unless a pre-existing amalgamation file is used.
 REM
-IF NOT DEFINED %TCLSH_FILE%_PATH (
-  ECHO The Tcl shell executable "%TCLSH_FILE%" is required to be in the PATH.
+IF NOT DEFINED gawk.exe_PATH (
+  ECHO The Gawk executable "gawk.exe" is required to be in the PATH.
+  GOTO errors
+)
+
+REM
+REM NOTE: The Tcl 8.5 executable "tclsh85.exe" is required during the SQLite
+REM       build process unless a pre-existing amalgamation file is used.
+REM
+IF NOT DEFINED tclsh85.exe_PATH (
+  ECHO The Tcl 8.5 executable "tclsh85.exe" is required to be in the PATH.
   GOTO errors
 )
 
@@ -259,7 +258,7 @@ REM
 REM NOTE: Set the TOOLPATH variable to contain all the directories where the
 REM       external tools were found in the search above.
 REM
-CALL :fn_CopyVariable %TCLSH_FILE%_PATH TOOLPATH
+SET TOOLPATH=%gawk.exe_PATH%;%tclsh85.exe_PATH%
 
 %_VECHO% ToolPath = '%TOOLPATH%'
 
@@ -314,27 +313,6 @@ IF "%VisualStudioVersion%" == "11.0" (
 )
 
 REM
-REM NOTE: This is the name of the sub-directory where the UCRT libraries may
-REM       be found.  It is only used when compiling against the UCRT.
-REM
-IF DEFINED UCRTVersion (
-  SET NUCRTVER=%UCRTVersion%
-) ELSE (
-  SET NUCRTVER=10.0.10586.0
-)
-
-REM
-REM NOTE: This is the name of the sub-directory where the Windows 10.0 SDK
-REM       libraries may be found.  It is only used when compiling with the
-REM       Windows 10.0 SDK.
-REM
-IF DEFINED WindowsSDKLibVersion (
-  SET WIN10SDKVER=%WindowsSDKLibVersion:\=%
-) ELSE (
-  SET WIN10SDKVER=%NUCRTVER%
-)
-
-REM
 REM NOTE: Check if this is the Windows Phone SDK.  If so, a different batch
 REM       file is necessary to setup the build environment.  Since the variable
 REM       values involved here may contain parenthesis, using GOTO instead of
@@ -376,7 +354,6 @@ FOR %%P IN (%PLATFORMS%) DO (
     REM
     CALL :fn_UnsetVariable CommandPromptType
     CALL :fn_UnsetVariable DevEnvDir
-    CALL :fn_UnsetVariable DNX_HOME
     CALL :fn_UnsetVariable ExtensionSdkDir
     CALL :fn_UnsetVariable Framework35Version
     CALL :fn_UnsetVariable Framework40Version
@@ -388,19 +365,14 @@ FOR %%P IN (%PLATFORMS%) DO (
     CALL :fn_UnsetVariable INCLUDE
     CALL :fn_UnsetVariable LIB
     CALL :fn_UnsetVariable LIBPATH
-    CALL :fn_UnsetVariable NETFXSDKDir
     CALL :fn_UnsetVariable Platform
-    CALL :fn_UnsetVariable UCRTVersion
     CALL :fn_UnsetVariable UniversalCRTSdkDir
     REM CALL :fn_UnsetVariable VCINSTALLDIR
     CALL :fn_UnsetVariable VSINSTALLDIR
-    CALL :fn_UnsetVariable WindowsLibPath
     CALL :fn_UnsetVariable WindowsPhoneKitDir
     CALL :fn_UnsetVariable WindowsSdkDir
     CALL :fn_UnsetVariable WindowsSdkDir_35
     CALL :fn_UnsetVariable WindowsSdkDir_old
-    CALL :fn_UnsetVariable WindowsSDKLibVersion
-    CALL :fn_UnsetVariable WindowsSDKVersion
     CALL :fn_UnsetVariable WindowsSDK_ExecutablePath_x86
     CALL :fn_UnsetVariable WindowsSDK_ExecutablePath_x64
 
@@ -510,9 +482,9 @@ FOR %%P IN (%PLATFORMS%) DO (
             REM       different directory naming conventions.
             REM
             IF DEFINED USE_WINV100_NSDKLIBPATH (
-              CALL :fn_AppendVariable NSDKLIBPATH \..\10\lib\%WIN10SDKVER%\um\x86
-              CALL :fn_CopyVariable WindowsSdkDir PSDKLIBPATH
-              CALL :fn_AppendVariable PSDKLIBPATH lib\%WIN10SDKVER%\um\%%D
+              CALL :fn_AppendVariable NSDKLIBPATH \..\10\lib\10.0.10030.0\um\x86
+              CALL :fn_CopyVariable UniversalCRTSdkDir PSDKLIBPATH
+              CALL :fn_AppendVariable PSDKLIBPATH Lib\10.0.10030.0\um\%%D
             ) ELSE IF DEFINED USE_WINV63_NSDKLIBPATH (
               CALL :fn_AppendVariable NSDKLIBPATH \lib\winv6.3\um\x86
             ) ELSE IF "%VisualStudioVersion%" == "12.0" (
@@ -535,7 +507,7 @@ FOR %%P IN (%PLATFORMS%) DO (
         IF DEFINED SET_NUCRTLIBPATH (
           IF DEFINED UniversalCRTSdkDir (
             CALL :fn_CopyVariable UniversalCRTSdkDir NUCRTLIBPATH
-            CALL :fn_AppendVariable NUCRTLIBPATH \lib\%NUCRTVER%\ucrt\x86
+            CALL :fn_AppendVariable NUCRTLIBPATH \lib\winv10.0\ucrt\x86
           )
         )
 
@@ -729,16 +701,10 @@ GOTO no_errors
   GOTO :EOF
 
 :fn_UnsetVariable
-  SETLOCAL
-  SET VALUE=%1
-  IF DEFINED VALUE (
-    SET VALUE=
-    ENDLOCAL
-    SET %VALUE%=
-  ) ELSE (
-    ENDLOCAL
+  IF NOT "%1" == "" (
+    SET %1=
+    CALL :fn_ResetErrorLevel
   )
-  CALL :fn_ResetErrorLevel
   GOTO :EOF
 
 :fn_AppendVariable

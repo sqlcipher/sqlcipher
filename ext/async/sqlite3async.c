@@ -1636,7 +1636,6 @@ void sqlite3async_run(void){
 ** Control/configure the asynchronous IO system.
 */
 int sqlite3async_control(int op, ...){
-  int rc = SQLITE_OK;
   va_list ap;
   va_start(ap, op);
   switch( op ){
@@ -1646,8 +1645,7 @@ int sqlite3async_control(int op, ...){
        && eWhen!=SQLITEASYNC_HALT_NOW
        && eWhen!=SQLITEASYNC_HALT_IDLE
       ){
-        rc = SQLITE_MISUSE;
-        break;
+        return SQLITE_MISUSE;
       }
       async.eHalt = eWhen;
       async_mutex_enter(ASYNC_MUTEX_QUEUE);
@@ -1659,8 +1657,7 @@ int sqlite3async_control(int op, ...){
     case SQLITEASYNC_DELAY: {
       int iDelay = va_arg(ap, int);
       if( iDelay<0 ){
-        rc = SQLITE_MISUSE;
-        break;
+        return SQLITE_MISUSE;
       }
       async.ioDelay = iDelay;
       break;
@@ -1671,8 +1668,7 @@ int sqlite3async_control(int op, ...){
       async_mutex_enter(ASYNC_MUTEX_QUEUE);
       if( async.nFile || async.pQueueFirst ){
         async_mutex_leave(ASYNC_MUTEX_QUEUE);
-        rc = SQLITE_MISUSE;
-        break;
+        return SQLITE_MISUSE;
       }
       async.bLockFiles = bLock;
       async_mutex_leave(ASYNC_MUTEX_QUEUE);
@@ -1696,11 +1692,9 @@ int sqlite3async_control(int op, ...){
     }
 
     default:
-      rc = SQLITE_ERROR;
-      break;
+      return SQLITE_ERROR;
   }
-  va_end(ap);
-  return rc;
+  return SQLITE_OK;
 }
 
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_ASYNCIO) */

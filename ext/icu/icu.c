@@ -83,6 +83,7 @@ static int icuLikeCompare(
     /* Read (and consume) the next character from the input pattern. */
     UChar32 uPattern;
     U8_NEXT_UNSAFE(zPattern, iPattern, uPattern);
+    assert(uPattern!=0);
 
     /* There are now 4 possibilities:
     **
@@ -421,7 +422,6 @@ static void icuLoadCollation(
   int rc;                   /* Return code from sqlite3_create_collation_x() */
 
   assert(nArg==2);
-  (void)nArg; /* Unused parameter */
   zLocale = (const char *)sqlite3_value_text(apArg[0]);
   zName = (const char *)sqlite3_value_text(apArg[1]);
 

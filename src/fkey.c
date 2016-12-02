@@ -219,7 +219,7 @@ int sqlite3FkLocateIndex(
     }
   }else if( paiCol ){
     assert( nCol>1 );
-    aiCol = (int *)sqlite3DbMallocRawNN(pParse->db, nCol*sizeof(int));
+    aiCol = (int *)sqlite3DbMallocRaw(pParse->db, nCol*sizeof(int));
     if( !aiCol ) return 1;
     *paiCol = aiCol;
   }
@@ -249,16 +249,16 @@ int sqlite3FkLocateIndex(
         int i, j;
         for(i=0; i<nCol; i++){
           i16 iCol = pIdx->aiColumn[i];     /* Index of column in parent tbl */
-          const char *zDfltColl;            /* Def. collation for column */
+          char *zDfltColl;                  /* Def. collation for column */
           char *zIdxCol;                    /* Name of indexed column */
-
-          if( iCol<0 ) break; /* No foreign keys against expression indexes */
 
           /* If the index uses a collation sequence that is different from
           ** the default collation sequence for the column, this index is
           ** unusable. Bail out early in this case.  */
           zDfltColl = pParent->aCol[iCol].zColl;
-          if( !zDfltColl ) zDfltColl = sqlite3StrBINARY;
+          if( !zDfltColl ){
+            zDfltColl = "BINARY";
+          }
           if( sqlite3StrICmp(pIdx->azColl[i], zDfltColl) ) break;
 
           zIdxCol = pParent->aCol[iCol].zName;
@@ -374,7 +374,7 @@ static void fkLookupParent(
   
       sqlite3OpenTable(pParse, iCur, iDb, pTab, OP_OpenRead);
       sqlite3VdbeAddOp3(v, OP_NotExists, iCur, 0, regTemp); VdbeCoverage(v);
-      sqlite3VdbeGoto(v, iOk);
+      sqlite3VdbeAddOp2(v, OP_Goto, 0, iOk);
       sqlite3VdbeJumpHere(v, sqlite3VdbeCurrentAddr(v)-2);
       sqlite3VdbeJumpHere(v, iMustBeInt);
       sqlite3ReleaseTempReg(pParse, regTemp);
@@ -404,7 +404,6 @@ static void fkLookupParent(
         for(i=0; i<nCol; i++){
           int iChild = aiCol[i]+1+regData;
           int iParent = pIdx->aiColumn[i]+1+regData;
-          assert( pIdx->aiColumn[i]>=0 );
           assert( aiCol[i]!=pTab->iPKey );
           if( pIdx->aiColumn[i]==pTab->iPKey ){
             /* The parent key is a composite key that includes the IPK column */
@@ -413,11 +412,11 @@ static void fkLookupParent(
           sqlite3VdbeAddOp3(v, OP_Ne, iChild, iJump, iParent); VdbeCoverage(v);
           sqlite3VdbeChangeP5(v, SQLITE_JUMPIFNULL);
         }
-        sqlite3VdbeGoto(v, iOk);
+        sqlite3VdbeAddOp2(v, OP_Goto, 0, iOk);
       }
   
       sqlite3VdbeAddOp4(v, OP_MakeRecord, regTemp, nCol, regRec,
-                        sqlite3IndexAffinityStr(pParse->db,pIdx), nCol);
+                        sqlite3IndexAffinityStr(v,pIdx), nCol);
       sqlite3VdbeAddOp4Int(v, OP_Found, iCur, iOk, regRec, 0); VdbeCoverage(v);
   
       sqlite3ReleaseTempReg(pParse, regRec);
@@ -613,7 +612,6 @@ static void fkScanChildren(
       assert( pIdx!=0 );
       for(i=0; i<pPk->nKeyCol; i++){
         i16 iCol = pIdx->aiColumn[i];
-        assert( iCol>=0 );
         pLeft = exprTableRegister(pParse, pTab, regData, iCol);
         pRight = exprTableColumn(db, pTab, pSrc->a[0].iCursor, iCol);
         pEq = sqlite3PExpr(pParse, TK_EQ, pLeft, pRight, 0);
@@ -933,7 +931,6 @@ void sqlite3FkCheck(
       if( aiCol[i]==pTab->iPKey ){
         aiCol[i] = -1;
       }
-      assert( pIdx==0 || pIdx->aiColumn[i]>=0 );
 #ifndef SQLITE_OMIT_AUTHORIZATION
       /* Request permission to read the parent key columns. If the 
       ** authorization callback returns SQLITE_IGNORE, behave as if any
@@ -1065,10 +1062,7 @@ u32 sqlite3FkOldmask(
       Index *pIdx = 0;
       sqlite3FkLocateIndex(pParse, pTab, p, &pIdx, 0);
       if( pIdx ){
-        for(i=0; i<pIdx->nKeyCol; i++){
-          assert( pIdx->aiColumn[i]>=0 );
-          mask |= COLUMN_MASK(pIdx->aiColumn[i]);
-        }
+        for(i=0; i<pIdx->nKeyCol; i++) mask |= COLUMN_MASK(pIdx->aiColumn[i]);
       }
     }
   }
@@ -1165,6 +1159,7 @@ static Trigger *fkActionTrigger(
   pTrigger = pFKey->apTrigger[iAction];
 
   if( action!=OE_None && !pTrigger ){
+    u8 enableLookaside;           /* Copy of db->lookaside.bEnabled */
     char const *zFrom;            /* Name of child table */
     int nFrom;                    /* Length in bytes of zFrom */
     Index *pIdx = 0;              /* Parent key index for this FK */
@@ -1190,10 +1185,11 @@ static Trigger *fkActionTrigger(
       iFromCol = aiCol ? aiCol[i] : pFKey->aCol[0].iFrom;
       assert( iFromCol>=0 );
       assert( pIdx!=0 || (pTab->iPKey>=0 && pTab->iPKey<pTab->nCol) );
-      assert( pIdx==0 || pIdx->aiColumn[i]>=0 );
-      sqlite3TokenInit(&tToCol,
-                   pTab->aCol[pIdx ? pIdx->aiColumn[i] : pTab->iPKey].zName);
-      sqlite3TokenInit(&tFromCol, pFKey->pFrom->aCol[iFromCol].zName);
+      tToCol.z = pTab->aCol[pIdx ? pIdx->aiColumn[i] : pTab->iPKey].zName;
+      tFromCol.z = pFKey->pFrom->aCol[iFromCol].zName;
+
+      tToCol.n = sqlite3Strlen30(tToCol.z);
+      tFromCol.n = sqlite3Strlen30(tFromCol.z);
 
       /* Create the expression "OLD.zToCol = zFromCol". It is important
       ** that the "OLD.zToCol" term is on the LHS of the = operator, so
@@ -1273,7 +1269,8 @@ static Trigger *fkActionTrigger(
     }
 
     /* Disable lookaside memory allocation */
-    db->lookaside.bDisable++;
+    enableLookaside = db->lookaside.bEnabled;
+    db->lookaside.bEnabled = 0;
 
     pTrigger = (Trigger *)sqlite3DbMallocZero(db, 
         sizeof(Trigger) +         /* struct Trigger */
@@ -1295,7 +1292,7 @@ static Trigger *fkActionTrigger(
     }
 
     /* Re-enable the lookaside buffer, if it was disabled earlier. */
-    db->lookaside.bDisable--;
+    db->lookaside.bEnabled = enableLookaside;
 
     sqlite3ExprDelete(db, pWhere);
     sqlite3ExprDelete(db, pWhen);

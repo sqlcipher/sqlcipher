@@ -42,3 +42,4 @@ do_execsql_test 1.2 {
 db close
 tvfs delete
 finish_test
+

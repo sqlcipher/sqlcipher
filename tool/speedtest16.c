@@ -29,8 +29,6 @@
 #include <unistd.h>
 #include "sqlite3.h"
 
-#define ISSPACE(X)  isspace((unsigned char)(X))
-
 /* 
 ** hwtime.h contains inline assembler code for implementing 
 ** high-performance timing routines.
@@ -142,7 +140,7 @@ int main(int argc, char **argv){
       zSql[j+1] = c;
       if( isComplete ){
         zSql[j] = 0;
-        while( i<j && ISSPACE(zSql[i]) ){ i++; }
+        while( i<j && isspace(zSql[i]) ){ i++; }
         if( i<j ){
           nStmt++;
           nByte += j-i;

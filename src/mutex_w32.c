@@ -78,30 +78,9 @@ static int winMutexNotheld(sqlite3_mutex *p){
 #endif
 
 /*
-** Try to provide a memory barrier operation, needed for initialization
-** and also for the xShmBarrier method of the VFS in cases when SQLite is
-** compiled without mutexes (SQLITE_THREADSAFE=0).
-*/
-void sqlite3MemoryBarrier(void){
-#if defined(SQLITE_MEMORY_BARRIER)
-  SQLITE_MEMORY_BARRIER;
-#elif defined(__GNUC__)
-  __sync_synchronize();
-#elif !defined(SQLITE_DISABLE_INTRINSIC) && \
-      defined(_MSC_VER) && _MSC_VER>=1300
-  _ReadWriteBarrier();
-#elif defined(MemoryBarrier)
-  MemoryBarrier();
-#endif
-}
-
-/*
 ** Initialize and deinitialize the mutex subsystem.
 */
 static sqlite3_mutex winMutex_staticMutexes[] = {
-  SQLITE3_MUTEX_INITIALIZER,
-  SQLITE3_MUTEX_INITIALIZER,
-  SQLITE3_MUTEX_INITIALIZER,
   SQLITE3_MUTEX_INITIALIZER,
   SQLITE3_MUTEX_INITIALIZER,
   SQLITE3_MUTEX_INITIALIZER,
@@ -181,9 +160,6 @@ static int winMutexEnd(void){
 ** <li>  SQLITE_MUTEX_STATIC_APP1
 ** <li>  SQLITE_MUTEX_STATIC_APP2
 ** <li>  SQLITE_MUTEX_STATIC_APP3
-** <li>  SQLITE_MUTEX_STATIC_VFS1
-** <li>  SQLITE_MUTEX_STATIC_VFS2
-** <li>  SQLITE_MUTEX_STATIC_VFS3
 ** </ul>
 **
 ** The first two constants cause sqlite3_mutex_alloc() to create

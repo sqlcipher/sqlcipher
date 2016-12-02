@@ -49,7 +49,7 @@ static int createModule(
     rc = SQLITE_MISUSE_BKPT;
   }else{
     Module *pMod;
-    pMod = (Module *)sqlite3DbMallocRawNN(db, sizeof(Module) + nName + 1);
+    pMod = (Module *)sqlite3DbMallocRaw(db, sizeof(Module) + nName + 1);
     if( pMod ){
       Module *pDel;
       char *zCopy = (char *)(&pMod[1]);
@@ -58,11 +58,10 @@ static int createModule(
       pMod->pModule = pModule;
       pMod->pAux = pAux;
       pMod->xDestroy = xDestroy;
-      pMod->pEpoTab = 0;
       pDel = (Module *)sqlite3HashInsert(&db->aModule,zCopy,(void*)pMod);
       assert( pDel==0 || pDel==pMod );
       if( pDel ){
-        sqlite3OomFault(db);
+        db->mallocFailed = 1;
         sqlite3DbFree(db, pDel);
       }
     }
@@ -286,17 +285,23 @@ void sqlite3VtabClear(sqlite3 *db, Table *p){
 ** deleted.
 */
 static void addModuleArgument(sqlite3 *db, Table *pTable, char *zArg){
-  int nBytes = sizeof(char *)*(2+pTable->nModuleArg);
+  int i = pTable->nModuleArg++;
+  int nBytes = sizeof(char *)*(1+pTable->nModuleArg);
   char **azModuleArg;
   azModuleArg = sqlite3DbRealloc(db, pTable->azModuleArg, nBytes);
   if( azModuleArg==0 ){
+    int j;
+    for(j=0; j<i; j++){
+      sqlite3DbFree(db, pTable->azModuleArg[j]);
+    }
     sqlite3DbFree(db, zArg);
+    sqlite3DbFree(db, pTable->azModuleArg);
+    pTable->nModuleArg = 0;
   }else{
-    int i = pTable->nModuleArg++;
     azModuleArg[i] = zArg;
     azModuleArg[i+1] = 0;
-    pTable->azModuleArg = azModuleArg;
   }
+  pTable->azModuleArg = azModuleArg;
 }
 
 /*
@@ -423,7 +428,7 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
     sqlite3VdbeAddParseSchemaOp(v, iDb, zWhere);
 
     iReg = ++pParse->nMem;
-    sqlite3VdbeLoadString(v, iReg, pTab->zName);
+    sqlite3VdbeAddOp4(v, OP_String8, 0, iReg, 0, pTab->zName, 0);
     sqlite3VdbeAddOp2(v, OP_VCreate, iDb, iReg);
   }
 
@@ -439,7 +444,7 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
     assert( sqlite3SchemaMutexHeld(db, 0, pSchema) );
     pOld = sqlite3HashInsert(&pSchema->tblHash, zName, pTab);
     if( pOld ){
-      sqlite3OomFault(db);
+      db->mallocFailed = 1;
       assert( pTab==pOld );  /* Malloc must have failed inside HashInsert() */
       return;
     }
@@ -530,7 +535,7 @@ static int vtabCallConstructor(
   db->pVtabCtx = &sCtx;
   rc = xConstruct(db, pMod->pAux, nArg, azArg, &pVTable->pVtab, &zErr);
   db->pVtabCtx = sCtx.pPrior;
-  if( rc==SQLITE_NOMEM ) sqlite3OomFault(db);
+  if( rc==SQLITE_NOMEM ) db->mallocFailed = 1;
   assert( sCtx.pTab==pTab );
 
   if( SQLITE_OK!=rc ){
@@ -699,7 +704,7 @@ int sqlite3VtabCallCreate(sqlite3 *db, int iDb, const char *zTab, char **pzErr){
   ** invoke it now. If the module has not been registered, return an 
   ** error. Otherwise, do nothing.
   */
-  if( pMod==0 || pMod->pModule->xCreate==0 || pMod->pModule->xDestroy==0 ){
+  if( !pMod ){
     *pzErr = sqlite3MPrintf(db, "no such module: %s", zMod);
     rc = SQLITE_ERROR;
   }else{
@@ -801,7 +806,6 @@ int sqlite3VtabCallDestroy(sqlite3 *db, int iDb, const char *zTab){
   pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zName);
   if( ALWAYS(pTab!=0 && pTab->pVTable!=0) ){
     VTable *p;
-    int (*xDestroy)(sqlite3_vtab *);
     for(p=pTab->pVTable; p; p=p->pNext){
       assert( p->pVtab );
       if( p->pVtab->nRef>0 ){
@@ -809,9 +813,7 @@ int sqlite3VtabCallDestroy(sqlite3 *db, int iDb, const char *zTab){
       }
     }
     p = vtabDisconnectAll(db, pTab);
-    xDestroy = p->pMod->pModule->xDestroy;
-    assert( xDestroy!=0 );  /* Checked before the virtual table is created */
-    rc = xDestroy(p->pVtab);
+    rc = p->pMod->pModule->xDestroy(p->pVtab);
     /* Remove the sqlite3_vtab* from the aVTrans[] array, if applicable */
     if( rc==SQLITE_OK ){
       assert( pTab->pVTable==p && p->pNext==0 );
@@ -835,10 +837,8 @@ int sqlite3VtabCallDestroy(sqlite3 *db, int iDb, const char *zTab){
 static void callFinaliser(sqlite3 *db, int offset){
   int i;
   if( db->aVTrans ){
-    VTable **aVTrans = db->aVTrans;
-    db->aVTrans = 0;
     for(i=0; i<db->nVTrans; i++){
-      VTable *pVTab = aVTrans[i];
+      VTable *pVTab = db->aVTrans[i];
       sqlite3_vtab *p = pVTab->pVtab;
       if( p ){
         int (*x)(sqlite3_vtab *);
@@ -848,8 +848,9 @@ static void callFinaliser(sqlite3 *db, int offset){
       pVTab->iSavepoint = 0;
       sqlite3VtabUnlock(pVTab);
     }
-    sqlite3DbFree(db, aVTrans);
+    sqlite3DbFree(db, db->aVTrans);
     db->nVTrans = 0;
+    db->aVTrans = 0;
   }
 }
 
@@ -937,9 +938,7 @@ int sqlite3VtabBegin(sqlite3 *db, VTable *pVTab){
     if( rc==SQLITE_OK ){
       rc = pModule->xBegin(pVTab->pVtab);
       if( rc==SQLITE_OK ){
-        int iSvpt = db->nStatement + db->nSavepoint;
         addToVTrans(db, pVTab);
-        if( iSvpt ) rc = sqlite3VtabSavepoint(db, SAVEPOINT_BEGIN, iSvpt-1);
       }
     }
   }
@@ -1016,7 +1015,7 @@ FuncDef *sqlite3VtabOverloadFunction(
   Table *pTab;
   sqlite3_vtab *pVtab;
   sqlite3_module *pMod;
-  void (*xSFunc)(sqlite3_context*,int,sqlite3_value**) = 0;
+  void (*xFunc)(sqlite3_context*,int,sqlite3_value**) = 0;
   void *pArg = 0;
   FuncDef *pNew;
   int rc = 0;
@@ -1044,7 +1043,7 @@ FuncDef *sqlite3VtabOverloadFunction(
     for(z=(unsigned char*)zLowerName; *z; z++){
       *z = sqlite3UpperToLower[*z];
     }
-    rc = pMod->xFindFunction(pVtab, nArg, zLowerName, &xSFunc, &pArg);
+    rc = pMod->xFindFunction(pVtab, nArg, zLowerName, &xFunc, &pArg);
     sqlite3DbFree(db, zLowerName);
   }
   if( rc==0 ){
@@ -1061,7 +1060,7 @@ FuncDef *sqlite3VtabOverloadFunction(
   *pNew = *pDef;
   pNew->zName = (char *)&pNew[1];
   memcpy(pNew->zName, pDef->zName, sqlite3Strlen30(pDef->zName)+1);
-  pNew->xSFunc = xSFunc;
+  pNew->xFunc = xFunc;
   pNew->pUserData = pArg;
   pNew->funcFlags |= SQLITE_FUNC_EPHEM;
   return pNew;
@@ -1088,68 +1087,7 @@ void sqlite3VtabMakeWritable(Parse *pParse, Table *pTab){
     pToplevel->apVtabLock = apVtabLock;
     pToplevel->apVtabLock[pToplevel->nVtabLock++] = pTab;
   }else{
-    sqlite3OomFault(pToplevel->db);
-  }
-}
-
-/*
-** Check to see if virtual tale module pMod can be have an eponymous
-** virtual table instance.  If it can, create one if one does not already
-** exist. Return non-zero if the eponymous virtual table instance exists
-** when this routine returns, and return zero if it does not exist.
-**
-** An eponymous virtual table instance is one that is named after its
-** module, and more importantly, does not require a CREATE VIRTUAL TABLE
-** statement in order to come into existance.  Eponymous virtual table
-** instances always exist.  They cannot be DROP-ed.
-**
-** Any virtual table module for which xConnect and xCreate are the same
-** method can have an eponymous virtual table instance.
-*/
-int sqlite3VtabEponymousTableInit(Parse *pParse, Module *pMod){
-  const sqlite3_module *pModule = pMod->pModule;
-  Table *pTab;
-  char *zErr = 0;
-  int nName;
-  int rc;
-  sqlite3 *db = pParse->db;
-  if( pMod->pEpoTab ) return 1;
-  if( pModule->xCreate!=0 && pModule->xCreate!=pModule->xConnect ) return 0;
-  nName = sqlite3Strlen30(pMod->zName) + 1;
-  pTab = sqlite3DbMallocZero(db, sizeof(Table) + nName);
-  if( pTab==0 ) return 0;
-  pMod->pEpoTab = pTab;
-  pTab->zName = (char*)&pTab[1];
-  memcpy(pTab->zName, pMod->zName, nName);
-  pTab->nRef = 1;
-  pTab->pSchema = db->aDb[0].pSchema;
-  pTab->tabFlags |= TF_Virtual;
-  pTab->nModuleArg = 0;
-  pTab->iPKey = -1;
-  addModuleArgument(db, pTab, sqlite3DbStrDup(db, pTab->zName));
-  addModuleArgument(db, pTab, 0);
-  addModuleArgument(db, pTab, sqlite3DbStrDup(db, pTab->zName));
-  rc = vtabCallConstructor(db, pTab, pMod, pModule->xConnect, &zErr);
-  if( rc ){
-    sqlite3ErrorMsg(pParse, "%s", zErr);
-    sqlite3DbFree(db, zErr);
-    sqlite3VtabEponymousTableClear(db, pMod);
-    return 0;
-  }
-  return 1;
-}
-
-/*
-** Erase the eponymous virtual table instance associated with
-** virtual table module pMod, if it exists.
-*/
-void sqlite3VtabEponymousTableClear(sqlite3 *db, Module *pMod){
-  Table *pTab = pMod->pEpoTab;
-  if( pTab!=0 ){
-    sqlite3DeleteColumnNames(db, pTab);
-    sqlite3VtabClear(db, pTab);
-    sqlite3DbFree(db, pTab);
-    pMod->pEpoTab = 0;
+    pToplevel->db->mallocFailed = 1;
   }
 }
 

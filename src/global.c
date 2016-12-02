@@ -186,7 +186,7 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
    0,                         /* nScratch */
    (void*)0,                  /* pPage */
    0,                         /* szPage */
-   SQLITE_DEFAULT_PCACHE_INITSZ, /* nPage */
+   0,                         /* nPage */
    0,                         /* mxParserStack */
    0,                         /* sharedCacheEnabled */
    SQLITE_SORTER_PMASZ,       /* szPma */
@@ -260,8 +260,3 @@ int sqlite3PendingByte = 0x40000000;
 ** the vdbe.c file.  
 */
 const unsigned char sqlite3OpcodeProperty[] = OPFLG_INITIALIZER;
-
-/*
-** Name of the default collating sequence
-*/
-const char sqlite3StrBINARY[] = "BINARY";

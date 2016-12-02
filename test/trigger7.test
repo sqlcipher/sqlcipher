@@ -21,6 +21,7 @@ ifcapable {!trigger} {
   return
 }
 
+
 # Error messages resulting from qualified trigger names.
 #
 do_test trigger7-1.1 {

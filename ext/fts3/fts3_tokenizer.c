@@ -67,7 +67,6 @@ static void scalarFunc(
   nName = sqlite3_value_bytes(argv[0])+1;
 
   if( argc==2 ){
-#ifdef SQLITE_ENABLE_FTS3_TOKENIZER
     void *pOld;
     int n = sqlite3_value_bytes(argv[1]);
     if( zName==0 || n!=sizeof(pPtr) ){
@@ -80,14 +79,7 @@ static void scalarFunc(
       sqlite3_result_error(context, "out of memory", -1);
       return;
     }
-#else
-    sqlite3_result_error(context, "fts3tokenize: " 
-        "disabled - rebuild with -DSQLITE_ENABLE_FTS3_TOKENIZER", -1
-    );
-    return;
-#endif /* SQLITE_ENABLE_FTS3_TOKENIZER */
-  }else
-  {
+  }else{
     if( zName ){
       pPtr = sqlite3Fts3HashFind(pHash, zName, nName);
     }
@@ -336,7 +328,6 @@ finish:
   Tcl_DecrRefCount(pRet);
 }
 
-#ifdef SQLITE_ENABLE_FTS3_TOKENIZER
 static
 int registerTokenizer(
   sqlite3 *db, 
@@ -358,8 +349,6 @@ int registerTokenizer(
 
   return sqlite3_finalize(pStmt);
 }
-#endif /* SQLITE_ENABLE_FTS3_TOKENIZER */
-
 
 static
 int queryTokenizer(
@@ -431,13 +420,11 @@ static void intTestFunc(
   assert( 0==strcmp(sqlite3_errmsg(db), "unknown tokenizer: nosuchtokenizer") );
 
   /* Test the storage function */
-#ifdef SQLITE_ENABLE_FTS3_TOKENIZER
   rc = registerTokenizer(db, "nosuchtokenizer", p1);
   assert( rc==SQLITE_OK );
   rc = queryTokenizer(db, "nosuchtokenizer", &p2);
   assert( rc==SQLITE_OK );
   assert( p2==p1 );
-#endif
 
   sqlite3_result_text(context, "ok", -1, SQLITE_STATIC);
 }

@@ -172,3 +172,4 @@ do_faultsim_test 8 -faults oom* -body {
 
 
 finish_test
+

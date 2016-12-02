@@ -26,19 +26,7 @@ proc is_without_rowid {tname} {
 #
 proc usage {} {
   set argv0 [file rootname [file tail [info nameofexecutable]]]
-  puts stderr "Usage: $argv0 ?--pageinfo? ?--stats? database-filename"
-  puts stderr {
-Analyze the SQLite3 database file specified by the "database-filename"
-argument and output a report detailing size and storage efficiency
-information for the database and its constituent tables and indexes.
-
-Options:
-
-   --stats        Output SQL text that creates a new database containing
-                  statistics about the database that was analyzed
-
-   --pageinfo     Show how each page of the database-file is used
-}
+  puts stderr "Usage: $argv0 database-name"
   exit 1
 }
 set file_to_analyze {}
@@ -100,6 +88,7 @@ if {[catch {sqlite3 db $file_to_analyze -uri 1} msg]} {
   puts stderr "error trying to open $file_to_analyze: $msg"
   exit 1
 }
+register_dbstat_vtab db
 
 db eval {SELECT count(*) FROM sqlite_master}
 set pageSize [expr {wide([db one {PRAGMA page_size}])}]
@@ -154,7 +143,6 @@ set tabledef {CREATE TABLE space_used(
    is_index boolean, -- TRUE if it is an index, false for a table
    nentry int,       -- Number of entries in the BTree
    leaf_entries int, -- Number of leaf entries
-   depth int,        -- Depth of the b-tree
    payload int,      -- Total amount of data stored in this table or index
    ovfl_payload int, -- Total amount of data stored on overflow pages
    ovfl_cnt int,     -- Number of entries that use overflow
@@ -177,9 +165,22 @@ db eval {CREATE TEMP TABLE dbstat AS SELECT * FROM temp.stat
          ORDER BY name, path}
 db eval {DROP TABLE temp.stat}
 
+proc isleaf {pagetype is_index} {
+  return [expr {$pagetype == "leaf" || ($pagetype == "internal" && $is_index)}]
+}
+proc isoverflow {pagetype is_index} {
+  return [expr {$pagetype == "overflow"}]
+}
+proc isinternal {pagetype is_index} {
+  return [expr {$pagetype == "internal" && $is_index==0}]
+}
+
+db func isleaf isleaf
+db func isinternal isinternal
+db func isoverflow isoverflow
+
 set isCompressed 0
 set compressOverhead 0
-set depth 0
 set sql { SELECT name, tbl_name FROM sqlite_master WHERE rootpage>0 }
 foreach {name tblname} [concat sqlite_master sqlite_master [db eval $sql]] {
 
@@ -188,20 +189,18 @@ foreach {name tblname} [concat sqlite_master sqlite_master [db eval $sql]] {
   db eval {
     SELECT 
       sum(ncell) AS nentry,
-      sum((pagetype=='leaf')*ncell) AS leaf_entries,
+      sum(isleaf(pagetype, $idx_btree) * ncell) AS leaf_entries,
       sum(payload) AS payload,
-      sum((pagetype=='overflow') * payload) AS ovfl_payload,
+      sum(isoverflow(pagetype, $idx_btree) * payload) AS ovfl_payload,
       sum(path LIKE '%+000000') AS ovfl_cnt,
       max(mx_payload) AS mx_payload,
-      sum(pagetype=='internal') AS int_pages,
-      sum(pagetype=='leaf') AS leaf_pages,
-      sum(pagetype=='overflow') AS ovfl_pages,
-      sum((pagetype=='internal') * unused) AS int_unused,
-      sum((pagetype=='leaf') * unused) AS leaf_unused,
-      sum((pagetype=='overflow') * unused) AS ovfl_unused,
-      sum(pgsize) AS compressed_size,
-      max((length(CASE WHEN path LIKE '%+%' THEN '' ELSE path END)+3)/4)
-        AS depth
+      sum(isinternal(pagetype, $idx_btree)) AS int_pages,
+      sum(isleaf(pagetype, $idx_btree)) AS leaf_pages,
+      sum(isoverflow(pagetype, $idx_btree)) AS ovfl_pages,
+      sum(isinternal(pagetype, $idx_btree) * unused) AS int_unused,
+      sum(isleaf(pagetype, $idx_btree) * unused) AS leaf_unused,
+      sum(isoverflow(pagetype, $idx_btree) * unused) AS ovfl_unused,
+      sum(pgsize) AS compressed_size
     FROM temp.dbstat WHERE name = $name
   } break
 
@@ -237,7 +236,6 @@ foreach {name tblname} [concat sqlite_master sqlite_master [db eval $sql]] {
       $is_index,
       $nentry,
       $leaf_entries,
-      $depth,
       $payload,     
       $ovfl_payload,
       $ovfl_cnt,   
@@ -347,9 +345,7 @@ proc subreport {title where showFrag} {
       int(sum(int_unused)) AS int_unused,
       int(sum(ovfl_unused)) AS ovfl_unused,
       int(sum(gap_cnt)) AS gap_cnt,
-      int(sum(compressed_size)) AS compressed_size,
-      int(max(depth)) AS depth,
-      count(*) AS cnt
+      int(sum(compressed_size)) AS compressed_size
     FROM space_used WHERE $where" {} {}
 
   # Output the sub-report title, nicely decorated with * characters.
@@ -386,7 +382,7 @@ proc subreport {title where showFrag} {
     "]
     set avg_fanout [mem eval "
       SELECT (sum(leaf_pages+int_pages)-$nTab)/sum(int_pages) FROM space_used
-          WHERE $where
+          WHERE $where AND is_index = 0
     "]
     set avg_fanout [format %.2f $avg_fanout]
   }
@@ -404,7 +400,6 @@ proc subreport {title where showFrag} {
     statline {Bytes used after compression} $compressed_size $pct
   }
   statline {Bytes of payload} $payload $payload_percent
-  if {$cnt==1} {statline {B-tree depth} $depth}
   statline {Average payload per entry} $avg_payload
   statline {Average unused bytes per entry} $avg_unused
   if {[info exists avg_fanout]} {

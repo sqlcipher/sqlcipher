@@ -46,23 +46,19 @@ struct VdbeOp {
   int p1;             /* First operand */
   int p2;             /* Second parameter (often the jump destination) */
   int p3;             /* The third parameter */
-  union p4union {     /* fourth parameter */
+  union {             /* fourth parameter */
     int i;                 /* Integer value if p4type==P4_INT32 */
     void *p;               /* Generic pointer */
     char *z;               /* Pointer to data for string (char array) types */
     i64 *pI64;             /* Used when p4type is P4_INT64 */
     double *pReal;         /* Used when p4type is P4_REAL */
     FuncDef *pFunc;        /* Used when p4type is P4_FUNCDEF */
-    sqlite3_context *pCtx; /* Used when p4type is P4_FUNCCTX */
     CollSeq *pColl;        /* Used when p4type is P4_COLLSEQ */
     Mem *pMem;             /* Used when p4type is P4_MEM */
     VTable *pVtab;         /* Used when p4type is P4_VTAB */
     KeyInfo *pKeyInfo;     /* Used when p4type is P4_KEYINFO */
     int *ai;               /* Used when p4type is P4_INTARRAY */
     SubProgram *pProgram;  /* Used when p4type is P4_SUBPROGRAM */
-#ifdef SQLITE_ENABLE_CURSOR_HINTS
-    Expr *pExpr;           /* Used when p4type is P4_EXPR */
-#endif
     int (*xAdvance)(BtCursor *, int *);
   } p4;
 #ifdef SQLITE_ENABLE_EXPLAIN_COMMENTS
@@ -113,7 +109,6 @@ typedef struct VdbeOpList VdbeOpList;
 #define P4_COLLSEQ  (-4)  /* P4 is a pointer to a CollSeq structure */
 #define P4_FUNCDEF  (-5)  /* P4 is a pointer to a FuncDef structure */
 #define P4_KEYINFO  (-6)  /* P4 is a pointer to a KeyInfo structure */
-#define P4_EXPR     (-7)  /* P4 is a pointer to an Expr tree */
 #define P4_MEM      (-8)  /* P4 is a pointer to a Mem*    structure */
 #define P4_TRANSIENT  0   /* P4 is a pointer to a transient string */
 #define P4_VTAB     (-10) /* P4 is a pointer to an sqlite3_vtab structure */
@@ -124,7 +119,6 @@ typedef struct VdbeOpList VdbeOpList;
 #define P4_INTARRAY (-15) /* P4 is a vector of 32-bit integers */
 #define P4_SUBPROGRAM  (-18) /* P4 is a pointer to a SubProgram structure */
 #define P4_ADVANCE  (-19) /* P4 is a pointer to BtreeNext() or BtreePrev() */
-#define P4_FUNCCTX  (-20) /* P4 is a pointer to an sqlite3_context object */
 
 /* Error message codes for OP_Halt */
 #define P5_ConstraintNotNull 1
@@ -173,28 +167,17 @@ Vdbe *sqlite3VdbeCreate(Parse*);
 int sqlite3VdbeAddOp0(Vdbe*,int);
 int sqlite3VdbeAddOp1(Vdbe*,int,int);
 int sqlite3VdbeAddOp2(Vdbe*,int,int,int);
-int sqlite3VdbeGoto(Vdbe*,int);
-int sqlite3VdbeLoadString(Vdbe*,int,const char*);
-void sqlite3VdbeMultiLoad(Vdbe*,int,const char*,...);
 int sqlite3VdbeAddOp3(Vdbe*,int,int,int,int);
 int sqlite3VdbeAddOp4(Vdbe*,int,int,int,int,const char *zP4,int);
-int sqlite3VdbeAddOp4Dup8(Vdbe*,int,int,int,int,const u8*,int);
 int sqlite3VdbeAddOp4Int(Vdbe*,int,int,int,int,int);
-void sqlite3VdbeEndCoroutine(Vdbe*,int);
-#if defined(SQLITE_DEBUG) && !defined(SQLITE_TEST_REALLOC_STRESS)
-  void sqlite3VdbeVerifyNoMallocRequired(Vdbe *p, int N);
-#else
-# define sqlite3VdbeVerifyNoMallocRequired(A,B)
-#endif
-VdbeOp *sqlite3VdbeAddOpList(Vdbe*, int nOp, VdbeOpList const *aOp, int iLineno);
+int sqlite3VdbeAddOpList(Vdbe*, int nOp, VdbeOpList const *aOp, int iLineno);
 void sqlite3VdbeAddParseSchemaOp(Vdbe*,int,char*);
-void sqlite3VdbeChangeOpcode(Vdbe*, u32 addr, u8);
 void sqlite3VdbeChangeP1(Vdbe*, u32 addr, int P1);
 void sqlite3VdbeChangeP2(Vdbe*, u32 addr, int P2);
 void sqlite3VdbeChangeP3(Vdbe*, u32 addr, int P3);
 void sqlite3VdbeChangeP5(Vdbe*, u8 P5);
 void sqlite3VdbeJumpHere(Vdbe*, int addr);
-int sqlite3VdbeChangeToNoop(Vdbe*, int addr);
+void sqlite3VdbeChangeToNoop(Vdbe*, int addr);
 int sqlite3VdbeDeletePriorOpcode(Vdbe*, u8 op);
 void sqlite3VdbeChangeP4(Vdbe*, int addr, const char *zP4, int N);
 void sqlite3VdbeSetP4KeyInfo(Parse*, Index*);

@@ -47,6 +47,8 @@ set pragma_def {
   IF:   !defined(SQLITE_OMIT_FLAG_PRAGMAS)
 
   NAME: cache_spill
+  TYPE: FLAG
+  ARG:  SQLITE_CacheSpill
   IF:   !defined(SQLITE_OMIT_FLAG_PRAGMAS)
 
   NAME: reverse_unordered_selects
@@ -133,10 +135,6 @@ set pragma_def {
   ARG:  SQLITE_DeferFKs
   IF:   !defined(SQLITE_OMIT_FLAG_PRAGMAS)
   IF:   !defined(SQLITE_OMIT_FOREIGN_KEY) && !defined(SQLITE_OMIT_TRIGGER)
-
-  NAME: cell_size_check
-  TYPE: FLAG
-  ARG:  SQLITE_CellSizeCk
 
   NAME: default_cache_size
   FLAG: NeedSchema
@@ -238,7 +236,7 @@ set pragma_def {
   IF:   !defined(SQLITE_OMIT_FOREIGN_KEY) && !defined(SQLITE_OMIT_TRIGGER)
 
   NAME: parser_trace
-  IF:   defined(SQLITE_DEBUG) && !defined(SQLITE_OMIT_PARSER_TRACE)
+  IF:   defined(SQLITE_DEBUG)
 
   NAME: case_sensitive_like
 

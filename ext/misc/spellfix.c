@@ -186,7 +186,7 @@ static const unsigned char className[] = ".ABCDHLRMY9 ?";
 ** Return NULL if memory allocation fails.  
 */
 static unsigned char *phoneticHash(const unsigned char *zIn, int nIn){
-  unsigned char *zOut = sqlite3_malloc64( nIn + 1 );
+  unsigned char *zOut = sqlite3_malloc( nIn + 1 );
   int i;
   int nOut = 0;
   char cPrev = 0x77;
@@ -365,8 +365,8 @@ static int editdist1(const char *zA, const char *zB, int *pnMatch){
   int *m;                /* The cost matrix */
   char *cx;              /* Corresponding character values */
   int *toFree = 0;       /* Malloced space */
-  int nMatch = 0;
   int mStack[60+15];     /* Stack space to use if not too much is needed */
+  int nMatch = 0;
 
   /* Early out if either input is NULL */
   if( zA==0 || zB==0 ) return -1;
@@ -413,7 +413,7 @@ static int editdist1(const char *zA, const char *zB, int *pnMatch){
   if( nB<(sizeof(mStack)*4)/(sizeof(mStack[0])*5) ){
     m = mStack;
   }else{
-    m = toFree = sqlite3_malloc64( (nB+1)*5*sizeof(m[0])/4 );
+    m = toFree = sqlite3_malloc( (nB+1)*5*sizeof(m[0])/4 );
     if( m==0 ) return -3;
   }
   cx = (char*)&m[nB+1];
@@ -687,7 +687,7 @@ static int editDist3ConfigLoad(
     if( iCost<0 ) continue;
     if( pLang==0 || iLang!=iLangPrev ){
       EditDist3Lang *pNew;
-      pNew = sqlite3_realloc64(p->a, (p->nLang+1)*sizeof(p->a[0]));
+      pNew = sqlite3_realloc(p->a, (p->nLang+1)*sizeof(p->a[0]));
       if( pNew==0 ){ rc = SQLITE_NOMEM; break; }
       p->a = pNew;
       pLang = &p->a[p->nLang];
@@ -709,7 +709,7 @@ static int editDist3ConfigLoad(
       EditDist3Cost *pCost;
       int nExtra = nFrom + nTo - 4;
       if( nExtra<0 ) nExtra = 0;
-      pCost = sqlite3_malloc64( sizeof(*pCost) + nExtra );
+      pCost = sqlite3_malloc( sizeof(*pCost) + nExtra );
       if( pCost==0 ){ rc = SQLITE_NOMEM; break; }
       pCost->nFrom = nFrom;
       pCost->nTo = nTo;
@@ -808,7 +808,7 @@ static EditDist3FromString *editDist3FromStringNew(
 
   if( z==0 ) return 0;
   if( n<0 ) n = (int)strlen(z);
-  pStr = sqlite3_malloc64( sizeof(*pStr) + sizeof(pStr->a[0])*n + n + 1 );
+  pStr = sqlite3_malloc( sizeof(*pStr) + sizeof(pStr->a[0])*n + n + 1 );
   if( pStr==0 ) return 0;
   pStr->a = (EditDist3From*)&pStr[1];
   memset(pStr->a, 0, sizeof(pStr->a[0])*n);
@@ -833,13 +833,13 @@ static EditDist3FromString *editDist3FromStringNew(
       if( i+p->nFrom>n ) continue;
       if( matchFrom(p, z+i, n-i)==0 ) continue;
       if( p->nTo==0 ){
-        apNew = sqlite3_realloc64(pFrom->apDel,
+        apNew = sqlite3_realloc(pFrom->apDel,
                                 sizeof(*apNew)*(pFrom->nDel+1));
         if( apNew==0 ) break;
         pFrom->apDel = apNew;
         apNew[pFrom->nDel++] = p;
       }else{
-        apNew = sqlite3_realloc64(pFrom->apSubst,
+        apNew = sqlite3_realloc(pFrom->apSubst,
                                 sizeof(*apNew)*(pFrom->nSubst+1));
         if( apNew==0 ) break;
         pFrom->apSubst = apNew;
@@ -875,17 +875,6 @@ static void updateCost(
   }
 }
 
-/*
-** How much stack space (int bytes) to use for Wagner matrix in 
-** editDist3Core().  If more space than this is required, the entire
-** matrix is taken from the heap.  To reduce the load on the memory
-** allocator, make this value as large as practical for the
-** architecture in use.
-*/
-#ifndef SQLITE_SPELLFIX_STACKALLOC_SZ
-# define SQLITE_SPELLFIX_STACKALLOC_SZ  (1024)
-#endif
-
 /* Compute the edit distance between two strings.
 **
 ** If an error occurs, return a negative number which is the error code.
@@ -910,24 +899,15 @@ static int editDist3Core(
   EditDist3FromString f = *pFrom;
   EditDist3To *a2;
   unsigned int *m;
-  unsigned int *pToFree;
   int szRow;
   EditDist3Cost *p;
   int res;
-  sqlite3_uint64 nByte;
-  unsigned int stackSpace[SQLITE_SPELLFIX_STACKALLOC_SZ/sizeof(unsigned int)];
 
   /* allocate the Wagner matrix and the aTo[] array for the TO string */
   n = (f.n+1)*(n2+1);
   n = (n+1)&~1;
-  nByte = n*sizeof(m[0]) + sizeof(a2[0])*n2;
-  if( nByte<=sizeof(stackSpace) ){
-    m = stackSpace;
-    pToFree = 0;
-  }else{
-    m = pToFree = sqlite3_malloc64( nByte );
-    if( m==0 ) return -1;            /* Out of memory */
-  }
+  m = sqlite3_malloc( n*sizeof(m[0]) + sizeof(a2[0])*n2 );
+  if( m==0 ) return -1;            /* Out of memory */
   a2 = (EditDist3To*)&m[n];
   memset(a2, 0, sizeof(a2[0])*n2);
 
@@ -940,7 +920,7 @@ static int editDist3Core(
       if( i2+p->nTo>n2 ) continue;
       if( matchTo(p, z2+i2, n2-i2)==0 ) continue;
       a2[i2].nIns++;
-      apNew = sqlite3_realloc64(a2[i2].apIns, sizeof(*apNew)*a2[i2].nIns);
+      apNew = sqlite3_realloc(a2[i2].apIns, sizeof(*apNew)*a2[i2].nIns);
       if( apNew==0 ){
         res = -1;  /* Out of memory */
         goto editDist3Abort;
@@ -1049,7 +1029,7 @@ static int editDist3Core(
 
 editDist3Abort:
   for(i2=0; i2<n2; i2++) sqlite3_free(a2[i2].apIns);
-  sqlite3_free(pToFree);
+  sqlite3_free(m);
   return res;
 }
 
@@ -1118,7 +1098,7 @@ static void editDist3SqlFunc(
 */
 static int editDist3Install(sqlite3 *db){
   int rc;
-  EditDist3Config *pConfig = sqlite3_malloc64( sizeof(*pConfig) );
+  EditDist3Config *pConfig = sqlite3_malloc( sizeof(*pConfig) );
   if( pConfig==0 ) return SQLITE_NOMEM;
   memset(pConfig, 0, sizeof(*pConfig));
   rc = sqlite3_create_function_v2(db, "editdist3",
@@ -1607,7 +1587,7 @@ static const struct {
 ** should be freed by the caller.
 */
 static unsigned char *transliterate(const unsigned char *zIn, int nIn){
-  unsigned char *zOut = sqlite3_malloc64( nIn*4 + 1 );
+  unsigned char *zOut = sqlite3_malloc( nIn*4 + 1 );
   int c, sz, nOut;
   if( zOut==0 ) return 0;
   nOut = 0;
@@ -1737,23 +1717,17 @@ static void scriptCodeSqlFunc(
 # define SCRIPT_LATIN       0x0001
 # define SCRIPT_CYRILLIC    0x0002
 # define SCRIPT_GREEK       0x0004
-# define SCRIPT_HEBREW      0x0008
-# define SCRIPT_ARABIC      0x0010
 
   while( nIn>0 ){
     c = utf8Read(zIn, nIn, &sz);
     zIn += sz;
     nIn -= sz;
-    if( c<0x02af && (c>=0x80 || midClass[c&0x7f]<CCLASS_DIGIT) ){
+    if( c<0x02af ){
       scriptMask |= SCRIPT_LATIN;
     }else if( c>=0x0400 && c<=0x04ff ){
       scriptMask |= SCRIPT_CYRILLIC;
     }else if( c>=0x0386 && c<=0x03ce ){
       scriptMask |= SCRIPT_GREEK;
-    }else if( c>=0x0590 && c<=0x05ff ){
-      scriptMask |= SCRIPT_HEBREW;
-    }else if( c>=0x0600 && c<=0x06ff ){
-      scriptMask |= SCRIPT_ARABIC;
     }
   }
   switch( scriptMask ){
@@ -1761,8 +1735,6 @@ static void scriptCodeSqlFunc(
     case SCRIPT_LATIN:     res = 215; break;
     case SCRIPT_CYRILLIC:  res = 220; break;
     case SCRIPT_GREEK:     res = 200; break;
-    case SCRIPT_HEBREW:    res = 125; break;
-    case SCRIPT_ARABIC:    res = 160; break;
     default:               res = 998; break;
   }
   sqlite3_result_int(context, res);
@@ -1798,7 +1770,6 @@ struct spellfix1_cursor {
   sqlite3_vtab_cursor base;    /* Base class - must be first */
   spellfix1_vtab *pVTab;       /* The table to which this cursor belongs */
   char *zPattern;              /* rhs of MATCH clause */
-  int idxNum;                  /* idxNum value passed to xFilter() */
   int nRow;                    /* Number of rows of content */
   int nAlloc;                  /* Number of allocated rows */
   int iRow;                    /* Current row of content */
@@ -1879,7 +1850,7 @@ static char *spellfix1Dequote(const char *zIn){
   char *zOut;
   int i, j;
   char c;
-  while( isspace((unsigned char)zIn[0]) ) zIn++;
+  while( isspace(zIn[0]) ) zIn++;
   zOut = sqlite3_mprintf("%s", zIn);
   if( zOut==0 ) return 0;
   i = (int)strlen(zOut);
@@ -1930,7 +1901,7 @@ static int spellfix1Init(
   int i;
 
   nDbName = (int)strlen(zDbName);
-  pNew = sqlite3_malloc64( sizeof(*pNew) + nDbName + 1);
+  pNew = sqlite3_malloc( sizeof(*pNew) + nDbName + 1);
   if( pNew==0 ){
     rc = SQLITE_NOMEM;
   }else{
@@ -2044,7 +2015,7 @@ static void spellfix1ResetCursor(spellfix1_cursor *pCur){
 static void spellfix1ResizeCursor(spellfix1_cursor *pCur, int N){
   struct spellfix1_row *aNew;
   assert( N>=pCur->nRow );
-  aNew = sqlite3_realloc64(pCur->a, sizeof(pCur->a[0])*N);
+  aNew = sqlite3_realloc(pCur->a, sizeof(pCur->a[0])*N);
   if( aNew==0 && N>0 ){
     spellfix1ResetCursor(pCur);
     sqlite3_free(pCur->a);
@@ -2069,19 +2040,26 @@ static int spellfix1Close(sqlite3_vtab_cursor *cur){
   return SQLITE_OK;
 }
 
-#define SPELLFIX_IDXNUM_MATCH  0x01         /* word MATCH $str */
-#define SPELLFIX_IDXNUM_LANGID 0x02         /* langid == $langid */
-#define SPELLFIX_IDXNUM_TOP    0x04         /* top = $top */
-#define SPELLFIX_IDXNUM_SCOPE  0x08         /* scope = $scope */
-#define SPELLFIX_IDXNUM_DISTLT 0x10         /* distance < $distance */
-#define SPELLFIX_IDXNUM_DISTLE 0x20         /* distance <= $distance */
-#define SPELLFIX_IDXNUM_ROWID  0x40         /* rowid = $rowid */
-#define SPELLFIX_IDXNUM_DIST   (0x10|0x20)  /* DISTLT and DISTLE */
-
 /*
+** Search for terms of these forms:
 **
-** The plan number is a bitmask of the SPELLFIX_IDXNUM_* values defined
-** above.
+**   (A)    word MATCH $str
+**   (B)    langid == $langid
+**   (C)    top = $top
+**   (D)    scope = $scope
+**   (E)    distance < $distance
+**   (F)    distance <= $distance
+**   (G)    rowid = $rowid
+**
+** The plan number is a bit mask formed with these bits:
+**
+**   0x01   (A) is found
+**   0x02   (B) is found
+**   0x04   (C) is found
+**   0x08   (D) is found
+**   0x10   (E) is found
+**   0x20   (F) is found
+**   0x40   (G) is found
 **
 ** filter.argv[*] values contains $str, $langid, $top, $scope and $rowid
 ** if specified and in that order.
@@ -2100,66 +2078,62 @@ static int spellfix1BestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
     if( pConstraint->usable==0 ) continue;
 
     /* Terms of the form:  word MATCH $str */
-    if( (iPlan & SPELLFIX_IDXNUM_MATCH)==0 
+    if( (iPlan & 1)==0 
      && pConstraint->iColumn==SPELLFIX_COL_WORD
      && pConstraint->op==SQLITE_INDEX_CONSTRAINT_MATCH
     ){
-      iPlan |= SPELLFIX_IDXNUM_MATCH;
+      iPlan |= 1;
       pIdxInfo->aConstraintUsage[i].argvIndex = 1;
       pIdxInfo->aConstraintUsage[i].omit = 1;
     }
 
     /* Terms of the form:  langid = $langid  */
-    if( (iPlan & SPELLFIX_IDXNUM_LANGID)==0
+    if( (iPlan & 2)==0
      && pConstraint->iColumn==SPELLFIX_COL_LANGID
      && pConstraint->op==SQLITE_INDEX_CONSTRAINT_EQ
     ){
-      iPlan |= SPELLFIX_IDXNUM_LANGID;
+      iPlan |= 2;
       iLangTerm = i;
     }
 
     /* Terms of the form:  top = $top */
-    if( (iPlan & SPELLFIX_IDXNUM_TOP)==0
+    if( (iPlan & 4)==0
      && pConstraint->iColumn==SPELLFIX_COL_TOP
      && pConstraint->op==SQLITE_INDEX_CONSTRAINT_EQ
     ){
-      iPlan |= SPELLFIX_IDXNUM_TOP;
+      iPlan |= 4;
       iTopTerm = i;
     }
 
     /* Terms of the form:  scope = $scope */
-    if( (iPlan & SPELLFIX_IDXNUM_SCOPE)==0
+    if( (iPlan & 8)==0
      && pConstraint->iColumn==SPELLFIX_COL_SCOPE
      && pConstraint->op==SQLITE_INDEX_CONSTRAINT_EQ
     ){
-      iPlan |= SPELLFIX_IDXNUM_SCOPE;
+      iPlan |= 8;
       iScopeTerm = i;
     }
 
     /* Terms of the form:  distance < $dist or distance <= $dist */
-    if( (iPlan & SPELLFIX_IDXNUM_DIST)==0
+    if( (iPlan & (16|32))==0
      && pConstraint->iColumn==SPELLFIX_COL_DISTANCE
      && (pConstraint->op==SQLITE_INDEX_CONSTRAINT_LT
           || pConstraint->op==SQLITE_INDEX_CONSTRAINT_LE)
     ){
-      if( pConstraint->op==SQLITE_INDEX_CONSTRAINT_LT ){
-        iPlan |= SPELLFIX_IDXNUM_DISTLT;
-      }else{
-        iPlan |= SPELLFIX_IDXNUM_DISTLE;
-      }
+      iPlan |= pConstraint->op==SQLITE_INDEX_CONSTRAINT_LT ? 16 : 32;
       iDistTerm = i;
     }
 
     /* Terms of the form:  distance < $dist or distance <= $dist */
-    if( (iPlan & SPELLFIX_IDXNUM_ROWID)==0
+    if( (iPlan & 64)==0
      && pConstraint->iColumn<0
      && pConstraint->op==SQLITE_INDEX_CONSTRAINT_EQ
     ){
-      iPlan |= SPELLFIX_IDXNUM_ROWID;
+      iPlan |= 64;
       iRowidTerm = i;
     }
   }
-  if( iPlan&SPELLFIX_IDXNUM_MATCH ){
+  if( iPlan&1 ){
     int idx = 2;
     pIdxInfo->idxNum = iPlan;
     if( pIdxInfo->nOrderBy==1
@@ -2168,25 +2142,25 @@ static int spellfix1BestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
     ){
       pIdxInfo->orderByConsumed = 1;  /* Default order by iScore */
     }
-    if( iPlan&SPELLFIX_IDXNUM_LANGID ){
+    if( iPlan&2 ){
       pIdxInfo->aConstraintUsage[iLangTerm].argvIndex = idx++;
       pIdxInfo->aConstraintUsage[iLangTerm].omit = 1;
     }
-    if( iPlan&SPELLFIX_IDXNUM_TOP ){
+    if( iPlan&4 ){
       pIdxInfo->aConstraintUsage[iTopTerm].argvIndex = idx++;
       pIdxInfo->aConstraintUsage[iTopTerm].omit = 1;
     }
-    if( iPlan&SPELLFIX_IDXNUM_SCOPE ){
+    if( iPlan&8 ){
       pIdxInfo->aConstraintUsage[iScopeTerm].argvIndex = idx++;
       pIdxInfo->aConstraintUsage[iScopeTerm].omit = 1;
     }
-    if( iPlan&SPELLFIX_IDXNUM_DIST ){
+    if( iPlan&(16|32) ){
       pIdxInfo->aConstraintUsage[iDistTerm].argvIndex = idx++;
       pIdxInfo->aConstraintUsage[iDistTerm].omit = 1;
     }
     pIdxInfo->estimatedCost = 1e5;
-  }else if( (iPlan & SPELLFIX_IDXNUM_ROWID) ){
-    pIdxInfo->idxNum = SPELLFIX_IDXNUM_ROWID;
+  }else if( (iPlan & 64) ){
+    pIdxInfo->idxNum = 64;
     pIdxInfo->aConstraintUsage[iRowidTerm].argvIndex = 1;
     pIdxInfo->aConstraintUsage[iRowidTerm].omit = 1;
     pIdxInfo->estimatedCost = 5;
@@ -2203,7 +2177,7 @@ static int spellfix1BestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
 static int spellfix1Open(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCursor){
   spellfix1_vtab *p = (spellfix1_vtab*)pVTab;
   spellfix1_cursor *pCur;
-  pCur = sqlite3_malloc64( sizeof(*pCur) );
+  pCur = sqlite3_malloc( sizeof(*pCur) );
   if( pCur==0 ) return SQLITE_NOMEM;
   memset(pCur, 0, sizeof(*pCur));
   pCur->pVTab = p;
@@ -2337,24 +2311,15 @@ static void spellfix1RunQuery(MatchQuery *p, const char *zQuery, int nQuery){
       break;
     }
     pCur->nSearch++;
-    
-    /* If there is a "distance < $dist" or "distance <= $dist" constraint,
-    ** check if this row meets it. If not, jump back up to the top of the
-    ** loop to process the next row. Otherwise, if the row does match the
-    ** distance constraint, check if the pCur->a[] array is already full.
-    ** If it is and no explicit "top = ?" constraint was present in the
-    ** query, grow the array to ensure there is room for the new entry. */
-    assert( (p->iMaxDist>=0)==((pCur->idxNum & SPELLFIX_IDXNUM_DIST) ? 1 : 0) );
+    iScore = spellfix1Score(iDist,iRank);
     if( p->iMaxDist>=0 ){
       if( iDist>p->iMaxDist ) continue;
-      if( pCur->nRow>=pCur->nAlloc && (pCur->idxNum & SPELLFIX_IDXNUM_TOP)==0 ){
+      if( pCur->nRow>=pCur->nAlloc-1 ){
         spellfix1ResizeCursor(pCur, pCur->nAlloc*2 + 10);
         if( pCur->a==0 ) break;
       }
-    }
-
-    iScore = spellfix1Score(iDist,iRank);
-    if( pCur->nRow<pCur->nAlloc ){
+      idx = pCur->nRow;
+    }else if( pCur->nRow<pCur->nAlloc ){
       idx = pCur->nRow;
     }else if( iScore<iWorst ){
       idx = idxWorst;
@@ -2362,7 +2327,6 @@ static void spellfix1RunQuery(MatchQuery *p, const char *zQuery, int nQuery){
     }else{
       continue;
     }
-
     pCur->a[idx].zWord = sqlite3_mprintf("%s", sqlite3_column_text(pStmt, 1));
     if( pCur->a[idx].zWord==0 ){
       p->rc = SQLITE_NOMEM;
@@ -2397,10 +2361,10 @@ static void spellfix1RunQuery(MatchQuery *p, const char *zQuery, int nQuery){
 */
 static int spellfix1FilterForMatch(
   spellfix1_cursor *pCur,
+  int idxNum,
   int argc,
   sqlite3_value **argv
 ){
-  int idxNum = pCur->idxNum;
   const unsigned char *zMatchThis;   /* RHS of the MATCH operator */
   EditDist3FromString *pMatchStr3 = 0; /* zMatchThis as an editdist string */
   char *zPattern;                    /* Transliteration of zMatchThis */
@@ -2417,7 +2381,7 @@ static int spellfix1FilterForMatch(
 
   /* Load the cost table if we have not already done so */
   if( p->zCostTable!=0 && p->pConfig3==0 ){
-    p->pConfig3 = sqlite3_malloc64( sizeof(p->pConfig3[0]) );
+    p->pConfig3 = sqlite3_malloc( sizeof(p->pConfig3[0]) );
     if( p->pConfig3==0 ) return SQLITE_NOMEM;
     memset(p->pConfig3, 0, sizeof(p->pConfig3[0]));
     rc = editDist3ConfigLoad(p->pConfig3, p->db, p->zCostTable);
@@ -2512,11 +2476,11 @@ filter_exit:
 */
 static int spellfix1FilterForFullScan(
   spellfix1_cursor *pCur,
+  int idxNum,
   int argc,
   sqlite3_value **argv
 ){
   int rc = SQLITE_OK;
-  int idxNum = pCur->idxNum;
   char *zSql;
   spellfix1_vtab *pVTab = pCur->pVTab;
   spellfix1ResetCursor(pCur);
@@ -2557,11 +2521,10 @@ static int spellfix1Filter(
 ){
   spellfix1_cursor *pCur = (spellfix1_cursor *)cur;
   int rc;
-  pCur->idxNum = idxNum;
   if( idxNum & 1 ){
-    rc = spellfix1FilterForMatch(pCur, argc, argv);
+    rc = spellfix1FilterForMatch(pCur, idxNum, argc, argv);
   }else{
-    rc = spellfix1FilterForFullScan(pCur, argc, argv);
+    rc = spellfix1FilterForFullScan(pCur, idxNum, argc, argv);
   }
   return rc;
 }
@@ -2693,31 +2656,6 @@ static int spellfix1Rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
 }
 
 /*
-** This function is called by the xUpdate() method. It returns a string
-** containing the conflict mode that xUpdate() should use for the current
-** operation. One of: "ROLLBACK", "IGNORE", "ABORT" or "REPLACE".
-*/
-static const char *spellfix1GetConflict(sqlite3 *db){
-  static const char *azConflict[] = {
-    /* Note: Instead of "FAIL" - "ABORT". */
-    "ROLLBACK", "IGNORE", "ABORT", "ABORT", "REPLACE"
-  };
-  int eConflict = sqlite3_vtab_on_conflict(db);
-
-  assert( eConflict==SQLITE_ROLLBACK || eConflict==SQLITE_IGNORE
-       || eConflict==SQLITE_FAIL || eConflict==SQLITE_ABORT
-       || eConflict==SQLITE_REPLACE
-  );
-  assert( SQLITE_ROLLBACK==1 );
-  assert( SQLITE_IGNORE==2 );
-  assert( SQLITE_FAIL==3 );
-  assert( SQLITE_ABORT==4 );
-  assert( SQLITE_REPLACE==5 );
-
-  return azConflict[eConflict-1];
-}
-
-/*
 ** The xUpdate() method.
 */
 static int spellfix1Update(
@@ -2748,7 +2686,6 @@ static int spellfix1Update(
     char *zK1, *zK2;
     int i;
     char c;
-    const char *zConflict = spellfix1GetConflict(db);
 
     if( zWord==0 ){
       /* Inserts of the form:  INSERT INTO table(command) VALUES('xyzzy');
@@ -2809,10 +2746,10 @@ static int spellfix1Update(
       }else{
         newRowid = sqlite3_value_int64(argv[1]);
         spellfix1DbExec(&rc, db,
-            "INSERT OR %s INTO \"%w\".\"%w_vocab\"(id,rank,langid,word,k1,k2) "
-            "VALUES(%lld,%d,%d,%Q,%Q,%Q)",
-            zConflict, p->zDbName, p->zTableName,
-            newRowid, iRank, iLang, zWord, zK1, zK2
+               "INSERT INTO \"%w\".\"%w_vocab\"(id,rank,langid,word,k1,k2) "
+               "VALUES(%lld,%d,%d,%Q,%Q,%Q)",
+               p->zDbName, p->zTableName,
+               newRowid, iRank, iLang, zWord, zK1, zK2
         );
       }
       *pRowid = sqlite3_last_insert_rowid(db);
@@ -2820,9 +2757,9 @@ static int spellfix1Update(
       rowid = sqlite3_value_int64(argv[0]);
       newRowid = *pRowid = sqlite3_value_int64(argv[1]);
       spellfix1DbExec(&rc, db,
-             "UPDATE OR %s \"%w\".\"%w_vocab\" SET id=%lld, rank=%d, langid=%d,"
+             "UPDATE \"%w\".\"%w_vocab\" SET id=%lld, rank=%d, langid=%d,"
              " word=%Q, k1=%Q, k2=%Q WHERE id=%lld",
-             zConflict, p->zDbName, p->zTableName, newRowid, iRank, iLang,
+             p->zDbName, p->zTableName, newRowid, iRank, iLang,
              zWord, zK1, zK2, rowid
       );
     }

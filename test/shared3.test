@@ -139,3 +139,4 @@ do_test 3.5 {
 
 sqlite3_enable_shared_cache $::enable_shared_cache
 finish_test
+

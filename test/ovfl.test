@@ -45,3 +45,5 @@ do_execsql_test 1.2 {
 } [expr 2000 * 2000]
 
 finish_test
+
+

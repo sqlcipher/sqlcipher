@@ -50,9 +50,7 @@ struct sqlite3_mutex {
 #endif
 };
 #if SQLITE_MUTEX_NREF
-#define SQLITE3_MUTEX_INITIALIZER {PTHREAD_MUTEX_INITIALIZER,0,0,(pthread_t)0,0}
-#elif defined(SQLITE_ENABLE_API_ARMOR)
-#define SQLITE3_MUTEX_INITIALIZER { PTHREAD_MUTEX_INITIALIZER, 0 }
+#define SQLITE3_MUTEX_INITIALIZER { PTHREAD_MUTEX_INITIALIZER, 0, 0, (pthread_t)0, 0 }
 #else
 #define SQLITE3_MUTEX_INITIALIZER { PTHREAD_MUTEX_INITIALIZER }
 #endif
@@ -83,19 +81,6 @@ static int pthreadMutexNotheld(sqlite3_mutex *p){
 #endif
 
 /*
-** Try to provide a memory barrier operation, needed for initialization
-** and also for the implementation of xShmBarrier in the VFS in cases
-** where SQLite is compiled without mutexes.
-*/
-void sqlite3MemoryBarrier(void){
-#if defined(SQLITE_MEMORY_BARRIER)
-  SQLITE_MEMORY_BARRIER;
-#elif defined(__GNUC__) && GCC_VERSION>=4001000
-  __sync_synchronize();
-#endif
-}
-
-/*
 ** Initialize and deinitialize the mutex subsystem.
 */
 static int pthreadMutexInit(void){ return SQLITE_OK; }
@@ -120,9 +105,6 @@ static int pthreadMutexEnd(void){ return SQLITE_OK; }
 ** <li>  SQLITE_MUTEX_STATIC_APP1
 ** <li>  SQLITE_MUTEX_STATIC_APP2
 ** <li>  SQLITE_MUTEX_STATIC_APP3
-** <li>  SQLITE_MUTEX_STATIC_VFS1
-** <li>  SQLITE_MUTEX_STATIC_VFS2
-** <li>  SQLITE_MUTEX_STATIC_VFS3
 ** </ul>
 **
 ** The first two constants cause sqlite3_mutex_alloc() to create
@@ -151,9 +133,6 @@ static int pthreadMutexEnd(void){ return SQLITE_OK; }
 */
 static sqlite3_mutex *pthreadMutexAlloc(int iType){
   static sqlite3_mutex staticMutexes[] = {
-    SQLITE3_MUTEX_INITIALIZER,
-    SQLITE3_MUTEX_INITIALIZER,
-    SQLITE3_MUTEX_INITIALIZER,
     SQLITE3_MUTEX_INITIALIZER,
     SQLITE3_MUTEX_INITIALIZER,
     SQLITE3_MUTEX_INITIALIZER,

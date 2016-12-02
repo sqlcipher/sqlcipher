@@ -153,7 +153,6 @@ struct SqliteDb {
   IncrblobChannel *pIncrblob;/* Linked list of open incrblob channels */
   int nStep, nSort, nIndex;  /* Statistics for most recent operation */
   int nTransaction;          /* Number of nested [transaction] methods */
-  int openFlags;             /* Flags used to open.  (SQLITE_OPEN_URI) */
 #ifdef SQLITE_TEST
   int bLegacyPrepare;        /* True to use sqlite3_prepare() */
 #endif
@@ -1751,8 +1750,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       Tcl_WrongNumArgs(interp, 2, objv, "?DATABASE? FILENAME");
       return TCL_ERROR;
     }
-    rc = sqlite3_open_v2(zDestFile, &pDest,
-               SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE| pDb->openFlags, 0);
+    rc = sqlite3_open(zDestFile, &pDest);
     if( rc!=SQLITE_OK ){
       Tcl_AppendResult(interp, "cannot open target database: ",
            sqlite3_errmsg(pDest), (char*)0);
@@ -2615,8 +2613,7 @@ static int DbObjCmd(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       Tcl_WrongNumArgs(interp, 2, objv, "?DATABASE? FILENAME");
       return TCL_ERROR;
     }
-    rc = sqlite3_open_v2(zSrcFile, &pSrc,
-                         SQLITE_OPEN_READONLY | pDb->openFlags, 0);
+    rc = sqlite3_open_v2(zSrcFile, &pSrc, SQLITE_OPEN_READONLY, 0);
     if( rc!=SQLITE_OK ){
       Tcl_AppendResult(interp, "cannot open source database: ",
            sqlite3_errmsg(pSrc), (char*)0);
@@ -2979,10 +2976,6 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
       Tcl_AppendResult(interp,sqlite3_libversion(), (char*)0);
       return TCL_OK;
     }
-    if( strcmp(zArg,"-sourceid")==0 ){
-      Tcl_AppendResult(interp,sqlite3_sourceid(), (char*)0);
-      return TCL_OK;
-    }
     if( strcmp(zArg,"-has-codec")==0 ){
 #ifdef SQLITE_HAS_CODEC
       Tcl_AppendResult(interp,"1",(char*)0);
@@ -3091,7 +3084,6 @@ static int DbMain(void *cd, Tcl_Interp *interp, int objc,Tcl_Obj *const*objv){
     return TCL_ERROR;
   }
   p->maxStmt = NUM_PREPARED_STMTS;
-  p->openFlags = flags & SQLITE_OPEN_URI;
   p->interp = interp;
   zArg = Tcl_GetStringFromObj(objv[1], 0);
   if( DbUseNre() ){
@@ -3151,13 +3143,9 @@ EXTERN int Sqlite3_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
 EXTERN int Tclsqlite3_Unload(Tcl_Interp *interp, int flags){ return TCL_OK; }
 
 /* Because it accesses the file-system and uses persistent state, SQLite
-** is not considered appropriate for safe interpreters.  Hence, we cause
-** the _SafeInit() interfaces return TCL_ERROR.
+** is not considered appropriate for safe interpreters.  Hence, we deliberately
+** omit the _SafeInit() interfaces.
 */
-EXTERN int Sqlite3_SafeInit(Tcl_Interp *interp){ return TCL_ERROR; }
-EXTERN int Sqlite3_SafeUnload(Tcl_Interp *interp, int flags){return TCL_ERROR;}
-
-
 
 #ifndef SQLITE_3_SUFFIX_ONLY
 int Sqlite_Init(Tcl_Interp *interp){ return Sqlite3_Init(interp); }
@@ -3718,6 +3706,43 @@ static int db_last_stmt_ptr(
 }
 #endif /* SQLITE_TEST */
 
+#if defined(SQLITE_TEST) || defined(SQLITE_ENABLE_DBSTAT_VTAB)
+/*
+** tclcmd:   register_dbstat_vtab DB
+**
+** Cause the dbstat virtual table to be available on the connection DB
+*/
+static int sqlite3RegisterDbstatCmd(
+  void *clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+#ifdef SQLITE_OMIT_VIRTUALTABLE
+  Tcl_AppendResult(interp, "dbstat not available because of "
+                           "SQLITE_OMIT_VIRTUALTABLE", (void*)0);
+  return TCL_ERROR;
+#else
+  struct SqliteDb { sqlite3 *db; };
+  char *zDb;
+  Tcl_CmdInfo cmdInfo;
+
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB");
+    return TCL_ERROR;
+  }
+
+  zDb = Tcl_GetString(objv[1]);
+  if( Tcl_GetCommandInfo(interp, zDb, &cmdInfo) ){
+    int sqlite3_dbstat_register(sqlite3*);
+    sqlite3* db = ((struct SqliteDb*)cmdInfo.objClientData)->db;
+    sqlite3_dbstat_register(db);
+  }
+  return TCL_OK;
+#endif /* SQLITE_OMIT_VIRTUALTABLE */
+}
+#endif /* defined(SQLITE_TEST) || defined(SQLITE_ENABLE_DBSTAT_VTAB) */
+
 /*
 ** Configure the interpreter passed as the first argument to have access
 ** to the commands and linked variables that make up:
@@ -3734,6 +3759,16 @@ static void init_all(Tcl_Interp *interp){
 
 #if defined(SQLITE_TEST) || defined(SQLITE_TCLMD5)
   Md5_Init(interp);
+#endif
+
+  /* Install the [register_dbstat_vtab] command to access the implementation
+  ** of virtual table dbstat (source file test_stat.c). This command is
+  ** required for testfixture and sqlite3_analyzer, but not by the production
+  ** Tcl extension.  */
+#if defined(SQLITE_TEST) || defined(SQLITE_ENABLE_DBSTAT_VTAB)
+  Tcl_CreateObjCommand(
+      interp, "register_dbstat_vtab", sqlite3RegisterDbstatCmd, 0, 0
+  );
 #endif
 
 #ifdef SQLITE_TEST
@@ -3772,8 +3807,7 @@ static void init_all(Tcl_Interp *interp){
     extern int Sqlitemultiplex_Init(Tcl_Interp*);
     extern int SqliteSuperlock_Init(Tcl_Interp*);
     extern int SqlitetestSyscall_Init(Tcl_Interp*);
-    extern int Fts5tcl_Init(Tcl_Interp *);
-    extern int SqliteRbu_Init(Tcl_Interp*);
+
 #if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
     extern int Sqlitetestfts3_Init(Tcl_Interp *interp);
 #endif
@@ -3816,8 +3850,6 @@ static void init_all(Tcl_Interp *interp){
     Sqlitemultiplex_Init(interp);
     SqliteSuperlock_Init(interp);
     SqlitetestSyscall_Init(interp);
-    Fts5tcl_Init(interp);
-    SqliteRbu_Init(interp);
 
 #if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
     Sqlitetestfts3_Init(interp);

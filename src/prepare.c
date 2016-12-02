@@ -26,12 +26,13 @@ static void corruptSchema(
 ){
   sqlite3 *db = pData->db;
   if( !db->mallocFailed && (db->flags & SQLITE_RecoveryMode)==0 ){
-    char *z;
     if( zObj==0 ) zObj = "?";
-    z = sqlite3MPrintf(db, "malformed database schema (%s)", zObj);
-    if( zExtra ) z = sqlite3MPrintf(db, "%z - %s", z, zExtra);
-    sqlite3DbFree(db, *pData->pzErrMsg);
-    *pData->pzErrMsg = z;
+    sqlite3SetString(pData->pzErrMsg, db,
+      "malformed database schema (%s)", zObj);
+    if( zExtra ){
+      *pData->pzErrMsg = sqlite3MAppendf(db, *pData->pzErrMsg, 
+                                 "%s - %s", *pData->pzErrMsg, zExtra);
+    }
   }
   pData->rc = db->mallocFailed ? SQLITE_NOMEM : SQLITE_CORRUPT_BKPT;
 }
@@ -90,7 +91,7 @@ int sqlite3InitCallback(void *pInit, int argc, char **argv, char **NotUsed){
       }else{
         pData->rc = rc;
         if( rc==SQLITE_NOMEM ){
-          sqlite3OomFault(db);
+          db->mallocFailed = 1;
         }else if( rc!=SQLITE_INTERRUPT && (rc&0xFF)!=SQLITE_LOCKED ){
           corruptSchema(pData, argv[0], sqlite3_errmsg(db));
         }
@@ -136,27 +137,61 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
 #ifndef SQLITE_OMIT_DEPRECATED
   int size;
 #endif
+  Table *pTab;
   Db *pDb;
   char const *azArg[4];
   int meta[5];
   InitData initData;
-  const char *zMasterName;
+  char const *zMasterSchema;
+  char const *zMasterName;
   int openedTransaction = 0;
+
+  /*
+  ** The master database table has a structure like this
+  */
+  static const char master_schema[] = 
+     "CREATE TABLE sqlite_master(\n"
+     "  type text,\n"
+     "  name text,\n"
+     "  tbl_name text,\n"
+     "  rootpage integer,\n"
+     "  sql text\n"
+     ")"
+  ;
+#ifndef SQLITE_OMIT_TEMPDB
+  static const char temp_master_schema[] = 
+     "CREATE TEMP TABLE sqlite_temp_master(\n"
+     "  type text,\n"
+     "  name text,\n"
+     "  tbl_name text,\n"
+     "  rootpage integer,\n"
+     "  sql text\n"
+     ")"
+  ;
+#else
+  #define temp_master_schema 0
+#endif
 
   assert( iDb>=0 && iDb<db->nDb );
   assert( db->aDb[iDb].pSchema );
   assert( sqlite3_mutex_held(db->mutex) );
   assert( iDb==1 || sqlite3BtreeHoldsMutex(db->aDb[iDb].pBt) );
 
-  /* Construct the in-memory representation schema tables (sqlite_master or
-  ** sqlite_temp_master) by invoking the parser directly.  The appropriate
-  ** table name will be inserted automatically by the parser so we can just
-  ** use the abbreviation "x" here.  The parser will also automatically tag
-  ** the schema table as read-only. */
-  azArg[0] = zMasterName = SCHEMA_TABLE(iDb);
+  /* zMasterSchema and zInitScript are set to point at the master schema
+  ** and initialisation script appropriate for the database being
+  ** initialized. zMasterName is the name of the master table.
+  */
+  if( !OMIT_TEMPDB && iDb==1 ){
+    zMasterSchema = temp_master_schema;
+  }else{
+    zMasterSchema = master_schema;
+  }
+  zMasterName = SCHEMA_TABLE(iDb);
+
+  /* Construct the schema tables.  */
+  azArg[0] = zMasterName;
   azArg[1] = "1";
-  azArg[2] = "CREATE TABLE x(type text,name text,tbl_name text,"
-                            "rootpage integer,sql text)";
+  azArg[2] = zMasterSchema;
   azArg[3] = 0;
   initData.db = db;
   initData.iDb = iDb;
@@ -166,6 +201,10 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   if( initData.rc ){
     rc = initData.rc;
     goto error_out;
+  }
+  pTab = sqlite3FindTable(db, zMasterName, db->aDb[iDb].zName);
+  if( ALWAYS(pTab) ){
+    pTab->tabFlags |= TF_Readonly;
   }
 
   /* Create a cursor to hold the database open
@@ -185,7 +224,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   if( !sqlite3BtreeIsInReadTrans(pDb->pBt) ){
     rc = sqlite3BtreeBeginTrans(pDb->pBt, 0);
     if( rc!=SQLITE_OK ){
-      sqlite3SetString(pzErrMsg, db, sqlite3ErrStr(rc));
+      sqlite3SetString(pzErrMsg, db, "%s", sqlite3ErrStr(rc));
       goto initone_error_out;
     }
     openedTransaction = 1;
@@ -285,7 +324,7 @@ static int sqlite3InitOne(sqlite3 *db, int iDb, char **pzErrMsg){
   {
     char *zSql;
     zSql = sqlite3MPrintf(db, 
-        "SELECT name, rootpage, sql FROM \"%w\".%s ORDER BY rowid",
+        "SELECT name, rootpage, sql FROM '%q'.%s ORDER BY rowid",
         db->aDb[iDb].zName, zMasterName);
 #ifndef SQLITE_OMIT_AUTHORIZATION
     {
@@ -335,7 +374,7 @@ initone_error_out:
 
 error_out:
   if( rc==SQLITE_NOMEM || rc==SQLITE_IOERR_NOMEM ){
-    sqlite3OomFault(db);
+    db->mallocFailed = 1;
   }
   return rc;
 }
@@ -433,7 +472,7 @@ static void schemaIsValid(Parse *pParse){
     if( !sqlite3BtreeIsInReadTrans(pBt) ){
       rc = sqlite3BtreeBeginTrans(pBt, 0);
       if( rc==SQLITE_NOMEM || rc==SQLITE_IOERR_NOMEM ){
-        sqlite3OomFault(db);
+        db->mallocFailed = 1;
       }
       if( rc!=SQLITE_OK ) return;
       openedTransaction = 1;
@@ -496,11 +535,6 @@ void sqlite3ParserReset(Parse *pParse){
     sqlite3 *db = pParse->db;
     sqlite3DbFree(db, pParse->aLabel);
     sqlite3ExprListDelete(db, pParse->pConstExpr);
-    if( db ){
-      assert( db->lookaside.bDisable >= pParse->disableLookaside );
-      db->lookaside.bDisable -= pParse->disableLookaside;
-    }
-    pParse->disableLookaside = 0;
   }
 }
 
@@ -529,7 +563,7 @@ static int sqlite3Prepare(
   }
   pParse->pReprepare = pReprepare;
   assert( ppStmt && *ppStmt==0 );
-  /* assert( !db->mallocFailed ); // not true with SQLITE_USE_ALLOCA */
+  assert( !db->mallocFailed );
   assert( sqlite3_mutex_held(db->mutex) );
 
   /* Check to verify that it is possible to get a read lock on all
@@ -586,8 +620,8 @@ static int sqlite3Prepare(
     zSqlCopy = sqlite3DbStrNDup(db, zSql, nBytes);
     if( zSqlCopy ){
       sqlite3RunParser(pParse, zSqlCopy, &zErrMsg);
-      pParse->zTail = &zSql[pParse->zTail-zSqlCopy];
       sqlite3DbFree(db, zSqlCopy);
+      pParse->zTail = &zSql[pParse->zTail-zSqlCopy];
     }else{
       pParse->zTail = &zSql[nBytes];
     }
@@ -596,6 +630,9 @@ static int sqlite3Prepare(
   }
   assert( 0==pParse->nQueryLoop );
 
+  if( db->mallocFailed ){
+    pParse->rc = SQLITE_NOMEM;
+  }
   if( pParse->rc==SQLITE_DONE ) pParse->rc = SQLITE_OK;
   if( pParse->checkSchema ){
     schemaIsValid(pParse);
@@ -717,7 +754,7 @@ int sqlite3Reprepare(Vdbe *p){
   rc = sqlite3LockAndPrepare(db, zSql, -1, 0, p, &pNew, 0);
   if( rc ){
     if( rc==SQLITE_NOMEM ){
-      sqlite3OomFault(db);
+      db->mallocFailed = 1;
     }
     assert( pNew==0 );
     return rc;

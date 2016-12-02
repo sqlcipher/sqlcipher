@@ -129,8 +129,6 @@ proc do_faultsim_test {name args} {
   set DEFAULT(-test)          ""
   set DEFAULT(-install)       ""
   set DEFAULT(-uninstall)     ""
-  set DEFAULT(-start)          1
-  set DEFAULT(-end)            0
 
   fix_testname name
 
@@ -148,8 +146,7 @@ proc do_faultsim_test {name args} {
   }
 
   set testspec [list -prep $O(-prep) -body $O(-body) \
-      -test $O(-test) -install $O(-install) -uninstall $O(-uninstall) \
-      -start $O(-start) -end $O(-end)
+      -test $O(-test) -install $O(-install) -uninstall $O(-uninstall)
   ]
   foreach f [lsort -unique $faultlist] {
     eval do_one_faultsim_test "$name-$f" $FAULTSIM($f) $testspec
@@ -292,7 +289,7 @@ proc faultsim_test_result_int {args} {
   upvar testrc testrc testresult testresult testnfail testnfail
   set t [list $testrc $testresult]
   set r $args
-  if { ($testnfail==0 && $t != [lindex $r 0]) || [lsearch -exact $r $t]<0 } {
+  if { ($testnfail==0 && $t != [lindex $r 0]) || [lsearch $r $t]<0 } {
     error "nfail=$testnfail rc=$testrc result=$testresult list=$r"
   }
 }
@@ -321,8 +318,6 @@ proc faultsim_test_result_int {args} {
 #
 #     -test             Script to execute after -body.
 #
-#     -start            Index of first fault to inject (default 1)
-#
 proc do_one_faultsim_test {testname args} {
 
   set DEFAULT(-injectstart)     "expr"
@@ -335,8 +330,6 @@ proc do_one_faultsim_test {testname args} {
   set DEFAULT(-test)            ""
   set DEFAULT(-install)         ""
   set DEFAULT(-uninstall)       ""
-  set DEFAULT(-start)           1
-  set DEFAULT(-end)             0
 
   array set O [array get DEFAULT]
   array set O $args
@@ -353,10 +346,7 @@ proc do_one_faultsim_test {testname args} {
   eval $O(-install)
 
   set stop 0
-  for {set iFail $O(-start)}                        \
-      {!$stop && ($O(-end)==0 || $iFail<=$O(-end))} \
-      {incr iFail}                                  \
-  {
+  for {set iFail 1} {!$stop} {incr iFail} {
 
     # Evaluate the -prep script.
     #

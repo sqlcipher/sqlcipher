@@ -214,19 +214,16 @@ static int btree_cursor(
   pBt = sqlite3TestTextToPtr(argv[1]);
   if( Tcl_GetInt(interp, argv[2], &iTable) ) return TCL_ERROR;
   if( Tcl_GetBoolean(interp, argv[3], &wrFlag) ) return TCL_ERROR;
-  if( wrFlag ) wrFlag = BTREE_WRCSR;
   pCur = (BtCursor *)ckalloc(sqlite3BtreeCursorSize());
   memset(pCur, 0, sqlite3BtreeCursorSize());
-  sqlite3_mutex_enter(pBt->db->mutex);
   sqlite3BtreeEnter(pBt);
 #ifndef SQLITE_OMIT_SHARED_CACHE
-  rc = sqlite3BtreeLockTable(pBt, iTable, !!wrFlag);
+  rc = sqlite3BtreeLockTable(pBt, iTable, wrFlag);
 #endif
   if( rc==SQLITE_OK ){
     rc = sqlite3BtreeCursor(pBt, iTable, wrFlag, 0, pCur);
   }
   sqlite3BtreeLeave(pBt);
-  sqlite3_mutex_leave(pBt->db->mutex);
   if( rc ){
     ckfree((char *)pCur);
     Tcl_AppendResult(interp, sqlite3ErrName(rc), 0);
@@ -259,11 +256,9 @@ static int btree_close_cursor(
   }
   pCur = sqlite3TestTextToPtr(argv[1]);
   pBt = pCur->pBtree;
-  sqlite3_mutex_enter(pBt->db->mutex);
   sqlite3BtreeEnter(pBt);
   rc = sqlite3BtreeCloseCursor(pCur);
   sqlite3BtreeLeave(pBt);
-  sqlite3_mutex_leave(pBt->db->mutex);
   ckfree((char *)pCur);
   if( rc ){
     Tcl_AppendResult(interp, sqlite3ErrName(rc), 0);
@@ -603,50 +598,6 @@ static int btree_set_cache_size(
   return TCL_OK;
 }      
 
-/*
-** usage:   btree_insert CSR ?KEY? VALUE
-**
-** Set the size of the cache used by btree $ID.
-*/
-static int btree_insert(
-  ClientData clientData,
-  Tcl_Interp *interp,
-  int objc,
-  Tcl_Obj *const objv[]
-){
-  BtCursor *pCur;
-  int rc;
-  void *pKey = 0;
-  int nKey = 0;
-  void *pData = 0;
-  int nData = 0;
-
-  if( objc!=4 && objc!=3 ){
-    Tcl_WrongNumArgs(interp, 1, objv, "?-intkey? CSR KEY VALUE");
-    return TCL_ERROR;
-  }
-
-  if( objc==4 ){
-    if( Tcl_GetIntFromObj(interp, objv[2], &nKey) ) return TCL_ERROR;
-    pData = (void*)Tcl_GetByteArrayFromObj(objv[3], &nData);
-  }else{
-    pKey = (void*)Tcl_GetByteArrayFromObj(objv[2], &nKey);
-  }
-  pCur = (BtCursor*)sqlite3TestTextToPtr(Tcl_GetString(objv[1]));
-
-  sqlite3_mutex_enter(pCur->pBtree->db->mutex);
-  sqlite3BtreeEnter(pCur->pBtree);
-  rc = sqlite3BtreeInsert(pCur, pKey, nKey, pData, nData, 0, 0, 0);
-  sqlite3BtreeLeave(pCur->pBtree);
-  sqlite3_mutex_leave(pCur->pBtree->db->mutex);
-
-  Tcl_ResetResult(interp);
-  if( rc ){
-    Tcl_AppendResult(interp, sqlite3ErrName(rc), 0);
-    return TCL_ERROR;
-  }
-  return TCL_OK;
-}
 
 
 /*
@@ -677,8 +628,6 @@ int Sqlitetest3_Init(Tcl_Interp *interp){
   for(i=0; i<sizeof(aCmd)/sizeof(aCmd[0]); i++){
     Tcl_CreateCommand(interp, aCmd[i].zName, aCmd[i].xProc, 0, 0);
   }
-
-  Tcl_CreateObjCommand(interp, "btree_insert", btree_insert, 0, 0);
 
   return TCL_OK;
 }

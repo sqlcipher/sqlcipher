@@ -46,16 +46,14 @@ struct PgHdr {
 };
 
 /* Bit values for PgHdr.flags */
-#define PGHDR_CLEAN           0x001  /* Page not on the PCache.pDirty list */
-#define PGHDR_DIRTY           0x002  /* Page is on the PCache.pDirty list */
-#define PGHDR_WRITEABLE       0x004  /* Journaled and ready to modify */
-#define PGHDR_NEED_SYNC       0x008  /* Fsync the rollback journal before
-                                     ** writing this page to the database */
-#define PGHDR_NEED_READ       0x010  /* Content is unread */
-#define PGHDR_DONT_WRITE      0x020  /* Do not write content to disk */
-#define PGHDR_MMAP            0x040  /* This is an mmap page object */
+#define PGHDR_DIRTY             0x002  /* Page has changed */
+#define PGHDR_NEED_SYNC         0x004  /* Fsync the rollback journal before
+                                       ** writing this page to the database */
+#define PGHDR_NEED_READ         0x008  /* Content is unread */
+#define PGHDR_REUSE_UNLIKELY    0x010  /* A hint that reuse is unlikely */
+#define PGHDR_DONT_WRITE        0x020  /* Do not write content to disk */
 
-#define PGHDR_WAL_APPEND      0x080  /* Appended to wal file */
+#define PGHDR_MMAP              0x040  /* This is an mmap page object */
 
 /* Initialize and shutdown the page cache subsystem */
 int sqlite3PcacheInitialize(void);
@@ -147,13 +145,6 @@ void sqlite3PcacheSetCachesize(PCache *, int);
 #ifdef SQLITE_TEST
 int sqlite3PcacheGetCachesize(PCache *);
 #endif
-
-/* Set or get the suggested spill-size for the specified pager-cache.
-**
-** The spill-size is the minimum number of pages in cache before the cache
-** will attempt to spill dirty pages by calling xStress.
-*/
-int sqlite3PcacheSetSpillsize(PCache *, int);
 
 /* Free up as much memory as possible from the page cache */
 void sqlite3PcacheShrink(PCache*);

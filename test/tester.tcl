@@ -81,12 +81,6 @@
 #      permutation
 #      presql
 #
-# Command to test whether or not --verbose=1 was specified on the command
-# line (returns 0 for not-verbose, 1 for verbose and 2 for "verbose in the
-# output file only").
-#
-#      verbose
-#
 
 # Set the precision of FP arithmatic used by the interpreter. And
 # configure SQLite to take database file locks on the page that begins
@@ -394,9 +388,6 @@ if {[info exists cmdlinearg]==0} {
   #   --file-retry-delay=N
   #   --start=[$permutation:]$testfile
   #   --match=$pattern
-  #   --verbose=$val
-  #   --output=$filename
-  #   --help
   #
   set cmdlinearg(soft-heap-limit)    0
   set cmdlinearg(maxerror)        1000
@@ -408,8 +399,6 @@ if {[info exists cmdlinearg]==0} {
   set cmdlinearg(file-retry-delay)   0
   set cmdlinearg(start)             ""
   set cmdlinearg(match)             ""
-  set cmdlinearg(verbose)           ""
-  set cmdlinearg(output)            ""
 
   set leftover [list]
   foreach a $argv {
@@ -468,22 +457,6 @@ if {[info exists cmdlinearg]==0} {
         set ::G(match) $cmdlinearg(match)
         if {$::G(match) == ""} {unset ::G(match)}
       }
-
-      {^-+output=.+$} {
-        foreach {dummy cmdlinearg(output)} [split $a =] break
-        if {$cmdlinearg(verbose)==""} {
-          set cmdlinearg(verbose) 2
-        }
-      }
-      {^-+verbose=.+$} {
-        foreach {dummy cmdlinearg(verbose)} [split $a =] break
-        if {$cmdlinearg(verbose)=="file"} {
-          set cmdlinearg(verbose) 2
-        } elseif {[string is boolean -strict $cmdlinearg(verbose)]==0} {
-          error "option --verbose= must be set to a boolean or to \"file\""
-        }
-      }
-
       default {
         lappend leftover $a
       }
@@ -510,16 +483,6 @@ if {[info exists cmdlinearg]==0} {
   #
   if {$cmdlinearg(malloctrace)} {
     sqlite3_memdebug_backtrace $cmdlinearg(backtrace)
-  }
-
-  if {$cmdlinearg(output)!=""} {
-    puts "Copying output to file $cmdlinearg(output)"
-    set ::G(output_fd) [open $cmdlinearg(output) w]
-    fconfigure $::G(output_fd) -buffering line
-  }
-
-  if {$cmdlinearg(verbose)==""} {
-    set cmdlinearg(verbose) 1
   }
 }
 
@@ -591,7 +554,7 @@ proc fail_test {name} {
 
   set nFail [set_test_counter errors]
   if {$nFail>=$::cmdlinearg(maxerror)} {
-    output2 "*** Giving up..."
+    puts "*** Giving up..."
     finalize_testing
   }
 }
@@ -599,7 +562,7 @@ proc fail_test {name} {
 # Remember a warning message to be displayed at the conclusion of all testing
 #
 proc warning {msg {append 1}} {
-  output2 "Warning: $msg"
+  puts "Warning: $msg"
   set warnList [set_test_counter warn_list]
   if {$append} {
     lappend warnList $msg
@@ -613,61 +576,6 @@ proc warning {msg {append 1}} {
 proc incr_ntest {} {
   set_test_counter count [expr [set_test_counter count] + 1]
 }
-
-# Return true if --verbose=1 was specified on the command line. Otherwise,
-# return false.
-#
-proc verbose {} {
-  return $::cmdlinearg(verbose)
-}
-
-# Use the following commands instead of [puts] for test output within
-# this file. Test scripts can still use regular [puts], which is directed
-# to stdout and, if one is open, the --output file.
-#
-# output1: output that should be printed if --verbose=1 was specified.
-# output2: output that should be printed unconditionally.
-# output2_if_no_verbose: output that should be printed only if --verbose=0.
-#
-proc output1 {args} {
-  set v [verbose]
-  if {$v==1} {
-    uplevel output2 $args
-  } elseif {$v==2} {
-    uplevel puts [lrange $args 0 end-1] $::G(output_fd) [lrange $args end end]
-  }
-}
-proc output2 {args} {
-  set nArg [llength $args]
-  uplevel puts $args
-}
-proc output2_if_no_verbose {args} {
-  set v [verbose]
-  if {$v==0} {
-    uplevel output2 $args
-  } elseif {$v==2} {
-    uplevel puts [lrange $args 0 end-1] stdout [lrange $args end end]
-  }
-}
-
-# Override the [puts] command so that if no channel is explicitly 
-# specified the string is written to both stdout and to the file 
-# specified by "--output=", if any.
-#
-proc puts_override {args} {
-  set nArg [llength $args]
-  if {$nArg==1 || ($nArg==2 && [string first [lindex $args 0] -nonewline]==0)} {
-    uplevel puts_original $args
-    if {[info exists ::G(output_fd)]} {
-      uplevel puts [lrange $args 0 end-1] $::G(output_fd) [lrange $args end end]
-    }
-  } else {
-    # A channel was explicitly specified.
-    uplevel puts_original $args
-  }
-}
-rename puts puts_original
-proc puts {args} { uplevel puts_override $args }
 
 
 # Invoke the do_test procedure to run a single test
@@ -696,13 +604,12 @@ proc do_test {name cmd expected} {
   }
 
   incr_ntest
-  output1 -nonewline $name...
+  puts -nonewline $name...
   flush stdout
 
   if {![info exists ::G(match)] || [string match $::G(match) $name]} {
     if {[catch {uplevel #0 "$cmd;\n"} result]} {
-      output2_if_no_verbose -nonewline $name...
-      output2 "\nError: $result"
+      puts "\nError: $result"
       fail_test $name
     } else {
       if {[regexp {^~?/.*/$} $expected]} {
@@ -746,15 +653,14 @@ proc do_test {name cmd expected} {
         # if {![info exists ::testprefix] || $::testprefix eq ""} {
         #   error "no test prefix"
         # }
-        output1 ""
-        output2 "! $name expected: \[$expected\]\n! $name got:      \[$result\]"
+        puts "\nExpected: \[$expected\]\n     Got: \[$result\]"
         fail_test $name
       } else {
-        output1 " Ok"
+        puts " Ok"
       }
     }
   } else {
-    output1 " Omitted"
+    puts " Omitted"
     omit_test $name "pattern mismatch" 0
   }
   flush stdout
@@ -931,7 +837,7 @@ proc delete_all_data {} {
 # Return the number of microseconds per statement.
 #
 proc speed_trial {name numstmt units sql} {
-  output2 -nonewline [format {%-21.21s } $name...]
+  puts -nonewline [format {%-21.21s } $name...]
   flush stdout
   set speed [time {sqlite3_exec_nr db $sql}]
   set tm [lindex $speed 0]
@@ -941,13 +847,13 @@ proc speed_trial {name numstmt units sql} {
     set rate [format %20.5f [expr {1000000.0*$numstmt/$tm}]]
   }
   set u2 $units/s
-  output2 [format {%12d uS %s %s} $tm $rate $u2]
+  puts [format {%12d uS %s %s} $tm $rate $u2]
   global total_time
   set total_time [expr {$total_time+$tm}]
   lappend ::speed_trial_times $name $tm
 }
 proc speed_trial_tcl {name numstmt units script} {
-  output2 -nonewline [format {%-21.21s } $name...]
+  puts -nonewline [format {%-21.21s } $name...]
   flush stdout
   set speed [time {eval $script}]
   set tm [lindex $speed 0]
@@ -957,7 +863,7 @@ proc speed_trial_tcl {name numstmt units script} {
     set rate [format %20.5f [expr {1000000.0*$numstmt/$tm}]]
   }
   set u2 $units/s
-  output2 [format {%12d uS %s %s} $tm $rate $u2]
+  puts [format {%12d uS %s %s} $tm $rate $u2]
   global total_time
   set total_time [expr {$total_time+$tm}]
   lappend ::speed_trial_times $name $tm
@@ -969,19 +875,19 @@ proc speed_trial_init {name} {
   sqlite3 versdb :memory:
   set vers [versdb one {SELECT sqlite_source_id()}]
   versdb close
-  output2 "SQLite $vers"
+  puts "SQLite $vers"
 }
 proc speed_trial_summary {name} {
   global total_time
-  output2 [format {%-21.21s %12d uS TOTAL} $name $total_time]
+  puts [format {%-21.21s %12d uS TOTAL} $name $total_time]
 
   if { 0 } {
     sqlite3 versdb :memory:
     set vers [lindex [versdb one {SELECT sqlite_source_id()}] 0]
     versdb close
-    output2 "CREATE TABLE IF NOT EXISTS time(version, script, test, us);"
+    puts "CREATE TABLE IF NOT EXISTS time(version, script, test, us);"
     foreach {test us} $::speed_trial_times {
-      output2 "INSERT INTO time VALUES('$vers', '$name', '$test', $us);"
+      puts "INSERT INTO time VALUES('$vers', '$name', '$test', $us);"
     }
   }
 }
@@ -1025,81 +931,75 @@ proc finalize_testing {} {
     }
   }
   if {$nKnown>0} {
-    output2 "[expr {$nErr-$nKnown}] new errors and $nKnown known errors\
+    puts "[expr {$nErr-$nKnown}] new errors and $nKnown known errors\
          out of $nTest tests"
   } else {
-    set cpuinfo {}
-    if {[catch {exec hostname} hname]==0} {set cpuinfo [string trim $hname]}
-    append cpuinfo " $::tcl_platform(os)"
-    append cpuinfo " [expr {$::tcl_platform(pointerSize)*8}]-bit"
-    append cpuinfo " [string map {E -e} $::tcl_platform(byteOrder)]"
-    output2 "SQLite [sqlite3 -sourceid]"
-    output2 "$nErr errors out of $nTest tests on $cpuinfo"
+    puts "$nErr errors out of $nTest tests"
   }
   if {$nErr>$nKnown} {
-    output2 -nonewline "!Failures on these tests:"
+    puts -nonewline "Failures on these tests:"
     foreach x [set_test_counter fail_list] {
-      if {![info exists known_error($x)]} {output2 -nonewline " $x"}
+      if {![info exists known_error($x)]} {puts -nonewline " $x"}
     }
-    output2 ""
+    puts ""
   }
   foreach warning [set_test_counter warn_list] {
-    output2 "Warning: $warning"
+    puts "Warning: $warning"
   }
   run_thread_tests 1
   if {[llength $omitList]>0} {
-    output2 "Omitted test cases:"
+    puts "Omitted test cases:"
     set prec {}
     foreach {rec} [lsort $omitList] {
       if {$rec==$prec} continue
       set prec $rec
-      output2 [format {.  %-12s %s} [lindex $rec 0] [lindex $rec 1]]
+      puts [format {  %-12s %s} [lindex $rec 0] [lindex $rec 1]]
     }
   }
   if {$nErr>0 && ![working_64bit_int]} {
-    output2 "******************************************************************"
-    output2 "N.B.:  The version of TCL that you used to build this test harness"
-    output2 "is defective in that it does not support 64-bit integers.  Some or"
-    output2 "all of the test failures above might be a result from this defect"
-    output2 "in your TCL build."
-    output2 "******************************************************************"
+    puts "******************************************************************"
+    puts "N.B.:  The version of TCL that you used to build this test harness"
+    puts "is defective in that it does not support 64-bit integers.  Some or"
+    puts "all of the test failures above might be a result from this defect"
+    puts "in your TCL build."
+    puts "******************************************************************"
   }
   if {$::cmdlinearg(binarylog)} {
     vfslog finalize binarylog
   }
   if {$sqlite_open_file_count} {
-    output2 "$sqlite_open_file_count files were left open"
+    puts "$sqlite_open_file_count files were left open"
     incr nErr
   }
   if {[lindex [sqlite3_status SQLITE_STATUS_MALLOC_COUNT 0] 1]>0 ||
               [sqlite3_memory_used]>0} {
-    output2 "Unfreed memory: [sqlite3_memory_used] bytes in\
+    puts "Unfreed memory: [sqlite3_memory_used] bytes in\
          [lindex [sqlite3_status SQLITE_STATUS_MALLOC_COUNT 0] 1] allocations"
     incr nErr
     ifcapable memdebug||mem5||(mem3&&debug) {
-      output2 "Writing unfreed memory log to \"./memleak.txt\""
+      puts "Writing unfreed memory log to \"./memleak.txt\""
       sqlite3_memdebug_dump ./memleak.txt
     }
   } else {
-    output2 "All memory allocations freed - no leaks"
+    puts "All memory allocations freed - no leaks"
     ifcapable memdebug||mem5 {
       sqlite3_memdebug_dump ./memusage.txt
     }
   }
   show_memstats
-  output2 "Maximum memory usage: [sqlite3_memory_highwater 1] bytes"
-  output2 "Current memory usage: [sqlite3_memory_highwater] bytes"
+  puts "Maximum memory usage: [sqlite3_memory_highwater 1] bytes"
+  puts "Current memory usage: [sqlite3_memory_highwater] bytes"
   if {[info commands sqlite3_memdebug_malloc_count] ne ""} {
-    output2 "Number of malloc()  : [sqlite3_memdebug_malloc_count] calls"
+    puts "Number of malloc()  : [sqlite3_memdebug_malloc_count] calls"
   }
   if {$::cmdlinearg(malloctrace)} {
-    output2 "Writing mallocs.sql..."
+    puts "Writing mallocs.sql..."
     memdebug_log_sql
     sqlite3_memdebug_log stop
     sqlite3_memdebug_log clear
 
     if {[sqlite3_memory_used]>0} {
-      output2 "Writing leaks.sql..."
+      puts "Writing leaks.sql..."
       sqlite3_memdebug_log sync
       memdebug_log_sql leaks.sql
     }
@@ -1120,30 +1020,30 @@ proc show_memstats {} {
   set y [sqlite3_status SQLITE_STATUS_MALLOC_SIZE 0]
   set val [format {now %10d  max %10d  max-size %10d} \
               [lindex $x 1] [lindex $x 2] [lindex $y 2]]
-  output1 "Memory used:          $val"
+  puts "Memory used:          $val"
   set x [sqlite3_status SQLITE_STATUS_MALLOC_COUNT 0]
   set val [format {now %10d  max %10d} [lindex $x 1] [lindex $x 2]]
-  output1 "Allocation count:     $val"
+  puts "Allocation count:     $val"
   set x [sqlite3_status SQLITE_STATUS_PAGECACHE_USED 0]
   set y [sqlite3_status SQLITE_STATUS_PAGECACHE_SIZE 0]
   set val [format {now %10d  max %10d  max-size %10d} \
               [lindex $x 1] [lindex $x 2] [lindex $y 2]]
-  output1 "Page-cache used:      $val"
+  puts "Page-cache used:      $val"
   set x [sqlite3_status SQLITE_STATUS_PAGECACHE_OVERFLOW 0]
   set val [format {now %10d  max %10d} [lindex $x 1] [lindex $x 2]]
-  output1 "Page-cache overflow:  $val"
+  puts "Page-cache overflow:  $val"
   set x [sqlite3_status SQLITE_STATUS_SCRATCH_USED 0]
   set val [format {now %10d  max %10d} [lindex $x 1] [lindex $x 2]]
-  output1 "Scratch memory used:  $val"
+  puts "Scratch memory used:  $val"
   set x [sqlite3_status SQLITE_STATUS_SCRATCH_OVERFLOW 0]
   set y [sqlite3_status SQLITE_STATUS_SCRATCH_SIZE 0]
   set val [format {now %10d  max %10d  max-size %10d} \
                [lindex $x 1] [lindex $x 2] [lindex $y 2]]
-  output1 "Scratch overflow:     $val"
+  puts "Scratch overflow:     $val"
   ifcapable yytrackmaxstackdepth {
     set x [sqlite3_status SQLITE_STATUS_PARSER_STACK 0]
     set val [format {               max %10d} [lindex $x 2]]
-    output2 "Parser stack depth:    $val"
+    puts "Parser stack depth:    $val"
   }
 }
 
@@ -1158,7 +1058,7 @@ proc execsql_timed {sql {db db}} {
     set x [uplevel [list $db eval $sql]]
   } 1]
   set tm [lindex $tm 0]
-  output1 -nonewline " ([expr {$tm*0.001}]ms) "
+  puts -nonewline " ([expr {$tm*0.001}]ms) "
   set x
 }
 
@@ -1174,20 +1074,20 @@ proc catchsql {sql {db db}} {
 # Do an VDBE code dump on the SQL given
 #
 proc explain {sql {db db}} {
-  output2 ""
-  output2 "addr  opcode        p1      p2      p3      p4               p5  #"
-  output2 "----  ------------  ------  ------  ------  ---------------  --  -"
+  puts ""
+  puts "addr  opcode        p1      p2      p3      p4               p5  #"
+  puts "----  ------------  ------  ------  ------  ---------------  --  -"
   $db eval "explain $sql" {} {
-    output2 [format {%-4d  %-12.12s  %-6d  %-6d  %-6d  % -17s %s  %s} \
+    puts [format {%-4d  %-12.12s  %-6d  %-6d  %-6d  % -17s %s  %s} \
       $addr $opcode $p1 $p2 $p3 $p4 $p5 $comment
     ]
   }
 }
 
 proc explain_i {sql {db db}} {
-  output2 ""
-  output2 "addr  opcode        p1      p2      p3      p4                p5  #"
-  output2 "----  ------------  ------  ------  ------  ----------------  --  -"
+  puts ""
+  puts "addr  opcode        p1      p2      p3      p4                p5  #"
+  puts "----  ------------  ------  ------  ------  ----------------  --  -"
 
 
   # Set up colors for the different opcodes. Scheme is as follows:
@@ -1253,18 +1153,18 @@ proc explain_i {sql {db db}} {
 
   $db eval "explain $sql" {} {
     if {[info exists linebreak($addr)]} {
-      output2 ""
+      puts ""
     }
     set I [string repeat " " $x($addr)]
 
     set col ""
     catch { set col $color($opcode) }
 
-    output2 [format {%-4d  %s%s%-12.12s%s  %-6d  %-6d  %-6d  % -17s %s  %s} \
+    puts [format {%-4d  %s%s%-12.12s%s  %-6d  %-6d  %-6d  % -17s %s  %s} \
       $addr $I $col $opcode $D $p1 $p2 $p3 $p4 $p5 $comment
     ]
   }
-  output2 "----  ------------  ------  ------  ------  ----------------  --  -"
+  puts "----  ------------  ------  ------  ------  ----------------  --  -"
 }
 
 # Show the VDBE program for an SQL statement but omit the Trace
@@ -1442,16 +1342,14 @@ proc crashsql {args} {
   puts $f "sqlite3_crash_enable 1"
   puts $f "sqlite3_crashparams $blocksize $dc $crashdelay $cfile"
   puts $f "sqlite3_test_control_pending_byte $::sqlite_pending_byte"
+  puts $f $opendb 
 
   # This block sets the cache size of the main database to 10
   # pages. This is done in case the build is configured to omit
   # "PRAGMA cache_size".
-  if {$opendb!=""} {
-    puts $f $opendb 
-    puts $f {db eval {SELECT * FROM sqlite_master;}}
-    puts $f {set bt [btree_from_db db]}
-    puts $f {btree_set_cache_size $bt 10}
-  }
+  puts $f {db eval {SELECT * FROM sqlite_master;}}
+  puts $f {set bt [btree_from_db db]}
+  puts $f {btree_set_cache_size $bt 10}
 
   if {$prngseed} {
     set seed [expr {$prngseed%10007+1}]
@@ -1695,9 +1593,9 @@ proc do_ioerr_test {testname args} {
         set nowcksum [cksum]
         set res [expr {$nowcksum==$::checksum || $nowcksum==$::goodcksum}]
         if {$res==0} {
-          output2 "now=$nowcksum"
-          output2 "the=$::checksum"
-          output2 "fwd=$::goodcksum"
+          puts "now=$nowcksum"
+          puts "the=$::checksum"
+          puts "fwd=$::goodcksum"
         }
         set res
       } 1
@@ -1905,12 +1803,6 @@ proc presql {} {
   set presql
 }
 
-proc isquick {} {
-  set ret 0
-  catch {set ret $::G(isquick)}
-  set ret
-}
-
 #-------------------------------------------------------------------------
 #
 proc slave_test_script {script} {
@@ -1925,12 +1817,6 @@ proc slave_test_script {script} {
     ::SLAVE 1                            \
   ] {
     interp eval tinterp [list set $var $value]
-  }
-
-  # If output is being copied into a file, share the file-descriptor with
-  # the interpreter.
-  if {[info exists ::G(output_fd)]} {
-    interp share {} $::G(output_fd) tinterp
   }
 
   # The alias used to access the global test counters.
@@ -2001,7 +1887,7 @@ proc slave_test_file {zFile} {
 
   # Add some info to the output.
   #
-  output2 "Time: $tail $ms ms"
+  puts "Time: $tail $ms ms"
   show_memstats
 }
 
@@ -2051,45 +1937,6 @@ proc db_delete_and_reopen {{file test.db}} {
   catch { db close }
   foreach f [glob -nocomplain test.db*] { forcedelete $f }
   sqlite3 db $file
-}
-
-# Close any connections named [db], [db2] or [db3]. Then use sqlite3_config
-# to configure the size of the PAGECACHE allocation using the parameters
-# provided to this command. Save the old PAGECACHE parameters in a global 
-# variable so that [test_restore_config_pagecache] can restore the previous
-# configuration.
-#
-# Before returning, reopen connection [db] on file test.db.
-#
-proc test_set_config_pagecache {sz nPg} {
-  catch {db close}
-  catch {db2 close}
-  catch {db3 close}
-
-  sqlite3_shutdown
-  set ::old_pagecache_config [sqlite3_config_pagecache $sz $nPg]
-  sqlite3_initialize
-  autoinstall_test_functions
-  reset_db
-}
-
-# Close any connections named [db], [db2] or [db3]. Then use sqlite3_config
-# to configure the size of the PAGECACHE allocation to the size saved in
-# the global variable by an earlier call to [test_set_config_pagecache].
-#
-# Before returning, reopen connection [db] on file test.db.
-#
-proc test_restore_config_pagecache {} {
-  catch {db close}
-  catch {db2 close}
-  catch {db3 close}
-
-  sqlite3_shutdown
-  eval sqlite3_config_pagecache $::old_pagecache_config
-  unset ::old_pagecache_config 
-  sqlite3_initialize
-  autoinstall_test_functions
-  sqlite3 db test.db
 }
 
 # If the library is compiled with the SQLITE_DEFAULT_AUTOVACUUM macro set

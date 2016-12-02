@@ -15,7 +15,6 @@
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
-test_set_config_pagecache 0 0
 
 unset -nocomplain baseline
 do_test shrink-1.1 {
@@ -44,5 +43,4 @@ do_test shrink-1.3 {
   expr {$::baseline > [sqlite3_memory_used]+500000}
 } {1}
 
-test_restore_config_pagecache
 finish_test
