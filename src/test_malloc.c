@@ -222,7 +222,8 @@ static int faultsimInstall(int install){
     assert( memcmp(&m2, &memfault.m, sizeof(m2))==0 );
 
     rc = sqlite3_config(SQLITE_CONFIG_MALLOC, &memfault.m);
-    sqlite3_test_control(SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS, 0, 0);
+    sqlite3_test_control(SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS,
+        (void*)0, (void*)0);
   }
 
   if( rc==SQLITE_OK ){
@@ -910,7 +911,7 @@ static int test_config_scratch(
   free(buf);
   if( sz<0 ){
     buf = 0;
-    rc = sqlite3_config(SQLITE_CONFIG_SCRATCH, 0, 0, 0);
+    rc = sqlite3_config(SQLITE_CONFIG_SCRATCH, (void*)0, 0, 0);
   }else{
     buf = malloc( sz*N + 1 );
     rc = sqlite3_config(SQLITE_CONFIG_SCRATCH, buf, sz, N);
@@ -938,8 +939,8 @@ static int test_config_pagecache(
   int objc,
   Tcl_Obj *CONST objv[]
 ){
-  int sz, N, rc;
-  Tcl_Obj *pResult;
+  int sz, N;
+  Tcl_Obj *pRes;
   static char *buf = 0;
   if( objc!=3 ){
     Tcl_WrongNumArgs(interp, 1, objv, "SIZE N");
@@ -948,17 +949,20 @@ static int test_config_pagecache(
   if( Tcl_GetIntFromObj(interp, objv[1], &sz) ) return TCL_ERROR;
   if( Tcl_GetIntFromObj(interp, objv[2], &N) ) return TCL_ERROR;
   free(buf);
+  buf = 0;
+
+  /* Set the return value */
+  pRes = Tcl_NewObj();
+  Tcl_ListObjAppendElement(0, pRes, Tcl_NewIntObj(sqlite3GlobalConfig.szPage));
+  Tcl_ListObjAppendElement(0, pRes, Tcl_NewIntObj(sqlite3GlobalConfig.nPage));
+  Tcl_SetObjResult(interp, pRes);
+
   if( sz<0 ){
-    buf = 0;
-    rc = sqlite3_config(SQLITE_CONFIG_PAGECACHE, 0, 0, 0);
+    sqlite3_config(SQLITE_CONFIG_PAGECACHE, (void*)0, 0, 0);
   }else{
     buf = malloc( sz*N );
-    rc = sqlite3_config(SQLITE_CONFIG_PAGECACHE, buf, sz, N);
+    sqlite3_config(SQLITE_CONFIG_PAGECACHE, buf, sz, N);
   }
-  pResult = Tcl_NewObj();
-  Tcl_ListObjAppendElement(0, pResult, Tcl_NewIntObj(rc));
-  Tcl_ListObjAppendElement(0, pResult, Tcl_NewIntObj(N));
-  Tcl_SetObjResult(interp, pResult);
   return TCL_OK;
 }
 

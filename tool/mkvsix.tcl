@@ -261,12 +261,9 @@ proc getExtraFileListXmlChunk { packageFlavor vsVersion } {
           "\r\n    " {DependsOn="Microsoft.VCLibs, version=12.0"}]
     }
     2015 {
-      #
-      # TODO: Is the ".AppLocal" suffix always needed here?
-      #
       return [appendArgs \
           "\r\n    " AppliesTo=\" $appliesTo \" \
-          "\r\n    " {DependsOn="Microsoft.VCLibs.AppLocal, version=14.0"}]
+          "\r\n    " {DependsOn="Microsoft.VCLibs, version=14.0"}]
     }
     default {
       return ""
@@ -392,7 +389,7 @@ set shortNames(WP80,2013) SQLite.WP80.2013
 set shortNames(WP81,2013) SQLite.WP81
 set shortNames(Win32,2012) SQLite.Win32
 set shortNames(Win32,2013) SQLite.Win32.2013
-set shortNames(UAP,2015) SQLite.UAP.2015
+set shortNames(UWP,2015) SQLite.UWP.2015
 
 set displayNames(WinRT,2012) "SQLite for Windows Runtime"
 set displayNames(WinRT,2013) "SQLite for Windows Runtime"
@@ -402,7 +399,7 @@ set displayNames(WP80,2013) "SQLite for Windows Phone"
 set displayNames(WP81,2013) "SQLite for Windows Phone 8.1"
 set displayNames(Win32,2012) "SQLite for Windows"
 set displayNames(Win32,2013) "SQLite for Windows"
-set displayNames(UAP,2015) "SQLite for Universal App Platform"
+set displayNames(UWP,2015) "SQLite for Universal Windows Platform"
 
 if {[string equal $packageFlavor WinRT]} then {
   set shortName $shortNames($packageFlavor,$vsVersion)
@@ -458,7 +455,7 @@ if {[string equal $packageFlavor WinRT]} then {
   set extraSdkPath "\\..\\$targetPlatformIdentifier"
   set extraFileListAttributes \
       [getExtraFileListXmlChunk $packageFlavor $vsVersion]
-} elseif {[string equal $packageFlavor UAP]} then {
+} elseif {[string equal $packageFlavor UWP]} then {
   if {$vsVersion ne "2015"} then {
     fail [appendArgs \
         "unsupported combination, package flavor " $packageFlavor \
@@ -466,7 +463,7 @@ if {[string equal $packageFlavor WinRT]} then {
   }
   set shortName $shortNames($packageFlavor,$vsVersion)
   set displayName $displayNames($packageFlavor,$vsVersion)
-  set targetPlatformIdentifier UAP
+  set targetPlatformIdentifier UWP
   set targetPlatformVersion v0.8.0.0
   set minVsVersion [getMinVsVersionXmlChunk $vsVersion]
   set maxPlatformVersion \
@@ -488,7 +485,7 @@ if {[string equal $packageFlavor WinRT]} then {
 } else {
   fail [appendArgs \
       "unsupported package flavor, must be one of: " \
-      [list WinRT WinRT81 WP80 WP81 UAP Win32]]
+      [list WinRT WinRT81 WP80 WP81 UWP Win32]]
 }
 
 ###############################################################################

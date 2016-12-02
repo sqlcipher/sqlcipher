@@ -808,4 +808,32 @@ do_execsql_test table-17.1 {
   SELECT p, q, '|' FROM t3 ORDER BY p;
 } {1 1 | 2 2 |}
 
+# 2015-06-16
+# Ticket [https://www.sqlite.org/src/tktview/873cae2b6e25b1991ce5e9b782f9cd0409b96063]
+# Make sure a CREATE TABLE AS statement correctly rolls back partial changes to the
+# sqlite_master table when the SELECT on the right-hand side aborts.
+#
+do_catchsql_test table-18.1 {
+  DROP TABLE IF EXISTS t1;
+  BEGIN;
+  CREATE TABLE t1 AS SELECT zeroblob(2e20);
+} {1 {string or blob too big}}
+do_execsql_test table-18.2 {
+  COMMIT;
+  PRAGMA integrity_check;
+} {ok}
+
+# 2015-09-09
+# Ticket [https://www.sqlite.org/src/info/acd12990885d9276]
+# "CREATE TABLE ... AS SELECT ... FROM sqlite_master" fails because the row
+# in the sqlite_master table for the next table is initially populated
+# with a NULL instead of a record created by OP_Record.
+#
+do_execsql_test table-19.1 {
+  CREATE TABLE t19 AS SELECT * FROM sqlite_master;
+  SELECT name FROM t19 ORDER BY name;
+} {{} savepoint t10 t11 t12 t13 t16 t2 t3 t3\"xyz t4\"abc t7 t8 t9 tablet8 test1 weird}
+
+
+
 finish_test

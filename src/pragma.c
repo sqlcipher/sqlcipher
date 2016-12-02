@@ -32,8 +32,8 @@
 
 /*
 ** Interpret the given string as a safety level.  Return 0 for OFF,
-** 1 for ON or NORMAL and 2 for FULL.  Return 1 for an empty or 
-** unrecognized string argument.  The FULL option is disallowed
+** 1 for ON or NORMAL, 2 for FULL, and 3 for EXTRA.  Return 1 for an empty or 
+** unrecognized string argument.  The FULL and EXTRA option is disallowed
 ** if the omitFull parameter it 1.
 **
 ** Note that the values returned are one less that the values that
@@ -42,18 +42,21 @@
 ** and older scripts may have used numbers 0 for OFF and 1 for ON.
 */
 static u8 getSafetyLevel(const char *z, int omitFull, u8 dflt){
-                             /* 123456789 123456789 */
-  static const char zText[] = "onoffalseyestruefull";
-  static const u8 iOffset[] = {0, 1, 2, 4, 9, 12, 16};
-  static const u8 iLength[] = {2, 2, 3, 5, 3, 4, 4};
-  static const u8 iValue[] =  {1, 0, 0, 0, 1, 1, 2};
+                             /* 123456789 123456789 123 */
+  static const char zText[] = "onoffalseyestruextrafull";
+  static const u8 iOffset[] = {0, 1, 2,  4,    9,  12,  15,   20};
+  static const u8 iLength[] = {2, 2, 3,  5,    3,   4,   5,    4};
+  static const u8 iValue[] =  {1, 0, 0,  0,    1,   1,   3,    2};
+                            /* on no off false yes true extra full */
   int i, n;
   if( sqlite3Isdigit(*z) ){
     return (u8)sqlite3Atoi(z);
   }
   n = sqlite3Strlen30(z);
-  for(i=0; i<ArraySize(iLength)-omitFull; i++){
-    if( iLength[i]==n && sqlite3StrNICmp(&zText[iOffset[i]],z,n)==0 ){
+  for(i=0; i<ArraySize(iLength); i++){
+    if( iLength[i]==n && sqlite3StrNICmp(&zText[iOffset[i]],z,n)==0
+     && (!omitFull || iValue[i]<=1)
+    ){
       return iValue[i];
     }
   }
@@ -160,19 +163,45 @@ static int changeTempStorage(Parse *pParse, const char *zStorageType){
 #endif /* SQLITE_PAGER_PRAGMAS */
 
 /*
+** Set the names of the first N columns to the values in azCol[]
+*/
+static void setAllColumnNames(
+  Vdbe *v,               /* The query under construction */
+  int N,                 /* Number of columns */
+  const char **azCol     /* Names of columns */
+){
+  int i;
+  sqlite3VdbeSetNumCols(v, N);
+  for(i=0; i<N; i++){
+    sqlite3VdbeSetColName(v, i, COLNAME_NAME, azCol[i], SQLITE_STATIC);
+  }
+}
+static void setOneColumnName(Vdbe *v, const char *z){
+  setAllColumnNames(v, 1, &z);
+}
+
+/*
 ** Generate code to return a single integer value.
 */
-static void returnSingleInt(Parse *pParse, const char *zLabel, i64 value){
-  Vdbe *v = sqlite3GetVdbe(pParse);
-  int nMem = ++pParse->nMem;
-  i64 *pI64 = sqlite3DbMallocRaw(pParse->db, sizeof(value));
-  if( pI64 ){
-    memcpy(pI64, &value, sizeof(value));
+static void returnSingleInt(Vdbe *v, const char *zLabel, i64 value){
+  sqlite3VdbeAddOp4Dup8(v, OP_Int64, 0, 1, 0, (const u8*)&value, P4_INT64);
+  setOneColumnName(v, zLabel);
+  sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+}
+
+/*
+** Generate code to return a single text value.
+*/
+static void returnSingleText(
+  Vdbe *v,                /* Prepared statement under construction */
+  const char *zLabel,     /* Name of the result column */
+  const char *zValue      /* Value to be returned */
+){
+  if( zValue ){
+    sqlite3VdbeLoadString(v, 1, (const char*)zValue);
+    setOneColumnName(v, zLabel);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
   }
-  sqlite3VdbeAddOp4(v, OP_Int64, 0, nMem, 0, (char*)pI64, P4_INT64);
-  sqlite3VdbeSetNumCols(v, 1);
-  sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLabel, SQLITE_STATIC);
-  sqlite3VdbeAddOp2(v, OP_ResultRow, nMem, 1);
 }
 
 
@@ -253,7 +282,7 @@ const char *sqlite3JournalModename(int eMode){
 **
 ** Pragmas are of this form:
 **
-**      PRAGMA [database.]id [= value]
+**      PRAGMA [schema.]id [= value]
 **
 ** The identifier might also be a string.  The value is a string, and
 ** identifier, or a number.  If minusFlag is true, then the value is
@@ -265,8 +294,8 @@ const char *sqlite3JournalModename(int eMode){
 */
 void sqlite3Pragma(
   Parse *pParse, 
-  Token *pId1,        /* First part of [database.]id field */
-  Token *pId2,        /* Second part of [database.]id field, or NULL */
+  Token *pId1,        /* First part of [schema.]id field */
+  Token *pId2,        /* Second part of [schema.]id field, or NULL */
   Token *pValue,      /* Token for <value>, or NULL */
   int minusFlag       /* True if a '-' sign preceded <value> */
 ){
@@ -292,7 +321,7 @@ void sqlite3Pragma(
   sqlite3VdbeRunOnlyOnce(v);
   pParse->nMem = 2;
 
-  /* Interpret the [database.] part of the pragma statement. iDb is the
+  /* Interpret the [schema.] part of the pragma statement. iDb is the
   ** index of the database this pragma is being applied to in db.aDb[]. */
   iDb = sqlite3TwoPartName(pParse, pId1, pId2, &pId);
   if( iDb<0 ) return;
@@ -341,14 +370,8 @@ void sqlite3Pragma(
   db->busyHandler.nBusy = 0;
   rc = sqlite3_file_control(db, zDb, SQLITE_FCNTL_PRAGMA, (void*)aFcntl);
   if( rc==SQLITE_OK ){
-    if( aFcntl[0] ){
-      int nMem = ++pParse->nMem;
-      sqlite3VdbeAddOp4(v, OP_String8, 0, nMem, 0, aFcntl[0], 0);
-      sqlite3VdbeSetNumCols(v, 1);
-      sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "result", SQLITE_STATIC);
-      sqlite3VdbeAddOp2(v, OP_ResultRow, nMem, 1);
-      sqlite3_free(aFcntl[0]);
-    }
+    returnSingleText(v, "result", aFcntl[0]);
+    sqlite3_free(aFcntl[0]);
     goto pragma_out;
   }
   if( rc!=SQLITE_NOTFOUND ){
@@ -397,8 +420,8 @@ void sqlite3Pragma(
   
 #if !defined(SQLITE_OMIT_PAGER_PRAGMAS) && !defined(SQLITE_OMIT_DEPRECATED)
   /*
-  **  PRAGMA [database.]default_cache_size
-  **  PRAGMA [database.]default_cache_size=N
+  **  PRAGMA [schema.]default_cache_size
+  **  PRAGMA [schema.]default_cache_size=N
   **
   ** The first form reports the current persistent setting for the
   ** page cache size.  The value returned is the maximum number of
@@ -425,21 +448,21 @@ void sqlite3Pragma(
       { OP_Noop,        0, 0,        0},
       { OP_ResultRow,   1, 1,        0},
     };
-    int addr;
+    VdbeOp *aOp;
     sqlite3VdbeUsesBtree(v, iDb);
     if( !zRight ){
-      sqlite3VdbeSetNumCols(v, 1);
-      sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "cache_size", SQLITE_STATIC);
+      setOneColumnName(v, "cache_size");
       pParse->nMem += 2;
-      addr = sqlite3VdbeAddOpList(v, ArraySize(getCacheSize), getCacheSize,iLn);
-      sqlite3VdbeChangeP1(v, addr, iDb);
-      sqlite3VdbeChangeP1(v, addr+1, iDb);
-      sqlite3VdbeChangeP1(v, addr+6, SQLITE_DEFAULT_CACHE_SIZE);
+      sqlite3VdbeVerifyNoMallocRequired(v, ArraySize(getCacheSize));
+      aOp = sqlite3VdbeAddOpList(v, ArraySize(getCacheSize), getCacheSize, iLn);
+      if( ONLY_IF_REALLOC_STRESS(aOp==0) ) break;
+      aOp[0].p1 = iDb;
+      aOp[1].p1 = iDb;
+      aOp[6].p1 = SQLITE_DEFAULT_CACHE_SIZE;
     }else{
       int size = sqlite3AbsInt32(sqlite3Atoi(zRight));
       sqlite3BeginWriteOperation(pParse, 0, iDb);
-      sqlite3VdbeAddOp2(v, OP_Integer, size, 1);
-      sqlite3VdbeAddOp3(v, OP_SetCookie, iDb, BTREE_DEFAULT_CACHE_SIZE, 1);
+      sqlite3VdbeAddOp3(v, OP_SetCookie, iDb, BTREE_DEFAULT_CACHE_SIZE, size);
       assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
       pDb->pSchema->cache_size = size;
       sqlite3BtreeSetCacheSize(pDb->pBt, pDb->pSchema->cache_size);
@@ -450,8 +473,8 @@ void sqlite3Pragma(
 
 #if !defined(SQLITE_OMIT_PAGER_PRAGMAS)
   /*
-  **  PRAGMA [database.]page_size
-  **  PRAGMA [database.]page_size=N
+  **  PRAGMA [schema.]page_size
+  **  PRAGMA [schema.]page_size=N
   **
   ** The first form reports the current setting for the
   ** database page size in bytes.  The second form sets the
@@ -463,22 +486,22 @@ void sqlite3Pragma(
     assert( pBt!=0 );
     if( !zRight ){
       int size = ALWAYS(pBt) ? sqlite3BtreeGetPageSize(pBt) : 0;
-      returnSingleInt(pParse, "page_size", size);
+      returnSingleInt(v, "page_size", size);
     }else{
       /* Malloc may fail when setting the page-size, as there is an internal
       ** buffer that the pager module resizes using sqlite3_realloc().
       */
       db->nextPagesize = sqlite3Atoi(zRight);
       if( SQLITE_NOMEM==sqlite3BtreeSetPageSize(pBt, db->nextPagesize,-1,0) ){
-        db->mallocFailed = 1;
+        sqlite3OomFault(db);
       }
     }
     break;
   }
 
   /*
-  **  PRAGMA [database.]secure_delete
-  **  PRAGMA [database.]secure_delete=ON/OFF
+  **  PRAGMA [schema.]secure_delete
+  **  PRAGMA [schema.]secure_delete=ON/OFF
   **
   ** The first form reports the current setting for the
   ** secure_delete flag.  The second form changes the secure_delete
@@ -498,13 +521,13 @@ void sqlite3Pragma(
       }
     }
     b = sqlite3BtreeSecureDelete(pBt, b);
-    returnSingleInt(pParse, "secure_delete", b);
+    returnSingleInt(v, "secure_delete", b);
     break;
   }
 
   /*
-  **  PRAGMA [database.]max_page_count
-  **  PRAGMA [database.]max_page_count=N
+  **  PRAGMA [schema.]max_page_count
+  **  PRAGMA [schema.]max_page_count=N
   **
   ** The first form reports the current setting for the
   ** maximum number of pages in the database file.  The 
@@ -515,7 +538,7 @@ void sqlite3Pragma(
   ** change.  The only purpose is to provide an easy way to test
   ** the sqlite3AbsInt32() function.
   **
-  **  PRAGMA [database.]page_count
+  **  PRAGMA [schema.]page_count
   **
   ** Return the number of pages in the specified database.
   */
@@ -536,8 +559,8 @@ void sqlite3Pragma(
   }
 
   /*
-  **  PRAGMA [database.]locking_mode
-  **  PRAGMA [database.]locking_mode = (normal|exclusive)
+  **  PRAGMA [schema.]locking_mode
+  **  PRAGMA [schema.]locking_mode = (normal|exclusive)
   */
   case PragTyp_LOCKING_MODE: {
     const char *zRet = "normal";
@@ -577,25 +600,20 @@ void sqlite3Pragma(
     if( eMode==PAGER_LOCKINGMODE_EXCLUSIVE ){
       zRet = "exclusive";
     }
-    sqlite3VdbeSetNumCols(v, 1);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "locking_mode", SQLITE_STATIC);
-    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, zRet, 0);
-    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    returnSingleText(v, "locking_mode", zRet);
     break;
   }
 
   /*
-  **  PRAGMA [database.]journal_mode
-  **  PRAGMA [database.]journal_mode =
+  **  PRAGMA [schema.]journal_mode
+  **  PRAGMA [schema.]journal_mode =
   **                      (delete|persist|off|truncate|memory|wal|off)
   */
   case PragTyp_JOURNAL_MODE: {
     int eMode;        /* One of the PAGER_JOURNALMODE_XXX symbols */
     int ii;           /* Loop counter */
 
-    sqlite3VdbeSetNumCols(v, 1);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "journal_mode", SQLITE_STATIC);
-
+    setOneColumnName(v, "journal_mode");
     if( zRight==0 ){
       /* If there is no "=MODE" part of the pragma, do a query for the
       ** current mode */
@@ -628,8 +646,8 @@ void sqlite3Pragma(
   }
 
   /*
-  **  PRAGMA [database.]journal_size_limit
-  **  PRAGMA [database.]journal_size_limit=N
+  **  PRAGMA [schema.]journal_size_limit
+  **  PRAGMA [schema.]journal_size_limit=N
   **
   ** Get or set the size limit on rollback journal files.
   */
@@ -641,15 +659,15 @@ void sqlite3Pragma(
       if( iLimit<-1 ) iLimit = -1;
     }
     iLimit = sqlite3PagerJournalSizeLimit(pPager, iLimit);
-    returnSingleInt(pParse, "journal_size_limit", iLimit);
+    returnSingleInt(v, "journal_size_limit", iLimit);
     break;
   }
 
 #endif /* SQLITE_OMIT_PAGER_PRAGMAS */
 
   /*
-  **  PRAGMA [database.]auto_vacuum
-  **  PRAGMA [database.]auto_vacuum=N
+  **  PRAGMA [schema.]auto_vacuum
+  **  PRAGMA [schema.]auto_vacuum=N
   **
   ** Get or set the value of the database 'auto-vacuum' parameter.
   ** The value is one of:  0 NONE 1 FULL 2 INCREMENTAL
@@ -659,7 +677,7 @@ void sqlite3Pragma(
     Btree *pBt = pDb->pBt;
     assert( pBt!=0 );
     if( !zRight ){
-      returnSingleInt(pParse, "auto_vacuum", sqlite3BtreeGetAutoVacuum(pBt));
+      returnSingleInt(v, "auto_vacuum", sqlite3BtreeGetAutoVacuum(pBt));
     }else{
       int eAuto = getAutoVacuum(zRight);
       assert( eAuto>=0 && eAuto<=2 );
@@ -682,16 +700,18 @@ void sqlite3Pragma(
           { OP_ReadCookie,     0,         1,         BTREE_LARGEST_ROOT_PAGE},
           { OP_If,             1,         0,                 0},    /* 2 */
           { OP_Halt,           SQLITE_OK, OE_Abort,          0},    /* 3 */
-          { OP_Integer,        0,         1,                 0},    /* 4 */
-          { OP_SetCookie,      0,         BTREE_INCR_VACUUM, 1},    /* 5 */
+          { OP_SetCookie,      0,         BTREE_INCR_VACUUM, 0},    /* 4 */
         };
-        int iAddr;
-        iAddr = sqlite3VdbeAddOpList(v, ArraySize(setMeta6), setMeta6, iLn);
-        sqlite3VdbeChangeP1(v, iAddr, iDb);
-        sqlite3VdbeChangeP1(v, iAddr+1, iDb);
-        sqlite3VdbeChangeP2(v, iAddr+2, iAddr+4);
-        sqlite3VdbeChangeP1(v, iAddr+4, eAuto-1);
-        sqlite3VdbeChangeP1(v, iAddr+5, iDb);
+        VdbeOp *aOp;
+        int iAddr = sqlite3VdbeCurrentAddr(v);
+        sqlite3VdbeVerifyNoMallocRequired(v, ArraySize(setMeta6));
+        aOp = sqlite3VdbeAddOpList(v, ArraySize(setMeta6), setMeta6, iLn);
+        if( ONLY_IF_REALLOC_STRESS(aOp==0) ) break;
+        aOp[0].p1 = iDb;
+        aOp[1].p1 = iDb;
+        aOp[2].p2 = iAddr+4;
+        aOp[4].p1 = iDb;
+        aOp[4].p3 = eAuto - 1;
         sqlite3VdbeUsesBtree(v, iDb);
       }
     }
@@ -700,7 +720,7 @@ void sqlite3Pragma(
 #endif
 
   /*
-  **  PRAGMA [database.]incremental_vacuum(N)
+  **  PRAGMA [schema.]incremental_vacuum(N)
   **
   ** Do N steps of incremental vacuuming on a database.
   */
@@ -723,8 +743,8 @@ void sqlite3Pragma(
 
 #ifndef SQLITE_OMIT_PAGER_PRAGMAS
   /*
-  **  PRAGMA [database.]cache_size
-  **  PRAGMA [database.]cache_size=N
+  **  PRAGMA [schema.]cache_size
+  **  PRAGMA [schema.]cache_size=N
   **
   ** The first form reports the current local setting for the
   ** page cache size. The second form sets the local
@@ -736,7 +756,7 @@ void sqlite3Pragma(
   case PragTyp_CACHE_SIZE: {
     assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
     if( !zRight ){
-      returnSingleInt(pParse, "cache_size", pDb->pSchema->cache_size);
+      returnSingleInt(v, "cache_size", pDb->pSchema->cache_size);
     }else{
       int size = sqlite3Atoi(zRight);
       pDb->pSchema->cache_size = size;
@@ -746,7 +766,50 @@ void sqlite3Pragma(
   }
 
   /*
-  **  PRAGMA [database.]mmap_size(N)
+  **  PRAGMA [schema.]cache_spill
+  **  PRAGMA cache_spill=BOOLEAN
+  **  PRAGMA [schema.]cache_spill=N
+  **
+  ** The first form reports the current local setting for the
+  ** page cache spill size. The second form turns cache spill on
+  ** or off.  When turnning cache spill on, the size is set to the
+  ** current cache_size.  The third form sets a spill size that
+  ** may be different form the cache size.
+  ** If N is positive then that is the
+  ** number of pages in the cache.  If N is negative, then the
+  ** number of pages is adjusted so that the cache uses -N kibibytes
+  ** of memory.
+  **
+  ** If the number of cache_spill pages is less then the number of
+  ** cache_size pages, no spilling occurs until the page count exceeds
+  ** the number of cache_size pages.
+  **
+  ** The cache_spill=BOOLEAN setting applies to all attached schemas,
+  ** not just the schema specified.
+  */
+  case PragTyp_CACHE_SPILL: {
+    assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
+    if( !zRight ){
+      returnSingleInt(v, "cache_spill", 
+         (db->flags & SQLITE_CacheSpill)==0 ? 0 : 
+            sqlite3BtreeSetSpillSize(pDb->pBt,0));
+    }else{
+      int size = 1;
+      if( sqlite3GetInt32(zRight, &size) ){
+        sqlite3BtreeSetSpillSize(pDb->pBt, size);
+      }
+      if( sqlite3GetBoolean(zRight, size!=0) ){
+        db->flags |= SQLITE_CacheSpill;
+      }else{
+        db->flags &= ~SQLITE_CacheSpill;
+      }
+      setAllPagerFlags(db);
+    }
+    break;
+  }
+
+  /*
+  **  PRAGMA [schema.]mmap_size(N)
   **
   ** Used to set mapping size limit. The mapping size limit is
   ** used to limit the aggregate size of all memory mapped regions of the
@@ -781,7 +844,7 @@ void sqlite3Pragma(
     rc = SQLITE_OK;
 #endif
     if( rc==SQLITE_OK ){
-      returnSingleInt(pParse, "mmap_size", sz);
+      returnSingleInt(v, "mmap_size", sz);
     }else if( rc!=SQLITE_NOTFOUND ){
       pParse->nErr++;
       pParse->rc = rc;
@@ -802,7 +865,7 @@ void sqlite3Pragma(
   */
   case PragTyp_TEMP_STORE: {
     if( !zRight ){
-      returnSingleInt(pParse, "temp_store", db->temp_store);
+      returnSingleInt(v, "temp_store", db->temp_store);
     }else{
       changeTempStorage(pParse, zRight);
     }
@@ -821,13 +884,7 @@ void sqlite3Pragma(
   */
   case PragTyp_TEMP_STORE_DIRECTORY: {
     if( !zRight ){
-      if( sqlite3_temp_directory ){
-        sqlite3VdbeSetNumCols(v, 1);
-        sqlite3VdbeSetColName(v, 0, COLNAME_NAME, 
-            "temp_store_directory", SQLITE_STATIC);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, sqlite3_temp_directory, 0);
-        sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
-      }
+      returnSingleText(v, "temp_store_directory", sqlite3_temp_directory);
     }else{
 #ifndef SQLITE_OMIT_WSD
       if( zRight[0] ){
@@ -871,13 +928,7 @@ void sqlite3Pragma(
   */
   case PragTyp_DATA_STORE_DIRECTORY: {
     if( !zRight ){
-      if( sqlite3_data_directory ){
-        sqlite3VdbeSetNumCols(v, 1);
-        sqlite3VdbeSetColName(v, 0, COLNAME_NAME, 
-            "data_store_directory", SQLITE_STATIC);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, sqlite3_data_directory, 0);
-        sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
-      }
+      returnSingleText(v, "data_store_directory", sqlite3_data_directory);
     }else{
 #ifndef SQLITE_OMIT_WSD
       if( zRight[0] ){
@@ -902,8 +953,8 @@ void sqlite3Pragma(
 
 #if SQLITE_ENABLE_LOCKING_STYLE
   /*
-  **   PRAGMA [database.]lock_proxy_file
-  **   PRAGMA [database.]lock_proxy_file = ":auto:"|"lock_file_path"
+  **   PRAGMA [schema.]lock_proxy_file
+  **   PRAGMA [schema.]lock_proxy_file = ":auto:"|"lock_file_path"
   **
   ** Return or set the value of the lock_proxy_file flag.  Changing
   ** the value sets a specific file to be used for database access locks.
@@ -916,14 +967,7 @@ void sqlite3Pragma(
       sqlite3_file *pFile = sqlite3PagerFile(pPager);
       sqlite3OsFileControlHint(pFile, SQLITE_GET_LOCKPROXYFILE, 
                            &proxy_file_path);
-      
-      if( proxy_file_path ){
-        sqlite3VdbeSetNumCols(v, 1);
-        sqlite3VdbeSetColName(v, 0, COLNAME_NAME, 
-                              "lock_proxy_file", SQLITE_STATIC);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, proxy_file_path, 0);
-        sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
-      }
+      returnSingleText(v, "lock_proxy_file", proxy_file_path);
     }else{
       Pager *pPager = sqlite3BtreePager(pDb->pBt);
       sqlite3_file *pFile = sqlite3PagerFile(pPager);
@@ -945,8 +989,8 @@ void sqlite3Pragma(
 #endif /* SQLITE_ENABLE_LOCKING_STYLE */      
     
   /*
-  **   PRAGMA [database.]synchronous
-  **   PRAGMA [database.]synchronous=OFF|ON|NORMAL|FULL
+  **   PRAGMA [schema.]synchronous
+  **   PRAGMA [schema.]synchronous=OFF|ON|NORMAL|FULL|EXTRA
   **
   ** Return or set the local value of the synchronous flag.  Changing
   ** the local value does not make changes to the disk file and the
@@ -955,7 +999,7 @@ void sqlite3Pragma(
   */
   case PragTyp_SYNCHRONOUS: {
     if( !zRight ){
-      returnSingleInt(pParse, "synchronous", pDb->safety_level-1);
+      returnSingleInt(v, "synchronous", pDb->safety_level-1);
     }else{
       if( !db->autoCommit ){
         sqlite3ErrorMsg(pParse, 
@@ -974,7 +1018,7 @@ void sqlite3Pragma(
 #ifndef SQLITE_OMIT_FLAG_PRAGMAS
   case PragTyp_FLAG: {
     if( zRight==0 ){
-      returnSingleInt(pParse, pPragma->zName, (db->flags & pPragma->iArg)!=0 );
+      returnSingleInt(v, pPragma->zName, (db->flags & pPragma->iArg)!=0 );
     }else{
       int mask = pPragma->iArg;    /* Mask of bits to set or clear. */
       if( db->autoCommit==0 ){
@@ -1024,34 +1068,21 @@ void sqlite3Pragma(
     Table *pTab;
     pTab = sqlite3FindTable(db, zRight, zDb);
     if( pTab ){
+      static const char *azCol[] = {
+         "cid", "name", "type", "notnull", "dflt_value", "pk"
+      };
       int i, k;
       int nHidden = 0;
       Column *pCol;
       Index *pPk = sqlite3PrimaryKeyIndex(pTab);
-      sqlite3VdbeSetNumCols(v, 6);
       pParse->nMem = 6;
       sqlite3CodeVerifySchema(pParse, iDb);
-      sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "cid", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "name", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "type", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 3, COLNAME_NAME, "notnull", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 4, COLNAME_NAME, "dflt_value", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 5, COLNAME_NAME, "pk", SQLITE_STATIC);
+      setAllColumnNames(v, 6, azCol); assert( 6==ArraySize(azCol) );
       sqlite3ViewGetColumnNames(pParse, pTab);
       for(i=0, pCol=pTab->aCol; i<pTab->nCol; i++, pCol++){
         if( IsHiddenColumn(pCol) ){
           nHidden++;
           continue;
-        }
-        sqlite3VdbeAddOp2(v, OP_Integer, i-nHidden, 1);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 2, 0, pCol->zName, 0);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0,
-           pCol->zType ? pCol->zType : "", 0);
-        sqlite3VdbeAddOp2(v, OP_Integer, (pCol->notNull ? 1 : 0), 4);
-        if( pCol->zDflt ){
-          sqlite3VdbeAddOp4(v, OP_String8, 0, 5, 0, (char*)pCol->zDflt, 0);
-        }else{
-          sqlite3VdbeAddOp2(v, OP_Null, 0, 5);
         }
         if( (pCol->colFlags & COLFLAG_PRIMKEY)==0 ){
           k = 0;
@@ -1060,7 +1091,13 @@ void sqlite3Pragma(
         }else{
           for(k=1; k<=pTab->nCol && pPk->aiColumn[k-1]!=i; k++){}
         }
-        sqlite3VdbeAddOp2(v, OP_Integer, k, 6);
+        sqlite3VdbeMultiLoad(v, 1, "issisi",
+               i-nHidden,
+               pCol->zName,
+               pCol->zType ? pCol->zType : "",
+               pCol->notNull ? 1 : 0,
+               pCol->zDflt,
+               k);
         sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 6);
       }
     }
@@ -1068,31 +1105,26 @@ void sqlite3Pragma(
   break;
 
   case PragTyp_STATS: {
+    static const char *azCol[] = { "table", "index", "width", "height" };
     Index *pIdx;
     HashElem *i;
     v = sqlite3GetVdbe(pParse);
-    sqlite3VdbeSetNumCols(v, 4);
     pParse->nMem = 4;
     sqlite3CodeVerifySchema(pParse, iDb);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "table", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "index", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "width", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 3, COLNAME_NAME, "height", SQLITE_STATIC);
+    setAllColumnNames(v, 4, azCol);  assert( 4==ArraySize(azCol) );
     for(i=sqliteHashFirst(&pDb->pSchema->tblHash); i; i=sqliteHashNext(i)){
       Table *pTab = sqliteHashData(i);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, pTab->zName, 0);
-      sqlite3VdbeAddOp2(v, OP_Null, 0, 2);
-      sqlite3VdbeAddOp2(v, OP_Integer,
-                           (int)sqlite3LogEstToInt(pTab->szTabRow), 3);
-      sqlite3VdbeAddOp2(v, OP_Integer, 
-          (int)sqlite3LogEstToInt(pTab->nRowLogEst), 4);
+      sqlite3VdbeMultiLoad(v, 1, "ssii",
+           pTab->zName,
+           0,
+           (int)sqlite3LogEstToInt(pTab->szTabRow),
+           (int)sqlite3LogEstToInt(pTab->nRowLogEst));
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 4);
       for(pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext){
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 2, 0, pIdx->zName, 0);
-        sqlite3VdbeAddOp2(v, OP_Integer,
-                             (int)sqlite3LogEstToInt(pIdx->szIdxRow), 3);
-        sqlite3VdbeAddOp2(v, OP_Integer, 
-            (int)sqlite3LogEstToInt(pIdx->aiRowLogEst[0]), 4);
+        sqlite3VdbeMultiLoad(v, 2, "sii",
+           pIdx->zName,
+           (int)sqlite3LogEstToInt(pIdx->szIdxRow),
+           (int)sqlite3LogEstToInt(pIdx->aiRowLogEst[0]));
         sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 4);
       }
     }
@@ -1104,6 +1136,9 @@ void sqlite3Pragma(
     Table *pTab;
     pIdx = sqlite3FindIndex(db, zRight, zDb);
     if( pIdx ){
+      static const char *azCol[] = {
+         "seqno", "cid", "name", "desc", "coll", "key"
+      };
       int i;
       int mx;
       if( pPragma->iArg ){
@@ -1116,29 +1151,18 @@ void sqlite3Pragma(
         pParse->nMem = 3;
       }
       pTab = pIdx->pTable;
-      sqlite3VdbeSetNumCols(v, pParse->nMem);
       sqlite3CodeVerifySchema(pParse, iDb);
-      sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "seqno", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "cid", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "name", SQLITE_STATIC);
-      if( pPragma->iArg ){
-        sqlite3VdbeSetColName(v, 3, COLNAME_NAME, "desc", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 4, COLNAME_NAME, "coll", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 5, COLNAME_NAME, "key", SQLITE_STATIC);
-      }
+      assert( pParse->nMem<=ArraySize(azCol) );
+      setAllColumnNames(v, pParse->nMem, azCol);
       for(i=0; i<mx; i++){
         i16 cnum = pIdx->aiColumn[i];
-        sqlite3VdbeAddOp2(v, OP_Integer, i, 1);
-        sqlite3VdbeAddOp2(v, OP_Integer, cnum, 2);
-        if( cnum<0 ){
-          sqlite3VdbeAddOp2(v, OP_Null, 0, 3);
-        }else{
-          sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0, pTab->aCol[cnum].zName, 0);
-        }
+        sqlite3VdbeMultiLoad(v, 1, "iis", i, cnum,
+                             cnum<0 ? 0 : pTab->aCol[cnum].zName);
         if( pPragma->iArg ){
-          sqlite3VdbeAddOp2(v, OP_Integer, pIdx->aSortOrder[i], 4);
-          sqlite3VdbeAddOp4(v, OP_String8, 0, 5, 0, pIdx->azColl[i], 0);
-          sqlite3VdbeAddOp2(v, OP_Integer, i<pIdx->nKeyCol, 6);
+          sqlite3VdbeMultiLoad(v, 4, "isi",
+            pIdx->aSortOrder[i],
+            pIdx->azColl[i],
+            i<pIdx->nKeyCol);
         }
         sqlite3VdbeAddOp2(v, OP_ResultRow, 1, pParse->nMem);
       }
@@ -1152,22 +1176,21 @@ void sqlite3Pragma(
     int i;
     pTab = sqlite3FindTable(db, zRight, zDb);
     if( pTab ){
+      static const char *azCol[] = {
+        "seq", "name", "unique", "origin", "partial"
+      };
       v = sqlite3GetVdbe(pParse);
-      sqlite3VdbeSetNumCols(v, 5);
       pParse->nMem = 5;
       sqlite3CodeVerifySchema(pParse, iDb);
-      sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "seq", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "name", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "unique", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 3, COLNAME_NAME, "origin", SQLITE_STATIC);
-      sqlite3VdbeSetColName(v, 4, COLNAME_NAME, "partial", SQLITE_STATIC);
+      setAllColumnNames(v, 5, azCol);  assert( 5==ArraySize(azCol) );
       for(pIdx=pTab->pIndex, i=0; pIdx; pIdx=pIdx->pNext, i++){
         const char *azOrigin[] = { "c", "u", "pk" };
-        sqlite3VdbeAddOp2(v, OP_Integer, i, 1);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 2, 0, pIdx->zName, 0);
-        sqlite3VdbeAddOp2(v, OP_Integer, IsUniqueIndex(pIdx), 3);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 4, 0, azOrigin[pIdx->idxType], 0);
-        sqlite3VdbeAddOp2(v, OP_Integer, pIdx->pPartIdxWhere!=0, 5);
+        sqlite3VdbeMultiLoad(v, 1, "isisi",
+           i,
+           pIdx->zName,
+           IsUniqueIndex(pIdx),
+           azOrigin[pIdx->idxType],
+           pIdx->pPartIdxWhere!=0);
         sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 5);
       }
     }
@@ -1175,35 +1198,31 @@ void sqlite3Pragma(
   break;
 
   case PragTyp_DATABASE_LIST: {
+    static const char *azCol[] = { "seq", "name", "file" };
     int i;
-    sqlite3VdbeSetNumCols(v, 3);
     pParse->nMem = 3;
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "seq", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "name", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "file", SQLITE_STATIC);
+    setAllColumnNames(v, 3, azCol); assert( 3==ArraySize(azCol) );
     for(i=0; i<db->nDb; i++){
       if( db->aDb[i].pBt==0 ) continue;
       assert( db->aDb[i].zName!=0 );
-      sqlite3VdbeAddOp2(v, OP_Integer, i, 1);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 2, 0, db->aDb[i].zName, 0);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0,
-           sqlite3BtreeGetFilename(db->aDb[i].pBt), 0);
+      sqlite3VdbeMultiLoad(v, 1, "iss",
+         i,
+         db->aDb[i].zName,
+         sqlite3BtreeGetFilename(db->aDb[i].pBt));
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 3);
     }
   }
   break;
 
   case PragTyp_COLLATION_LIST: {
+    static const char *azCol[] = { "seq", "name" };
     int i = 0;
     HashElem *p;
-    sqlite3VdbeSetNumCols(v, 2);
     pParse->nMem = 2;
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "seq", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "name", SQLITE_STATIC);
+    setAllColumnNames(v, 2, azCol); assert( 2==ArraySize(azCol) );
     for(p=sqliteHashFirst(&db->aCollSeq); p; p=sqliteHashNext(p)){
       CollSeq *pColl = (CollSeq *)sqliteHashData(p);
-      sqlite3VdbeAddOp2(v, OP_Integer, i++, 1);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 2, 0, pColl->zName, 0);
+      sqlite3VdbeMultiLoad(v, 1, "is", i++, pColl->zName);
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 2);
     }
   }
@@ -1219,33 +1238,26 @@ void sqlite3Pragma(
       v = sqlite3GetVdbe(pParse);
       pFK = pTab->pFKey;
       if( pFK ){
+        static const char *azCol[] = {
+           "id", "seq", "table", "from", "to", "on_update", "on_delete",
+           "match"
+        };
         int i = 0; 
-        sqlite3VdbeSetNumCols(v, 8);
         pParse->nMem = 8;
         sqlite3CodeVerifySchema(pParse, iDb);
-        sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "id", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "seq", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "table", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 3, COLNAME_NAME, "from", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 4, COLNAME_NAME, "to", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 5, COLNAME_NAME, "on_update", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 6, COLNAME_NAME, "on_delete", SQLITE_STATIC);
-        sqlite3VdbeSetColName(v, 7, COLNAME_NAME, "match", SQLITE_STATIC);
+        setAllColumnNames(v, 8, azCol); assert( 8==ArraySize(azCol) );
         while(pFK){
           int j;
           for(j=0; j<pFK->nCol; j++){
-            char *zCol = pFK->aCol[j].zCol;
-            char *zOnDelete = (char *)actionName(pFK->aAction[0]);
-            char *zOnUpdate = (char *)actionName(pFK->aAction[1]);
-            sqlite3VdbeAddOp2(v, OP_Integer, i, 1);
-            sqlite3VdbeAddOp2(v, OP_Integer, j, 2);
-            sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0, pFK->zTo, 0);
-            sqlite3VdbeAddOp4(v, OP_String8, 0, 4, 0,
-                              pTab->aCol[pFK->aCol[j].iFrom].zName, 0);
-            sqlite3VdbeAddOp4(v, zCol ? OP_String8 : OP_Null, 0, 5, 0, zCol, 0);
-            sqlite3VdbeAddOp4(v, OP_String8, 0, 6, 0, zOnUpdate, 0);
-            sqlite3VdbeAddOp4(v, OP_String8, 0, 7, 0, zOnDelete, 0);
-            sqlite3VdbeAddOp4(v, OP_String8, 0, 8, 0, "NONE", 0);
+            sqlite3VdbeMultiLoad(v, 1, "iissssss",
+                   i,
+                   j,
+                   pFK->zTo,
+                   pTab->aCol[pFK->aCol[j].iFrom].zName,
+                   pFK->aCol[j].zCol,
+                   actionName(pFK->aAction[1]),  /* ON UPDATE */
+                   actionName(pFK->aAction[0]),  /* ON DELETE */
+                   "NONE");
             sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 8);
           }
           ++i;
@@ -1274,17 +1286,14 @@ void sqlite3Pragma(
     int addrTop;           /* Top of a loop checking foreign keys */
     int addrOk;            /* Jump here if the key is OK */
     int *aiCols;           /* child to parent column mapping */
+    static const char *azCol[] = { "table", "rowid", "parent", "fkid" };
 
     regResult = pParse->nMem+1;
     pParse->nMem += 4;
     regKey = ++pParse->nMem;
     regRow = ++pParse->nMem;
     v = sqlite3GetVdbe(pParse);
-    sqlite3VdbeSetNumCols(v, 4);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "table", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "rowid", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "parent", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 3, COLNAME_NAME, "fkid", SQLITE_STATIC);
+    setAllColumnNames(v, 4, azCol); assert( 4==ArraySize(azCol) );
     sqlite3CodeVerifySchema(pParse, iDb);
     k = sqliteHashFirst(&db->aDb[iDb].pSchema->tblHash);
     while( k ){
@@ -1299,8 +1308,7 @@ void sqlite3Pragma(
       sqlite3TableLock(pParse, iDb, pTab->tnum, 0, pTab->zName);
       if( pTab->nCol+regRow>pParse->nMem ) pParse->nMem = pTab->nCol + regRow;
       sqlite3OpenTable(pParse, 0, iDb, pTab, OP_OpenRead);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, regResult, 0, pTab->zName,
-                        P4_TRANSIENT);
+      sqlite3VdbeLoadString(v, regResult, pTab->zName);
       for(i=1, pFK=pTab->pFKey; pFK; i++, pFK=pFK->pNextFrom){
         pParent = sqlite3FindTable(db, pFK->zTo, zDb);
         if( pParent==0 ) continue;
@@ -1345,7 +1353,7 @@ void sqlite3Pragma(
             sqlite3VdbeAddOp2(v, OP_Rowid, 0, regRow);
           }
           sqlite3VdbeAddOp3(v, OP_NotExists, i, 0, regRow); VdbeCoverage(v);
-          sqlite3VdbeAddOp2(v, OP_Goto, 0, addrOk);
+          sqlite3VdbeGoto(v, addrOk);
           sqlite3VdbeJumpHere(v, sqlite3VdbeCurrentAddr(v)-2);
         }else{
           for(j=0; j<pFK->nCol; j++){
@@ -1355,15 +1363,13 @@ void sqlite3Pragma(
           }
           if( pParent ){
             sqlite3VdbeAddOp4(v, OP_MakeRecord, regRow, pFK->nCol, regKey,
-                              sqlite3IndexAffinityStr(v,pIdx), pFK->nCol);
+                              sqlite3IndexAffinityStr(db,pIdx), pFK->nCol);
             sqlite3VdbeAddOp4Int(v, OP_Found, i, addrOk, regKey, 0);
             VdbeCoverage(v);
           }
         }
         sqlite3VdbeAddOp2(v, OP_Rowid, 0, regResult+1);
-        sqlite3VdbeAddOp4(v, OP_String8, 0, regResult+2, 0, 
-                          pFK->zTo, P4_TRANSIENT);
-        sqlite3VdbeAddOp2(v, OP_Integer, i-1, regResult+3);
+        sqlite3VdbeMultiLoad(v, regResult+2, "si", pFK->zTo, i-1);
         sqlite3VdbeAddOp2(v, OP_ResultRow, regResult, 4);
         sqlite3VdbeResolveLabel(v, addrOk);
         sqlite3DbFree(db, aiCols);
@@ -1380,7 +1386,7 @@ void sqlite3Pragma(
   case PragTyp_PARSER_TRACE: {
     if( zRight ){
       if( sqlite3GetBoolean(zRight, 0) ){
-        sqlite3ParserTrace(stderr, "parser: ");
+        sqlite3ParserTrace(stdout, "parser: ");
       }else{
         sqlite3ParserTrace(0, 0);
       }
@@ -1411,17 +1417,6 @@ void sqlite3Pragma(
   case PragTyp_INTEGRITY_CHECK: {
     int i, j, addr, mxErr;
 
-    /* Code that appears at the end of the integrity check.  If no error
-    ** messages have been generated, output OK.  Otherwise output the
-    ** error message
-    */
-    static const int iLn = VDBE_OFFSET_LINENO(2);
-    static const VdbeOpList endCode[] = {
-      { OP_IfNeg,       1, 0,        0},    /* 0 */
-      { OP_String8,     0, 3,        0},    /* 1 */
-      { OP_ResultRow,   3, 1,        0},
-    };
-
     int isQuick = (sqlite3Tolower(zLeft[0])=='q');
 
     /* If the PRAGMA command was of the form "PRAGMA <db>.integrity_check",
@@ -1439,8 +1434,7 @@ void sqlite3Pragma(
 
     /* Initialize the VDBE program */
     pParse->nMem = 6;
-    sqlite3VdbeSetNumCols(v, 1);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "integrity_check", SQLITE_STATIC);
+    setOneColumnName(v, "integrity_check");
 
     /* Set the maximum error count */
     mxErr = SQLITE_INTEGRITY_CHECK_ERROR_MAX;
@@ -1521,7 +1515,7 @@ void sqlite3Pragma(
         sqlite3VdbeAddOp2(v, OP_Halt, 0, 0);
         sqlite3VdbeJumpHere(v, addr);
         sqlite3ExprCacheClear(pParse);
-        sqlite3OpenTableAndIndices(pParse, pTab, OP_OpenRead,
+        sqlite3OpenTableAndIndices(pParse, pTab, OP_OpenRead, 0,
                                    1, 0, &iDataCur, &iIdxCur);
         sqlite3VdbeAddOp2(v, OP_Integer, 0, 7);
         for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
@@ -1562,13 +1556,11 @@ void sqlite3Pragma(
           jmp2 = sqlite3VdbeAddOp4Int(v, OP_Found, iIdxCur+j, ckUniq, r1,
                                       pIdx->nColumn); VdbeCoverage(v);
           sqlite3VdbeAddOp2(v, OP_AddImm, 1, -1); /* Decrement error limit */
-          sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0, "row ", P4_STATIC);
+          sqlite3VdbeLoadString(v, 3, "row ");
           sqlite3VdbeAddOp3(v, OP_Concat, 7, 3, 3);
-          sqlite3VdbeAddOp4(v, OP_String8, 0, 4, 0, 
-                            " missing from index ", P4_STATIC);
+          sqlite3VdbeLoadString(v, 4, " missing from index ");
           sqlite3VdbeAddOp3(v, OP_Concat, 4, 3, 3);
-          jmp5 = sqlite3VdbeAddOp4(v, OP_String8, 0, 4, 0,
-                                   pIdx->zName, P4_TRANSIENT);
+          jmp5 = sqlite3VdbeLoadString(v, 4, pIdx->zName);
           sqlite3VdbeAddOp3(v, OP_Concat, 4, 3, 3);
           sqlite3VdbeAddOp2(v, OP_ResultRow, 3, 1);
           jmp4 = sqlite3VdbeAddOp1(v, OP_IfPos, 1); VdbeCoverage(v);
@@ -1583,20 +1575,19 @@ void sqlite3Pragma(
             int kk;
             for(kk=0; kk<pIdx->nKeyCol; kk++){
               int iCol = pIdx->aiColumn[kk];
-              assert( iCol>=0 && iCol<pTab->nCol );
-              if( pTab->aCol[iCol].notNull ) continue;
+              assert( iCol!=XN_ROWID && iCol<pTab->nCol );
+              if( iCol>=0 && pTab->aCol[iCol].notNull ) continue;
               sqlite3VdbeAddOp2(v, OP_IsNull, r1+kk, uniqOk);
               VdbeCoverage(v);
             }
             jmp6 = sqlite3VdbeAddOp1(v, OP_Next, iIdxCur+j); VdbeCoverage(v);
-            sqlite3VdbeAddOp2(v, OP_Goto, 0, uniqOk);
+            sqlite3VdbeGoto(v, uniqOk);
             sqlite3VdbeJumpHere(v, jmp6);
             sqlite3VdbeAddOp4Int(v, OP_IdxGT, iIdxCur+j, uniqOk, r1,
                                  pIdx->nKeyCol); VdbeCoverage(v);
             sqlite3VdbeAddOp2(v, OP_AddImm, 1, -1); /* Decrement error limit */
-            sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0,
-                              "non-unique entry in index ", P4_STATIC);
-            sqlite3VdbeAddOp2(v, OP_Goto, 0, jmp5);
+            sqlite3VdbeLoadString(v, 3, "non-unique entry in index ");
+            sqlite3VdbeGoto(v, jmp5);
             sqlite3VdbeResolveLabel(v, uniqOk);
           }
           sqlite3VdbeJumpHere(v, jmp4);
@@ -1605,8 +1596,7 @@ void sqlite3Pragma(
         sqlite3VdbeAddOp2(v, OP_Next, iDataCur, loopTop); VdbeCoverage(v);
         sqlite3VdbeJumpHere(v, loopTop-1);
 #ifndef SQLITE_OMIT_BTREECOUNT
-        sqlite3VdbeAddOp4(v, OP_String8, 0, 2, 0, 
-                     "wrong # of entries in index ", P4_STATIC);
+        sqlite3VdbeLoadString(v, 2, "wrong # of entries in index ");
         for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
           if( pPk==pIdx ) continue;
           addr = sqlite3VdbeCurrentAddr(v);
@@ -1616,17 +1606,30 @@ void sqlite3Pragma(
           sqlite3VdbeAddOp3(v, OP_Eq, 8+j, addr+8, 3); VdbeCoverage(v);
           sqlite3VdbeChangeP5(v, SQLITE_NOTNULL);
           sqlite3VdbeAddOp2(v, OP_AddImm, 1, -1);
-          sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0, pIdx->zName, P4_TRANSIENT);
+          sqlite3VdbeLoadString(v, 3, pIdx->zName);
           sqlite3VdbeAddOp3(v, OP_Concat, 3, 2, 7);
           sqlite3VdbeAddOp2(v, OP_ResultRow, 7, 1);
         }
 #endif /* SQLITE_OMIT_BTREECOUNT */
       } 
     }
-    addr = sqlite3VdbeAddOpList(v, ArraySize(endCode), endCode, iLn);
-    sqlite3VdbeChangeP3(v, addr, -mxErr);
-    sqlite3VdbeJumpHere(v, addr);
-    sqlite3VdbeChangeP4(v, addr+1, "ok", P4_STATIC);
+    {
+      static const int iLn = VDBE_OFFSET_LINENO(2);
+      static const VdbeOpList endCode[] = {
+        { OP_AddImm,      1, 0,        0},    /* 0 */
+        { OP_If,          1, 4,        0},    /* 1 */
+        { OP_String8,     0, 3,        0},    /* 2 */
+        { OP_ResultRow,   3, 1,        0},    /* 3 */
+      };
+      VdbeOp *aOp;
+
+      aOp = sqlite3VdbeAddOpList(v, ArraySize(endCode), endCode, iLn);
+      if( aOp ){
+        aOp[0].p2 = -mxErr;
+        aOp[2].p4type = P4_STATIC;
+        aOp[2].p4.z = "ok";
+      }
+    }
   }
   break;
 #endif /* SQLITE_OMIT_INTEGRITY_CHECK */
@@ -1672,14 +1675,10 @@ void sqlite3Pragma(
     const struct EncName *pEnc;
     if( !zRight ){    /* "PRAGMA encoding" */
       if( sqlite3ReadSchema(pParse) ) goto pragma_out;
-      sqlite3VdbeSetNumCols(v, 1);
-      sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "encoding", SQLITE_STATIC);
-      sqlite3VdbeAddOp2(v, OP_String8, 0, 1);
       assert( encnames[SQLITE_UTF8].enc==SQLITE_UTF8 );
       assert( encnames[SQLITE_UTF16LE].enc==SQLITE_UTF16LE );
       assert( encnames[SQLITE_UTF16BE].enc==SQLITE_UTF16BE );
-      sqlite3VdbeChangeP4(v, -1, encnames[ENC(pParse->db)].zName, P4_STATIC);
-      sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+      returnSingleText(v, "encoding", encnames[ENC(pParse->db)].zName);
     }else{                        /* "PRAGMA encoding = XXX" */
       /* Only change the value of sqlite.enc if the database handle is not
       ** initialized. If the main database exists, the new sqlite.enc value
@@ -1708,16 +1707,16 @@ void sqlite3Pragma(
 
 #ifndef SQLITE_OMIT_SCHEMA_VERSION_PRAGMAS
   /*
-  **   PRAGMA [database.]schema_version
-  **   PRAGMA [database.]schema_version = <integer>
+  **   PRAGMA [schema.]schema_version
+  **   PRAGMA [schema.]schema_version = <integer>
   **
-  **   PRAGMA [database.]user_version
-  **   PRAGMA [database.]user_version = <integer>
+  **   PRAGMA [schema.]user_version
+  **   PRAGMA [schema.]user_version = <integer>
   **
-  **   PRAGMA [database.]freelist_count = <integer>
+  **   PRAGMA [schema.]freelist_count = <integer>
   **
-  **   PRAGMA [database.]application_id
-  **   PRAGMA [database.]application_id = <integer>
+  **   PRAGMA [schema.]application_id
+  **   PRAGMA [schema.]application_id = <integer>
   **
   ** The pragma's schema_version and user_version are used to set or get
   ** the value of the schema-version and user-version, respectively. Both
@@ -1744,14 +1743,16 @@ void sqlite3Pragma(
       /* Write the specified cookie value */
       static const VdbeOpList setCookie[] = {
         { OP_Transaction,    0,  1,  0},    /* 0 */
-        { OP_Integer,        0,  1,  0},    /* 1 */
-        { OP_SetCookie,      0,  0,  1},    /* 2 */
+        { OP_SetCookie,      0,  0,  0},    /* 1 */
       };
-      int addr = sqlite3VdbeAddOpList(v, ArraySize(setCookie), setCookie, 0);
-      sqlite3VdbeChangeP1(v, addr, iDb);
-      sqlite3VdbeChangeP1(v, addr+1, sqlite3Atoi(zRight));
-      sqlite3VdbeChangeP1(v, addr+2, iDb);
-      sqlite3VdbeChangeP2(v, addr+2, iCookie);
+      VdbeOp *aOp;
+      sqlite3VdbeVerifyNoMallocRequired(v, ArraySize(setCookie));
+      aOp = sqlite3VdbeAddOpList(v, ArraySize(setCookie), setCookie, 0);
+      if( ONLY_IF_REALLOC_STRESS(aOp==0) ) break;
+      aOp[0].p1 = iDb;
+      aOp[1].p1 = iDb;
+      aOp[1].p2 = iCookie;
+      aOp[1].p3 = sqlite3Atoi(zRight);
     }else{
       /* Read the specified cookie value */
       static const VdbeOpList readCookie[] = {
@@ -1759,10 +1760,13 @@ void sqlite3Pragma(
         { OP_ReadCookie,      0,  1,  0},    /* 1 */
         { OP_ResultRow,       1,  1,  0}
       };
-      int addr = sqlite3VdbeAddOpList(v, ArraySize(readCookie), readCookie, 0);
-      sqlite3VdbeChangeP1(v, addr, iDb);
-      sqlite3VdbeChangeP1(v, addr+1, iDb);
-      sqlite3VdbeChangeP3(v, addr+1, iCookie);
+      VdbeOp *aOp;
+      sqlite3VdbeVerifyNoMallocRequired(v, ArraySize(readCookie));
+      aOp = sqlite3VdbeAddOpList(v, ArraySize(readCookie),readCookie,0);
+      if( ONLY_IF_REALLOC_STRESS(aOp==0) ) break;
+      aOp[0].p1 = iDb;
+      aOp[1].p1 = iDb;
+      aOp[1].p3 = iCookie;
       sqlite3VdbeSetNumCols(v, 1);
       sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLeft, SQLITE_TRANSIENT);
     }
@@ -1780,11 +1784,10 @@ void sqlite3Pragma(
   case PragTyp_COMPILE_OPTIONS: {
     int i = 0;
     const char *zOpt;
-    sqlite3VdbeSetNumCols(v, 1);
     pParse->nMem = 1;
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "compile_option", SQLITE_STATIC);
+    setOneColumnName(v, "compile_option");
     while( (zOpt = sqlite3_compileoption_get(i++))!=0 ){
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, zOpt, 0);
+      sqlite3VdbeLoadString(v, 1, zOpt);
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     }
   }
@@ -1793,11 +1796,12 @@ void sqlite3Pragma(
 
 #ifndef SQLITE_OMIT_WAL
   /*
-  **   PRAGMA [database.]wal_checkpoint = passive|full|restart|truncate
+  **   PRAGMA [schema.]wal_checkpoint = passive|full|restart|truncate
   **
   ** Checkpoint the database.
   */
   case PragTyp_WAL_CHECKPOINT: {
+    static const char *azCol[] = { "busy", "log", "checkpointed" };
     int iBt = (pId2->z?iDb:SQLITE_MAX_ATTACHED);
     int eMode = SQLITE_CHECKPOINT_PASSIVE;
     if( zRight ){
@@ -1809,12 +1813,8 @@ void sqlite3Pragma(
         eMode = SQLITE_CHECKPOINT_TRUNCATE;
       }
     }
-    sqlite3VdbeSetNumCols(v, 3);
+    setAllColumnNames(v, 3, azCol);  assert( 3==ArraySize(azCol) );
     pParse->nMem = 3;
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "busy", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "log", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 2, COLNAME_NAME, "checkpointed", SQLITE_STATIC);
-
     sqlite3VdbeAddOp3(v, OP_Checkpoint, iBt, eMode, 1);
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 3);
   }
@@ -1832,7 +1832,7 @@ void sqlite3Pragma(
     if( zRight ){
       sqlite3_wal_autocheckpoint(db, sqlite3Atoi(zRight));
     }
-    returnSingleInt(pParse, "wal_autocheckpoint", 
+    returnSingleInt(v, "wal_autocheckpoint", 
        db->xWalCallback==sqlite3WalDefaultHook ? 
            SQLITE_PTR_TO_INT(db->pWalArg) : 0);
   }
@@ -1865,7 +1865,7 @@ void sqlite3Pragma(
     if( zRight ){
       sqlite3_busy_timeout(db, sqlite3Atoi(zRight));
     }
-    returnSingleInt(pParse, "timeout",  db->busyTimeout);
+    returnSingleInt(v, "timeout",  db->busyTimeout);
     break;
   }
 
@@ -1885,7 +1885,7 @@ void sqlite3Pragma(
     if( zRight && sqlite3DecOrHexToI64(zRight, &N)==SQLITE_OK ){
       sqlite3_soft_heap_limit64(N);
     }
-    returnSingleInt(pParse, "soft_heap_limit",  sqlite3_soft_heap_limit64(-1));
+    returnSingleInt(v, "soft_heap_limit",  sqlite3_soft_heap_limit64(-1));
     break;
   }
 
@@ -1904,7 +1904,7 @@ void sqlite3Pragma(
     ){
       sqlite3_limit(db, SQLITE_LIMIT_WORKER_THREADS, (int)(N&0x7fffffff));
     }
-    returnSingleInt(pParse, "threads",
+    returnSingleInt(v, "threads",
                     sqlite3_limit(db, SQLITE_LIMIT_WORKER_THREADS, -1));
     break;
   }
@@ -1917,17 +1917,15 @@ void sqlite3Pragma(
     static const char *const azLockName[] = {
       "unlocked", "shared", "reserved", "pending", "exclusive"
     };
+    static const char *azCol[] = { "database", "status" };
     int i;
-    sqlite3VdbeSetNumCols(v, 2);
+    setAllColumnNames(v, 2, azCol); assert( 2==ArraySize(azCol) );
     pParse->nMem = 2;
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "database", SQLITE_STATIC);
-    sqlite3VdbeSetColName(v, 1, COLNAME_NAME, "status", SQLITE_STATIC);
     for(i=0; i<db->nDb; i++){
       Btree *pBt;
       const char *zState = "unknown";
       int j;
       if( db->aDb[i].zName==0 ) continue;
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, db->aDb[i].zName, P4_STATIC);
       pBt = db->aDb[i].pBt;
       if( pBt==0 || sqlite3BtreePager(pBt)==0 ){
         zState = "closed";
@@ -1935,7 +1933,7 @@ void sqlite3Pragma(
                                      SQLITE_FCNTL_LOCKSTATE, &j)==SQLITE_OK ){
          zState = azLockName[j];
       }
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 2, 0, zState, P4_STATIC);
+      sqlite3VdbeMultiLoad(v, 1, "ss", db->aDb[i].zName, zState);
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 2);
     }
     break;
