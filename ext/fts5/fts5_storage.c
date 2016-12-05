@@ -145,6 +145,7 @@ static int fts5StorageGetStmt(
   }
 
   *ppStmt = p->aStmt[eStmt];
+  sqlite3_reset(*ppStmt);
   return rc;
 }
 
@@ -246,7 +247,11 @@ int sqlite3Fts5CreateTable(
   char *zErr = 0;
 
   rc = fts5ExecPrintf(pConfig->db, &zErr, "CREATE TABLE %Q.'%q_%q'(%s)%s",
-      pConfig->zDb, pConfig->zName, zPost, zDefn, bWithout?" WITHOUT ROWID":""
+      pConfig->zDb, pConfig->zName, zPost, zDefn, 
+#ifndef SQLITE_FTS5_NO_WITHOUT_ROWID
+      bWithout?" WITHOUT ROWID":
+#endif
+      ""
   );
   if( zErr ){
     *pzErr = sqlite3_mprintf(
@@ -368,6 +373,7 @@ static int fts5StorageInsertCallback(
   Fts5InsertCtx *pCtx = (Fts5InsertCtx*)pContext;
   Fts5Index *pIdx = pCtx->pStorage->pIndex;
   UNUSED_PARAM2(iUnused1, iUnused2);
+  if( nToken>FTS5_MAX_TOKEN_SIZE ) nToken = FTS5_MAX_TOKEN_SIZE;
   if( (tflags & FTS5_TOKEN_COLOCATED)==0 || pCtx->szCol==0 ){
     pCtx->szCol++;
   }
@@ -639,6 +645,10 @@ int sqlite3Fts5StorageMerge(Fts5Storage *p, int nMerge){
   return sqlite3Fts5IndexMerge(p->pIndex, nMerge);
 }
 
+int sqlite3Fts5StorageReset(Fts5Storage *p){
+  return sqlite3Fts5IndexReset(p->pIndex);
+}
+
 /*
 ** Allocate a new rowid. This is used for "external content" tables when
 ** a NULL value is inserted into the rowid column. The new rowid is allocated
@@ -810,6 +820,7 @@ static int fts5StorageIntegrityCallback(
   int iCol;
 
   UNUSED_PARAM2(iUnused1, iUnused2);
+  if( nToken>FTS5_MAX_TOKEN_SIZE ) nToken = FTS5_MAX_TOKEN_SIZE;
 
   if( (tflags & FTS5_TOKEN_COLOCATED)==0 || pCtx->szCol==0 ){
     pCtx->szCol++;
@@ -1121,5 +1132,3 @@ int sqlite3Fts5StorageConfigValue(
   }
   return rc;
 }
-
-

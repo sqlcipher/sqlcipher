@@ -249,7 +249,7 @@ void sqlite3Update(
       int rc;
       rc = sqlite3AuthCheck(pParse, SQLITE_UPDATE, pTab->zName,
                             j<0 ? "ROWID" : pTab->aCol[j].zName,
-                            db->aDb[iDb].zName);
+                            db->aDb[iDb].zDbSName);
       if( rc==SQLITE_DENY ){
         goto update_cleanup;
       }else if( rc==SQLITE_IGNORE ){
@@ -268,7 +268,7 @@ void sqlite3Update(
   ** case, set all bits of the colUsed mask (to ensure that the virtual
   ** table implementation makes all columns available).
   */
-  pTabList->a[0].colUsed = IsVirtual(pTab) ? (Bitmask)-1 : 0;
+  pTabList->a[0].colUsed = IsVirtual(pTab) ? ALLBITS : 0;
 
   hasFK = sqlite3FkRequired(pParse, pTab, aXRef, chngKey);
 
@@ -352,7 +352,8 @@ void sqlite3Update(
   if( HasRowid(pTab) ){
     sqlite3VdbeAddOp3(v, OP_Null, 0, regRowSet, regOldRowid);
     pWInfo = sqlite3WhereBegin(
-        pParse, pTabList, pWhere, 0, 0, WHERE_ONEPASS_DESIRED, iIdxCur
+        pParse, pTabList, pWhere, 0, 0,
+            WHERE_ONEPASS_DESIRED | WHERE_SEEK_TABLE, iIdxCur
     );
     if( pWInfo==0 ) goto update_cleanup;
     okOnePass = sqlite3WhereOkOnePass(pWInfo, aiCurOnePass);
@@ -590,11 +591,30 @@ void sqlite3Update(
       VdbeCoverageNeverTaken(v);
     }
     sqlite3GenerateRowIndexDelete(pParse, pTab, iDataCur, iIdxCur, aRegIdx, -1);
-  
-    /* If changing the record number, delete the old record.  */
+
+    /* If changing the rowid value, or if there are foreign key constraints
+    ** to process, delete the old record. Otherwise, add a noop OP_Delete
+    ** to invoke the pre-update hook.
+    **
+    ** That (regNew==regnewRowid+1) is true is also important for the 
+    ** pre-update hook. If the caller invokes preupdate_new(), the returned
+    ** value is copied from memory cell (regNewRowid+1+iCol), where iCol
+    ** is the column index supplied by the user.
+    */
+    assert( regNew==regNewRowid+1 );
+#ifdef SQLITE_ENABLE_PREUPDATE_HOOK
+    sqlite3VdbeAddOp3(v, OP_Delete, iDataCur,
+        OPFLAG_ISUPDATE | ((hasFK || chngKey || pPk!=0) ? 0 : OPFLAG_ISNOOP),
+        regNewRowid
+    );
+    if( !pParse->nested ){
+      sqlite3VdbeChangeP4(v, -1, (char*)pTab, P4_TABLE);
+    }
+#else
     if( hasFK || chngKey || pPk!=0 ){
       sqlite3VdbeAddOp2(v, OP_Delete, iDataCur, 0);
     }
+#endif
     if( bReplace || chngKey ){
       sqlite3VdbeJumpHere(v, addr1);
     }
