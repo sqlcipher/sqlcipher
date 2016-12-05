@@ -1022,7 +1022,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   int saved_flags;
   int saved_nChange;
   int saved_nTotalChange;
-  void (*saved_xTrace)(void*,const char*);
+  int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");

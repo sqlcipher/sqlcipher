@@ -50,6 +50,15 @@
 
 #ifndef SQLITE_OMIT_DATETIME_FUNCS
 
+/*
+** The MSVC CRT on Windows CE may not have a localtime() function.
+** So declare a substitute.  The substitute function itself is
+** defined in "os_win.c".
+*/
+#if !defined(SQLITE_OMIT_LOCALTIME) && defined(_WIN32_WCE) && \
+    (!defined(SQLITE_MSVC_LOCALTIME_API) || !SQLITE_MSVC_LOCALTIME_API)
+struct tm *__cdecl localtime(const time_t *);
+#endif
 
 /*
 ** A structure for holding a single date and time.
@@ -418,6 +427,7 @@ static void clearYMD_HMS_TZ(DateTime *p){
   p->validTZ = 0;
 }
 
+#ifndef SQLITE_OMIT_LOCALTIME
 /*
 ** On recent Windows platforms, the localtime_s() function is available
 ** as part of the "Secure CRT". It is essentially equivalent to 
@@ -436,7 +446,6 @@ static void clearYMD_HMS_TZ(DateTime *p){
 #define HAVE_LOCALTIME_S 1
 #endif
 
-#ifndef SQLITE_OMIT_LOCALTIME
 /*
 ** The following routine implements the rough equivalent of localtime_r()
 ** using whatever operating-system specific localtime facility that
@@ -1103,7 +1112,6 @@ static void currentTimeFunc(
 ){
   time_t t;
   char *zFormat = (char *)sqlite3_user_data(context);
-  sqlite3 *db;
   sqlite3_int64 iT;
   struct tm *pTm;
   struct tm sNow;
@@ -1136,7 +1144,7 @@ static void currentTimeFunc(
 ** external linkage.
 */
 void sqlite3RegisterDateTimeFunctions(void){
-  static SQLITE_WSD FuncDef aDateTimeFuncs[] = {
+  static FuncDef aDateTimeFuncs[] = {
 #ifndef SQLITE_OMIT_DATETIME_FUNCS
     DFUNCTION(julianday,        -1, 0, 0, juliandayFunc ),
     DFUNCTION(date,             -1, 0, 0, dateFunc      ),
@@ -1152,11 +1160,5 @@ void sqlite3RegisterDateTimeFunctions(void){
     STR_FUNCTION(current_timestamp, 0, "%Y-%m-%d %H:%M:%S", 0, currentTimeFunc),
 #endif
   };
-  int i;
-  FuncDefHash *pHash = &GLOBAL(FuncDefHash, sqlite3GlobalFunctions);
-  FuncDef *aFunc = (FuncDef*)&GLOBAL(FuncDef, aDateTimeFuncs);
-
-  for(i=0; i<ArraySize(aDateTimeFuncs); i++){
-    sqlite3FuncDefInsert(pHash, &aFunc[i]);
-  }
+  sqlite3InsertBuiltinFuncs(aDateTimeFuncs, ArraySize(aDateTimeFuncs));
 }

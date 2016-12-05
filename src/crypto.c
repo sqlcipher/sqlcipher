@@ -402,7 +402,7 @@ static int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
   }
   for(db_index = 0; db_index < db->nDb; db_index++) {
     struct Db *pDb = &db->aDb[db_index];
-    if(strcmp(pDb->zName, zDb) == 0) {
+    if(strcmp(pDb->zDbSName, zDb) == 0) {
       return db_index;
     }
   }
@@ -610,7 +610,7 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   int saved_flags;        /* Saved value of the db->flags */
   int saved_nChange;      /* Saved value of db->nChange */
   int saved_nTotalChange; /* Saved value of db->nTotalChange */
-  void (*saved_xTrace)(void*,const char*);  /* Saved db->xTrace */
+  int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
   int rc = SQLITE_OK;     /* Return code from service routines */
   char *zSql = NULL;         /* SQL statements */
   char *pzErrMsg = NULL;

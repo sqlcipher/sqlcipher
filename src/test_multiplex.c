@@ -539,7 +539,7 @@ static int multiplexOpen(
     memset(pGroup, 0, sz);
     pMultiplexOpen->pGroup = pGroup;
     pGroup->bEnabled = (unsigned char)-1;
-    pGroup->bTruncate = sqlite3_uri_boolean(zUri, "truncate", 
+    pGroup->bTruncate = (unsigned char)sqlite3_uri_boolean(zUri, "truncate", 
                                    (flags & SQLITE_OPEN_MAIN_DB)==0);
     pGroup->szChunk = (int)sqlite3_uri_int64(zUri, "chunksize",
                                         SQLITE_MULTIPLEX_CHUNK_SIZE);
@@ -717,7 +717,11 @@ static int multiplexCurrentTime(sqlite3_vfs *a, double *b){
   return gMultiplex.pOrigVfs->xCurrentTime(gMultiplex.pOrigVfs, b);
 }
 static int multiplexGetLastError(sqlite3_vfs *a, int b, char *c){
-  return gMultiplex.pOrigVfs->xGetLastError(gMultiplex.pOrigVfs, b, c);
+  if( gMultiplex.pOrigVfs->xGetLastError ){
+    return gMultiplex.pOrigVfs->xGetLastError(gMultiplex.pOrigVfs, b, c);
+  }else{
+    return 0;
+  }
 }
 static int multiplexCurrentTimeInt64(sqlite3_vfs *a, sqlite3_int64 *b){
   return gMultiplex.pOrigVfs->xCurrentTimeInt64(gMultiplex.pOrigVfs, b);
@@ -974,7 +978,7 @@ static int multiplexFileControl(sqlite3_file *pConn, int op, void *pArg){
     case MULTIPLEX_CTRL_ENABLE:
       if( pArg ) {
         int bEnabled = *(int *)pArg;
-        pGroup->bEnabled = bEnabled;
+        pGroup->bEnabled = (unsigned char)bEnabled;
         rc = SQLITE_OK;
       }
       break;
@@ -1193,7 +1197,7 @@ int sqlite3_multiplex_initialize(const char *zOrigVfsName, int makeDefault){
   gMultiplex.sIoMethodsV2.xShmUnmap = multiplexShmUnmap;
   sqlite3_vfs_register(&gMultiplex.sThisVfs, makeDefault);
 
-  sqlite3_auto_extension((void*)multiplexFuncInit);
+  sqlite3_auto_extension((void(*)(void))multiplexFuncInit);
 
   return SQLITE_OK;
 }
@@ -1225,14 +1229,21 @@ int sqlite3_multiplex_shutdown(int eForce){
 
 /***************************** Test Code ***********************************/
 #ifdef SQLITE_TEST
-#include <tcl.h>
+#if defined(INCLUDE_SQLITE_TCL_H)
+#  include "sqlite_tcl.h"
+#else
+#  include "tcl.h"
+#  ifndef SQLITE_TCLAPI
+#    define SQLITE_TCLAPI
+#  endif
+#endif
 extern const char *sqlite3ErrName(int);
 
 
 /*
 ** tclcmd: sqlite3_multiplex_initialize NAME MAKEDEFAULT
 */
-static int test_multiplex_initialize(
+static int SQLITE_TCLAPI test_multiplex_initialize(
   void * clientData,
   Tcl_Interp *interp,
   int objc,
@@ -1263,7 +1274,7 @@ static int test_multiplex_initialize(
 /*
 ** tclcmd: sqlite3_multiplex_shutdown
 */
-static int test_multiplex_shutdown(
+static int SQLITE_TCLAPI test_multiplex_shutdown(
   void * clientData,
   Tcl_Interp *interp,
   int objc,
@@ -1291,7 +1302,7 @@ static int test_multiplex_shutdown(
 /*
 ** tclcmd:  sqlite3_multiplex_dump
 */
-static int test_multiplex_dump(
+static int SQLITE_TCLAPI test_multiplex_dump(
   void * clientData,
   Tcl_Interp *interp,
   int objc,
@@ -1346,7 +1357,7 @@ static int test_multiplex_dump(
 /*
 ** Tclcmd: test_multiplex_control HANDLE DBNAME SUB-COMMAND ?INT-VALUE?
 */
-static int test_multiplex_control(
+static int SQLITE_TCLAPI test_multiplex_control(
   ClientData cd,
   Tcl_Interp *interp,
   int objc,

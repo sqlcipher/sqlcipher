@@ -77,7 +77,7 @@
 # command prompt:
 #
 #                         CD /D C:\dev\sqlite\core
-#                         tclsh85 tool\mkvsix.tcl C:\Temp
+#                         tclsh tool\mkvsix.tcl C:\Temp
 #
 # In the example above, "C:\dev\sqlite\core" represents the root of the source
 # tree for SQLite and "C:\Temp" represents the top-level directory containing
@@ -463,7 +463,7 @@ if {[string equal $packageFlavor WinRT]} then {
   }
   set shortName $shortNames($packageFlavor,$vsVersion)
   set displayName $displayNames($packageFlavor,$vsVersion)
-  set targetPlatformIdentifier UWP
+  set targetPlatformIdentifier UAP; # NOTE: Not "UWP".
   set targetPlatformVersion v0.8.0.0
   set minVsVersion [getMinVsVersionXmlChunk $vsVersion]
   set maxPlatformVersion \

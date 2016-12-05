@@ -86,7 +86,13 @@ proc test_set {args} {
 #
 set alltests [list]
 foreach f [glob $testdir/*.test] { lappend alltests [file tail $f] }
-foreach f [glob -nocomplain $testdir/../ext/rtree/*.test] { 
+foreach f [glob -nocomplain       \
+    $testdir/../ext/rtree/*.test  \
+    $testdir/../ext/fts5/test/*.test   \
+] { 
+  lappend alltests $f 
+}
+foreach f [glob -nocomplain $testdir/../ext/session/*.test] { 
   lappend alltests $f 
 }
 
@@ -97,6 +103,7 @@ set alltests [test_set $alltests -exclude {
   all.test        async.test         quick.test  veryquick.test
   memleak.test    permutations.test  soak.test   fts3.test
   mallocAll.test  rtree.test         full.test   extraquick.test
+  session.test
 }]
 
 set allquicktests [test_set $alltests -exclude {
@@ -157,7 +164,8 @@ test_suite "veryquick" -prefix "" -description {
   This test suite is the same as the "quick" tests, except that some files
   that test malloc and IO errors are omitted.
 } -files [
-  test_set $allquicktests -exclude *malloc* *ioerr* *fault* *bigfile* *_err*
+  test_set $allquicktests -exclude *malloc* *ioerr* *fault* *bigfile* *_err* \
+      *fts5corrupt* *fts5big* *fts5aj*
 ]
 
 test_suite "extraquick" -prefix "" -description {
@@ -612,6 +620,7 @@ test_suite "utf16" -description {
     trace.test trigger1.test trigger2.test trigger3.test
     trigger4.test types2.test types.test unique.test update.test
     vacuum.test view.test where.test
+    bestindex1.test
 }
 
 # Run some tests in exclusive locking mode.
@@ -719,7 +728,7 @@ test_suite "inmemory_journal" -description {
   ioerr.test ioerr2.test ioerr3.test ioerr4.test ioerr5.test
   vacuum3.test incrblob_err.test diskfull.test backup_ioerr.test
   e_fts3.test fts3cov.test fts3malloc.test fts3rnd.test
-  fts3snippet.test mmapfault.test
+  fts3snippet.test mmapfault.test sessionfault.test sessionfault2.test
 
   # Exclude test scripts that use tcl IO to access journal files or count
   # the number of fsync() calls.
@@ -737,6 +746,14 @@ test_suite "inmemory_journal" -description {
 
   # WAL mode is different.
   wal* tkt-2d1a5c67d.test backcompat.test e_wal* rowallock.test
+
+  # This test does not work as the "PRAGMA journal_mode = memory"
+  # statement switches the database out of wal mode at inopportune
+  # times.
+  snapshot_fault.test
+  
+  # This test assumes a journal file is created on disk.
+  delete_db.test
 }]
 
 ifcapable mem3 {
@@ -933,7 +950,10 @@ test_suite "journaltest" -description {
   unregister_jt_vfs
 } -files [test_set $::allquicktests -exclude {
   wal* incrvacuum.test ioerr.test corrupt4.test io.test crash8.test 
-  async4.test bigfile.test backcompat.test
+  async4.test bigfile.test backcompat.test e_wal* fstat.test mmap2.test
+  pager1.test syscall.test tkt3457.test *malloc* mmap* multiplex* nolock*
+  pager2.test *fault* rowal* snapshot* superlock* symlink.test
+  delete_db.test
 }]
 
 if {[info commands register_demovfs] != ""} {
@@ -969,6 +989,26 @@ test_suite "wal" -description {
 test_suite "rtree" -description {
   All R-tree related tests. Provides coverage of source file rtree.c.
 } -files [glob -nocomplain $::testdir/../ext/rtree/*.test]
+
+test_suite "session" -description {
+  All session module related tests. 
+} -files [glob -nocomplain $::testdir/../ext/session/*.test]
+
+test_suite "session_eec" -description {
+  All session module related tests with sqlite3_extended_result_codes() set. 
+} -files [
+  glob -nocomplain $::testdir/../ext/session/*.test
+] -dbconfig {
+  sqlite3_extended_result_codes $::dbhandle 1
+}
+
+test_suite "session_strm" -description {
+  All session module related tests using the streaming APIs.
+} -files [
+  glob -nocomplain $::testdir/../ext/session/*.test
+] -dbconfig {
+  set ::sqlite3session_streams 1
+}
 
 test_suite "rbu" -description {
   RBU tests.
@@ -1021,14 +1061,12 @@ proc run_tests {name args} {
   set ::G(isquick)           1
   set ::G(perm:dbconfig)     $options(-dbconfig)
 
-  uplevel $options(-initialize)
-
   foreach file [lsort $options(-files)] {
+    uplevel $options(-initialize)
     if {[file tail $file] == $file} { set file [file join $::testdir $file] }
     slave_test_file $file
+    uplevel $options(-shutdown)
   }
-
-  uplevel $options(-shutdown)
 
   unset ::G(perm:name)
   unset ::G(perm:prefix)
@@ -1063,12 +1101,12 @@ proc help {} {
   exit -1
 }
 
-if {[info script] == $argv0} {
+if {[file tail $argv0] == "permutations.test"} {
   proc main {argv} {
     if {[llength $argv]==0} {
       help
     } else {
-      set suite [lindex $argv 0]
+      set suite [file tail [lindex $argv 0]]
       if {[info exists ::testspec($suite)]==0} help
       set extra ""
       if {[llength $argv]>1} { set extra [list -files [lrange $argv 1 end]] }

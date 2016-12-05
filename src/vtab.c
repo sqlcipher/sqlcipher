@@ -344,7 +344,7 @@ void sqlite3VtabBeginParse(
   */
   if( pTable->azModuleArg ){
     sqlite3AuthCheck(pParse, SQLITE_CREATE_VTABLE, pTable->zName, 
-            pTable->azModuleArg[0], pParse->db->aDb[iDb].zName);
+            pTable->azModuleArg[0], pParse->db->aDb[iDb].zDbSName);
   }
 #endif
 }
@@ -408,7 +408,7 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
       "UPDATE %Q.%s "
          "SET type='table', name=%Q, tbl_name=%Q, rootpage=0, sql=%Q "
        "WHERE rowid=#%d",
-      db->aDb[iDb].zName, SCHEMA_TABLE(iDb),
+      db->aDb[iDb].zDbSName, SCHEMA_TABLE(iDb),
       pTab->zName,
       pTab->zName,
       zStmt,
@@ -418,7 +418,7 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
     v = sqlite3GetVdbe(pParse);
     sqlite3ChangeCookie(pParse, iDb);
 
-    sqlite3VdbeAddOp2(v, OP_Expire, 0, 0);
+    sqlite3VdbeAddOp0(v, OP_Expire);
     zWhere = sqlite3MPrintf(db, "name='%q' AND type='table'", pTab->zName);
     sqlite3VdbeAddParseSchemaOp(v, iDb, zWhere);
 
@@ -506,19 +506,19 @@ static int vtabCallConstructor(
 
   zModuleName = sqlite3MPrintf(db, "%s", pTab->zName);
   if( !zModuleName ){
-    return SQLITE_NOMEM;
+    return SQLITE_NOMEM_BKPT;
   }
 
   pVTable = sqlite3DbMallocZero(db, sizeof(VTable));
   if( !pVTable ){
     sqlite3DbFree(db, zModuleName);
-    return SQLITE_NOMEM;
+    return SQLITE_NOMEM_BKPT;
   }
   pVTable->db = db;
   pVTable->pMod = pMod;
 
   iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
-  pTab->azModuleArg[1] = db->aDb[iDb].zName;
+  pTab->azModuleArg[1] = db->aDb[iDb].zDbSName;
 
   /* Invoke the virtual table constructor */
   assert( &db->pVtabCtx );
@@ -564,22 +564,16 @@ static int vtabCallConstructor(
       pTab->pVTable = pVTable;
 
       for(iCol=0; iCol<pTab->nCol; iCol++){
-        char *zType = pTab->aCol[iCol].zType;
+        char *zType = sqlite3ColumnType(&pTab->aCol[iCol], "");
         int nType;
         int i = 0;
-        if( !zType ){
-          pTab->tabFlags |= oooHidden;
-          continue;
-        }
         nType = sqlite3Strlen30(zType);
-        if( sqlite3StrNICmp("hidden", zType, 6)||(zType[6] && zType[6]!=' ') ){
-          for(i=0; i<nType; i++){
-            if( (0==sqlite3StrNICmp(" hidden", &zType[i], 7))
-             && (zType[i+7]=='\0' || zType[i+7]==' ')
-            ){
-              i++;
-              break;
-            }
+        for(i=0; i<nType; i++){
+          if( 0==sqlite3StrNICmp("hidden", &zType[i], 6)
+           && (i==0 || zType[i-1]==' ')
+           && (zType[i+6]=='\0' || zType[i+6]==' ')
+          ){
+            break;
           }
         }
         if( i<nType ){
@@ -655,7 +649,7 @@ static int growVTrans(sqlite3 *db){
     int nBytes = sizeof(sqlite3_vtab *) * (db->nVTrans + ARRAY_INCR);
     aVTrans = sqlite3DbRealloc(db, (void *)db->aVTrans, nBytes);
     if( !aVTrans ){
-      return SQLITE_NOMEM;
+      return SQLITE_NOMEM_BKPT;
     }
     memset(&aVTrans[db->nVTrans], 0, sizeof(sqlite3_vtab *)*ARRAY_INCR);
     db->aVTrans = aVTrans;
@@ -678,7 +672,7 @@ static void addToVTrans(sqlite3 *db, VTable *pVTab){
 ** This function is invoked by the vdbe to call the xCreate method
 ** of the virtual table named zTab in database iDb. 
 **
-** If an error occurs, *pzErr is set to point an an English language
+** If an error occurs, *pzErr is set to point to an English language
 ** description of the error and an SQLITE_XXX error code is returned.
 ** In this case the caller must call sqlite3DbFree(db, ) on *pzErr.
 */
@@ -688,7 +682,7 @@ int sqlite3VtabCallCreate(sqlite3 *db, int iDb, const char *zTab, char **pzErr){
   Module *pMod;
   const char *zMod;
 
-  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zName);
+  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zDbSName);
   assert( pTab && (pTab->tabFlags & TF_Virtual)!=0 && !pTab->pVTable );
 
   /* Locate the required virtual table module */
@@ -747,7 +741,7 @@ int sqlite3_declare_vtab(sqlite3 *db, const char *zCreateTable){
 
   pParse = sqlite3StackAllocZero(db, sizeof(*pParse));
   if( pParse==0 ){
-    rc = SQLITE_NOMEM;
+    rc = SQLITE_NOMEM_BKPT;
   }else{
     pParse->declareVtab = 1;
     pParse->db = db;
@@ -760,10 +754,24 @@ int sqlite3_declare_vtab(sqlite3 *db, const char *zCreateTable){
      && (pParse->pNewTable->tabFlags & TF_Virtual)==0
     ){
       if( !pTab->aCol ){
-        pTab->aCol = pParse->pNewTable->aCol;
-        pTab->nCol = pParse->pNewTable->nCol;
-        pParse->pNewTable->nCol = 0;
-        pParse->pNewTable->aCol = 0;
+        Table *pNew = pParse->pNewTable;
+        Index *pIdx;
+        pTab->aCol = pNew->aCol;
+        pTab->nCol = pNew->nCol;
+        pTab->tabFlags |= pNew->tabFlags & (TF_WithoutRowid|TF_NoVisibleRowid);
+        pNew->nCol = 0;
+        pNew->aCol = 0;
+        assert( pTab->pIndex==0 );
+        if( !HasRowid(pNew) && pCtx->pVTable->pMod->pModule->xUpdate!=0 ){
+          rc = SQLITE_ERROR;
+        }
+        pIdx = pNew->pIndex;
+        if( pIdx ){
+          assert( pIdx->pNext==0 );
+          pTab->pIndex = pIdx;
+          pNew->pIndex = 0;
+          pIdx->pTable = pTab;
+        }
       }
       pCtx->bDeclared = 1;
     }else{
@@ -798,8 +806,8 @@ int sqlite3VtabCallDestroy(sqlite3 *db, int iDb, const char *zTab){
   int rc = SQLITE_OK;
   Table *pTab;
 
-  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zName);
-  if( ALWAYS(pTab!=0 && pTab->pVTable!=0) ){
+  pTab = sqlite3FindTable(db, zTab, db->aDb[iDb].zDbSName);
+  if( pTab!=0 && ALWAYS(pTab->pVTable!=0) ){
     VTable *p;
     int (*xDestroy)(sqlite3_vtab *);
     for(p=pTab->pVTable; p; p=p->pNext){
@@ -939,7 +947,10 @@ int sqlite3VtabBegin(sqlite3 *db, VTable *pVTab){
       if( rc==SQLITE_OK ){
         int iSvpt = db->nStatement + db->nSavepoint;
         addToVTrans(db, pVTab);
-        if( iSvpt ) rc = sqlite3VtabSavepoint(db, SAVEPOINT_BEGIN, iSvpt-1);
+        if( iSvpt && pModule->xSavepoint ){
+          pVTab->iSavepoint = iSvpt;
+          rc = pModule->xSavepoint(pVTab->pVtab, iSvpt-1);
+        }
       }
     }
   }
@@ -1059,8 +1070,8 @@ FuncDef *sqlite3VtabOverloadFunction(
     return pDef;
   }
   *pNew = *pDef;
-  pNew->zName = (char *)&pNew[1];
-  memcpy(pNew->zName, pDef->zName, sqlite3Strlen30(pDef->zName)+1);
+  pNew->zName = (const char*)&pNew[1];
+  memcpy((char*)&pNew[1], pDef->zName, sqlite3Strlen30(pDef->zName)+1);
   pNew->xSFunc = xSFunc;
   pNew->pUserData = pArg;
   pNew->funcFlags |= SQLITE_FUNC_EPHEM;
@@ -1093,7 +1104,7 @@ void sqlite3VtabMakeWritable(Parse *pParse, Table *pTab){
 }
 
 /*
-** Check to see if virtual tale module pMod can be have an eponymous
+** Check to see if virtual table module pMod can be have an eponymous
 ** virtual table instance.  If it can, create one if one does not already
 ** exist. Return non-zero if the eponymous virtual table instance exists
 ** when this routine returns, and return zero if it does not exist.
@@ -1110,17 +1121,18 @@ int sqlite3VtabEponymousTableInit(Parse *pParse, Module *pMod){
   const sqlite3_module *pModule = pMod->pModule;
   Table *pTab;
   char *zErr = 0;
-  int nName;
   int rc;
   sqlite3 *db = pParse->db;
   if( pMod->pEpoTab ) return 1;
   if( pModule->xCreate!=0 && pModule->xCreate!=pModule->xConnect ) return 0;
-  nName = sqlite3Strlen30(pMod->zName) + 1;
-  pTab = sqlite3DbMallocZero(db, sizeof(Table) + nName);
+  pTab = sqlite3DbMallocZero(db, sizeof(Table));
   if( pTab==0 ) return 0;
+  pTab->zName = sqlite3DbStrDup(db, pMod->zName);
+  if( pTab->zName==0 ){
+    sqlite3DbFree(db, pTab);
+    return 0;
+  }
   pMod->pEpoTab = pTab;
-  pTab->zName = (char*)&pTab[1];
-  memcpy(pTab->zName, pMod->zName, nName);
   pTab->nRef = 1;
   pTab->pSchema = db->aDb[0].pSchema;
   pTab->tabFlags |= TF_Virtual;
@@ -1146,9 +1158,11 @@ int sqlite3VtabEponymousTableInit(Parse *pParse, Module *pMod){
 void sqlite3VtabEponymousTableClear(sqlite3 *db, Module *pMod){
   Table *pTab = pMod->pEpoTab;
   if( pTab!=0 ){
-    sqlite3DeleteColumnNames(db, pTab);
-    sqlite3VtabClear(db, pTab);
-    sqlite3DbFree(db, pTab);
+    /* Mark the table as Ephemeral prior to deleting it, so that the
+    ** sqlite3DeleteTable() routine will know that it is not stored in 
+    ** the schema. */
+    pTab->tabFlags |= TF_Ephemeral;
+    sqlite3DeleteTable(db, pTab);
     pMod->pEpoTab = 0;
   }
 }
