@@ -39,9 +39,10 @@ file delete -force test.db
 file delete -force test2.db
 file delete -force test3.db
 file delete -force test4.db
-
+                          
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
+set sampleDir [file normalize [file dirname [file dirname $argv0]]]
 set old_pending_byte [sqlite3_test_control_pending_byte 0x40000000]
 
 # If the library is not compiled with has_codec support then
@@ -991,7 +992,7 @@ file delete -force test.db
 
 # open a 1.1.8 database using the new code, HMAC disabled
 do_test open-1.1.8-database {
-  file copy -force sqlcipher-1.1.8-testkey.db test.db
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db test.db
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -1006,8 +1007,8 @@ file delete -force test.db
 
 # open a 1.1.8 database without hmac, then copy the data
 do_test attach-and-copy-1.1.8 {
-  sqlite_orig db sqlcipher-1.1.8-testkey.db
-
+  sqlite_orig db $sampleDir/sqlcipher-1.1.8-testkey.db
+  
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_use_hmac = OFF;
@@ -1474,7 +1475,8 @@ file delete -force test.db
 # attached database should have the same hmac
 # setting as the original 
 do_test default-hmac-kdf-attach {
-  file copy -force sqlcipher-1.1.8-testkey.db test.db
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db test.db
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db;
   sqlite_orig db test.db
   execsql {
     PRAGMA cipher_default_use_hmac = OFF;
@@ -1489,12 +1491,14 @@ do_test default-hmac-kdf-attach {
 } {75709 75709}
 db close
 file delete -force test.db
+file delete -force sqlcipher-1.1.8-testkey.db
 
 # open a 2.0 database (with HMAC), then 
 # try to a 1.1.8 database. this should 
 # fail because the hmac setting for the 
 # attached database is not compatible
 do_test attach-1.1.8-database-from-2.0-fails {
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db;
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey';
@@ -1504,6 +1508,7 @@ do_test attach-1.1.8-database-from-2.0-fails {
 } {1 {file is encrypted or is not a database}}
 db close
 file delete -force test.db
+file delete -force sqlcipher-1.1.8-testkey.db
 
 # open a 2.0 database (with HMAC, 4k iter), then 
 # set the default hmac setting to OFF.
@@ -1511,6 +1516,7 @@ file delete -force test.db
 # succeed now that hmac is off by default
 # before the attach
 do_test change-default-hmac-kdf-attach {
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db;
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -1532,6 +1538,7 @@ do_test change-default-hmac-kdf-attach {
 } {1 75709}
 db close
 file delete -force test.db
+file delete -force sqlcipher-1.1.8-testkey.db
 
 # verify the pragma cipher_version
 # returns the currently configured
@@ -1706,7 +1713,7 @@ file delete -force test.db
 # open a 3.0 database with little endian hmac page numbers (default)
 # verify it can be opened
 do_test open-3.0-le-database {
-  sqlite_orig db sqlcipher-3.0-testkey.db
+  sqlite_orig db $sampleDir/sqlcipher-3.0-testkey.db
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
@@ -1718,7 +1725,7 @@ db close
 # open a 2.0 database with little endian hmac page numbers (default)
 # verify it can be opened
 do_test open-2.0-le-database {
-  sqlite_orig db sqlcipher-2.0-le-testkey.db
+  sqlite_orig db $sampleDir/sqlcipher-2.0-le-testkey.db
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA kdf_iter = 4000;
@@ -1731,7 +1738,7 @@ db close
 # open a 2.0 database with big-endian hmac page numbers
 # verify it can be opened
 do_test open-2.0-be-database {
-  sqlite_orig db sqlcipher-2.0-be-testkey.db
+  sqlite_orig db $sampleDir/sqlcipher-2.0-be-testkey.db
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_hmac_pgno = be;
@@ -1747,7 +1754,7 @@ db close
 # copy schema between the two, and verify the latter 
 # can be opened
 do_test be-to-le-migration {
-  sqlite_orig db sqlcipher-2.0-be-testkey.db
+  sqlite_orig db $sampleDir/sqlcipher-2.0-be-testkey.db
 
   execsql {
     PRAGMA key = 'testkey';
@@ -2015,7 +2022,7 @@ file delete -force test.db
 # hmac salt mask 
 # verify it can be opened
 do_test open-2.0-beta-database {
-  sqlite_orig db sqlcipher-2.0-beta-testkey.db
+  sqlite_orig db $sampleDir/sqlcipher-2.0-beta-testkey.db
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA kdf_iter = 4000;
@@ -2032,7 +2039,7 @@ db close
 # copy schema between the two, and verify the latter 
 # can be opened
 do_test 2.0-beta-to-2.0-migration {
-  sqlite_orig db sqlcipher-2.0-beta-testkey.db
+  sqlite_orig db $sampleDir/sqlcipher-2.0-beta-testkey.db
 
   execsql {
     PRAGMA key = 'testkey';
@@ -2080,7 +2087,7 @@ db close
 file delete -force test.db
 
 do_test migrate-1.1.8-database-to-3x-format {
-  file copy -force sqlcipher-1.1.8-testkey.db test.db
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db test.db
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -2098,7 +2105,7 @@ db close
 file delete -force test.db
 
 do_test migrate-2-0-le-database-to-3x-format {
-  file copy -force sqlcipher-2.0-le-testkey.db test.db
+  file copy -force $sampleDir/sqlcipher-2.0-le-testkey.db test.db
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
