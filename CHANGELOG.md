@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased][unreleased]
 
+## [3.4.1] - 2016-12-28
+### Added
+- Added support for OpenSSL 1.1.0
+
+### Changed
+- Merged upstream SQLite 3.15.2
+
 ## [3.4.0] - 2016-04-05
 ### Added
 - Added `PRAGMA cipher_provider_version`
@@ -66,7 +73,8 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.0...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.1...prerelease
+[3.4.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.0...v3.3.1
 [3.3.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.2.0...v3.3.0
