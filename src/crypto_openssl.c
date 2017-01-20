@@ -37,6 +37,7 @@
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/opensslv.h>
 
 typedef struct {
   EVP_CIPHER *evp_cipher;
@@ -155,14 +156,24 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
 }
 
 static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
-  HMAC_CTX hctx;
   unsigned int outlen;
+#if OPENSSL_VERSION_NUMBER >= 0x10100001L
+  HMAC_CTX *hctx;
+  hctx = HMAC_CTX_new();
+  HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL);
+  HMAC_Update(hctx, in, in_sz);
+  HMAC_Update(hctx, in2, in2_sz);
+  HMAC_Final(hctx, out, &outlen);
+  HMAC_CTX_free(hctx);
+#else
+  HMAC_CTX hctx;
   HMAC_CTX_init(&hctx);
   HMAC_Init_ex(&hctx, hmac_key, key_sz, EVP_sha1(), NULL);
   HMAC_Update(&hctx, in, in_sz);
   HMAC_Update(&hctx, in2, in2_sz);
   HMAC_Final(&hctx, out, &outlen);
   HMAC_CTX_cleanup(&hctx);
+#endif
   return SQLITE_OK; 
 }
 
@@ -172,9 +183,21 @@ static int sqlcipher_openssl_kdf(void *ctx, const unsigned char *pass, int pass_
 }
 
 static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
-  EVP_CIPHER_CTX ectx;
   int tmp_csz, csz;
- 
+#if OPENSSL_VERSION_NUMBER >= 0x10100001L
+  EVP_CIPHER_CTX *ectx;
+  ectx = EVP_CIPHER_CTX_new();
+  EVP_CipherInit_ex(ectx, ((openssl_ctx *)ctx)->evp_cipher, NULL, NULL, NULL, mode);
+  EVP_CIPHER_CTX_set_padding(ectx, 0); // no padding
+  EVP_CipherInit_ex(ectx, NULL, NULL, key, iv, mode);
+  EVP_CipherUpdate(ectx, out, &tmp_csz, in, in_sz);
+  csz = tmp_csz;  
+  out += tmp_csz;
+  EVP_CipherFinal(ectx, out, &tmp_csz);
+  csz += tmp_csz;
+  EVP_CIPHER_CTX_free(ectx);
+#else
+  EVP_CIPHER_CTX ectx;
   EVP_CipherInit(&ectx, ((openssl_ctx *)ctx)->evp_cipher, NULL, NULL, mode);
   EVP_CIPHER_CTX_set_padding(&ectx, 0); // no padding
   EVP_CipherInit(&ectx, NULL, key, iv, mode);
@@ -184,7 +207,9 @@ static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int
   EVP_CipherFinal(&ectx, out, &tmp_csz);
   csz += tmp_csz;
   EVP_CIPHER_CTX_cleanup(&ectx);
+#endif
   assert(in_sz == csz);
+
   return SQLITE_OK; 
 }
 
