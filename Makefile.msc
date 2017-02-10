@@ -493,8 +493,8 @@ TCC = $(CC) -nologo -W4 -DINCLUDE_MSVC_H=1 $(CCOPTS) $(TCCOPTS)
 TCC = $(CC) -nologo -W3 $(CCOPTS) $(TCCOPTS)
 !ENDIF
 
-TCC = $(TCC) -DSQLITE_OS_WIN=1 -I. -I$(TOP) -I$(TOP)\src -fp:precise
-RCC = $(RC) -DSQLITE_OS_WIN=1 -I. -I$(TOP) -I$(TOP)\src $(RCOPTS) $(RCCOPTS)
+TCC = $(TCC) -DSQLITE_OS_WIN=1 -I. -I$(TOP) -I$(TOP)\src $(EXTRA_COMPILE_OPTS) -fp:precise
+RCC = $(RC) -DSQLITE_OS_WIN=1 -I. -I$(TOP) -I$(TOP)\src $(EXTRA_COMPILE_OPTS) $(RCOPTS) $(RCCOPTS)
 
 # Check if we want to use the "stdcall" calling convention when compiling.
 # This is not supported by the compilers for non-x86 platforms.  It should
@@ -542,6 +542,8 @@ CORE_COMPILE_OPTS = $(CORE_CCONV_OPTS) -DSQLITE_API=__declspec(dllexport)
 CORE_COMPILE_OPTS = $(CORE_CCONV_OPTS)
 !ENDIF
 !ENDIF
+
+CORE_COMPILE_OPTS = $(CORE_COMPILE_OPTS) $(EXTRA_COMPILE_OPTS)
 
 # These are the additional targets that the core library should depend on
 # when linking.
@@ -866,8 +868,8 @@ TLIBS =
 # default to file, 2 to default to memory, and 3 to force temporary
 # tables to always be in memory.
 #
-TCC = $(TCC) -DSQLITE_TEMP_STORE=1
-RCC = $(RCC) -DSQLITE_TEMP_STORE=1
+TCC = $(TCC) -DSQLITE_TEMP_STORE=2
+RCC = $(RCC) -DSQLITE_TEMP_STORE=2
 
 # Enable/disable loadable extensions, and other optional features
 # based on configuration. (-DSQLITE_OMIT*, -DSQLITE_ENABLE*).
@@ -971,6 +973,8 @@ LTLIBOPTS = /NOLOGO /MACHINE:$(PLATFORM)
 LTLINKOPTS = /NOLOGO
 LTLIBOPTS = /NOLOGO
 !ENDIF
+
+LTLINKOPTS = $(LTLINKOPTS) $(EXTRA_LTLINK_OPTS)
 
 # When compiling for use in the WinRT environment, the following
 # linker option must be used to mark the executable as runnable

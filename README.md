@@ -38,6 +38,17 @@ Example Dynamic linking
 		LDFLAGS="-lcrypto"
 	$ make
 
+Example on Windows using native toolchain
+
+    > nmake /f Makefile.msc ^
+          USE_AMALGAMATION=1 NO_TCL=1 ^
+          EXTRA_COMPILE_OPTS="-I %openssl_dir%\include" ^
+          EXTRA_LTLINK_OPTS="%openssl_dir%\lib\libeay32.lib" ^
+          SQLITE3DLL=sqlcipher.dll SQLITE3EXE=sqlcipher.exe ^
+          SQLITE3LIB=sqlcipher.lib ^
+          OPT_FEATURE_FLAGS="-DSQLITE_HAS_CODEC=1 -DSQLCIPHER_CRYPTO_OPENSSL=1"
+
+
 ## Encrypting a database
 
 To specify an encryption passphrase for the database via the SQL interface you 
