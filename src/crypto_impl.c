@@ -648,6 +648,10 @@ void sqlcipher_codec_get_keyspec(codec_ctx *ctx, void **zKey, int *nKey) {
 }
 
 int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
+  if(!((size != 0) && ((size & (size - 1)) == 0)) || size < 512 || size > 65536) {
+    CODEC_TRACE(("cipher_page_size not a power of 2 and between 512 and 65536 inclusive\n"));
+    return SQLITE_ERROR;
+  }
   /* attempt to free the existing page buffer */
   sqlcipher_free(ctx->buffer,ctx->page_sz);
   ctx->page_sz = size;
