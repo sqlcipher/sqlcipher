@@ -110,7 +110,9 @@ static int sqlcipher_openssl_activate(void *ctx) {
 
   if(openssl_init_count == 0 && openssl_external_init == 0)  {
     /* if the library was not externally initialized, then should be now */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     OpenSSL_add_all_algorithms();
+#endif
   } 
 
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
@@ -139,7 +141,9 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
        Note: this code will only be reached if OpensSSL_add_all_algorithms()
        is called by SQLCipher internally. This should prevent SQLCipher from 
        "cleaning up" openssl when it was initialized externally by the program */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
       EVP_cleanup();
+#endif
     } else {
       openssl_external_init = 0;
     }
