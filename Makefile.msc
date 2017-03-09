@@ -965,10 +965,10 @@ LTLINK = $(LTLINK) rpcrt4.lib
 # set this for you.  Otherwise, the linker will attempt
 # to deduce the binary type based on the object files.
 !IFDEF PLATFORM
-LTLINKOPTS = /NOLOGO /MACHINE:$(PLATFORM)
+LTLINKOPTS = $(LTLINKOPTS) /NOLOGO /MACHINE:$(PLATFORM)
 LTLIBOPTS = /NOLOGO /MACHINE:$(PLATFORM)
 !ELSE
-LTLINKOPTS = /NOLOGO
+LTLINKOPTS = $(LTLINKOPTS) /NOLOGO
 LTLIBOPTS = /NOLOGO
 !ENDIF
 
