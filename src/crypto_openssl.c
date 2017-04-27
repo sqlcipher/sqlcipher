@@ -37,6 +37,7 @@
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/err.h>
 
 typedef struct {
   EVP_CIPHER *evp_cipher;
