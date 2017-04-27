@@ -1249,5 +1249,13 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
   return ctx->read_ctx->provider->get_provider_version(ctx->read_ctx);
 }
 
+int sqlcipher_codec_hmac(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
+                         unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
+                         unsigned char *out) {
+  ctx->read_ctx->provider->hmac(ctx->read_ctx, (unsigned char *)hmac_key, key_sz, in, in_sz, in2, in2_sz, out);
+  return SQLITE_OK;
+}
+
+
 #endif
 /* END SQLCIPHER */
