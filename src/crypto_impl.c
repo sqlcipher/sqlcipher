@@ -1026,6 +1026,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   int saved_flags;
   int saved_nChange;
   int saved_nTotalChange;
+  u8 saved_mTrace;
   int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
@@ -1130,9 +1131,11 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       saved_nChange = db->nChange;
       saved_nTotalChange = db->nTotalChange;
       saved_xTrace = db->xTrace;
+      saved_mTrace = db->mTrace;
       db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_PreferBuiltin;
       db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
       db->xTrace = 0;
+      db->mTrace = 0;
       
       pDest = db->aDb[0].pBt;
       pDb = &(db->aDb[db->nDb-1]);
@@ -1164,6 +1167,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       db->nChange = saved_nChange;
       db->nTotalChange = saved_nTotalChange;
       db->xTrace = saved_xTrace;
+      db->mTrace = saved_mTrace;
       db->autoCommit = 1;
       sqlite3BtreeClose(pDb->pBt);
       pDb->pBt = 0;

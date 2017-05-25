@@ -103,6 +103,11 @@ proc cmpFilesChunked {file1 file2 {chunksize 16384}} {
     return 0
 }
 
+proc trace_proc sql {
+  global TRACE_OUT
+  lappend TRACE_OUT [string trim $sql]
+}
+
 # The database is initially empty.
 # set an hex key create some basic data
 # create table and insert operations should work
@@ -2317,6 +2322,30 @@ if_built_with_openssl wont-write-database-with-invalid-cipher-2 {
 } {{PRAGMA cipher command is deprecated, please remove from usage.}}
 db close
 file delete -force test.db
+
+do_test verify-cipher-export-with-trace-configured {
+  sqlite_orig db plain.db
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES(1,2);
+  }
+  set TRACE_OUT {}
+  db trace trace_proc
+  set stmt [sqlite3_prepare db {ATTACH DATABASE 'encrypted.db' AS encrypted KEY 'encrypted';} -1 TAIL]
+  sqlite3_step $stmt
+  sqlite3_finalize $stmt
+  set stmt [sqlite3_prepare db {SELECT sqlcipher_export('encrypted');} -1 TAIL]
+  sqlite3_step $stmt
+  sqlite3_finalize $stmt
+  set stmt [sqlite3_prepare db {DETACH DATABASE encrypted;} -1 TAIL]
+  sqlite3_step $stmt
+  sqlite3_finalize $stmt
+  set TRACE_OUT
+} {{ATTACH DATABASE 'encrypted.db' AS encrypted KEY 'encrypted';} {SELECT sqlcipher_export('encrypted');} {DETACH DATABASE encrypted;}}
+set TRACE_OUT {}
+db close
+file delete -force plain.db
+file delete -force encrypted.db
 
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test
