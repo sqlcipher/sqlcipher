@@ -2331,15 +2331,11 @@ do_test verify-cipher-export-with-trace-configured {
   }
   set TRACE_OUT {}
   db trace trace_proc
-  set stmt [sqlite3_prepare db {ATTACH DATABASE 'encrypted.db' AS encrypted KEY 'encrypted';} -1 TAIL]
-  sqlite3_step $stmt
-  sqlite3_finalize $stmt
-  set stmt [sqlite3_prepare db {SELECT sqlcipher_export('encrypted');} -1 TAIL]
-  sqlite3_step $stmt
-  sqlite3_finalize $stmt
-  set stmt [sqlite3_prepare db {DETACH DATABASE encrypted;} -1 TAIL]
-  sqlite3_step $stmt
-  sqlite3_finalize $stmt
+  execsql {
+    ATTACH DATABASE 'encrypted.db' AS encrypted KEY 'encrypted';
+    SELECT sqlcipher_export('encrypted');
+    DETACH DATABASE encrypted;
+  }
   set TRACE_OUT
 } {{ATTACH DATABASE 'encrypted.db' AS encrypted KEY 'encrypted';} {SELECT sqlcipher_export('encrypted');} {DETACH DATABASE encrypted;}}
 set TRACE_OUT {}
