@@ -100,11 +100,28 @@
 #define CIPHER_MAX_KEY_SZ 64
 #endif
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
+#ifdef CODEC_DEBUG_MUTEX
+#ifdef __ANDROID__
+#define CODEC_TRACE_MUTEX(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
+#else
+#define CODEC_TRACE_MUTEX(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
+#endif
+#else
+#define CODEC_TRACE_MUTEX(...)
+#endif
 
 #ifdef CODEC_DEBUG
-#define CODEC_TRACE(X)  {printf X;fflush(stdout);}
+#ifdef __ANDROID__
+#define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
 #else
-#define CODEC_TRACE(X)
+#define CODEC_TRACE(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
+#endif
+#else
+#define CODEC_TRACE(...)
 #endif
 
 #ifdef CODEC_DEBUG_PAGEDATA

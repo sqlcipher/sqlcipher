@@ -55,21 +55,30 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
   page_sz = sqlcipher_codec_ctx_get_pagesize(ctx);
   reserve_sz = sqlcipher_codec_ctx_get_reservesize(ctx);
 
+  CODEC_TRACE("codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize() size=%d reserve=%d\n", page_sz, reserve_sz);
+
+  CODEC_TRACE_MUTEX("codec_set_btree_to_codec_pagesize: entering database mutex %p\n", db->mutex);
   sqlite3_mutex_enter(db->mutex);
+  CODEC_TRACE_MUTEX("codec_set_btree_to_codec_pagesize: entered database mutex %p\n", db->mutex);
   db->nextPagesize = page_sz; 
 
   /* before forcing the page size we need to unset the BTS_PAGESIZE_FIXED flag, else  
      sqliteBtreeSetPageSize will block the change  */
   pDb->pBt->pBt->btsFlags &= ~BTS_PAGESIZE_FIXED;
-  CODEC_TRACE(("codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize() size=%d reserve=%d\n", page_sz, reserve_sz));
   rc = sqlite3BtreeSetPageSize(pDb->pBt, page_sz, reserve_sz, 0);
+
+  CODEC_TRACE("codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize returned %d\n", rc);
+
+  CODEC_TRACE_MUTEX("codec_set_btree_to_codec_pagesize: leaving database mutex %p\n", db->mutex);
   sqlite3_mutex_leave(db->mutex);
+  CODEC_TRACE_MUTEX("codec_set_btree_to_codec_pagesize: left database mutex %p\n", db->mutex);
+
   return rc;
 }
 
 static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("codec_set_pass_key: entered db=%p nDb=%d zKey=%s nKey=%d for_ctx=%d\n", db, nDb, (char *)zKey, nKey, for_ctx));
+  CODEC_TRACE("codec_set_pass_key: entered db=%p nDb=%d zKey=%s nKey=%d for_ctx=%d\n", db, nDb, (char *)zKey, nKey, for_ctx);
   if(pDb->pBt) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
@@ -88,7 +97,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
   }
 
-  CODEC_TRACE(("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx));
+  CODEC_TRACE("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx);
   
   if( sqlite3StrICmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
     if(ctx) {
@@ -300,7 +309,7 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   unsigned char *pData = (unsigned char *) data;
   void *buffer = sqlcipher_codec_ctx_get_data(ctx);
   void *kdf_salt = sqlcipher_codec_ctx_get_kdf_salt(ctx);
-  CODEC_TRACE(("sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz));
+  CODEC_TRACE("sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
 
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
@@ -310,7 +319,7 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   if(pgno == 1) offset = FILE_HEADER_SZ; /* adjust starting pointers in data page for header offset on first page*/
 
-  CODEC_TRACE(("sqlite3Codec: switch mode=%d offset=%d\n",  mode, offset));
+  CODEC_TRACE("sqlite3Codec: switch mode=%d offset=%d\n",  mode, offset);
   switch(mode) {
     case 0: /* decrypt */
     case 2:
@@ -349,7 +358,7 @@ void sqlite3FreeCodecArg(void *pCodecArg) {
 int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   struct Db *pDb = &db->aDb[nDb];
 
-  CODEC_TRACE(("sqlite3CodecAttach: entered nDb=%d zKey=%s, nKey=%d\n", nDb, (char *)zKey, nKey));
+  CODEC_TRACE("sqlite3CodecAttach: entered db=%p, nDb=%d zKey=%s, nKey=%d\n", db, nDb, (char *)zKey, nKey);
 
 
   if(nKey && zKey && pDb->pBt) {
@@ -358,35 +367,48 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     sqlite3_file *fd = sqlite3Pager_get_fd(pPager);
     codec_ctx *ctx;
 
+    CODEC_TRACE("sqlite3CodecAttach: calling sqlcipher_activate()\n");
     sqlcipher_activate(); /* perform internal initialization for sqlcipher */
 
+    CODEC_TRACE_MUTEX("sqlite3CodecAttach: entering database mutex %p\n", db->mutex);
     sqlite3_mutex_enter(db->mutex);
+    CODEC_TRACE_MUTEX("sqlite3CodecAttach: entered database mutex %p\n", db->mutex);
 
     /* point the internal codec argument against the contet to be prepared */
+    CODEC_TRACE("sqlite3CodecAttach: calling sqlcipher_codec_ctx_init()\n");
     rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey); 
 
     if(rc != SQLITE_OK) {
       /* initialization failed, do not attach potentially corrupted context */
+      CODEC_TRACE("sqlite3CodecAttach: context initialization failed with rc=%d\n", rc);
+      CODEC_TRACE_MUTEX("sqlite3CodecAttach: leaving database mutex %p (early return on rc=%d)\n", db->mutex, rc);
       sqlite3_mutex_leave(db->mutex);
+      CODEC_TRACE_MUTEX("sqlite3CodecAttach: left database mutex %p (early return on rc=%d)\n", db->mutex, rc);
       return rc;
     }
 
+    CODEC_TRACE("sqlite3CodecAttach: calling sqlite3pager_sqlite3PagerSetCodec()\n");
     sqlite3pager_sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 
+    CODEC_TRACE("sqlite3CodecAttach: calling codec_set_btree_to_codec_pagesize()\n");
     codec_set_btree_to_codec_pagesize(db, pDb, ctx);
 
     /* force secure delete. This has the benefit of wiping internal data when deleted
        and also ensures that all pages are written to disk (i.e. not skipped by
        sqlite3PagerDontWrite optimizations) */ 
+    CODEC_TRACE("sqlite3CodecAttach: calling sqlite3BtreeSecureDelete()\n");
     sqlite3BtreeSecureDelete(pDb->pBt, 1); 
 
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
        if not null, then set to the default */
     if(fd != NULL) { 
+      CODEC_TRACE("sqlite3CodecAttach: calling sqlite3BtreeSetAutoVacuum()\n");
       sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
     }
+    CODEC_TRACE_MUTEX("sqlite3CodecAttach: leaving database mutex %p\n", db->mutex);
     sqlite3_mutex_leave(db->mutex);
+    CODEC_TRACE_MUTEX("sqlite3CodecAttach: left database mutex %p\n", db->mutex);
   }
   return SQLITE_OK;
 }
@@ -410,12 +432,12 @@ static int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_key entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
+  CODEC_TRACE("sqlite3_key entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey);
   return sqlite3_key_v2(db, "main", pKey, nKey);
 }
 
 int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_key_v2: entered db=%p zDb=%s pKey=%s nKey=%d\n", db, zDb, (char *)pKey, nKey));
+  CODEC_TRACE("sqlite3_key_v2: entered db=%p zDb=%s pKey=%s nKey=%d\n", db, zDb, (char *)pKey, nKey);
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
@@ -425,7 +447,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 }
 
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_rekey entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
+  CODEC_TRACE("sqlite3_rekey entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey);
   return sqlite3_rekey_v2(db, "main", pKey, nKey);
 }
 
@@ -440,11 +462,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  CODEC_TRACE(("sqlite3_rekey_v2: entered db=%p zDb=%s pKey=%s, nKey=%d\n", db, zDb, (char *)pKey, nKey));
+  CODEC_TRACE("sqlite3_rekey_v2: entered db=%p zDb=%s pKey=%s, nKey=%d\n", db, zDb, (char *)pKey, nKey);
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = &db->aDb[db_index];
-    CODEC_TRACE(("sqlite3_rekey_v2: database pDb=%p db_index:%d\n", pDb, db_index));
+    CODEC_TRACE("sqlite3_rekey_v2: database pDb=%p db_index:%d\n", pDb, db_index);
     if(pDb->pBt) {
       codec_ctx *ctx;
       int rc, page_count;
@@ -456,11 +478,13 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
      
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
-        CODEC_TRACE(("sqlite3_rekey_v2: no codec attached to db, exiting\n"));
+        CODEC_TRACE("sqlite3_rekey_v2: no codec attached to db, exiting\n");
         return SQLITE_OK;
       }
 
+      CODEC_TRACE_MUTEX("sqlite3_rekey_v2: entering database mutex %p\n", db->mutex);
       sqlite3_mutex_enter(db->mutex);
+      CODEC_TRACE_MUTEX("sqlite3_rekey_v2: entered database mutex %p\n", db->mutex);
 
       codec_set_pass_key(db, db_index, pKey, nKey, CIPHER_WRITE_CTX);
     
@@ -480,25 +504,27 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
             if(rc == SQLITE_OK) {
               sqlite3PagerUnref(page);
             } else {
-             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred writing page %d\n", rc, pgno));  
+             CODEC_TRACE("sqlite3_rekey_v2: error %d occurred writing page %d\n", rc, pgno);  
             }
           } else {
-             CODEC_TRACE(("sqlite3_rekey_v2: error %d occurred getting page %d\n", rc, pgno));  
+             CODEC_TRACE("sqlite3_rekey_v2: error %d occurred getting page %d\n", rc, pgno);  
           }
         } 
       }
 
       /* if commit was successful commit and copy the rekey data to current key, else rollback to release locks */
       if(rc == SQLITE_OK) { 
-        CODEC_TRACE(("sqlite3_rekey_v2: committing\n"));
+        CODEC_TRACE("sqlite3_rekey_v2: committing\n");
         rc = sqlite3BtreeCommit(pDb->pBt); 
         sqlcipher_codec_key_copy(ctx, CIPHER_WRITE_CTX);
       } else {
-        CODEC_TRACE(("sqlite3_rekey_v2: rollback\n"));
+        CODEC_TRACE("sqlite3_rekey_v2: rollback\n");
         sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK, 0);
       }
 
+      CODEC_TRACE_MUTEX("sqlite3_rekey_v2: leaving database mutex %p\n", db->mutex);
       sqlite3_mutex_leave(db->mutex);
+      CODEC_TRACE_MUTEX("sqlite3_rekey_v2: left database mutex %p\n", db->mutex);
     }
     return SQLITE_OK;
   }
@@ -507,7 +533,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 
 void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE(("sqlite3CodecGetKey: entered db=%p, nDb=%d\n", db, nDb));
+  CODEC_TRACE("sqlite3CodecGetKey: entered db=%p, nDb=%d\n", db, nDb);
   if( pDb->pBt ) {
     codec_ctx *ctx;
     sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);

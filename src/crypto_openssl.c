@@ -71,11 +71,15 @@ static void HMAC_CTX_free(HMAC_CTX *ctx)
 
 static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: entering openssl_rand_mutex %p\n", openssl_rand_mutex);
   sqlite3_mutex_enter(openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: entered openssl_rand_mutex %p\n", openssl_rand_mutex);
 #endif
   RAND_add(buffer, length, 0);
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: leaving openssl_rand_mutex %p\n", openssl_rand_mutex);
   sqlite3_mutex_leave(openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: left openssl_rand_mutex %p\n", openssl_rand_mutex);
 #endif
   return SQLITE_OK;
 }
@@ -90,7 +94,9 @@ static int sqlcipher_openssl_activate(void *ctx) {
   /* initialize openssl and increment the internal init counter
      but only if it hasn't been initalized outside of SQLCipher by this program 
      e.g. on startup */
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entering static master mutex");
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered static master mutex");
 
   if(openssl_init_count == 0 && EVP_get_cipherbyname(CIPHER) != NULL) {
     /* if openssl has not yet been initialized by this library, but 
@@ -116,12 +122,16 @@ static int sqlcipher_openssl_activate(void *ctx) {
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   if(openssl_rand_mutex == NULL) {
     /* allocate a mutex to guard against concurrent calls to RAND_bytes() */
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocating openssl_rand_mutex");
     openssl_rand_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocated openssl_rand_mutex %p", openssl_rand_mutex);
   }
 #endif
 
   openssl_init_count++; 
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving static master mutex");
   sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left static master mutex");
   return SQLITE_OK;
 }
 
@@ -129,7 +139,9 @@ static int sqlcipher_openssl_activate(void *ctx) {
    freeing the EVP structures on the final deactivation to ensure that 
    OpenSSL memory is cleaned up */
 static int sqlcipher_openssl_deactivate(void *ctx) {
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: entering static master mutex");
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: entered static master mutex");
   openssl_init_count--;
 
   if(openssl_init_count == 0) {
@@ -144,11 +156,15 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
       openssl_external_init = 0;
     }
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freeing openssl_rand_mutex %p", openssl_rand_mutex);
     sqlite3_mutex_free(openssl_rand_mutex);
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freed openssl_rand_mutex %p", openssl_rand_mutex);
     openssl_rand_mutex = NULL;
 #endif
   }
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: leaving static master mutex");
   sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: left static master mutex");
   return SQLITE_OK;
 }
 
@@ -170,11 +186,15 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
      but a more proper solution is that applications setup platform-appropriate
      thread saftey in openssl externally */
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: entering openssl_rand_mutex %p", openssl_rand_mutex);
   sqlite3_mutex_enter(openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: entered openssl_rand_mutex %p", openssl_rand_mutex);
 #endif
   rc = RAND_bytes((unsigned char *)buffer, length);
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: leaving openssl_rand_mutex %p", openssl_rand_mutex);
   sqlite3_mutex_leave(openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: left openssl_rand_mutex %p", openssl_rand_mutex);
 #endif
   return (rc == 1) ? SQLITE_OK : SQLITE_ERROR;
 }
