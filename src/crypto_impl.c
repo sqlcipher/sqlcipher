@@ -431,9 +431,11 @@ static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
                   c1->pass, c2->pass,
                   c1->pass, c2->pass,
                   c1->provider->ctx_cmp(c1->provider_ctx, c2->provider_ctx),
-                  sqlcipher_memcmp((const unsigned char*)c1->pass,
-                           (const unsigned char*)c2->pass,
-                           c1->pass_sz),
+                  (c1->pass == NULL || c2->pass == NULL) 
+                    ? -1 : sqlcipher_memcmp(
+                      (const unsigned char*)c1->pass,
+                      (const unsigned char*)c2->pass,
+                      c1->pass_sz),
                   are_equal
                   );
 
