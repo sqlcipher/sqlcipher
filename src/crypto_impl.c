@@ -37,9 +37,12 @@
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) || defined(_AIX)
+#include <errno.h>
+#include <unistd.h>
+#include <sys/resource.h>
 #include <sys/mman.h>
 #elif defined(_WIN32)
-# include <windows.h>
+#include <windows.h>
 #endif
 #endif
 
@@ -248,14 +251,28 @@ int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
 void sqlcipher_free(void *ptr, int sz) {
   if(ptr) {
     if(sz > 0) {
+#ifndef OMIT_MEMLOCK
+      int rc;
+#if defined(__unix__) || defined(__APPLE__) 
+      unsigned long pagesize = sysconf(_SC_PAGESIZE);
+      unsigned long offset = (unsigned long) ptr % pagesize;
+#endif
+#endif
       CODEC_TRACE("sqlcipher_free: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
       sqlcipher_memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
-      munlock(ptr, sz);
+      CODEC_TRACE("sqlcipher_free: calling munlock(%p,%lu)\n", ptr - offset, sz + offset);
+      rc = munlock(ptr - offset, sz + offset);
+      if(rc!=0) {
+        CODEC_TRACE("sqlcipher_free: munlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+      }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
-VirtualUnlock(ptr, sz);
+      rc = VirtualUnlock(ptr, sz);
+      if(!rc) {
+        CODEC_TRACE("sqlcipher_free: VirtualUnlock(%p,%d) returned %d LastError=%d\n", ptr, sz, rc, GetLastError());
+      }
 #endif
 #endif
 #endif
@@ -277,11 +294,21 @@ void* sqlcipher_malloc(int sz) {
   sqlcipher_memset(ptr, 0, sz);
 #ifndef OMIT_MEMLOCK
   if(ptr) {
+    int rc;
 #if defined(__unix__) || defined(__APPLE__) 
-    mlock(ptr, sz);
+    unsigned long pagesize = sysconf(_SC_PAGESIZE);
+    unsigned long offset = (unsigned long) ptr % pagesize;
+    CODEC_TRACE("sqlcipher_malloc: calling mlock(%p,%lu); _SC_PAGESIZE=%lu\n", ptr - offset, sz + offset, pagesize);
+    rc = mlock(ptr - offset, sz + offset);
+    if(rc!=0) {
+      CODEC_TRACE("sqlcipher_malloc: mlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+    }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
-    VirtualLock(ptr, sz);
+    rc = VirtualLock(ptr, sz);
+    if(rc==0) {
+      CODEC_TRACE("sqlcipher_malloc: VirtualLock(%p,%d) returned %d LastError=%d\n", ptr, sz, rc, GetLastError());
+    }
 #endif
 #endif
   }
