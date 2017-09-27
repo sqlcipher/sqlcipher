@@ -2139,6 +2139,9 @@ static int SQLITE_TCLAPI test_stmt_status(
     { "SQLITE_STMTSTATUS_SORT",            SQLITE_STMTSTATUS_SORT            },
     { "SQLITE_STMTSTATUS_AUTOINDEX",       SQLITE_STMTSTATUS_AUTOINDEX       },
     { "SQLITE_STMTSTATUS_VM_STEP",         SQLITE_STMTSTATUS_VM_STEP         },
+    { "SQLITE_STMTSTATUS_REPREPARE",       SQLITE_STMTSTATUS_REPREPARE       },
+    { "SQLITE_STMTSTATUS_RUN",             SQLITE_STMTSTATUS_RUN             },
+    { "SQLITE_STMTSTATUS_MEMUSED",         SQLITE_STMTSTATUS_MEMUSED         },
   };
   if( objc!=4 ){
     Tcl_WrongNumArgs(interp, 1, objv, "STMT PARAMETER RESETFLAG");
@@ -2312,6 +2315,38 @@ static int SQLITE_TCLAPI test_snapshot_get(
 
 #ifdef SQLITE_ENABLE_SNAPSHOT
 /*
+** Usage: sqlite3_snapshot_recover DB DBNAME
+*/
+static int SQLITE_TCLAPI test_snapshot_recover(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int rc;
+  sqlite3 *db;
+  char *zName;
+
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB DBNAME");
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
+  zName = Tcl_GetString(objv[2]);
+
+  rc = sqlite3_snapshot_recover(db, zName);
+  if( rc!=SQLITE_OK ){
+    Tcl_SetObjResult(interp, Tcl_NewStringObj(sqlite3ErrName(rc), -1));
+    return TCL_ERROR;
+  }else{
+    Tcl_ResetResult(interp);
+  }
+  return TCL_OK;
+}
+#endif /* SQLITE_ENABLE_SNAPSHOT */
+
+#ifdef SQLITE_ENABLE_SNAPSHOT
+/*
 ** Usage: sqlite3_snapshot_open DB DBNAME SNAPSHOT
 */
 static int SQLITE_TCLAPI test_snapshot_open(
@@ -2383,6 +2418,113 @@ static int SQLITE_TCLAPI test_snapshot_cmp(
   p1 = (sqlite3_snapshot*)sqlite3TestTextToPtr(Tcl_GetString(objv[1]));
   p2 = (sqlite3_snapshot*)sqlite3TestTextToPtr(Tcl_GetString(objv[2]));
   res = sqlite3_snapshot_cmp(p1, p2);
+  Tcl_SetObjResult(interp, Tcl_NewIntObj(res));
+  return TCL_OK;
+}
+#endif /* SQLITE_ENABLE_SNAPSHOT */
+
+#ifdef SQLITE_ENABLE_SNAPSHOT
+/*
+** Usage: sqlite3_snapshot_get_blob DB DBNAME
+*/
+static int SQLITE_TCLAPI test_snapshot_get_blob(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int rc;
+  sqlite3 *db;
+  char *zName;
+  sqlite3_snapshot *pSnapshot = 0;
+
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB DBNAME");
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
+  zName = Tcl_GetString(objv[2]);
+
+  rc = sqlite3_snapshot_get(db, zName, &pSnapshot);
+  if( rc!=SQLITE_OK ){
+    Tcl_SetObjResult(interp, Tcl_NewStringObj(sqlite3ErrName(rc), -1));
+    return TCL_ERROR;
+  }else{
+    Tcl_SetObjResult(interp, 
+        Tcl_NewByteArrayObj((unsigned char*)pSnapshot, sizeof(sqlite3_snapshot))
+    );
+    sqlite3_snapshot_free(pSnapshot);
+  }
+  return TCL_OK;
+}
+#endif /* SQLITE_ENABLE_SNAPSHOT */
+
+#ifdef SQLITE_ENABLE_SNAPSHOT
+  /*
+  ** Usage: sqlite3_snapshot_open_blob DB DBNAME SNAPSHOT
+*/
+static int SQLITE_TCLAPI test_snapshot_open_blob(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int rc;
+  sqlite3 *db;
+  char *zName;
+  unsigned char *pBlob;
+  int nBlob;
+
+  if( objc!=4 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB DBNAME SNAPSHOT");
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
+  zName = Tcl_GetString(objv[2]);
+  pBlob = Tcl_GetByteArrayFromObj(objv[3], &nBlob);
+  if( nBlob!=sizeof(sqlite3_snapshot) ){
+    Tcl_AppendResult(interp, "bad SNAPSHOT", 0);
+    return TCL_ERROR;
+  }
+  rc = sqlite3_snapshot_open(db, zName, (sqlite3_snapshot*)pBlob);
+  if( rc!=SQLITE_OK ){
+    Tcl_SetObjResult(interp, Tcl_NewStringObj(sqlite3ErrName(rc), -1));
+    return TCL_ERROR;
+  }
+  return TCL_OK;
+}
+#endif /* SQLITE_ENABLE_SNAPSHOT */
+
+#ifdef SQLITE_ENABLE_SNAPSHOT
+/*
+** Usage: sqlite3_snapshot_cmp_blob SNAPSHOT1 SNAPSHOT2
+*/
+static int SQLITE_TCLAPI test_snapshot_cmp_blob(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int res;
+  unsigned char *p1;
+  unsigned char *p2;
+  int n1;
+  int n2;
+
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "SNAPSHOT1 SNAPSHOT2");
+    return TCL_ERROR;
+  }
+
+  p1 = Tcl_GetByteArrayFromObj(objv[1], &n1);
+  p2 = Tcl_GetByteArrayFromObj(objv[2], &n2);
+
+  if( n1!=sizeof(sqlite3_snapshot) || n1!=n2 ){
+    Tcl_AppendResult(interp, "bad SNAPSHOT", 0);
+    return TCL_ERROR;
+  }
+
+  res = sqlite3_snapshot_cmp((sqlite3_snapshot*)p1, (sqlite3_snapshot*)p2);
   Tcl_SetObjResult(interp, Tcl_NewIntObj(res));
   return TCL_OK;
 }
@@ -4810,52 +4952,6 @@ static int SQLITE_TCLAPI test_interrupt(
   return TCL_OK;
 }
 
-static u8 *sqlite3_stack_baseline = 0;
-
-/*
-** Fill the stack with a known bitpattern.
-*/
-static void prepStack(void){
-  int i;
-  u32 bigBuf[65536];
-  for(i=0; i<sizeof(bigBuf)/sizeof(bigBuf[0]); i++) bigBuf[i] = 0xdeadbeef;
-  sqlite3_stack_baseline = (u8*)&bigBuf[65536];
-}
-
-/*
-** Get the current stack depth.  Used for debugging only.
-*/
-u64 sqlite3StackDepth(void){
-  u8 x;
-  return (u64)(sqlite3_stack_baseline - &x);
-}
-
-/*
-** Usage:  sqlite3_stack_used DB SQL
-**
-** Try to measure the amount of stack space used by a call to sqlite3_exec
-*/
-static int SQLITE_TCLAPI test_stack_used(
-  void * clientData,
-  Tcl_Interp *interp,
-  int argc,
-  char **argv
-){
-  sqlite3 *db;
-  int i;
-  if( argc!=3 ){
-    Tcl_AppendResult(interp, "wrong # args: should be \"", argv[0], 
-        " DB SQL", 0);
-    return TCL_ERROR;
-  }
-  if( getDbPointer(interp, argv[1], &db) ) return TCL_ERROR;
-  prepStack();
-  (void)sqlite3_exec(db, argv[2], 0, 0, 0);
-  for(i=65535; i>=0 && ((u32*)sqlite3_stack_baseline)[-i]==0xdeadbeef; i--){}
-  Tcl_SetObjResult(interp, Tcl_NewIntObj(i*4));
-  return TCL_OK;
-}
-
 /*
 ** Usage: sqlite_delete_function DB function-name
 **
@@ -6819,10 +6915,12 @@ static int SQLITE_TCLAPI tclLoadStaticExtensionCmd(
   extern int sqlite3_nextchar_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_percentile_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_regexp_init(sqlite3*,char**,const sqlite3_api_routines*);
+  extern int sqlite3_remember_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_series_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_spellfix_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_totype_init(sqlite3*,char**,const sqlite3_api_routines*);
   extern int sqlite3_wholenumber_init(sqlite3*,char**,const sqlite3_api_routines*);
+  extern int sqlite3_unionvtab_init(sqlite3*,char**,const sqlite3_api_routines*);
   static const struct {
     const char *zExtName;
     int (*pInit)(sqlite3*,char**,const sqlite3_api_routines*);
@@ -6838,9 +6936,11 @@ static int SQLITE_TCLAPI tclLoadStaticExtensionCmd(
     { "nextchar",              sqlite3_nextchar_init             },
     { "percentile",            sqlite3_percentile_init           },
     { "regexp",                sqlite3_regexp_init               },
+    { "remember",              sqlite3_remember_init             },
     { "series",                sqlite3_series_init               },
     { "spellfix",              sqlite3_spellfix_init             },
     { "totype",                sqlite3_totype_init               },
+    { "unionvtab",             sqlite3_unionvtab_init            },
     { "wholenumber",           sqlite3_wholenumber_init          },
   };
   sqlite3 *db;
@@ -7221,6 +7321,8 @@ static int SQLITE_TCLAPI test_sqlite3_db_config(
     { "TRIGGER",         SQLITE_DBCONFIG_ENABLE_TRIGGER },
     { "FTS3_TOKENIZER",  SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER },
     { "LOAD_EXTENSION",  SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION },
+    { "NO_CKPT_ON_CLOSE",SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE },
+    { "QPSG",            SQLITE_DBCONFIG_ENABLE_QPSG },
   };
   int i;
   int v;
@@ -7331,7 +7433,6 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "sqlite_delete_function",        (Tcl_CmdProc*)delete_function       },
      { "sqlite_delete_collation",       (Tcl_CmdProc*)delete_collation      },
      { "sqlite3_get_autocommit",        (Tcl_CmdProc*)get_autocommit        },
-     { "sqlite3_stack_used",            (Tcl_CmdProc*)test_stack_used       },
      { "sqlite3_busy_timeout",          (Tcl_CmdProc*)test_busy_timeout     },
      { "printf",                        (Tcl_CmdProc*)test_printf           },
      { "sqlite3IoTrace",              (Tcl_CmdProc*)test_io_trace         },
@@ -7538,6 +7639,10 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "sqlite3_snapshot_open", test_snapshot_open, 0 },
      { "sqlite3_snapshot_free", test_snapshot_free, 0 },
      { "sqlite3_snapshot_cmp", test_snapshot_cmp, 0 },
+     { "sqlite3_snapshot_recover", test_snapshot_recover, 0 },
+     { "sqlite3_snapshot_get_blob", test_snapshot_get_blob, 0 },
+     { "sqlite3_snapshot_open_blob", test_snapshot_open_blob, 0 },
+     { "sqlite3_snapshot_cmp_blob", test_snapshot_cmp_blob, 0 },
 #endif
      { "sqlite3_delete_database", test_delete_database, 0 },
   };

@@ -181,12 +181,12 @@ do_execsql_test indexexpr1-260eqp {
 
 
 do_catchsql_test indexexpr1-300 {
-  CREATE TABLE t2(a,b,c);
+  CREATE TABLE t2(a,b,c); INSERT INTO t2 VALUES(1,2,3);
   CREATE INDEX t2x1 ON t2(a,b+random());
 } {1 {non-deterministic functions prohibited in index expressions}}
 do_catchsql_test indexexpr1-301 {
-  CREATE INDEX t2x1 ON t2(a+julianday('now'));
-} {1 {non-deterministic functions prohibited in index expressions}}
+  CREATE INDEX t2x1 ON t2(julianday('now',a));
+} {1 {non-deterministic function in index expression or CHECK constraint}}
 do_catchsql_test indexexpr1-310 {
   CREATE INDEX t2x2 ON t2(a,b+(SELECT 15));
 } {1 {subqueries prohibited in index expressions}}
@@ -369,5 +369,15 @@ do_execsql_test indexexpr1-1200.4 {
 } {
   0 0 0 2 0 4 2 0 2 2 4 0
 }
+
+# Ticket https://www.sqlite.org/src/tktview/eb703ba7b50c1a
+# Incorrect result using an index on an expression with a collating function
+#
+do_execsql_test indexexpr1-1300.1 {
+  CREATE TABLE t1300(a INTEGER PRIMARY KEY, b);
+  INSERT INTO t1300 VALUES(1,'coffee'),(2,'COFFEE'),(3,'stress'),(4,'STRESS');
+  CREATE INDEX t1300bexpr ON t1300( substr(b,4) );
+  SELECT a FROM t1300 WHERE substr(b,4)='ess' COLLATE nocase ORDER BY +a;
+} {3 4}
 
 finish_test
