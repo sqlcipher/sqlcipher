@@ -195,12 +195,14 @@ static int execCallback(void *NotUsed, int argc, char **argv, char **colv){
   int i;
   static unsigned cnt = 0;
   printf("ROW #%u:\n", ++cnt);
-  for(i=0; i<argc; i++){
-    printf(" %s=", colv[i]);
-    if( argv[i] ){
-      printf("[%s]\n", argv[i]);
-    }else{
-      printf("NULL\n");
+  if( argv ){
+    for(i=0; i<argc; i++){
+      printf(" %s=", colv[i]);
+      if( argv[i] ){
+        printf("[%s]\n", argv[i]);
+      }else{
+        printf("NULL\n");
+      }
     }
   }
   fflush(stdout);
@@ -223,6 +225,56 @@ static void traceNoop(void *NotUsed, const char *zMsg){
   return;
 }
 #endif
+
+/***************************************************************************
+** String accumulator object
+*/
+typedef struct Str Str;
+struct Str {
+  char *z;                /* The string.  Memory from malloc() */
+  sqlite3_uint64 n;       /* Bytes of input used */
+  sqlite3_uint64 nAlloc;  /* Bytes allocated to z[] */
+  int oomErr;             /* OOM error has been seen */
+};
+
+/* Initialize a Str object */
+static void StrInit(Str *p){
+  memset(p, 0, sizeof(*p));
+}
+
+/* Append text to the end of a Str object */
+static void StrAppend(Str *p, const char *z){
+  sqlite3_uint64 n = strlen(z);
+  if( p->n + n >= p->nAlloc ){
+    char *zNew;
+    sqlite3_uint64 nNew;
+    if( p->oomErr ) return;
+    nNew = p->nAlloc*2 + 100 + n;
+    zNew = sqlite3_realloc(p->z, (int)nNew);
+    if( zNew==0 ){
+      sqlite3_free(p->z);
+      memset(p, 0, sizeof(*p));
+      p->oomErr = 1;
+      return;
+    }
+    p->z = zNew;
+    p->nAlloc = nNew;
+  }
+  memcpy(p->z + p->n, z, (size_t)n);
+  p->n += n;
+  p->z[p->n] = 0;
+}
+
+/* Return the current string content */
+static char *StrStr(Str *p){
+ return p->z;
+}
+
+/* Free the string */
+static void StrFree(Str *p){
+  sqlite3_free(p->z);
+  StrInit(p);
+}
 
 /***************************************************************************
 ** eval() implementation copied from ../ext/misc/eval.c
@@ -1026,6 +1078,8 @@ int main(int argc, char **argv){
         oomCnt = 0;
       }
       do{
+        Str sql;
+        StrInit(&sql);
         if( zDbName ){
           rc = sqlite3_open_v2(zDbName, &db, SQLITE_OPEN_READWRITE, 0);
           if( rc!=SQLITE_OK ){
@@ -1055,6 +1109,25 @@ int main(int argc, char **argv){
         if( pageSize ) sqlexec(db, "PRAGMA pagesize=%d", pageSize);
         if( doAutovac ) sqlexec(db, "PRAGMA auto_vacuum=FULL");
         iStart = timeOfDay();
+
+        /* If using an input database file and that database contains a table
+        ** named "autoexec" with a column "sql", then replace the input SQL
+        ** with the concatenated text of the autoexec table.  In this way,
+        ** if the database file is the input being fuzzed, the SQL text is
+        ** fuzzed at the same time. */
+        if( sqlite3_table_column_metadata(db,0,"autoexec","sql",0,0,0,0,0)==0 ){
+          sqlite3_stmt *pStmt2;
+          rc = sqlite3_prepare_v2(db,"SELECT sql FROM autoexec",-1,&pStmt2,0);
+          if( rc==SQLITE_OK ){
+            while( sqlite3_step(pStmt2)==SQLITE_ROW ){
+              StrAppend(&sql, (const char*)sqlite3_column_text(pStmt2, 0));
+              StrAppend(&sql, "\n");
+            }
+          }
+          sqlite3_finalize(pStmt2);
+          zSql = StrStr(&sql);
+        }
+
         g.bOomEnable = 1;
         if( verboseFlag ){
           zErrMsg = 0;
@@ -1068,6 +1141,7 @@ int main(int argc, char **argv){
         }
         g.bOomEnable = 0;
         iEnd = timeOfDay();
+        StrFree(&sql);
         rc = sqlite3_close(db);
         if( rc ){
           abendError("sqlite3_close() failed with rc=%d", rc);

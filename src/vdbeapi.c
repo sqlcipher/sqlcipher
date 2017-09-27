@@ -154,7 +154,8 @@ int sqlite3_clear_bindings(sqlite3_stmt *pStmt){
     sqlite3VdbeMemRelease(&p->aVar[i]);
     p->aVar[i].flags = MEM_Null;
   }
-  if( p->isPrepareV2 && p->expmask ){
+  assert( (p->prepFlags & SQLITE_PREPARE_SAVESQL)!=0 || p->expmask==0 );
+  if( p->expmask ){
     p->expired = 1;
   }
   sqlite3_mutex_leave(mutex);
@@ -197,6 +198,19 @@ sqlite_int64 sqlite3_value_int64(sqlite3_value *pVal){
 unsigned int sqlite3_value_subtype(sqlite3_value *pVal){
   Mem *pMem = (Mem*)pVal;
   return ((pMem->flags & MEM_Subtype) ? pMem->eSubtype : 0);
+}
+void *sqlite3_value_pointer(sqlite3_value *pVal, const char *zPType){
+  Mem *p = (Mem*)pVal;
+  if( (p->flags&(MEM_TypeMask|MEM_Term|MEM_Subtype)) ==
+                 (MEM_Null|MEM_Term|MEM_Subtype)
+   && zPType!=0
+   && p->eSubtype=='p'
+   && strcmp(p->u.zPType, zPType)==0
+  ){
+    return (void*)p->z;
+  }else{
+    return 0;
+  }
 }
 const unsigned char *sqlite3_value_text(sqlite3_value *pVal){
   return (const unsigned char *)sqlite3ValueText(pVal, SQLITE_UTF8);
@@ -375,6 +389,18 @@ void sqlite3_result_int64(sqlite3_context *pCtx, i64 iVal){
 void sqlite3_result_null(sqlite3_context *pCtx){
   assert( sqlite3_mutex_held(pCtx->pOut->db->mutex) );
   sqlite3VdbeMemSetNull(pCtx->pOut);
+}
+void sqlite3_result_pointer(
+  sqlite3_context *pCtx,
+  void *pPtr,
+  const char *zPType,
+  void (*xDestructor)(void*)
+){
+  Mem *pOut = pCtx->pOut;
+  assert( sqlite3_mutex_held(pOut->db->mutex) );
+  sqlite3VdbeMemRelease(pOut);
+  pOut->flags = MEM_Null;
+  sqlite3VdbeMemSetPointer(pOut, pPtr, zPType, xDestructor);
 }
 void sqlite3_result_subtype(sqlite3_context *pCtx, unsigned int eSubtype){
   Mem *pOut = pCtx->pOut;
@@ -632,8 +658,11 @@ end_of_step:
        || (rc&0xff)==SQLITE_BUSY || rc==SQLITE_MISUSE
   );
   assert( (p->rc!=SQLITE_ROW && p->rc!=SQLITE_DONE) || p->rc==p->rcApp );
-  if( p->isPrepareV2 && rc!=SQLITE_ROW && rc!=SQLITE_DONE ){
-    /* If this statement was prepared using sqlite3_prepare_v2(), and an
+  if( (p->prepFlags & SQLITE_PREPARE_SAVESQL)!=0 
+   && rc!=SQLITE_ROW 
+   && rc!=SQLITE_DONE 
+  ){
+    /* If this statement was prepared using saved SQL and an 
     ** error has occurred, then return the error code in p->rc to the
     ** caller. Set the error code in the database handle to the same value.
     */ 
@@ -803,6 +832,12 @@ void *sqlite3_aggregate_context(sqlite3_context *p, int nByte){
 /*
 ** Return the auxiliary data pointer, if any, for the iArg'th argument to
 ** the user-function defined by pCtx.
+**
+** The left-most argument is 0.
+**
+** Undocumented behavior:  If iArg is negative then access a cache of
+** auxiliary data pointers that is available to all functions within a
+** single prepared statement.  The iArg values must match.
 */
 void *sqlite3_get_auxdata(sqlite3_context *pCtx, int iArg){
   AuxData *pAuxData;
@@ -813,17 +848,24 @@ void *sqlite3_get_auxdata(sqlite3_context *pCtx, int iArg){
 #else
   assert( pCtx->pVdbe!=0 );
 #endif
-  for(pAuxData=pCtx->pVdbe->pAuxData; pAuxData; pAuxData=pAuxData->pNext){
-    if( pAuxData->iOp==pCtx->iOp && pAuxData->iArg==iArg ) break;
+  for(pAuxData=pCtx->pVdbe->pAuxData; pAuxData; pAuxData=pAuxData->pNextAux){
+    if(  pAuxData->iAuxArg==iArg && (pAuxData->iAuxOp==pCtx->iOp || iArg<0) ){
+      return pAuxData->pAux;
+    }
   }
-
-  return (pAuxData ? pAuxData->pAux : 0);
+  return 0;
 }
 
 /*
 ** Set the auxiliary data pointer and delete function, for the iArg'th
 ** argument to the user-function defined by pCtx. Any previous value is
 ** deleted by calling the delete function specified when it was set.
+**
+** The left-most argument is 0.
+**
+** Undocumented behavior:  If iArg is negative then make the data available
+** to all functions within the current prepared statement using iArg as an
+** access code.
 */
 void sqlite3_set_auxdata(
   sqlite3_context *pCtx, 
@@ -835,33 +877,34 @@ void sqlite3_set_auxdata(
   Vdbe *pVdbe = pCtx->pVdbe;
 
   assert( sqlite3_mutex_held(pCtx->pOut->db->mutex) );
-  if( iArg<0 ) goto failed;
 #ifdef SQLITE_ENABLE_STAT3_OR_STAT4
   if( pVdbe==0 ) goto failed;
 #else
   assert( pVdbe!=0 );
 #endif
 
-  for(pAuxData=pVdbe->pAuxData; pAuxData; pAuxData=pAuxData->pNext){
-    if( pAuxData->iOp==pCtx->iOp && pAuxData->iArg==iArg ) break;
+  for(pAuxData=pVdbe->pAuxData; pAuxData; pAuxData=pAuxData->pNextAux){
+    if( pAuxData->iAuxArg==iArg && (pAuxData->iAuxOp==pCtx->iOp || iArg<0) ){
+      break;
+    }
   }
   if( pAuxData==0 ){
     pAuxData = sqlite3DbMallocZero(pVdbe->db, sizeof(AuxData));
     if( !pAuxData ) goto failed;
-    pAuxData->iOp = pCtx->iOp;
-    pAuxData->iArg = iArg;
-    pAuxData->pNext = pVdbe->pAuxData;
+    pAuxData->iAuxOp = pCtx->iOp;
+    pAuxData->iAuxArg = iArg;
+    pAuxData->pNextAux = pVdbe->pAuxData;
     pVdbe->pAuxData = pAuxData;
     if( pCtx->fErrorOrAux==0 ){
       pCtx->isError = 0;
       pCtx->fErrorOrAux = 1;
     }
-  }else if( pAuxData->xDelete ){
-    pAuxData->xDelete(pAuxData->pAux);
+  }else if( pAuxData->xDeleteAux ){
+    pAuxData->xDeleteAux(pAuxData->pAux);
   }
 
   pAuxData->pAux = pAux;
-  pAuxData->xDelete = xDelete;
+  pAuxData->xDeleteAux = xDelete;
   return;
 
 failed:
@@ -1258,9 +1301,8 @@ static int vdbeUnbind(Vdbe *p, int i){
   ** as if there had been a schema change, on the first sqlite3_step() call
   ** following any change to the bindings of that parameter.
   */
-  if( p->isPrepareV2 &&
-     ((i<32 && p->expmask & ((u32)1 << i)) || p->expmask==0xffffffff)
-  ){
+  assert( (p->prepFlags & SQLITE_PREPARE_SAVESQL)!=0 || p->expmask==0 );
+  if( p->expmask!=0 && (p->expmask & (i>=31 ? 0x80000000 : (u32)1<<i))!=0 ){
     p->expired = 1;
   }
   return SQLITE_OK;
@@ -1289,8 +1331,10 @@ static int bindText(
       if( rc==SQLITE_OK && encoding!=0 ){
         rc = sqlite3VdbeChangeEncoding(pVar, ENC(p->db));
       }
-      sqlite3Error(p->db, rc);
-      rc = sqlite3ApiExit(p->db, rc);
+      if( rc ){
+        sqlite3Error(p->db, rc);
+        rc = sqlite3ApiExit(p->db, rc);
+      }
     }
     sqlite3_mutex_leave(p->db->mutex);
   }else if( xDel!=SQLITE_STATIC && xDel!=SQLITE_TRANSIENT ){
@@ -1358,6 +1402,24 @@ int sqlite3_bind_null(sqlite3_stmt *pStmt, int i){
   rc = vdbeUnbind(p, i);
   if( rc==SQLITE_OK ){
     sqlite3_mutex_leave(p->db->mutex);
+  }
+  return rc;
+}
+int sqlite3_bind_pointer(
+  sqlite3_stmt *pStmt,
+  int i,
+  void *pPtr,
+  const char *zPTtype,
+  void (*xDestructor)(void*)
+){
+  int rc;
+  Vdbe *p = (Vdbe*)pStmt;
+  rc = vdbeUnbind(p, i);
+  if( rc==SQLITE_OK ){
+    sqlite3VdbeMemSetPointer(&p->aVar[i-1], pPtr, zPTtype, xDestructor);
+    sqlite3_mutex_leave(p->db->mutex);
+  }else if( xDestructor ){
+    xDestructor(pPtr);
   }
   return rc;
 }
@@ -1470,10 +1532,8 @@ int sqlite3_bind_parameter_count(sqlite3_stmt *pStmt){
 */
 const char *sqlite3_bind_parameter_name(sqlite3_stmt *pStmt, int i){
   Vdbe *p = (Vdbe*)pStmt;
-  if( p==0 || i<1 || i>p->nzVar ){
-    return 0;
-  }
-  return p->azVar[i-1];
+  if( p==0 ) return 0;
+  return sqlite3VListNumToName(p->pVList, i);
 }
 
 /*
@@ -1482,19 +1542,8 @@ const char *sqlite3_bind_parameter_name(sqlite3_stmt *pStmt, int i){
 ** return 0.
 */
 int sqlite3VdbeParameterIndex(Vdbe *p, const char *zName, int nName){
-  int i;
-  if( p==0 ){
-    return 0;
-  }
-  if( zName ){
-    for(i=0; i<p->nzVar; i++){
-      const char *z = p->azVar[i];
-      if( z && strncmp(z,zName,nName)==0 && z[nName]==0 ){
-        return i+1;
-      }
-    }
-  }
-  return 0;
+  if( p==0 || zName==0 ) return 0;
+  return sqlite3VListNameToNum(p->pVList, zName, nName);
 }
 int sqlite3_bind_parameter_index(sqlite3_stmt *pStmt, const char *zName){
   return sqlite3VdbeParameterIndex((Vdbe*)pStmt, zName, sqlite3Strlen30(zName));
@@ -1536,10 +1585,12 @@ int sqlite3_transfer_bindings(sqlite3_stmt *pFromStmt, sqlite3_stmt *pToStmt){
   if( pFrom->nVar!=pTo->nVar ){
     return SQLITE_ERROR;
   }
-  if( pTo->isPrepareV2 && pTo->expmask ){
+  assert( (pTo->prepFlags & SQLITE_PREPARE_SAVESQL)!=0 || pTo->expmask==0 );
+  if( pTo->expmask ){
     pTo->expired = 1;
   }
-  if( pFrom->isPrepareV2 && pFrom->expmask ){
+  assert( (pFrom->prepFlags & SQLITE_PREPARE_SAVESQL)!=0 || pFrom->expmask==0 );
+  if( pFrom->expmask ){
     pFrom->expired = 1;
   }
   return sqlite3TransferBindings(pFromStmt, pToStmt);
@@ -1608,8 +1659,19 @@ int sqlite3_stmt_status(sqlite3_stmt *pStmt, int op, int resetFlag){
     return 0;
   }
 #endif
-  v = pVdbe->aCounter[op];
-  if( resetFlag ) pVdbe->aCounter[op] = 0;
+  if( op==SQLITE_STMTSTATUS_MEMUSED ){
+    sqlite3 *db = pVdbe->db;
+    sqlite3_mutex_enter(db->mutex);
+    v = 0;
+    db->pnBytesFreed = (int*)&v;
+    sqlite3VdbeClearObject(db, pVdbe);
+    sqlite3DbFree(db, pVdbe);
+    db->pnBytesFreed = 0;
+    sqlite3_mutex_leave(db->mutex);
+  }else{
+    v = pVdbe->aCounter[op];
+    if( resetFlag ) pVdbe->aCounter[op] = 0;
+  }
   return (int)v;
 }
 
@@ -1657,10 +1719,9 @@ static UnpackedRecord *vdbeUnpackRecord(
   int nKey, 
   const void *pKey
 ){
-  char *dummy;                    /* Dummy argument for AllocUnpackedRecord() */
   UnpackedRecord *pRet;           /* Return value */
 
-  pRet = sqlite3VdbeAllocUnpackedRecord(pKeyInfo, 0, 0, &dummy);
+  pRet = sqlite3VdbeAllocUnpackedRecord(pKeyInfo);
   if( pRet ){
     memset(pRet->aMem, 0, sizeof(Mem)*(pKeyInfo->nField+1));
     sqlite3VdbeRecordUnpack(pKeyInfo, nKey, pKey, pRet);
@@ -1674,6 +1735,7 @@ static UnpackedRecord *vdbeUnpackRecord(
 */
 int sqlite3_preupdate_old(sqlite3 *db, int iIdx, sqlite3_value **ppValue){
   PreUpdate *p = db->pPreUpdate;
+  Mem *pMem;
   int rc = SQLITE_OK;
 
   /* Test that this call is being made from within an SQLITE_DELETE or
@@ -1681,6 +1743,9 @@ int sqlite3_preupdate_old(sqlite3 *db, int iIdx, sqlite3_value **ppValue){
   if( !p || p->op==SQLITE_INSERT ){
     rc = SQLITE_MISUSE_BKPT;
     goto preupdate_old_out;
+  }
+  if( p->pPk ){
+    iIdx = sqlite3ColumnOfIndex(p->pPk, iIdx);
   }
   if( iIdx>=p->pCsr->nField || iIdx<0 ){
     rc = SQLITE_RANGE;
@@ -1695,7 +1760,7 @@ int sqlite3_preupdate_old(sqlite3 *db, int iIdx, sqlite3_value **ppValue){
     nRec = sqlite3BtreePayloadSize(p->pCsr->uc.pCursor);
     aRec = sqlite3DbMallocRaw(db, nRec);
     if( !aRec ) goto preupdate_old_out;
-    rc = sqlite3BtreeData(p->pCsr->uc.pCursor, 0, nRec, aRec);
+    rc = sqlite3BtreePayload(p->pCsr->uc.pCursor, 0, nRec, aRec);
     if( rc==SQLITE_OK ){
       p->pUnpacked = vdbeUnpackRecord(&p->keyinfo, nRec, aRec);
       if( !p->pUnpacked ) rc = SQLITE_NOMEM;
@@ -1707,17 +1772,14 @@ int sqlite3_preupdate_old(sqlite3 *db, int iIdx, sqlite3_value **ppValue){
     p->aRecord = aRec;
   }
 
-  if( iIdx>=p->pUnpacked->nField ){
+  pMem = *ppValue = &p->pUnpacked->aMem[iIdx];
+  if( iIdx==p->pTab->iPKey ){
+    sqlite3VdbeMemSetInt64(pMem, p->iKey1);
+  }else if( iIdx>=p->pUnpacked->nField ){
     *ppValue = (sqlite3_value *)columnNullValue();
-  }else{
-    Mem *pMem = *ppValue = &p->pUnpacked->aMem[iIdx];
-    *ppValue = &p->pUnpacked->aMem[iIdx];
-    if( iIdx==p->pTab->iPKey ){
-      sqlite3VdbeMemSetInt64(pMem, p->iKey1);
-    }else if( p->pTab->aCol[iIdx].affinity==SQLITE_AFF_REAL ){
-      if( pMem->flags & MEM_Int ){
-        sqlite3VdbeMemRealify(pMem);
-      }
+  }else if( p->pTab->aCol[iIdx].affinity==SQLITE_AFF_REAL ){
+    if( pMem->flags & MEM_Int ){
+      sqlite3VdbeMemRealify(pMem);
     }
   }
 
@@ -1770,6 +1832,9 @@ int sqlite3_preupdate_new(sqlite3 *db, int iIdx, sqlite3_value **ppValue){
     rc = SQLITE_MISUSE_BKPT;
     goto preupdate_new_out;
   }
+  if( p->pPk && p->op!=SQLITE_UPDATE ){
+    iIdx = sqlite3ColumnOfIndex(p->pPk, iIdx);
+  }
   if( iIdx>=p->pCsr->nField || iIdx<0 ){
     rc = SQLITE_RANGE;
     goto preupdate_new_out;
@@ -1790,13 +1855,11 @@ int sqlite3_preupdate_new(sqlite3 *db, int iIdx, sqlite3_value **ppValue){
       }
       p->pNewUnpacked = pUnpack;
     }
-    if( iIdx>=pUnpack->nField ){
+    pMem = &pUnpack->aMem[iIdx];
+    if( iIdx==p->pTab->iPKey ){
+      sqlite3VdbeMemSetInt64(pMem, p->iKey2);
+    }else if( iIdx>=pUnpack->nField ){
       pMem = (sqlite3_value *)columnNullValue();
-    }else{
-      pMem = &pUnpack->aMem[iIdx];
-      if( iIdx==p->pTab->iPKey ){
-        sqlite3VdbeMemSetInt64(pMem, p->iKey2);
-      }
     }
   }else{
     /* For an UPDATE, memory cell (p->iNewReg+1+iIdx) contains the required
