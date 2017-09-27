@@ -1435,7 +1435,7 @@ const char *sqlite3ErrStr(int rc){
     /* SQLITE_AUTH        */ "authorization denied",
     /* SQLITE_FORMAT      */ 0,
     /* SQLITE_RANGE       */ "column index out of range",
-    /* SQLITE_NOTADB      */ "file is not a database",
+    /* SQLITE_NOTADB      */ "file is encrypted or is not a database",
   };
   const char *zErr = "unknown error";
   switch( rc ){
