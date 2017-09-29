@@ -7574,6 +7574,7 @@ void sqlite3pager_sqlite3PagerSetCodec(
 
 void sqlite3pager_sqlite3PagerSetError( Pager *pPager, int error) {
   pPager->errCode = error;
+  setGetterMethod(pPager);
 }
 
 #endif
