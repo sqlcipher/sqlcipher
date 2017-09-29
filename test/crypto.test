@@ -153,7 +153,7 @@ do_test wont-open-without-key {
   catchsql {
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db close
 file delete -force test.db
 
@@ -167,7 +167,7 @@ do_test wont-open-with-invalid-derived-key {
     PRAGMA key = 'testkey2';
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db close
 file delete -force test.db
 
@@ -181,7 +181,7 @@ do_test wont-open-with-invalid-raw-key {
     PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db close
 file delete -force test.db
 
@@ -445,7 +445,7 @@ do_test attach-database-with-default-key {
     ATTACH 'test.db' AS db;
   } db2
     
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db2 close
 file delete -force test.db
 file delete -force test2.db
@@ -912,7 +912,7 @@ do_test custom-pagesize-must-match {
     PRAGMA key = 'testkey';
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db close
 file delete -force test.db
 
@@ -950,7 +950,7 @@ do_test hmac-tamper-resistence {
     SELECT count(*) FROM t1;
   }
 
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db close
 file delete -force test.db
 
@@ -1277,7 +1277,7 @@ do_test multiple-key-calls-safe-2 {
     PRAGMA key = 'wrong key'; 
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 
 do_test multiple-key-calls-safe-3 {
   execsql {
@@ -1335,7 +1335,7 @@ do_test custom-hmac-kdf-iter-must-match {
     PRAGMA key = 'testkey';
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db close
 file delete -force test.db
 
@@ -1510,7 +1510,7 @@ do_test attach-1.1.8-database-from-2.0-fails {
     CREATE table t1(a,b);
     ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2 KEY 'testkey';
   } 
-} {1 {file is encrypted or is not a database}}
+} {1 {file is not a database}}
 db close
 file delete -force test.db
 file delete -force sqlcipher-1.1.8-testkey.db
@@ -2309,7 +2309,7 @@ if_built_with_openssl wont-write-database-with-invalid-cipher {
         PRAGMA cipher = 'foobar';
         CREATE TABLE t1(a,b);
     }
-} {1 {SQL logic error or missing database}}
+} {1 {SQL logic error}}
 db close
 file delete -force test.db
 
