@@ -207,10 +207,10 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
 static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   unsigned int outlen;
   HMAC_CTX* hctx = HMAC_CTX_new();
-  if(hctx == NULL) return SQLITE_ERROR;
+  if(hctx == NULL || in == NULL) return SQLITE_ERROR;
   HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL);
   HMAC_Update(hctx, in, in_sz);
-  HMAC_Update(hctx, in2, in2_sz);
+  if(in2 != NULL) HMAC_Update(hctx, in2, in2_sz);
   HMAC_Final(hctx, out, &outlen);
   HMAC_CTX_free(hctx);
   return SQLITE_OK; 
