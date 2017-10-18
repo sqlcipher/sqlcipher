@@ -81,19 +81,19 @@ static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
 }
 
 /* activate and initialize sqlcipher. Most importantly, this will automatically
-   intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
-   this function may be called multiple times as new codecs are intiialized. 
+   intialize OpenSSL's EVP system if it hasn't already be externally. Note that
+   this function may be called multiple times as new codecs are intiialized.
    Thus it performs some basic counting to ensure that only the last and final
-   sqlcipher_openssl_deactivate() will free the EVP structures. 
+   sqlcipher_openssl_deactivate() will free the EVP structures.
 */
 static int sqlcipher_openssl_activate(void *ctx) {
   /* initialize openssl and increment the internal init counter
-     but only if it hasn't been initalized outside of SQLCipher by this program 
+     but only if it hasn't been initalized outside of SQLCipher by this program
      e.g. on startup */
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
 
   if(openssl_init_count == 0 && EVP_get_cipherbyname(CIPHER) != NULL) {
-    /* if openssl has not yet been initialized by this library, but 
+    /* if openssl has not yet been initialized by this library, but
        a call to get_cipherbyname works, then the openssl library
        has been initialized externally already. */
     openssl_external_init = 1;
@@ -111,7 +111,7 @@ static int sqlcipher_openssl_activate(void *ctx) {
   if(openssl_init_count == 0 && openssl_external_init == 0)  {
     /* if the library was not externally initialized, then should be now */
     OpenSSL_add_all_algorithms();
-  } 
+  }
 
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   if(openssl_rand_mutex == NULL) {
@@ -120,13 +120,13 @@ static int sqlcipher_openssl_activate(void *ctx) {
   }
 #endif
 
-  openssl_init_count++; 
+  openssl_init_count++;
   sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   return SQLITE_OK;
 }
 
 /* deactivate SQLCipher, most imporantly decremeting the activation count and
-   freeing the EVP structures on the final deactivation to ensure that 
+   freeing the EVP structures on the final deactivation to ensure that
    OpenSSL memory is cleaned up */
 static int sqlcipher_openssl_deactivate(void *ctx) {
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
@@ -134,10 +134,10 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
 
   if(openssl_init_count == 0) {
     if(openssl_external_init == 0) {
-    /* if OpenSSL hasn't be initialized externally, and the counter reaches zero 
+    /* if OpenSSL hasn't be initialized externally, and the counter reaches zero
        after it's decremented, release EVP memory
        Note: this code will only be reached if OpensSSL_add_all_algorithms()
-       is called by SQLCipher internally. This should prevent SQLCipher from 
+       is called by SQLCipher internally. This should prevent SQLCipher from
        "cleaning up" openssl when it was initialized externally by the program */
       EVP_cleanup();
     } else {
@@ -163,9 +163,9 @@ static const char* sqlcipher_openssl_get_provider_version(void *ctx) {
 /* generate a defined number of random bytes */
 static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   int rc = 0;
-  /* concurrent calls to RAND_bytes can cause a crash under some openssl versions when a 
+  /* concurrent calls to RAND_bytes can cause a crash under some openssl versions when a
      naive application doesn't use CRYPTO_set_locking_callback and
-     CRYPTO_THREADID_set_callback to ensure openssl thread safety. 
+     CRYPTO_THREADID_set_callback to ensure openssl thread safety.
      This is simple workaround to prevent this common crash
      but a more proper solution is that applications setup platform-appropriate
      thread saftey in openssl externally */
@@ -183,17 +183,17 @@ static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz
   unsigned int outlen;
   HMAC_CTX* hctx = HMAC_CTX_new();
   if(hctx == NULL) return SQLITE_ERROR;
-  HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL);
+  HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha256(), NULL);
   HMAC_Update(hctx, in, in_sz);
   HMAC_Update(hctx, in2, in2_sz);
   HMAC_Final(hctx, out, &outlen);
   HMAC_CTX_free(hctx);
-  return SQLITE_OK; 
+  return SQLITE_OK;
 }
 
 static int sqlcipher_openssl_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
-  PKCS5_PBKDF2_HMAC_SHA1((const char *)pass, pass_sz, salt, salt_sz, workfactor, key_sz, key);
-  return SQLITE_OK; 
+  PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha256(), key_sz, key);
+  return SQLITE_OK;
 }
 
 static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
@@ -204,13 +204,13 @@ static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int
   EVP_CIPHER_CTX_set_padding(ectx, 0); // no padding
   EVP_CipherInit_ex(ectx, NULL, NULL, key, iv, mode);
   EVP_CipherUpdate(ectx, out, &tmp_csz, in, in_sz);
-  csz = tmp_csz;  
+  csz = tmp_csz;
   out += tmp_csz;
   EVP_CipherFinal_ex(ectx, out, &tmp_csz);
   csz += tmp_csz;
   EVP_CIPHER_CTX_free(ectx);
   assert(in_sz == csz);
-  return SQLITE_OK; 
+  return SQLITE_OK;
 }
 
 static int sqlcipher_openssl_set_cipher(void *ctx, const char *cipher_name) {
@@ -239,7 +239,7 @@ static int sqlcipher_openssl_get_block_sz(void *ctx) {
 }
 
 static int sqlcipher_openssl_get_hmac_sz(void *ctx) {
-  return EVP_MD_size(EVP_sha1());
+  return EVP_MD_size(EVP_sha256());
 }
 
 static int sqlcipher_openssl_ctx_copy(void *target_ctx, void *source_ctx) {
@@ -265,7 +265,7 @@ static int sqlcipher_openssl_ctx_free(void **ctx) {
 }
 
 static int sqlcipher_openssl_fips_status(void *ctx) {
-#ifdef SQLCIPHER_FIPS  
+#ifdef SQLCIPHER_FIPS
   return FIPS_mode();
 #else
   return 0;
@@ -273,7 +273,7 @@ static int sqlcipher_openssl_fips_status(void *ctx) {
 }
 
 int sqlcipher_openssl_setup(sqlcipher_provider *p) {
-  p->activate = sqlcipher_openssl_activate;  
+  p->activate = sqlcipher_openssl_activate;
   p->deactivate = sqlcipher_openssl_deactivate;
   p->get_provider_name = sqlcipher_openssl_get_provider_name;
   p->random = sqlcipher_openssl_random;

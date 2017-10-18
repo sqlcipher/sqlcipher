@@ -66,16 +66,16 @@ static const char* sqlcipher_cc_get_provider_version(void *ctx) {
 
 static int sqlcipher_cc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   CCHmacContext hmac_context;
-  CCHmacInit(&hmac_context, kCCHmacAlgSHA1, hmac_key, key_sz);
+  CCHmacInit(&hmac_context, kCCHmacAlgSHA256, hmac_key, key_sz);
   CCHmacUpdate(&hmac_context, in, in_sz);
   CCHmacUpdate(&hmac_context, in2, in2_sz);
   CCHmacFinal(&hmac_context, out);
-  return SQLITE_OK; 
+  return SQLITE_OK;
 }
 
 static int sqlcipher_cc_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
-  CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA1, workfactor, key, key_sz);
-  return SQLITE_OK; 
+  CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA256, workfactor, key, key_sz);
+  return SQLITE_OK;
 }
 
 static int sqlcipher_cc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
@@ -92,7 +92,7 @@ static int sqlcipher_cc_cipher(void *ctx, int mode, unsigned char *key, int key_
   CCCryptorRelease(cryptor);
   assert(in_sz == csz);
 
-  return SQLITE_OK; 
+  return SQLITE_OK;
 }
 
 static int sqlcipher_cc_set_cipher(void *ctx, const char *cipher_name) {
@@ -116,7 +116,7 @@ static int sqlcipher_cc_get_block_sz(void *ctx) {
 }
 
 static int sqlcipher_cc_get_hmac_sz(void *ctx) {
-  return CC_SHA1_DIGEST_LENGTH;
+  return CC_SHA256_DIGEST_LENGTH;
 }
 
 static int sqlcipher_cc_ctx_copy(void *target_ctx, void *source_ctx) {

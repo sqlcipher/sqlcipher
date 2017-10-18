@@ -78,7 +78,7 @@ static int sqlcipher_ltc_activate(void *ctx) {
   if(ltc_init == 0) {
     if(register_prng(&fortuna_desc) != CRYPT_OK) return SQLITE_ERROR;
     if(register_cipher(&rijndael_desc) != CRYPT_OK) return SQLITE_ERROR;
-    if(register_hash(&sha1_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(register_hash(&sha256_desc) != CRYPT_OK) return SQLITE_ERROR;
     if(fortuna_start(&prng) != CRYPT_OK) {
       return SQLITE_ERROR;
     }
@@ -116,7 +116,7 @@ static int sqlcipher_ltc_deactivate(void *ctx) {
   else {
     sqlite3_mutex_leave(ltc_rand_mutex);
   }
-#endif    
+#endif
   return SQLITE_OK;
 }
 
@@ -144,7 +144,7 @@ static int sqlcipher_ltc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, un
   hmac_state hmac;
   unsigned long outlen = key_sz;
 
-  hash_idx = find_hash("sha1");
+  hash_idx = find_hash("sha256");
   if((rc = hmac_init(&hmac, hash_idx, hmac_key, key_sz)) != CRYPT_OK) return SQLITE_ERROR;
   if((rc = hmac_process(&hmac, in, in_sz)) != CRYPT_OK) return SQLITE_ERROR;
   if((rc = hmac_process(&hmac, in2, in2_sz)) != CRYPT_OK) return SQLITE_ERROR;
@@ -159,7 +159,7 @@ static int sqlcipher_ltc_kdf(void *ctx, const unsigned char *pass, int pass_sz, 
   unsigned char *random_buffer = sqlcipher_malloc(random_buffer_sz);
   sqlcipher_memset(random_buffer, 0, random_buffer_sz);
 
-  hash_idx = find_hash("sha1");
+  hash_idx = find_hash("sha256");
   if((rc = pkcs_5_alg2(pass, pass_sz, salt, salt_sz,
                        workfactor, hash_idx, key, &outlen)) != CRYPT_OK) {
     return SQLITE_ERROR;
@@ -209,7 +209,7 @@ static int sqlcipher_ltc_get_block_sz(void *ctx) {
 }
 
 static int sqlcipher_ltc_get_hmac_sz(void *ctx) {
-  int hash_idx = find_hash("sha1");
+  int hash_idx = find_hash("sha256");
   return hash_descriptor[hash_idx].hashsize;
 }
 
