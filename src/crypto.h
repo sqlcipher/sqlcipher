@@ -63,7 +63,7 @@
 #define CIPHER_READWRITE_CTX 2
 
 #ifndef PBKDF2_ITER
-#define PBKDF2_ITER 64000
+#define PBKDF2_ITER 100000
 #endif
 
 /* possible flags for cipher_ctx->flags */
@@ -80,7 +80,7 @@
    the HMAC key / or transform a raw cipher key 
    */
 #ifndef FAST_PBKDF2_ITER
-#define FAST_PBKDF2_ITER 2
+#define FAST_PBKDF2_ITER 10 
 #endif
 
 /* this if a fixed random array that will be xor'd with the database salt to ensure that the

@@ -70,7 +70,7 @@ typedef struct {
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static int default_kdf_iter = PBKDF2_ITER;
-static int default_page_size = 1024;
+static int default_page_size = 2048;
 static unsigned int sqlcipher_activate_count = 0;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
