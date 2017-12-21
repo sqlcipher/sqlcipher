@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased][unreleased]
 
-## [3.4.2] - 2017-09-29
+## [3.4.2] - 2017-12-21
 ### Added
 - Added support for building with LibreSSL
 
@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Fix `sqlcipher_export` and `cipher_migrate` when tracing API in use
 - Validate codec page size when setting
 - Guard OpenSSL initialization and cleanup routines
+- Allow additional linker options to be passed via command line for Windows platforms
 
 ## [3.4.1] - 2016-12-28
 ### Added
