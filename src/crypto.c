@@ -288,6 +288,37 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
           sqlite3_free(hmac_salt_mask);
       }
     }
+  }else 
+  if( sqlite3StrICmp(zLeft,"cipher_plaintext_header_size")==0 ){
+    if(ctx) {
+      if( zRight ) {
+        int size = atoi(zRight);
+        if((rc = sqlcipher_codec_ctx_set_plaintext_header_size(ctx, size)) != SQLITE_OK)
+          sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR); 
+      } else {
+        char *size = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_plaintext_header_size(ctx));
+        codec_vdbe_return_static_string(pParse, "cipher_plaintext_header_size", size);
+        sqlite3_free(size);
+      }
+    }
+  }else 
+  if( sqlite3StrICmp(zLeft,"cipher_salt")==0 ){
+    if(ctx) {
+      if(zRight) {
+        if (sqlite3StrNICmp(zRight ,"x'", 2) == 0 && sqlite3Strlen30(zRight) == (FILE_HEADER_SZ*2)+3) {
+          unsigned char *salt = (unsigned char*) sqlite3_malloc(FILE_HEADER_SZ);
+          const unsigned char *hex = (const unsigned char *)zRight+2;
+          cipher_hex2bin(hex,FILE_HEADER_SZ*2,salt);
+          sqlcipher_codec_ctx_set_kdf_salt(ctx, salt, FILE_HEADER_SZ);
+          sqlite3_free(salt);
+        }
+      } else {
+          char *salt = (char*) sqlite3_malloc((FILE_HEADER_SZ*2)+1);
+          cipher_bin2hex(sqlcipher_codec_ctx_get_kdf_salt(ctx), FILE_HEADER_SZ, salt);
+          codec_vdbe_return_static_string(pParse, "cipher_salt", salt);
+          sqlite3_free(salt);
+      }
+    }
   }else {
     return 0;
   }
@@ -309,6 +340,9 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   unsigned char *pData = (unsigned char *) data;
   void *buffer = sqlcipher_codec_ctx_get_data(ctx);
   void *kdf_salt = sqlcipher_codec_ctx_get_kdf_salt(ctx);
+  int plaintext_header_sz = sqlcipher_codec_ctx_get_plaintext_header_size(ctx);
+  int cctx = CIPHER_READ_CTX;
+
   CODEC_TRACE("sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
 
   /* call to derive keys if not present yet */
@@ -317,32 +351,36 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
    return NULL;
   }
 
-  if(pgno == 1) offset = FILE_HEADER_SZ; /* adjust starting pointers in data page for header offset on first page*/
+  if(pgno == 1) /* adjust starting pointers in data page for header offset on first page*/   
+    offset = plaintext_header_sz ? plaintext_header_sz : FILE_HEADER_SZ; 
+  
 
   CODEC_TRACE("sqlite3Codec: switch mode=%d offset=%d\n",  mode, offset);
   switch(mode) {
-    case 0: /* decrypt */
-    case 2:
-    case 3:
-      if(pgno == 1) memcpy(buffer, SQLITE_FILE_HEADER, FILE_HEADER_SZ); /* copy file header to the first 16 bytes of the page */ 
-      rc = sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
+    case 3: /* decrypt */
+      if(pgno == 1) /* copy initial part of file header or SQLite magic to buffer */ 
+        memcpy(buffer, plaintext_header_sz ? pData : (void *) SQLITE_FILE_HEADER, offset); 
+
+      rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
       break;
-    case 6: /* encrypt */
-      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
-      rc = sqlcipher_page_cipher(ctx, CIPHER_WRITE_CTX, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
+
+    case 6: /* encrypt database page, operate on write context and fall through to case 7*/
+      cctx = CIPHER_WRITE_CTX; 
+
+    case 7: /* encrypt journal page, operate on read context use to get the original page data from the database */ 
+      if(pgno == 1) /* copy initial part of file header or salt to buffer */ 
+        memcpy(buffer, plaintext_header_sz ? pData : kdf_salt, offset); 
+
+      rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       return buffer; /* return persistent buffer data, pData remains intact */
       break;
-    case 7:
-      if(pgno == 1) memcpy(buffer, kdf_salt, FILE_HEADER_SZ); /* copy salt to output buffer */ 
-      rc = sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
-      return buffer; /* return persistent buffer data, pData remains intact */
-      break;
+
     default:
+      sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR); /* unsupported mode, set error */
       return pData;
       break;
   }

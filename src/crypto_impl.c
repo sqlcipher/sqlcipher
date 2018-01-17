@@ -81,6 +81,7 @@ static sqlcipher_provider *default_provider = NULL;
 struct codec_ctx {
   int kdf_salt_sz;
   int page_sz;
+  int plaintext_header_sz;
   unsigned char *kdf_salt;
   unsigned char *hmac_kdf_salt;
   unsigned char *buffer;
@@ -685,6 +686,23 @@ int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx) {
   return (c_ctx->flags & CIPHER_FLAG_HMAC) != 0;
 }
 
+int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size) {
+  /* the lenght of plaintext header size must be:
+   * 1. greater than or equal to zero
+   * 2. a multiple of the cipher block size
+   * 3. less than the usable size of the first database page
+   */
+  if(size >= 0 && (size % ctx->read_ctx->block_sz) == 0 && size < (ctx->page_sz - ctx->read_ctx->reserve_sz)) {
+    ctx->plaintext_header_sz = size;
+    return SQLITE_OK;
+  }
+  return SQLITE_ERROR;
+} 
+
+int sqlcipher_codec_ctx_get_plaintext_header_size(codec_ctx *ctx) {
+  return ctx->plaintext_header_sz;
+}
+
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag) {
   ctx->write_ctx->flags |= flag;
   ctx->read_ctx->flags |= flag;
@@ -714,6 +732,15 @@ int sqlcipher_codec_ctx_get_reservesize(codec_ctx *ctx) {
 
 void* sqlcipher_codec_ctx_get_data(codec_ctx *ctx) {
   return ctx->buffer;
+}
+
+int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int size) {
+  if(size >= ctx->kdf_salt_sz) {
+    memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
+    ctx->need_kdf_salt = 0;
+    return SQLITE_OK;
+  }
+  return SQLITE_ERROR;
 }
 
 void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx) {
@@ -767,6 +794,8 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   if(ctx == NULL) return SQLITE_NOMEM;
 
   ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
+
+  ctx->plaintext_header_sz = 0; /* by default all data encrypted */
 
   /* allocate space for salt data. Then read the first 16 bytes 
        directly off the database file. This is the salt for the
@@ -936,14 +965,14 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
            and return SQLITE_OK to skip the decryption step. */
         CODEC_TRACE("codec_cipher: zeroed page (short read) for pgno %d, encryption but returning SQLITE_OK\n", pgno);
         sqlcipher_memset(out, 0, page_sz); 
-  	return SQLITE_OK;
+        return SQLITE_OK;
       } else {
-	/* if the page memory is not all zeros, it means the there was data and a hmac on the page. 
+        /* if the page memory is not all zeros, it means the there was data and a hmac on the page. 
            since the check failed, the page was either tampered with or corrupted. wipe the output buffer,
            and return SQLITE_ERROR to the caller */
-      	CODEC_TRACE("codec_cipher: hmac check failed for pgno=%d returning SQLITE_ERROR\n", pgno);
+        CODEC_TRACE("codec_cipher: hmac check failed for pgno=%d returning SQLITE_ERROR\n", pgno);
         sqlcipher_memset(out, 0, page_sz); 
-      	return SQLITE_ERROR;
+        return SQLITE_ERROR;
       }
     }
   } 
@@ -1334,7 +1363,7 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
     if(f == 0){
 #endif    
     return SQLITE_ERROR;
-  }	
+  }
 
   }
   sqlite3_profile(db, sqlcipher_profile_callback, f);

@@ -223,6 +223,7 @@ int sqlcipher_get_default_kdf_iter();
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int, int);
 int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx, int);
 
+int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int sz);
 void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
 
 int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *, int, int);
@@ -260,6 +261,10 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx);
 int sqlcipher_codec_hmac(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
                          unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
                          unsigned char *out);
+
+int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size);
+int sqlcipher_codec_ctx_get_plaintext_header_size(codec_ctx *ctx);
+
 #endif
 #endif
 /* END SQLCIPHER */
