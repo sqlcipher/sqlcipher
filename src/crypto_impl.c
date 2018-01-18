@@ -687,7 +687,7 @@ int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx) {
   return (c_ctx->flags & CIPHER_FLAG_HMAC) != 0;
 }
 
-/* the lenght of plaintext header size must be:
+/* the length of plaintext header size must be:
  * 1. greater than or equal to zero
  * 2. a multiple of the cipher block size
  * 3. less than the usable size of the first database page
