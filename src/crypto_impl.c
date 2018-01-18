@@ -74,6 +74,7 @@ static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static int default_kdf_iter = PBKDF2_ITER;
 static int default_page_size = 1024;
+static int default_plaintext_header_sz = 0;
 static unsigned int sqlcipher_activate_count = 0;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
@@ -686,18 +687,27 @@ int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx) {
   return (c_ctx->flags & CIPHER_FLAG_HMAC) != 0;
 }
 
+/* the lenght of plaintext header size must be:
+ * 1. greater than or equal to zero
+ * 2. a multiple of the cipher block size
+ * 3. less than the usable size of the first database page
+ */
+int sqlcipher_set_default_plaintext_header_size(int size) {
+  default_plaintext_header_sz = size;
+  return SQLITE_OK;
+}
+
 int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size) {
-  /* the lenght of plaintext header size must be:
-   * 1. greater than or equal to zero
-   * 2. a multiple of the cipher block size
-   * 3. less than the usable size of the first database page
-   */
   if(size >= 0 && (size % ctx->read_ctx->block_sz) == 0 && size < (ctx->page_sz - ctx->read_ctx->reserve_sz)) {
     ctx->plaintext_header_sz = size;
     return SQLITE_OK;
   }
   return SQLITE_ERROR;
 } 
+
+int sqlcipher_get_default_plaintext_header_size() {
+  return default_plaintext_header_sz;
+}
 
 int sqlcipher_codec_ctx_get_plaintext_header_size(codec_ctx *ctx) {
   return ctx->plaintext_header_sz;
@@ -795,8 +805,6 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
 
-  ctx->plaintext_header_sz = 0; /* by default all data encrypted */
-
   /* allocate space for salt data. Then read the first 16 bytes 
        directly off the database file. This is the salt for the
        key derivation function. If we get a short read allocate
@@ -852,6 +860,9 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   CODEC_TRACE("sqlcipher_codec_ctx_init: copying write_ctx to read_ctx\n");
   if((rc = sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) return rc;
+
+  CODEC_TRACE("sqlcipher_codec_ctx_init: calling sqlcipher_codec_ctx_set_plaintext_header_size with %d\n", default_plaintext_header_sz);
+  if((rc = sqlcipher_codec_ctx_set_plaintext_header_size(ctx, default_plaintext_header_sz)) != SQLITE_OK) return rc;
 
   return SQLITE_OK;
 }

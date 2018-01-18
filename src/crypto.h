@@ -262,6 +262,8 @@ int sqlcipher_codec_hmac(const codec_ctx *ctx, const unsigned char *hmac_key, in
                          unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
                          unsigned char *out);
 
+int sqlcipher_set_default_plaintext_header_size(int size);
+int sqlcipher_get_default_plaintext_header_size();
 int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size);
 int sqlcipher_codec_ctx_get_plaintext_header_size(codec_ctx *ctx);
 

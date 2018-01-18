@@ -2346,7 +2346,6 @@ file delete -force encrypted.db
 
 # verify that a when a standard database is encrypted the first
 # 16 bytes are not "SQLite format 3\0" 
-# start of the database unencrypted, i.e. 
 do_test test-sqlcipher-header-overwrite {
   sqlite_orig db test.db
   execsql {
@@ -2373,8 +2372,7 @@ do_test test-pragma-salt-get {
 } {1}
 file delete -force test.db
 
-# set the salt of a new database 
-# of an existing database
+# explicitly set the salt of a new database 
 do_test test-pragma-salt-set {
   set rc {}
   sqlite_orig db test.db
@@ -2401,7 +2399,8 @@ file delete -force test.db
 set hexkeyspec "\"x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648101010101010101010101010101010101'\""
 
 # verify that a raw key with a fixed salt will work
-# first 16 bytes of database should be equal to the specified salt
+# the first 16 bytes of database should be equal to the specified salt
+# which is the last 32 characters of the hex key spec.
 # also verify return value of cipher_salt
 do_test test-raw-key-with-salt-spec {
   set rc {}
@@ -2425,7 +2424,8 @@ do_test test-raw-key-with-salt-spec {
 db close
 file delete -force test.db
 
-# verify that a raw key with an invalid salt will not work
+# verify that a raw key with an invalid salt will not work to
+# open an existing database.
 # should cause hmac failure due to invalid generated HMAC key
 do_test test-raw-key-with-invalid-salt-spec {
   sqlite_orig db test.db
@@ -2445,8 +2445,9 @@ do_test test-raw-key-with-invalid-salt-spec {
 db close
 file delete -force test.db
 
-# verify that a raw key with a bad salt will work if page HMAC is disabled
-# in which case the salt will not actually be used for anything
+# verify that a raw key with a bad salt *will* work if page HMAC is disabled
+# in this case the salt will not actually be used for anything
+# because the encryption key is provided explicitly
 do_test test-raw-key-with-invalid-salt-spec-no-hmac {
   sqlite_orig db test.db
   execsql "
@@ -2526,7 +2527,7 @@ file delete -force test.db
 # when using a standard mode database and 32 byte
 # plaintext header, ensure that bytes 16 - 19
 # corresponding to the page size and file versions, and reserve size
-# are readable and equal to 1024, 1, 1, and 48 
+# are readable and equal to 1024, 1, 1, and 48 respectively
 do_test test-plaintext-header-journal-delete-mode-readable {
   sqlite_orig db test.db
   execsql {
@@ -2544,7 +2545,7 @@ file delete -force test.db
 # when using a WAL mode database and 32 byte
 # plaintext header, ensure that bytes 16 - 19
 # corresponding to the page size and file versions, and reserve size
-# are readable and equal to 1024, 2, 2 and 48
+# are readable and equal to 1024, 2, 2 and 48 respectively
 do_test test-plaintext-header-journal-wal-mode-readable {
   sqlite_orig db test.db
   execsql {
@@ -2558,6 +2559,76 @@ do_test test-plaintext-header-journal-wal-mode-readable {
   string equal [hexio_read test.db 16 5] "0400020230" 
 } {1}
 file delete -force test.db
+
+# verify that a valid default_cipher_plaintext_header_size leaves the
+# start of the database unencrypted right from the start
+# , i.e. "SQLite format 3\0"
+do_test test-valid-default-plaintext-header-size {
+  set rc {}
+  sqlite_orig db test.db
+  set salt [execsql {
+    PRAGMA cipher_default_plaintext_header_size = 16;
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+    PRAGMA cipher_salt;
+  }]
+  db close
+
+  lappend rc [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = 'test';
+    PRAGMA cipher_salt = \"x'$salt'\";
+    SELECT count(*) FROM t1;
+    PRAGMA cipher_plaintext_header_size;
+  "]
+
+  # reset the default back to 0 or subsequent tests will fail
+  execsql "PRAGMA cipher_default_plaintext_header_size = 0;"
+
+  lappend rc [string equal $salt "53514c69746520666f726d6174203300"]
+} {53514C69746520666F726D6174203300 {1 16} 0}
+db close
+file delete -force test.db
+
+# verify that a valid default_cipher_plaintext_header_size 
+# operates properly on an attached database, and that the 
+# salt pragma operates on the attached database as well
+do_test test-valid-default-plaintext-header-size-attach {
+  set rc {}
+  sqlite_orig db test.db
+  set salt [execsql {
+    PRAGMA cipher_default_plaintext_header_size = 16;
+    PRAGMA key = 'test';
+    CREATE TABLE temp(a);
+    ATTACH DATABASE 'test2.db' as db2;
+    CREATE TABLE db2.t2(a,b);
+    INSERT INTO db2.t2(a,b) VALUES (1,2);
+    PRAGMA db2.cipher_salt;
+    DETACH DATABASE db2;
+  }]
+  db close
+  lappend rc [hexio_read test2.db 0 16]
+
+  sqlite_orig db test2.db
+  lappend rc [execsql "
+    PRAGMA key = 'test';
+    PRAGMA cipher_salt = \"x'$salt'\";
+    SELECT count(*) FROM t2;
+    PRAGMA cipher_plaintext_header_size;
+  "]
+
+  # reset the default back to 0 or subsequent tests will fail
+  execsql "PRAGMA cipher_default_plaintext_header_size = 0;"
+
+  lappend rc [string equal $salt "53514c69746520666f726d6174203300"]
+} {53514C69746520666F726D6174203300 {1 16} 0}
+db close
+file delete -force test.db
+file delete -force test2.db
+
 
 # migrate a standard database in place to use a 
 # plaintext header offset by opening it, adjusting

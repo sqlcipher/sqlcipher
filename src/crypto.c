@@ -302,6 +302,15 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       }
     }
   }else 
+  if( sqlite3StrICmp(zLeft,"cipher_default_plaintext_header_size")==0 ){
+    if( zRight ) {
+      sqlcipher_set_default_plaintext_header_size(atoi(zRight));
+    } else {
+      char *size = sqlite3_mprintf("%d", sqlcipher_get_default_plaintext_header_size());
+      codec_vdbe_return_static_string(pParse, "cipher_default_plaintext_header_size", size);
+      sqlite3_free(size);
+    }
+  }else
   if( sqlite3StrICmp(zLeft,"cipher_salt")==0 ){
     if(ctx) {
       if(zRight) {
