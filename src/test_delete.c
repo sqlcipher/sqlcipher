@@ -19,14 +19,12 @@
 **     above.
 */
 
-#if SQLITE_OS_WIN
-#  include <io.h>
-#  define F_OK 0
-#else
+#ifndef SQLITE_OS_WIN
 #  include <unistd.h>
+#  include <errno.h>
 #endif
 #include <string.h>
-#include <errno.h>
+#include <assert.h>
 #include "sqlite3.h"
 
 /* The following #defines are copied from test_multiplex.c */
@@ -47,7 +45,7 @@
 */
 static void sqlite3Delete83Name(char *z){
   int i, sz;
-  sz = strlen(z);
+  sz = (int)strlen(z);
   for(i=sz-1; i>0 && z[i]!='/' && z[i]!='.'; i--){}
   if( z[i]=='.' && (sz>i+4) ) memmove(&z[i+1], &z[sz-3], 4);
 }
@@ -57,30 +55,44 @@ static void sqlite3Delete83Name(char *z){
 ** set *pbExists to true and unlink it. Or, if the file does not exist,
 ** set *pbExists to false before returning.
 **
-** If an error occurs, the value of errno is returned. Or, if no error
-** occurs, zero is returned.
+** If an error occurs, non-zero is returned. Or, if no error occurs, zero.
 */
-static int sqlite3DeleteUnlinkIfExists(const char *zFile, int *pbExists){
-  int rc;
+static int sqlite3DeleteUnlinkIfExists(
+  sqlite3_vfs *pVfs,
+  const char *zFile, 
+  int *pbExists
+){
+  int rc = SQLITE_ERROR;
+#if SQLITE_OS_WIN
+  if( pVfs ){
+    if( pbExists ) *pbExists = 1;
+    rc = pVfs->xDelete(pVfs, zFile, 0);
+    if( rc==SQLITE_IOERR_DELETE_NOENT ){
+      if( pbExists ) *pbExists = 0;
+      rc = SQLITE_OK;
+    }
+  }
+#else
+  assert( pVfs==0 );
   rc = access(zFile, F_OK);
   if( rc ){
     if( errno==ENOENT ){ 
       if( pbExists ) *pbExists = 0;
-      return 0; 
+      rc = SQLITE_OK; 
     }
-    return errno;
+  }else{
+    if( pbExists ) *pbExists = 1;
+    rc = unlink(zFile);
   }
-  if( pbExists ) *pbExists = 1;
-  rc = unlink(zFile);
-  if( rc ) return errno;
-  return 0;
+#endif
+  return rc;
 }
 
 /*
 ** Delete the database file identified by the string argument passed to this
 ** function. The string must contain a filename, not an SQLite URI.
 */
-int sqlite3_delete_database(
+SQLITE_API int sqlite3_delete_database(
   const char *zFile               /* File to delete */
 ){
   char *zBuf;                     /* Buffer to sprintf() filenames to */
@@ -103,9 +115,15 @@ int sqlite3_delete_database(
     { "%s-wal%03d",     SQLITE_MULTIPLEX_WAL_8_3_OFFSET, 1 },
   };
 
+#ifdef SQLITE_OS_WIN
+  sqlite3_vfs *pVfs = sqlite3_vfs_find("win32");
+#else
+  sqlite3_vfs *pVfs = 0;
+#endif
+
   /* Allocate a buffer large enough for any of the files that need to be
   ** deleted.  */
-  nBuf = strlen(zFile) + 100;
+  nBuf = (int)strlen(zFile) + 100;
   zBuf = (char*)sqlite3_malloc(nBuf);
   if( zBuf==0 ) return SQLITE_NOMEM;
 
@@ -113,10 +131,10 @@ int sqlite3_delete_database(
   ** journal, wal and shm files.  */
   for(i=0; rc==0 && i<sizeof(azFmt)/sizeof(azFmt[0]); i++){
     sqlite3_snprintf(nBuf, zBuf, azFmt[i], zFile);
-    rc = sqlite3DeleteUnlinkIfExists(zBuf, 0);
+    rc = sqlite3DeleteUnlinkIfExists(pVfs, zBuf, 0);
     if( rc==0 && i!=0 ){
       sqlite3Delete83Name(zBuf);
-      rc = sqlite3DeleteUnlinkIfExists(zBuf, 0);
+      rc = sqlite3DeleteUnlinkIfExists(pVfs, zBuf, 0);
     }
   }
 
@@ -128,7 +146,7 @@ int sqlite3_delete_database(
       int bExists;
       sqlite3_snprintf(nBuf, zBuf, p->zFmt, zFile, iChunk+p->iOffset);
       if( p->b83 ) sqlite3Delete83Name(zBuf);
-      rc = sqlite3DeleteUnlinkIfExists(zBuf, &bExists);
+      rc = sqlite3DeleteUnlinkIfExists(pVfs, zBuf, &bExists);
       if( bExists==0 || rc!=0 ) break;
     }
   }

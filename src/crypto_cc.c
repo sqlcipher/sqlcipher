@@ -66,9 +66,10 @@ static const char* sqlcipher_cc_get_provider_version(void *ctx) {
 
 static int sqlcipher_cc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   CCHmacContext hmac_context;
+  if(in == NULL) return SQLITE_ERROR;
   CCHmacInit(&hmac_context, kCCHmacAlgSHA256, hmac_key, key_sz);
   CCHmacUpdate(&hmac_context, in, in_sz);
-  CCHmacUpdate(&hmac_context, in2, in2_sz);
+  if(in2 != NULL) CCHmacUpdate(&hmac_context, in2, in2_sz);
   CCHmacFinal(&hmac_context, out);
   return SQLITE_OK;
 }

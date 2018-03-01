@@ -285,6 +285,7 @@ proc copy_file {filename} {
 #
 
 foreach file {
+   ctime.c
    sqliteInt.h
 
    crypto.c
@@ -294,7 +295,6 @@ foreach file {
    crypto_cc.c
 
    global.c
-   ctime.c
    status.c
    date.c
    os.c
@@ -399,6 +399,7 @@ foreach file {
    sqlite3session.c
    json1.c
    fts5.c
+   stmt.c
 } {
   copy_file tsrc/$file
 }

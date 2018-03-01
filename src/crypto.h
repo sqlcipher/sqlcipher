@@ -45,9 +45,9 @@
 
 #ifndef CIPHER_VERSION
 #ifdef SQLCIPHER_FIPS
-#define CIPHER_VERSION "3.4.1 FIPS"
+#define CIPHER_VERSION "3.4.2 FIPS"
 #else
-#define CIPHER_VERSION "3.4.1"
+#define CIPHER_VERSION "3.4.2"
 #endif
 #endif
 
@@ -100,11 +100,28 @@
 #define CIPHER_MAX_KEY_SZ 64
 #endif
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
+#ifdef CODEC_DEBUG_MUTEX
+#ifdef __ANDROID__
+#define CODEC_TRACE_MUTEX(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
+#else
+#define CODEC_TRACE_MUTEX(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
+#endif
+#else
+#define CODEC_TRACE_MUTEX(...)
+#endif
 
 #ifdef CODEC_DEBUG
-#define CODEC_TRACE(X)  {printf X;fflush(stdout);}
+#ifdef __ANDROID__
+#define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
 #else
-#define CODEC_TRACE(X)
+#define CODEC_TRACE(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
+#endif
+#else
+#define CODEC_TRACE(...)
 #endif
 
 #ifdef CODEC_DEBUG_PAGEDATA
@@ -235,12 +252,14 @@ const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx);
 int sqlcipher_codec_add_random(codec_ctx *ctx, const char *data, int random_sz);
 int sqlcipher_cipher_profile(sqlite3 *db, const char *destination);
-static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint64 run_time);
-static int sqlcipher_codec_get_store_pass(codec_ctx *ctx);
-static void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey);
-static void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value);
+int sqlcipher_codec_get_store_pass(codec_ctx *ctx);
+void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey);
+void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value);
 int sqlcipher_codec_fips_status(codec_ctx *ctx);
 const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx);
+int sqlcipher_codec_hmac(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
+                         unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
+                         unsigned char *out);
 #endif
 #endif
 /* END SQLCIPHER */
