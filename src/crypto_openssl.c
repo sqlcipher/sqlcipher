@@ -47,7 +47,7 @@ static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
 static sqlite3_mutex* openssl_rand_mutex = NULL;
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x20700000) 
 static HMAC_CTX *HMAC_CTX_new(void)
 {
   HMAC_CTX *ctx = OPENSSL_malloc(sizeof(*ctx));
@@ -117,7 +117,7 @@ static int sqlcipher_openssl_activate(void *ctx) {
 
   if(openssl_init_count == 0 && openssl_external_init == 0)  {
     /* if the library was not externally initialized, then should be now */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x20700000)
     OpenSSL_add_all_algorithms();
 #endif
   } 
@@ -154,7 +154,7 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
        Note: this code will only be reached if OpensSSL_add_all_algorithms()
        is called by SQLCipher internally. This should prevent SQLCipher from 
        "cleaning up" openssl when it was initialized externally by the program */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x20700000)
       EVP_cleanup();
 #endif
     } else {
