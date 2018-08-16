@@ -1154,9 +1154,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
   if(db_filename){
     const char* commands[5];
-    char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%q';",
-                                            db_filename, key);
-
+    char *attach_command = 0;
     int rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, "", &user_version);
     if(rc == SQLITE_OK){
       CODEC_TRACE("No upgrade required - exiting\n");
@@ -1186,6 +1184,9 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       goto handle_error;
     }
 
+    attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%q';",
+                                     db_filename, key);
+
     set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
     commands[0] = upgrade_4k_format == 1 ? pragma_4k_kdf_iter : "";
     commands[1] = upgrade_1x_format == 1 ? pragma_hmac_off : "";
@@ -1205,12 +1206,12 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     }
     sqlite3_free(attach_command);
     sqlite3_free(set_user_version);
-    sqlcipher_free(key, key_sz);
     
     if(rc == SQLITE_OK){
       Btree *pDest;
       Btree *pSrc;
       int i = 0;
+      char *skey = 0;
 
       if( !db->autoCommit ){
         CODEC_TRACE("cannot migrate from within a transaction");
@@ -1245,8 +1246,8 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       assert( 1==sqlite3BtreeIsInTrans(pDest) );
       assert( 1==sqlite3BtreeIsInTrans(pSrc) );
 
-      sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
-      sqlite3CodecAttach(db, 0, key, password_sz);
+      sqlite3CodecGetKey(db, db->nDb - 1, (void**)&skey, &password_sz);
+      sqlite3CodecAttach(db, 0, skey, password_sz);
       sqlite3pager_get_codec(pDest->pBt->pPager, (void**)&ctx);
       
       ctx->skip_read_hmac = 1;      
@@ -1271,7 +1272,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       pDb->pSchema = 0;
       sqlite3ResetAllSchemasOfConnection(db);
       remove(migrated_db_filename);
-      sqlite3_free(migrated_db_filename);
     } else {
       CODEC_TRACE("*** migration failure** \n\n");
     }
@@ -1284,6 +1284,8 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   rc = SQLITE_ERROR;
 
  exit:
+  sqlcipher_free(key, key_sz);
+  sqlite3_free(migrated_db_filename);
   return rc;
 }
 
