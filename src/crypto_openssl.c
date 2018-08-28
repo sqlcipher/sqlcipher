@@ -47,7 +47,7 @@ static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
 static sqlite3_mutex* openssl_rand_mutex = NULL;
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || LIBRESSL_VERSION_NUMBER < 0x20700000L
 static HMAC_CTX *HMAC_CTX_new(void)
 {
   HMAC_CTX *ctx = OPENSSL_malloc(sizeof(*ctx));
@@ -57,10 +57,10 @@ static HMAC_CTX *HMAC_CTX_new(void)
   return ctx;
 }
 
-// Per 1.1.0 (https://wiki.openssl.org/index.php/1.1_API_Changes)
-// HMAC_CTX_free should call HMAC_CTX_cleanup, then EVP_MD_CTX_Cleanup.
-// HMAC_CTX_cleanup internally calls EVP_MD_CTX_cleanup so these
-// calls are not needed.
+/* Per 1.1.0 (https://wiki.openssl.org/index.php/1.1_API_Changes)
+   HMAC_CTX_free should call HMAC_CTX_cleanup, then EVP_MD_CTX_Cleanup.
+   HMAC_CTX_cleanup internally calls EVP_MD_CTX_cleanup so these
+   calls are not needed. */
 static void HMAC_CTX_free(HMAC_CTX *ctx)
 {
   if (ctx != NULL) {
@@ -117,7 +117,7 @@ static int sqlcipher_openssl_activate(void *ctx) {
 
   if(openssl_init_count == 0 && openssl_external_init == 0)  {
     /* if the library was not externally initialized, then should be now */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || LIBRESSL_VERSION_NUMBER < 0x20700000L
     OpenSSL_add_all_algorithms();
 #endif
   } 
@@ -154,7 +154,7 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
        Note: this code will only be reached if OpensSSL_add_all_algorithms()
        is called by SQLCipher internally. This should prevent SQLCipher from 
        "cleaning up" openssl when it was initialized externally by the program */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || LIBRESSL_VERSION_NUMBER < 0x20700000L
       EVP_cleanup();
 #endif
     } else {
@@ -226,7 +226,7 @@ static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int
   EVP_CIPHER_CTX* ectx = EVP_CIPHER_CTX_new();
   if(ectx == NULL) return SQLITE_ERROR;
   EVP_CipherInit_ex(ectx, ((openssl_ctx *)ctx)->evp_cipher, NULL, NULL, NULL, mode);
-  EVP_CIPHER_CTX_set_padding(ectx, 0); // no padding
+  EVP_CIPHER_CTX_set_padding(ectx, 0); /* no padding */
   EVP_CipherInit_ex(ectx, NULL, NULL, key, iv, mode);
   EVP_CipherUpdate(ectx, out, &tmp_csz, in, in_sz);
   csz = tmp_csz;  
