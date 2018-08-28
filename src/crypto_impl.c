@@ -93,6 +93,49 @@ struct codec_ctx {
   unsigned int need_kdf_salt;
 };
 
+sqlite3_mem_methods default_mem_methods;
+
+static int sqlcipher_mem_init(void *pAppData) {
+  return default_mem_methods.xInit(pAppData);
+}
+static void sqlcipher_mem_shutdown(void *pAppData) {
+  default_mem_methods.xShutdown(pAppData);
+}
+static void *sqlcipher_mem_malloc(int n) {
+  return default_mem_methods.xMalloc(n);
+}
+static int sqlcipher_mem_size(void *p) {
+  return default_mem_methods.xSize(p);
+}
+static void sqlcipher_mem_free(void *p) {
+  int sz = sqlcipher_mem_size(p);
+  CODEC_TRACE("sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d)\n", p, sz);
+  sqlcipher_memset(p, 0, sz);
+  default_mem_methods.xFree(p);
+}
+static void *sqlcipher_mem_realloc(void *p, int n) {
+  return default_mem_methods.xRealloc(p, n);
+}
+static int sqlcipher_mem_roundup(int n) {
+  return default_mem_methods.xRoundup(n);
+}
+
+static sqlite3_mem_methods sqlcipher_mem_methods = {
+  sqlcipher_mem_malloc,
+  sqlcipher_mem_free,
+  sqlcipher_mem_realloc,
+  sqlcipher_mem_size,
+  sqlcipher_mem_roundup,
+  sqlcipher_mem_init,
+  sqlcipher_mem_shutdown,
+  0
+};
+
+void sqlcipher_init_memmethods() {
+  sqlite3_config(SQLITE_CONFIG_GETMALLOC, &default_mem_methods);
+  sqlite3_config(SQLITE_CONFIG_MALLOC, &sqlcipher_mem_methods);
+}
+
 int sqlcipher_register_provider(sqlcipher_provider *p) {
   CODEC_TRACE_MUTEX("sqlcipher_register_provider: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
   sqlite3_mutex_enter(sqlcipher_provider_mutex);
