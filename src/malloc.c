@@ -131,6 +131,9 @@ int sqlite3MallocInit(void){
     sqlite3MemSetDefault();
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
+    /* install wrapping functions for memory management
+       that will wipe all memory allocated by SQLite
+       when freed */
     extern void sqlcipher_init_memmethods();
     sqlcipher_init_memmethods();
 #endif
