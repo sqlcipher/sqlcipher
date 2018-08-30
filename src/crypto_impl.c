@@ -73,7 +73,7 @@ typedef struct {
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static int default_kdf_iter = PBKDF2_ITER;
-static int default_page_size = 1024;
+static int default_page_size = 4096;
 static int default_plaintext_header_sz = 0;
 static unsigned int sqlcipher_activate_count = 0;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
@@ -1198,29 +1198,22 @@ cleanup:
   return rc;
 }
 
+static int pager_truncate(Pager *pPager, Pgno nPage);
+
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   u32 meta;
-  int rc = 0;
-  int command_idx = 0;
-  int password_sz;
-  int saved_flags;
-  int saved_nChange;
-  int saved_nTotalChange;
+  int i, password_sz, key_sz, saved_flags, saved_nChange, saved_nTotalChange, nRes, user_version = 0, upgrade_from = 0, rc = 0;
   u8 saved_mTrace;
   int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
   char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
-  char *pragma_hmac_off = "PRAGMA cipher_use_hmac = OFF;";
-  char *pragma_4k_kdf_iter = "PRAGMA kdf_iter = 4000;";
-  char *pragma_1x_and_4k;
-  char *set_user_version;
-  char *key;
-  int key_sz;
-  int user_version = 0;
-  int upgrade_1x_format = 0;
-  int upgrade_4k_format = 0;
+  char *v1_pragmas = "PRAGMA cipher_use_hmac = OFF; PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024;";
+  char *v2_pragmas = "PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024;";
+  char *v3_pragmas = "PRAGMA kdf_iter = 64000; PRAGMA cipher_page_size = 1024;";
+  char *set_user_version, *key;
+  Btree *pDest = NULL, *pSrc = NULL;
   static const unsigned char aCopy[] = {
     BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
     BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
@@ -1229,6 +1222,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
   };
 
+  rc = user_version = upgrade_from = 0;
 
   key_sz = ctx->read_ctx->pass_sz + 1;
   key = sqlcipher_malloc(key_sz);
@@ -1236,7 +1230,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   memcpy(key, ctx->read_ctx->pass, ctx->read_ctx->pass_sz);
 
   if(db_filename){
-    const char* commands[5];
+    const char* commands[4];
     char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%q';",
                                             db_filename, key);
 
@@ -1245,44 +1239,51 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       CODEC_TRACE("No upgrade required - exiting\n");
       goto exit;
     }
+
+    /* Version 3 - check for 64k with hmac format and 1024 page size */
+    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, v3_pragmas, &user_version);
+    if(rc == SQLITE_OK) {
+      CODEC_TRACE("Version 3 format found\n");
+      upgrade_from = 3;
+    }
     
-    // Version 2 - check for 4k with hmac format 
-    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, pragma_4k_kdf_iter, &user_version);
+    /* Version 2 - check for 4k with hmac format and 1024 page size */
+    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, v2_pragmas, &user_version);
     if(rc == SQLITE_OK) {
       CODEC_TRACE("Version 2 format found\n");
-      upgrade_4k_format = 1;
+      upgrade_from = 2;
     }
 
-    // Version 1 - check both no hmac and 4k together
-    pragma_1x_and_4k = sqlite3_mprintf("%s%s", pragma_hmac_off,
-                                             pragma_4k_kdf_iter);
-    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, pragma_1x_and_4k, &user_version);
-    sqlite3_free(pragma_1x_and_4k);
+    /* Version 1 - check no HMAC, 4k KDF, and 1024 page size */
+    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, v1_pragmas, &user_version);
     if(rc == SQLITE_OK) {
       CODEC_TRACE("Version 1 format found\n");
-      upgrade_1x_format = 1;
-      upgrade_4k_format = 1;
-    }
-
-    if(upgrade_1x_format == 0 && upgrade_4k_format == 0) {
-      CODEC_TRACE("Upgrade format not determined\n");
-      goto handle_error;
+      upgrade_from = 1;
     }
 
     set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
-    commands[0] = upgrade_4k_format == 1 ? pragma_4k_kdf_iter : "";
-    commands[1] = upgrade_1x_format == 1 ? pragma_hmac_off : "";
-    commands[2] = attach_command;
-    commands[3] = "SELECT sqlcipher_export('migrate');";
-    commands[4] = set_user_version;
+    switch(upgrade_from) {
+      case 1:
+        commands[0] = v1_pragmas;
+        break;
+      case 2:
+        commands[0] = v2_pragmas;
+        break;
+      case 3:
+        commands[0] = v3_pragmas;
+        break;
+      default:
+        CODEC_TRACE("Upgrade format not determined\n");
+        goto handle_error;
+    }
+    commands[1] = attach_command;
+    commands[2] = "SELECT sqlcipher_export('migrate');";
+    commands[3] = set_user_version;
       
-    for(command_idx = 0; command_idx < ArraySize(commands); command_idx++){
-      const char *command = commands[command_idx];
-      if(strcmp(command, "") == 0){
-        continue;
-      }
-      rc = sqlite3_exec(db, command, NULL, NULL, NULL);
+    for(i = 0; i < ArraySize(commands); i++){
+      rc = sqlite3_exec(db, commands[i], NULL, NULL, NULL);
       if(rc != SQLITE_OK){
+        CODEC_TRACE("migration step %d failed error code %d\n", i, rc);
         break;
       }
     }
@@ -1291,9 +1292,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     sqlcipher_free(key, key_sz);
     
     if(rc == SQLITE_OK){
-      Btree *pDest;
-      Btree *pSrc;
-      int i = 0;
 
       if( !db->autoCommit ){
         CODEC_TRACE("cannot migrate from within a transaction");
@@ -1316,32 +1314,53 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
       db->xTrace = 0;
       db->mTrace = 0;
-      
       pDest = db->aDb[0].pBt;
       pDb = &(db->aDb[db->nDb-1]);
       pSrc = pDb->pBt;
-      
+
+      nRes = sqlite3BtreeGetOptimalReserve(pSrc); 
+      rc = sqlite3BtreeSetPageSize(pDest, default_page_size, nRes, 0);
+      if( rc!=SQLITE_OK ) goto handle_error;
+      CODEC_TRACE("set BTree page size to %d res %d rc %d\n", default_page_size, nRes, rc);
+
       rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
+      if( rc!=SQLITE_OK ) goto handle_error;
+
+      pager_truncate(pDest->pBt->pPager, 0);
+
       rc = sqlite3BtreeBeginTrans(pSrc, 2);
+      if( rc!=SQLITE_OK ) goto handle_error;
+
       rc = sqlite3BtreeBeginTrans(pDest, 2);
-      
+      if( rc!=SQLITE_OK ) goto handle_error;
+
       assert( 1==sqlite3BtreeIsInTrans(pDest) );
       assert( 1==sqlite3BtreeIsInTrans(pSrc) );
+
+      CODEC_TRACE("started transactions\n");
 
       sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
       sqlite3CodecAttach(db, 0, key, password_sz);
       sqlite3pager_get_codec(pDest->pBt->pPager, (void**)&ctx);
-      
+
       ctx->skip_read_hmac = 1;      
+
       for(i=0; i<ArraySize(aCopy); i+=2){
         sqlite3BtreeGetMeta(pSrc, aCopy[i], &meta);
         rc = sqlite3BtreeUpdateMeta(pDest, aCopy[i], meta+aCopy[i+1]);
+        CODEC_TRACE("applied metadata %d %d\n",i, rc);
         if( NEVER(rc!=SQLITE_OK) ) goto handle_error; 
       }
+      CODEC_TRACE("finished applied metadata\n");
+
       rc = sqlite3BtreeCopyFile(pDest, pSrc);
       ctx->skip_read_hmac = 0;
       if( rc!=SQLITE_OK ) goto handle_error;
+      CODEC_TRACE("copied btree %d\n", rc);
+
       rc = sqlite3BtreeCommit(pDest);
+      if( rc!=SQLITE_OK ) goto handle_error;
+      CODEC_TRACE("committed destination transaction %d\n", rc);
 
       db->flags = saved_flags;
       db->nChange = saved_nChange;
@@ -1356,17 +1375,19 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       remove(migrated_db_filename);
       sqlite3_free(migrated_db_filename);
     } else {
-      CODEC_TRACE("*** migration failure** \n\n");
+      CODEC_TRACE("*** migration failure** error code: %d\n", rc);
     }
     
   }
   goto exit;
 
- handle_error:
+handle_error:
+  if(pDest) sqlite3BtreeRollback(pDest, SQLITE_OK, 0);
+
   CODEC_TRACE("An error occurred attempting to migrate the database\n");
   rc = SQLITE_ERROR;
 
- exit:
+exit:
   return rc;
 }
 

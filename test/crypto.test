@@ -1,4 +1,3 @@
-# SQLCipher
 # codec.test developed by Stephen Lombardo (Zetetic LLC) 
 # sjlombardo at zetetic dot net
 # http://zetetic.net
@@ -878,7 +877,7 @@ do_test custom-pagesize {
 
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_page_size = 4096;
+    PRAGMA cipher_page_size = 8192;
     CREATE table t1(a,b);
     BEGIN;
   }
@@ -897,7 +896,7 @@ do_test custom-pagesize {
 
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_page_size = 4096;
+    PRAGMA cipher_page_size = 8192;
     SELECT count(*) FROM t1;
   }
 
@@ -1003,6 +1002,7 @@ do_test open-1.1.8-database {
     PRAGMA key = 'testkey';
     PRAGMA cipher_use_hmac = off;
     PRAGMA kdf_iter = 4000;
+    PRAGMA cipher_page_size = 1024;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1018,6 +1018,7 @@ do_test attach-and-copy-1.1.8 {
     PRAGMA key = 'testkey';
     PRAGMA cipher_use_hmac = OFF;
     PRAGMA kdf_iter = 4000;
+    PRAGMA cipher_page_size = 1024;
     ATTACH DATABASE 'test.db' AS db2 KEY 'testkey-hmac'; 
     CREATE TABLE db2.t1(a,b);
     INSERT INTO db2.t1 SELECT * FROM main.t1;
@@ -1056,7 +1057,7 @@ do_test attached-database-pragmas {
   execsql {
     COMMIT;
     ATTACH DATABASE 'test2.db' AS db2 KEY 'testkey2'; 
-    PRAGMA db2.cipher_page_size = 4096;
+    PRAGMA db2.cipher_page_size = 8192;
     PRAGMA db2.cipher = 'aes-128-cbc';
     PRAGMA db2.kdf_iter = 1000;
     PRAGMA db2.cipher_use_hmac = OFF;
@@ -1069,7 +1070,7 @@ do_test attached-database-pragmas {
   sqlite_orig db test2.db
   execsql {
     PRAGMA key = 'testkey2';
-    PRAGMA cipher_page_size = 4096;
+    PRAGMA cipher_page_size = 8192;
     PRAGMA cipher = 'aes-128-cbc';
     PRAGMA kdf_iter = 1000;
     PRAGMA cipher_use_hmac = OFF;
@@ -1135,7 +1136,7 @@ do_test export-database {
     COMMIT;
 
     ATTACH DATABASE 'test2.db' AS db2 KEY 'testkey2'; 
-    PRAGMA db2.cipher_page_size = 4096;
+    PRAGMA db2.cipher_page_size = 8192;
 
     SELECT sqlcipher_export('db2');
 
@@ -1146,7 +1147,7 @@ do_test export-database {
   sqlite_orig db test2.db
   execsql {
     PRAGMA key = 'testkey2';
-    PRAGMA cipher_page_size = 4096;
+    PRAGMA cipher_page_size = 8192;
     SELECT count(*) FROM t1;
     SELECT count(*) FROM v1;
     SELECT count(*) FROM sqlite_sequence;
@@ -1455,7 +1456,7 @@ do_test cipher-options-before-keys {
 
   execsql {
     PRAGMA kdf_iter = 1000;
-    PRAGMA cipher_page_size = 4096;
+    PRAGMA cipher_page_size = 8192;
     PRAGMA cipher = 'aes-128-cbc';
     PRAGMA cipher_use_hmac = OFF;
     PRAGMA key = 'testkey';
@@ -1486,12 +1487,14 @@ do_test default-hmac-kdf-attach {
   execsql {
     PRAGMA cipher_default_use_hmac = OFF;
     PRAGMA cipher_default_kdf_iter = 4000;
+    PRAGMA cipher_default_page_size = 1024;
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
     ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2 KEY 'testkey';
     SELECT count(*) from db2.t1;
     PRAGMA cipher_default_use_hmac = ON;
     PRAGMA cipher_default_kdf_iter = 64000;
+    PRAGMA cipher_default_kdf_iter = 4096;
   } 
 } {75709 75709}
 db close
@@ -1535,10 +1538,12 @@ do_test change-default-hmac-kdf-attach {
     SELECT count(*) FROM t1;
     PRAGMA cipher_default_use_hmac = OFF;
     PRAGMA cipher_default_kdf_iter = 4000;
+    PRAGMA cipher_default_page_size = 1024;
     ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2 KEY 'testkey';
     SELECT count(*) from db2.t1;
     PRAGMA cipher_default_use_hmac = ON;
     PRAGMA cipher_default_kdf_iter = 64000;
+    PRAGMA cipher_default_page_size = 4096;
   } 
 } {1 75709}
 db close
@@ -1721,6 +1726,7 @@ do_test open-3.0-le-database {
   sqlite_orig db $sampleDir/sqlcipher-3.0-testkey.db
   execsql {
     PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 1024;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1734,6 +1740,7 @@ do_test open-2.0-le-database {
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA kdf_iter = 4000;
+    PRAGMA cipher_page_size = 1024;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1748,6 +1755,7 @@ do_test open-2.0-be-database {
     PRAGMA key = 'testkey';
     PRAGMA cipher_hmac_pgno = be;
     PRAGMA kdf_iter = 4000;
+    PRAGMA cipher_page_size = 1024;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1765,6 +1773,7 @@ do_test be-to-le-migration {
     PRAGMA key = 'testkey';
     PRAGMA cipher_hmac_pgno = be;
     PRAGMA kdf_iter = 4000;
+    PRAGMA cipher_page_size = 1024;
     ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
     CREATE TABLE db2.t1(a,b);
     INSERT INTO db2.t1 SELECT * FROM main.t1;
@@ -1917,7 +1926,7 @@ do_test verify-pragma-cipher-page-size-default {
         PRAGMA key = 'test';
         PRAGMA cipher_page_size;
     }
-} {1024}
+} {4096}
 db close
 file delete -force test.db
 
@@ -1927,10 +1936,10 @@ do_test verify-pragma-cipher-page-size-changed {
     sqlite_orig db test.db
     execsql {
         PRAGMA key = 'test';
-        PRAGMA cipher_page_size = 4096;
+        PRAGMA cipher_page_size = 8192;
         PRAGMA cipher_page_size;
     }
-} {4096}
+} {8192}
 db close
 file delete -force test.db
 
@@ -2033,6 +2042,7 @@ do_test open-2.0-beta-database {
     PRAGMA kdf_iter = 4000;
     PRAGMA fast_kdf_iter = 4000;
     PRAGMA cipher_hmac_salt_mask = "x'00'";
+    PRAGMA cipher_page_size = 1024;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -2051,6 +2061,7 @@ do_test 2.0-beta-to-2.0-migration {
     PRAGMA cipher_hmac_salt_mask = "x'00'";
     PRAGMA kdf_iter = 4000;
     PRAGMA fast_kdf_iter = 4000;
+    PRAGMA cipher_page_size = 1024;
     SELECT count(*) FROM sqlite_master;
 
     PRAGMA cipher_hmac_salt_mask = "x'3a'";
@@ -2089,9 +2100,9 @@ if_built_with_commoncrypto verify-default-cipher {
     }
 } {aes-256-cbc}
 db close
-file delete -force test.db
+file delete -force test.db test.db-migrated test.db-journal
 
-do_test migrate-1.1.8-database-to-3x-format {
+do_test migrate-1.1.8-database-to-current-format {
   file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db test.db
   sqlite_orig db test.db
   execsql {
@@ -2107,10 +2118,28 @@ do_test migrate-1.1.8-database-to-3x-format {
   }
 } {1}
 db close
-file delete -force test.db
+file delete -force test.db test.db-migrated test.db-journal
 
-do_test migrate-2-0-le-database-to-3x-format {
+do_test migrate-2-0-le-database-to-current-format {
   file copy -force $sampleDir/sqlcipher-2.0-le-testkey.db test.db
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_migrate;
+  }
+  db close
+    
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_master;
+  }
+} {1}
+db close
+file delete -force test.db test.db-migrated test.db-journal
+
+do_test migrate-3-0-database-to-current-format {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -2233,6 +2262,7 @@ do_test can-migrate-with-keys-longer-than-64-characters {
     sqlite_orig db test.db
     execsql {
         PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
+        PRAGMA cipher_page_size = 1024;
         PRAGMA kdf_iter = 4000;
         PRAGMA user_version = 5;
     }
@@ -2258,6 +2288,7 @@ do_test can-migrate-with-raw-hex-key {
     sqlite_orig db test.db
     execsql {
         PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+        PRAGMA cipher_page_size = 1024;
         PRAGMA kdf_iter = 4000;
         PRAGMA cipher_use_hmac = off;
         PRAGMA user_version = 5;
@@ -2284,7 +2315,7 @@ do_test attach_database_with_non_default_page_size {
     sqlite_orig db test2.db
     execsql {
         PRAGMA key = 'test';
-        PRAGMA cipher_page_size = 4096;
+        PRAGMA cipher_page_size = 8192;
         CREATE TABLE t1(a,b);
         INSERT INTO t1(a,b) values('one for the money', 'two for the show');
         INSERT INTO t1(a,b) values('three to get ready', 'now, go cat, go');
@@ -2293,7 +2324,7 @@ do_test attach_database_with_non_default_page_size {
 
     sqlite_orig db test.db
     execsql {
-        PRAGMA cipher_default_page_size = 4096;
+        PRAGMA cipher_default_page_size = 8192;
         PRAGMA key = 'test';
         ATTACH DATABASE 'test2.db' as test2 KEY 'test';
         SELECT count(*) FROM test2.t1;
