@@ -63,7 +63,7 @@
 #define CIPHER_READWRITE_CTX 2
 
 #ifndef PBKDF2_ITER
-#define PBKDF2_ITER 64000
+#define PBKDF2_ITER 128000
 #endif
 
 /* possible flags for cipher_ctx->flags */
