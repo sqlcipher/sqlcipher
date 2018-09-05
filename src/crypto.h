@@ -267,6 +267,17 @@ int sqlcipher_get_default_plaintext_header_size();
 int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size);
 int sqlcipher_codec_ctx_get_plaintext_header_size(codec_ctx *ctx);
 
+int sqlcipher_set_default_hmac_algorithm(int algorithm);
+int sqlcipher_get_default_hmac_algorithm();
+int sqlcipher_codec_ctx_set_hmac_algorithm(codec_ctx *ctx, int algorithm);
+int sqlcipher_codec_ctx_get_hmac_algorithm(codec_ctx *ctx);
+
+int sqlcipher_set_default_kdf_algorithm(int algorithm);
+int sqlcipher_get_default_kdf_algorithm();
+int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm);
+int sqlcipher_codec_ctx_get_kdf_algorithm(codec_ctx *ctx);
+
+
 #endif
 #endif
 /* END SQLCIPHER */

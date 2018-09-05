@@ -1003,6 +1003,7 @@ do_test open-1.1.8-database {
     PRAGMA cipher_use_hmac = off;
     PRAGMA kdf_iter = 4000;
     PRAGMA cipher_page_size = 1024;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1019,6 +1020,7 @@ do_test attach-and-copy-1.1.8 {
     PRAGMA cipher_use_hmac = OFF;
     PRAGMA kdf_iter = 4000;
     PRAGMA cipher_page_size = 1024;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     ATTACH DATABASE 'test.db' AS db2 KEY 'testkey-hmac'; 
     CREATE TABLE db2.t1(a,b);
     INSERT INTO db2.t1 SELECT * FROM main.t1;
@@ -1488,6 +1490,7 @@ do_test default-hmac-kdf-attach {
     PRAGMA cipher_default_use_hmac = OFF;
     PRAGMA cipher_default_kdf_iter = 4000;
     PRAGMA cipher_default_page_size = 1024;
+    PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA1;
     PRAGMA key = 'testkey';
     SELECT count(*) FROM t1;
     ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2 KEY 'testkey';
@@ -1495,6 +1498,7 @@ do_test default-hmac-kdf-attach {
     PRAGMA cipher_default_use_hmac = ON;
     PRAGMA cipher_default_kdf_iter = 128000;
     PRAGMA cipher_default_page_size = 4096;
+    PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;
   } 
 } {75709 75709}
 db close
@@ -1539,11 +1543,13 @@ do_test change-default-hmac-kdf-attach {
     PRAGMA cipher_default_use_hmac = OFF;
     PRAGMA cipher_default_kdf_iter = 4000;
     PRAGMA cipher_default_page_size = 1024;
+    PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA1;
     ATTACH 'sqlcipher-1.1.8-testkey.db' AS db2 KEY 'testkey';
     SELECT count(*) from db2.t1;
     PRAGMA cipher_default_use_hmac = ON;
     PRAGMA cipher_default_kdf_iter = 128000;
     PRAGMA cipher_default_page_size = 4096;
+    PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;
   } 
 } {1 75709}
 db close
@@ -1728,6 +1734,8 @@ do_test open-3.0-le-database {
     PRAGMA key = 'testkey';
     PRAGMA cipher_page_size = 1024;
     PRAGMA kdf_iter = 64000;
+    PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1742,6 +1750,8 @@ do_test open-2.0-le-database {
     PRAGMA key = 'testkey';
     PRAGMA kdf_iter = 4000;
     PRAGMA cipher_page_size = 1024;
+    PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1757,6 +1767,8 @@ do_test open-2.0-be-database {
     PRAGMA cipher_hmac_pgno = be;
     PRAGMA kdf_iter = 4000;
     PRAGMA cipher_page_size = 1024;
+    PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -1775,6 +1787,8 @@ do_test be-to-le-migration {
     PRAGMA cipher_hmac_pgno = be;
     PRAGMA kdf_iter = 4000;
     PRAGMA cipher_page_size = 1024;
+    PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
     CREATE TABLE db2.t1(a,b);
     INSERT INTO db2.t1 SELECT * FROM main.t1;
@@ -2044,6 +2058,8 @@ do_test open-2.0-beta-database {
     PRAGMA fast_kdf_iter = 4000;
     PRAGMA cipher_hmac_salt_mask = "x'00'";
     PRAGMA cipher_page_size = 1024;
+    PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
@@ -2063,6 +2079,8 @@ do_test 2.0-beta-to-2.0-migration {
     PRAGMA kdf_iter = 4000;
     PRAGMA fast_kdf_iter = 4000;
     PRAGMA cipher_page_size = 1024;
+    PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+    PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
     SELECT count(*) FROM sqlite_master;
 
     PRAGMA cipher_hmac_salt_mask = "x'3a'";
@@ -2265,6 +2283,8 @@ do_test can-migrate-with-keys-longer-than-64-characters {
         PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
         PRAGMA cipher_page_size = 1024;
         PRAGMA kdf_iter = 4000;
+        PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+        PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
         PRAGMA user_version = 5;
     }
     db close
@@ -2559,7 +2579,7 @@ file delete -force test.db
 # when using a standard mode database and 32 byte
 # plaintext header, ensure that bytes 16 - 19
 # corresponding to the page size and file versions, and reserve size
-# are readable and equal to 1024, 1, 1, and 48 respectively
+# are readable and equal to 1024, 1, 1, and 80 respectively
 do_test test-plaintext-header-journal-delete-mode-readable {
   sqlite_orig db test.db
   execsql {
@@ -2569,7 +2589,7 @@ do_test test-plaintext-header-journal-delete-mode-readable {
     INSERT INTO t1(a,b) VALUES (1,2);
   }
   db close
-  string equal [hexio_read test.db 16 5] "0400010130" 
+  string equal [hexio_read test.db 16 5] "0400010150" 
 } {1}
 file delete -force test.db
 
@@ -2577,7 +2597,7 @@ file delete -force test.db
 # when using a WAL mode database and 32 byte
 # plaintext header, ensure that bytes 16 - 19
 # corresponding to the page size and file versions, and reserve size
-# are readable and equal to 1024, 2, 2 and 48 respectively
+# are readable and equal to 1024, 2, 2 and 80 respectively
 do_test test-plaintext-header-journal-wal-mode-readable {
   sqlite_orig db test.db
   execsql {
@@ -2588,7 +2608,7 @@ do_test test-plaintext-header-journal-wal-mode-readable {
     INSERT INTO t1(a,b) VALUES (1,2);
   }
   db close
-  string equal [hexio_read test.db 16 5] "0400020230" 
+  string equal [hexio_read test.db 16 5] "0400020250" 
 } {1}
 file delete -force test.db
 
@@ -2694,7 +2714,7 @@ do_test test-plaintext-header-migrate-journal-delete {
     SELECT count(*) FROM t1;
   "]
 
-} {01010101010101010101010101010101 53514C69746520666F726D61742033000400010130 1}
+} {01010101010101010101010101010101 53514C69746520666F726D61742033000400010150 1}
 db close
 file delete -force test.db
 
@@ -2734,7 +2754,7 @@ do_test test-plaintext-header-migrate-journal-wal {
     PRAGMA journal_mode;
   "]
 
-} {01010101010101010101010101010101 {1 wal 0 1 1} 53514C69746520666F726D61742033000400020230 {1 wal}}
+} {01010101010101010101010101010101 {1 wal 0 1 1} 53514C69746520666F726D61742033000400020250 {1 wal}}
 db close
 file delete -force test.db
 
@@ -2776,7 +2796,76 @@ do_test test-plaintext-header-migrate-journal-wal-string-key-random-salt {
     PRAGMA journal_mode;
   "]
 
-} {{1 wal 0 1 1} 53514C69746520666F726D61742033000400020230 {1 wal}}
+
+} {{1 wal 0 1 1} 53514C69746520666F726D61742033000400020250 {1 wal}}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_algorithm works properly
+do_test verify-pragma-cipher-hmac-algorithm-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_algorithm;
+    }
+} {HMAC_SHA512}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-hmac-algorithm-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+        PRAGMA cipher_hmac_algorithm;
+    }
+} {HMAC_SHA1}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-default-hmac-algorithm {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_hmac_algorithm;
+        PRAGMA cipher_default_hmac_algorithm = HMAC_SHA1;
+        PRAGMA cipher_default_hmac_algorithm;
+        PRAGMA cipher_default_hmac_algorithm = HMAC_SHA512;
+    }
+} {HMAC_SHA512 HMAC_SHA1}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_kdf_algorithm works properly
+do_test verify-pragma-cipher-kdf-algorithm-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_kdf_algorithm;
+    }
+} {PBKDF2_HMAC_SHA512}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-kdf-algorithm-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
+        PRAGMA cipher_kdf_algorithm;
+    }
+} {PBKDF2_HMAC_SHA1}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-default-kdf-algorithm {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_kdf_algorithm;
+        PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA1;
+        PRAGMA cipher_default_kdf_algorithm;
+        PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;
+    }
+} {PBKDF2_HMAC_SHA512 PBKDF2_HMAC_SHA1}
 db close
 file delete -force test.db
 

@@ -204,11 +204,26 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   return (rc == 1) ? SQLITE_OK : SQLITE_ERROR;
 }
 
-static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   unsigned int outlen;
   HMAC_CTX* hctx = HMAC_CTX_new();
   if(hctx == NULL || in == NULL) return SQLITE_ERROR;
-  HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL);
+
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL);
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha256(), NULL);
+      return EVP_MD_size(EVP_sha256());;
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha512(), NULL);
+      break;
+    default:
+      return SQLITE_ERROR;
+  }
+
   HMAC_Update(hctx, in, in_sz);
   if(in2 != NULL) HMAC_Update(hctx, in2, in2_sz);
   HMAC_Final(hctx, out, &outlen);
@@ -216,8 +231,20 @@ static int sqlcipher_openssl_hmac(void *ctx, unsigned char *hmac_key, int key_sz
   return SQLITE_OK; 
 }
 
-static int sqlcipher_openssl_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
-  PKCS5_PBKDF2_HMAC_SHA1((const char *)pass, pass_sz, salt, salt_sz, workfactor, key_sz, key);
+static int sqlcipher_openssl_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha1(), key_sz, key);
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha256(), key_sz, key);
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha512(), key_sz, key);
+      break;
+    default:
+      return SQLITE_ERROR;
+  }
   return SQLITE_OK; 
 }
 
@@ -263,8 +290,20 @@ static int sqlcipher_openssl_get_block_sz(void *ctx) {
   return EVP_CIPHER_block_size(((openssl_ctx *)ctx)->evp_cipher);
 }
 
-static int sqlcipher_openssl_get_hmac_sz(void *ctx) {
-  return EVP_MD_size(EVP_sha1());
+static int sqlcipher_openssl_get_hmac_sz(void *ctx, int algorithm) {
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      return EVP_MD_size(EVP_sha1());
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      return EVP_MD_size(EVP_sha256());
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      return EVP_MD_size(EVP_sha512());
+      break;
+    default:
+      return 0;
+  }
 }
 
 static int sqlcipher_openssl_ctx_copy(void *target_ctx, void *source_ctx) {

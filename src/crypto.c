@@ -35,6 +35,7 @@
 #include "sqliteInt.h"
 #include "btreeInt.h"
 #include "crypto.h"
+#include "sqlcipher.h"
 
 static const char* codec_get_cipher_version() {
   return CIPHER_VERSION;
@@ -326,6 +327,100 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
           cipher_bin2hex(sqlcipher_codec_ctx_get_kdf_salt(ctx), FILE_HEADER_SZ, salt);
           codec_vdbe_return_static_string(pParse, "cipher_salt", salt);
           sqlite3_free(salt);
+      }
+    }
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_hmac_algorithm")==0 ){
+    if(ctx) {
+      if(zRight) {
+        int rc = SQLITE_ERROR;
+        if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA1_LABEL) == 0) {
+          rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA1);
+        } else if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA256_LABEL) == 0) {
+          rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA256);
+        } else if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA512_LABEL) == 0) {
+          rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA512);
+        }
+        if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+        rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+        if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+      } else {
+        int algorithm = sqlcipher_codec_ctx_get_hmac_algorithm(ctx);
+        if(algorithm == SQLCIPHER_HMAC_SHA1) {
+          codec_vdbe_return_static_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SHA1_LABEL);
+        } else if(algorithm == SQLCIPHER_HMAC_SHA256) {
+          codec_vdbe_return_static_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SHA256_LABEL);
+        } else if(algorithm == SQLCIPHER_HMAC_SHA512) {
+          codec_vdbe_return_static_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SHA512_LABEL);
+        }
+      }
+    }
+  }else 
+  if( sqlite3StrICmp(zLeft,"cipher_default_hmac_algorithm")==0 ){
+    if(zRight) {
+      int rc = SQLITE_ERROR;
+      if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA1_LABEL) == 0) {
+        rc = sqlcipher_set_default_hmac_algorithm(SQLCIPHER_HMAC_SHA1);
+      } else if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA256_LABEL) == 0) {
+        rc = sqlcipher_set_default_hmac_algorithm(SQLCIPHER_HMAC_SHA256);
+      } else if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA512_LABEL) == 0) {
+        rc = sqlcipher_set_default_hmac_algorithm(SQLCIPHER_HMAC_SHA512);
+      }
+      if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+    } else {
+      int algorithm = sqlcipher_get_default_hmac_algorithm();
+      if(algorithm == SQLCIPHER_HMAC_SHA1) {
+        codec_vdbe_return_static_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SHA1_LABEL);
+      } else if(algorithm == SQLCIPHER_HMAC_SHA256) {
+        codec_vdbe_return_static_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SHA256_LABEL);
+      } else if(algorithm == SQLCIPHER_HMAC_SHA512) {
+        codec_vdbe_return_static_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SHA512_LABEL);
+      }
+    }
+  }else 
+  if( sqlite3StrICmp(zLeft,"cipher_kdf_algorithm")==0 ){
+    if(ctx) {
+      if(zRight) {
+        int rc = SQLITE_ERROR;
+        if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA1_LABEL) == 0) {
+          rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA1);
+        } else if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL) == 0) {
+          rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA256);
+        } else if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL) == 0) {
+          rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA512);
+        }
+        if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+      } else {
+        int algorithm = sqlcipher_codec_ctx_get_kdf_algorithm(ctx);
+        if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA1) {
+          codec_vdbe_return_static_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA1_LABEL);
+        } else if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA256) {
+          codec_vdbe_return_static_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL);
+        } else if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
+          codec_vdbe_return_static_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
+        }
+      }
+    }
+  }else 
+  if( sqlite3StrICmp(zLeft,"cipher_default_kdf_algorithm")==0 ){
+    if(zRight) {
+      int rc = SQLITE_ERROR;
+      if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA1_LABEL) == 0) {
+        rc = sqlcipher_set_default_kdf_algorithm(SQLCIPHER_PBKDF2_HMAC_SHA1);
+      } else if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL) == 0) {
+        rc = sqlcipher_set_default_kdf_algorithm(SQLCIPHER_PBKDF2_HMAC_SHA256);
+      } else if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL) == 0) {
+        rc = sqlcipher_set_default_kdf_algorithm(SQLCIPHER_PBKDF2_HMAC_SHA512);
+      }
+      if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+    } else {
+      int algorithm = sqlcipher_get_default_kdf_algorithm();
+      if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA1) {
+        codec_vdbe_return_static_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA1_LABEL);
+      } else if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA256) {
+        codec_vdbe_return_static_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL);
+      } else if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
+        codec_vdbe_return_static_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
       }
     }
   }else {

@@ -68,6 +68,7 @@ typedef struct {
   char *keyspec;
   sqlcipher_provider *provider;
   void *provider_ctx;
+  codec_ctx *codec;
 } cipher_ctx;
 
 static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
@@ -75,6 +76,8 @@ static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static int default_kdf_iter = PBKDF2_ITER;
 static int default_page_size = 4096;
 static int default_plaintext_header_sz = 0;
+static int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
+static int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
 static unsigned int sqlcipher_activate_count = 0;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
@@ -83,6 +86,8 @@ struct codec_ctx {
   int kdf_salt_sz;
   int page_sz;
   int plaintext_header_sz;
+  int hmac_algorithm;
+  int kdf_algorithm;
   unsigned char *kdf_salt;
   unsigned char *hmac_kdf_salt;
   unsigned char *buffer;
@@ -571,6 +576,29 @@ void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
   *nKey = ctx->read_ctx->pass_sz;
 }
 
+
+static int sqlcipher_codec_ctx_reserve_setup(codec_ctx *ctx) {
+  int base_reserve = CIPHER_MAX_IV_SZ; /* base reserve size will be IV only */ 
+  int reserve = base_reserve;
+
+  ctx->write_ctx->hmac_sz = ctx->read_ctx->hmac_sz = ctx->read_ctx->provider->get_hmac_sz(ctx->read_ctx->provider_ctx, ctx->hmac_algorithm); 
+
+  if(sqlcipher_codec_ctx_get_use_hmac(ctx, 0))
+    reserve += ctx->read_ctx->hmac_sz; /* if reserve will include hmac, update that size */
+
+  /* calculate the amount of reserve needed in even increments of the cipher block size */
+  reserve = ((reserve % ctx->read_ctx->block_sz) == 0) ? reserve :
+               ((reserve / ctx->read_ctx->block_sz) + 1) * ctx->read_ctx->block_sz;  
+
+  CODEC_TRACE("sqlcipher_codec_ctx_reserve_setup: base_reserve=%d block_sz=%d md_size=%d reserve=%d\n", 
+                base_reserve, ctx->read_ctx->block_sz, ctx->read_ctx->hmac_sz, reserve); 
+
+  ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
+
+  return SQLITE_OK;
+}
+
+
 /**
   * Set the passphrase for the cipher_ctx
   * 
@@ -619,8 +647,9 @@ int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name, int 
   c_ctx->key_sz = c_ctx->provider->get_key_sz(c_ctx->provider_ctx);
   c_ctx->iv_sz = c_ctx->provider->get_iv_sz(c_ctx->provider_ctx);
   c_ctx->block_sz = c_ctx->provider->get_block_sz(c_ctx->provider_ctx);
-  c_ctx->hmac_sz = c_ctx->provider->get_hmac_sz(c_ctx->provider_ctx);
   c_ctx->derive_key = 1;
+
+  sqlcipher_codec_ctx_reserve_setup(ctx);
 
   if(for_ctx == 2)
     if((rc = sqlcipher_cipher_ctx_copy( for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK)
@@ -701,28 +730,13 @@ unsigned char sqlcipher_get_hmac_salt_mask() {
 
 /* set the codec flag for whether this individual database should be using hmac */
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
-  int reserve = CIPHER_MAX_IV_SZ; /* base reserve size will be IV only */ 
-
-  if(use) reserve += ctx->read_ctx->hmac_sz; /* if reserve will include hmac, update that size */
-
-  /* calculate the amount of reserve needed in even increments of the cipher block size */
-
-  reserve = ((reserve % ctx->read_ctx->block_sz) == 0) ? reserve :
-               ((reserve / ctx->read_ctx->block_sz) + 1) * ctx->read_ctx->block_sz;  
-
-  CODEC_TRACE("sqlcipher_codec_ctx_set_use_hmac: use=%d block_sz=%d md_size=%d reserve=%d\n", 
-                use, ctx->read_ctx->block_sz, ctx->read_ctx->hmac_sz, reserve); 
-
-  
   if(use) {
     sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HMAC);
   } else {
     sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_HMAC);
   } 
-  
-  ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
 
-  return SQLITE_OK;
+  return sqlcipher_codec_ctx_reserve_setup(ctx);
 }
 
 int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx) {
@@ -754,6 +768,44 @@ int sqlcipher_get_default_plaintext_header_size() {
 
 int sqlcipher_codec_ctx_get_plaintext_header_size(codec_ctx *ctx) {
   return ctx->plaintext_header_sz;
+}
+
+/* manipulate HMAC algorithm */
+int sqlcipher_set_default_hmac_algorithm(int algorithm) {
+  default_hmac_algorithm = algorithm;
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_set_hmac_algorithm(codec_ctx *ctx, int algorithm) {
+  ctx->hmac_algorithm = algorithm;
+  return sqlcipher_codec_ctx_reserve_setup(ctx);
+} 
+
+int sqlcipher_get_default_hmac_algorithm() {
+  return default_hmac_algorithm;
+}
+
+int sqlcipher_codec_ctx_get_hmac_algorithm(codec_ctx *ctx) {
+  return ctx->hmac_algorithm;
+}
+
+/* manipulate KDF algorithm */
+int sqlcipher_set_default_kdf_algorithm(int algorithm) {
+  default_kdf_algorithm = algorithm;
+  return SQLITE_OK;
+}
+
+int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) {
+  ctx->kdf_algorithm = algorithm;
+  return SQLITE_OK;
+} 
+
+int sqlcipher_get_default_kdf_algorithm() {
+  return default_kdf_algorithm;
+}
+
+int sqlcipher_codec_ctx_get_kdf_algorithm(codec_ctx *ctx) {
+  return ctx->kdf_algorithm;
 }
 
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag) {
@@ -875,9 +927,11 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   CODEC_TRACE("sqlcipher_codec_ctx_init: initializing read_ctx\n");
   if((rc = sqlcipher_cipher_ctx_init(&ctx->read_ctx)) != SQLITE_OK) return rc; 
+  ctx->read_ctx->codec = ctx;
 
   CODEC_TRACE("sqlcipher_codec_ctx_init: initializing write_ctx\n");
   if((rc = sqlcipher_cipher_ctx_init(&ctx->write_ctx)) != SQLITE_OK) return rc; 
+  ctx->write_ctx->codec = ctx;
 
   CODEC_TRACE("sqlcipher_codec_ctx_init: reading file header\n");
   if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, FILE_HEADER_SZ, 0) != SQLITE_OK) {
@@ -895,6 +949,12 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
 
   CODEC_TRACE("sqlcipher_codec_ctx_init: setting pass key\n");
   if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) return rc;
+
+  CODEC_TRACE("sqlcipher_codec_ctx_init: calling sqlcipher_codec_ctx_set_hmac_algorithm with %d\n", default_hmac_algorithm);
+  if((rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, default_hmac_algorithm)) != SQLITE_OK) return rc;
+
+  CODEC_TRACE("sqlcipher_codec_ctx_init: calling sqlcipher_codec_ctx_set_kdf_algorithm with %d\n", default_kdf_algorithm);
+  if((rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, default_kdf_algorithm)) != SQLITE_OK) return rc;
 
   /* Note that use_hmac is a special case that requires recalculation of page size
      so we call set_use_hmac to perform setup */
@@ -955,7 +1015,7 @@ static int sqlcipher_page_hmac(cipher_ctx *ctx, Pgno pgno, unsigned char *in, in
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
   ctx->provider->hmac(
-    ctx->provider_ctx, ctx->hmac_key,
+    ctx->provider_ctx, ctx->codec->hmac_algorithm, ctx->hmac_key,
     ctx->key_sz, in,
     in_sz, (unsigned char*) &pgno_raw,
     sizeof(pgno), out);
@@ -1084,7 +1144,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       cipher_hex2bin(z + (c_ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
     } else { 
       CODEC_TRACE("cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter); 
-      c_ctx->provider->kdf(c_ctx->provider_ctx, c_ctx->pass, c_ctx->pass_sz, 
+      c_ctx->provider->kdf(c_ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz, 
                     ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter,
                     c_ctx->key_sz, c_ctx->key);
     }
@@ -1112,7 +1172,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
         c_ctx->fast_kdf_iter); 
 
       
-      c_ctx->provider->kdf(c_ctx->provider_ctx, c_ctx->key, c_ctx->key_sz, 
+      c_ctx->provider->kdf(c_ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, c_ctx->key_sz, 
                     ctx->hmac_kdf_salt, ctx->kdf_salt_sz, c_ctx->fast_kdf_iter,
                     c_ctx->key_sz, c_ctx->hmac_key); 
     }
@@ -1209,9 +1269,9 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
   char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
-  char *v1_pragmas = "PRAGMA cipher_use_hmac = OFF; PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024;";
-  char *v2_pragmas = "PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024;";
-  char *v3_pragmas = "PRAGMA kdf_iter = 64000; PRAGMA cipher_page_size = 1024;";
+  char *v1_pragmas = "PRAGMA cipher_use_hmac = OFF; PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;"; 
+  char *v2_pragmas = "PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
+  char *v3_pragmas = "PRAGMA kdf_iter = 64000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
   char *set_user_version, *key;
   Btree *pDest = NULL, *pSrc = NULL;
   static const unsigned char aCopy[] = {
@@ -1457,7 +1517,7 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
 int sqlcipher_codec_hmac(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
                          unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
                          unsigned char *out) {
-  ctx->read_ctx->provider->hmac(ctx->read_ctx, (unsigned char *)hmac_key, key_sz, in, in_sz, in2, in2_sz, out);
+  ctx->read_ctx->provider->hmac(ctx->read_ctx, SQLCIPHER_HMAC_SHA1, (unsigned char *)hmac_key, key_sz, in, in_sz, in2, in2_sz, out);
   return SQLITE_OK;
 }
 

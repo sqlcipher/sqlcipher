@@ -64,18 +64,42 @@ static const char* sqlcipher_cc_get_provider_version(void *ctx) {
 #endif
 }
 
-static int sqlcipher_cc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_cc_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   CCHmacContext hmac_context;
   if(in == NULL) return SQLITE_ERROR;
-  CCHmacInit(&hmac_context, kCCHmacAlgSHA1, hmac_key, key_sz);
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      CCHmacInit(&hmac_context, kCCHmacAlgSHA1, hmac_key, key_sz);
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      CCHmacInit(&hmac_context, kCCHmacAlgSHA256, hmac_key, key_sz);
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      CCHmacInit(&hmac_context, kCCHmacAlgSHA512, hmac_key, key_sz);
+      break;
+    default:
+      return SQLITE_ERROR;
+  }
   CCHmacUpdate(&hmac_context, in, in_sz);
   if(in2 != NULL) CCHmacUpdate(&hmac_context, in2, in2_sz);
   CCHmacFinal(&hmac_context, out);
   return SQLITE_OK; 
 }
 
-static int sqlcipher_cc_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
-  CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA1, workfactor, key, key_sz);
+static int sqlcipher_cc_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA1, workfactor, key, key_sz);
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA256, workfactor, key, key_sz);
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA512, workfactor, key, key_sz);
+      break;
+    default:
+      return SQLITE_ERROR;
+  }
   return SQLITE_OK; 
 }
 
@@ -116,8 +140,20 @@ static int sqlcipher_cc_get_block_sz(void *ctx) {
   return kCCBlockSizeAES128;
 }
 
-static int sqlcipher_cc_get_hmac_sz(void *ctx) {
-  return CC_SHA1_DIGEST_LENGTH;
+static int sqlcipher_cc_get_hmac_sz(void *ctx, int algorithm) {
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      return CC_SHA1_DIGEST_LENGTH;
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      return CC_SHA256_DIGEST_LENGTH;
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      return CC_SHA512_DIGEST_LENGTH;
+      break;
+    default:
+      return 0;
+  }
 }
 
 static int sqlcipher_cc_ctx_copy(void *target_ctx, void *source_ctx) {
