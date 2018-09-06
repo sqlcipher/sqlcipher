@@ -536,7 +536,7 @@ void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
   *nKey = ctx->read_ctx->pass_sz;
 }
 
-static int sqlcipher_set_derive_key(codec_ctx *ctx, int derive) {
+static void sqlcipher_set_derive_key(codec_ctx *ctx, int derive) {
   if(ctx->read_ctx != NULL) ctx->read_ctx->derive_key = 1;
   if(ctx->write_ctx != NULL) ctx->write_ctx->derive_key = 1;
 }
