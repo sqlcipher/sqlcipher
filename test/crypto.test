@@ -2270,7 +2270,7 @@ do_test attach_database_with_non_default_page_size {
         PRAGMA key = 'test';
         ATTACH DATABASE 'test2.db' as test2 KEY 'test';
         SELECT count(*) FROM test2.t1;
-        PRAGMA cipher_default_page_size = 1024;
+        PRAGMA cipher_default_page_size = 4096;
     }
 } {2}
 db close
@@ -2457,7 +2457,7 @@ do_test test-invalid-plaintext-header-sizes {
   sqlite_orig db test.db
   lappend rc [catchsql "
     PRAGMA key = $hexkeyspec;
-    PRAGMA cipher_plaintext_header_size = 1024; 
+    PRAGMA cipher_plaintext_header_size = 4096;
     CREATE TABLE t1(a,b);
   "]
   db close
@@ -2510,7 +2510,7 @@ do_test test-plaintext-header-journal-delete-mode-readable {
     INSERT INTO t1(a,b) VALUES (1,2);
   }
   db close
-  string equal [hexio_read test.db 16 5] "0400010150" 
+  string equal [hexio_read test.db 16 5] "1000010150"
 } {1}
 file delete -force test.db
 
@@ -2529,7 +2529,7 @@ do_test test-plaintext-header-journal-wal-mode-readable {
     INSERT INTO t1(a,b) VALUES (1,2);
   }
   db close
-  string equal [hexio_read test.db 16 5] "0400020250" 
+  string equal [hexio_read test.db 16 5] "1000020250"
 } {1}
 file delete -force test.db
 
@@ -2635,7 +2635,7 @@ do_test test-plaintext-header-migrate-journal-delete {
     SELECT count(*) FROM t1;
   "]
 
-} {01010101010101010101010101010101 53514C69746520666F726D61742033000400010150 1}
+} {01010101010101010101010101010101 53514C69746520666F726D61742033001000010150 1}
 db close
 file delete -force test.db
 
@@ -2675,7 +2675,7 @@ do_test test-plaintext-header-migrate-journal-wal {
     PRAGMA journal_mode;
   "]
 
-} {01010101010101010101010101010101 {1 wal 0 1 1} 53514C69746520666F726D61742033000400020250 {1 wal}}
+} {01010101010101010101010101010101 {1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {1 wal}}
 db close
 file delete -force test.db
 
@@ -2718,7 +2718,7 @@ do_test test-plaintext-header-migrate-journal-wal-string-key-random-salt {
   "]
 
 
-} {{1 wal 0 1 1} 53514C69746520666F726D61742033000400020250 {1 wal}}
+} {{1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {1 wal}}
 db close
 file delete -force test.db
 
