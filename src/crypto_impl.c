@@ -1378,7 +1378,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       pDb->pBt = 0;
       pDb->pSchema = 0;
       sqlite3ResetAllSchemasOfConnection(db);
-      remove(migrated_db_filename);
+      db->pVfs->xDelete(db->pVfs, migrated_db_filename, 0);
       sqlite3_free(migrated_db_filename);
     } else {
       CODEC_TRACE("*** migration failure** error code: %d\n", rc);
