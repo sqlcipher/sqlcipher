@@ -163,7 +163,9 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     }
   }else
   if( sqlite3StrICmp(zLeft, "rekey_cipher")==0 && zRight ){
-    if(ctx) sqlcipher_codec_ctx_set_cipher(ctx, zRight, 1); // change write cipher only 
+    const char* message = "PRAGMA rekey_cipher is no longer supported.";
+    codec_vdbe_return_static_string(pParse, "rekey_cipher", message);
+    sqlite3_log(SQLITE_WARNING, message);
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_kdf_iter")==0 ){
     if( zRight ) {
@@ -177,9 +179,9 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "kdf_iter")==0 ){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
+        sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight)); // change of RW PBKDF2 iteration 
       } else {
-        char *kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_kdf_iter(ctx, 2));
+        char *kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_kdf_iter(ctx));
         codec_vdbe_return_static_string(pParse, "kdf_iter", kdf_iter);
         sqlite3_free(kdf_iter);
       }
@@ -188,16 +190,18 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight), 2); // change of RW PBKDF2 iteration 
+        sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight)); // change of RW PBKDF2 iteration 
       } else {
-        char *fast_kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_fast_kdf_iter(ctx, 2));
+        char *fast_kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_fast_kdf_iter(ctx));
         codec_vdbe_return_static_string(pParse, "fast_kdf_iter", fast_kdf_iter);
         sqlite3_free(fast_kdf_iter);
       }
     }
   }else
   if( sqlite3StrICmp(zLeft, "rekey_kdf_iter")==0 && zRight ){
-    if(ctx) sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight), 1); // write iterations only
+    const char* message = "PRAGMA rekey_kdf_iter is no longer supported.";
+    codec_vdbe_return_static_string(pParse, "rekey_kdf_iter", message);
+    sqlite3_log(SQLITE_WARNING, message);
   }else
   if( sqlite3StrICmp(zLeft,"cipher_page_size")==0 ){
     if(ctx) {

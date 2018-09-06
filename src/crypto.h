@@ -235,17 +235,17 @@ int sqlcipher_get_default_pagesize();
 
 void sqlcipher_set_default_kdf_iter(int iter);
 int sqlcipher_get_default_kdf_iter();
-int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int, int);
-int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx, int);
+int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int);
+int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx);
 
 int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int sz);
 void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
 
-int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *, int, int);
-int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *, int);
+int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *, int);
+int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *);
 
-int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *, int);
-const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx, int for_ctx);
+int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *);
+const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx);
 
 void* sqlcipher_codec_ctx_get_data(codec_ctx *);
 
@@ -256,11 +256,11 @@ void sqlcipher_set_hmac_salt_mask(unsigned char mask);
 unsigned char sqlcipher_get_hmac_salt_mask();
 
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use);
-int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx, int for_ctx);
+int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx);
 
 int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag);
 int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag);
-int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx);
+int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag);
 
 const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx);

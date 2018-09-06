@@ -600,93 +600,14 @@ file delete -force test.db
 # test alterations of KDF iterations and ciphers
 # rekey then add
 setup test.db "'testkey'"
-do_test non-standard-kdf-and-ciphers {
+do_test verify-errors-for-rekey-kdf-and-cipher-changes {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA rekey_kdf_iter = 1000;
-    PRAGMA rekey_cipher = 'aes-256-cfb';
-    PRAGMA rekey = 'testkey2';
-    INSERT INTO t1 VALUES (1,2);
+    PRAGMA rekey_cipher = 'aes-256-ecb';
   } 
-  db close
-
-  sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey2';
-    PRAGMA kdf_iter = 1000;
-    PRAGMA cipher = 'aes-256-cfb';
-    SELECT count(*) FROM t1;
-  } 
-
-} {{PRAGMA cipher command is deprecated, please remove from usage.} 2}
-db close
-file delete -force test.db
-
-# test alterations of CIPHER from CBC Mode requiring
-# IV to ECB mode that does not
-setup test.db "'testkey'"
-do_test rekey-from-cbc-to-ecb-no-iv {
-  sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,$r);" 
-  }
-  
-  execsql {
-    COMMIT;
-    PRAGMA rekey_kdf_iter = 1000;
-    PRAGMA rekey_cipher = 'aes-128-ecb';
-    PRAGMA rekey = 'testkey';
-  } 
-  db close
-
-  sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
-    PRAGMA kdf_iter = 1000;
-    PRAGMA cipher = 'aes-128-ecb';
-    SELECT count(*) FROM t1;
-  } 
-
-} {{PRAGMA cipher command is deprecated, please remove from usage.} 1001}
-db close
-file delete -force test.db
-
-# test alterations of CIPHER from ECB Mode (no IV) to CBC Mode
-do_test rekey-from-ecb-to-cbc-with-iv {
-  sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
-    PRAGMA cipher = 'aes-256-ecb';
-    CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,$r);" 
-  }
-  
-  execsql {
-    COMMIT;
-    PRAGMA rekey_cipher = 'aes-256-cbc';
-    PRAGMA rekey = 'testkey';
-  } 
-  db close
-
-  sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
-    SELECT count(*) FROM t1;
-  } 
-
-} {1000}
+} {{PRAGMA rekey_kdf_iter is no longer supported.} {PRAGMA rekey_cipher is no longer supported.}}
 db close
 file delete -force test.db
 
@@ -1121,7 +1042,7 @@ do_test export-database {
     CREATE VIEW v1 AS
       SELECT c FROM t1;
 
-    CREATE VIRTUAL TABLE fts USING fts3(a,b); 
+    CREATE VIRTUAL TABLE fts USING fts5(a,b); 
 
     BEGIN;
     -- start with one known value
