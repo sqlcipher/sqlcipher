@@ -31,8 +31,6 @@
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 
-#include "sqliteInt.h"
-#include "btreeInt.h"
 #include "sqlcipher.h"
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
@@ -98,7 +96,7 @@ struct codec_ctx {
   unsigned int need_kdf_salt;
 };
 
-sqlite3_mem_methods default_mem_methods;
+static sqlite3_mem_methods default_mem_methods;
 
 static int sqlcipher_mem_init(void *pAppData) {
   return default_mem_methods.xInit(pAppData);
@@ -430,6 +428,27 @@ static void sqlcipher_cipher_ctx_free(cipher_ctx **iCtx) {
   sqlcipher_free(ctx, sizeof(cipher_ctx)); 
 }
 
+static int sqlcipher_codec_ctx_reserve_setup(codec_ctx *ctx) {
+  int base_reserve = CIPHER_MAX_IV_SZ; /* base reserve size will be IV only */ 
+  int reserve = base_reserve;
+
+  ctx->write_ctx->hmac_sz = ctx->read_ctx->hmac_sz = ctx->read_ctx->provider->get_hmac_sz(ctx->read_ctx->provider_ctx, ctx->hmac_algorithm); 
+
+  if(sqlcipher_codec_ctx_get_use_hmac(ctx, 0))
+    reserve += ctx->read_ctx->hmac_sz; /* if reserve will include hmac, update that size */
+
+  /* calculate the amount of reserve needed in even increments of the cipher block size */
+  reserve = ((reserve % ctx->read_ctx->block_sz) == 0) ? reserve :
+               ((reserve / ctx->read_ctx->block_sz) + 1) * ctx->read_ctx->block_sz;  
+
+  CODEC_TRACE("sqlcipher_codec_ctx_reserve_setup: base_reserve=%d block_sz=%d md_size=%d reserve=%d\n", 
+                base_reserve, ctx->read_ctx->block_sz, ctx->read_ctx->hmac_sz, reserve); 
+
+  ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
+
+  return SQLITE_OK;
+}
+
 /**
   * Compare one cipher_ctx to another.
   *
@@ -576,29 +595,6 @@ void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
   *nKey = ctx->read_ctx->pass_sz;
 }
 
-
-static int sqlcipher_codec_ctx_reserve_setup(codec_ctx *ctx) {
-  int base_reserve = CIPHER_MAX_IV_SZ; /* base reserve size will be IV only */ 
-  int reserve = base_reserve;
-
-  ctx->write_ctx->hmac_sz = ctx->read_ctx->hmac_sz = ctx->read_ctx->provider->get_hmac_sz(ctx->read_ctx->provider_ctx, ctx->hmac_algorithm); 
-
-  if(sqlcipher_codec_ctx_get_use_hmac(ctx, 0))
-    reserve += ctx->read_ctx->hmac_sz; /* if reserve will include hmac, update that size */
-
-  /* calculate the amount of reserve needed in even increments of the cipher block size */
-  reserve = ((reserve % ctx->read_ctx->block_sz) == 0) ? reserve :
-               ((reserve / ctx->read_ctx->block_sz) + 1) * ctx->read_ctx->block_sz;  
-
-  CODEC_TRACE("sqlcipher_codec_ctx_reserve_setup: base_reserve=%d block_sz=%d md_size=%d reserve=%d\n", 
-                base_reserve, ctx->read_ctx->block_sz, ctx->read_ctx->hmac_sz, reserve); 
-
-  ctx->write_ctx->reserve_sz = ctx->read_ctx->reserve_sz = reserve;
-
-  return SQLITE_OK;
-}
-
-
 /**
   * Set the passphrase for the cipher_ctx
   * 
@@ -606,7 +602,6 @@ static int sqlcipher_codec_ctx_reserve_setup(codec_ctx *ctx) {
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
 static int sqlcipher_cipher_ctx_set_pass(cipher_ctx *ctx, const void *zKey, int nKey) {
-
   /* free, zero existing pointers and size */
   sqlcipher_free(ctx->pass, ctx->pass_sz);
   ctx->pass = NULL;
@@ -1258,8 +1253,6 @@ cleanup:
   return rc;
 }
 
-static int pager_truncate(Pager *pPager, Pgno nPage);
-
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   u32 meta;
   int i, password_sz, key_sz, saved_flags, saved_nChange, saved_nTotalChange, nRes, user_version = 0, upgrade_from = 0, rc = 0;
@@ -1386,7 +1379,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
       if( rc!=SQLITE_OK ) goto handle_error;
 
-      pager_truncate(pDest->pBt->pPager, 0);
+      sqlite3pager_truncate(pDest->pBt->pPager, 0);
 
       rc = sqlite3BtreeBeginTrans(pSrc, 2);
       if( rc!=SQLITE_OK ) goto handle_error;

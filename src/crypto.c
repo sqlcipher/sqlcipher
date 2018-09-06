@@ -32,10 +32,8 @@
 #ifdef SQLITE_HAS_CODEC
 
 #include <assert.h>
-#include "sqliteInt.h"
-#include "btreeInt.h"
-#include "crypto.h"
 #include "sqlcipher.h"
+#include "crypto.h"
 
 static const char* codec_get_cipher_version() {
   return CIPHER_VERSION;
@@ -437,7 +435,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
  * decrypt mode - expected to return a pointer to pData, with
  *   the data decrypted in the input buffer
  */
-void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
+static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   codec_ctx *ctx = (codec_ctx *) iCtx;
   int offset = 0, rc = 0;
   int page_sz = sqlcipher_codec_ctx_get_pagesize(ctx); 
@@ -490,7 +488,7 @@ void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   }
 }
 
-void sqlite3FreeCodecArg(void *pCodecArg) {
+static void sqlite3FreeCodecArg(void *pCodecArg) {
   codec_ctx *ctx = (codec_ctx *) pCodecArg;
   if(pCodecArg == NULL) return;
   sqlcipher_codec_ctx_free(&ctx); // wipe and free allocated memory for the context 
