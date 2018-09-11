@@ -54,10 +54,6 @@
 #endif
 #endif
 
-#ifndef CIPHER
-#define CIPHER "aes-256-cbc"
-#endif
-
 #define CIPHER_DECRYPT 0
 #define CIPHER_ENCRYPT 1
 
@@ -244,7 +240,6 @@ void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
 int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *);
 
-int sqlcipher_codec_ctx_set_cipher(codec_ctx *, const char *);
 const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx);
 
 void* sqlcipher_codec_ctx_get_data(codec_ctx *);

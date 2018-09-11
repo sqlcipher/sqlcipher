@@ -87,7 +87,6 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
 } 
 
 int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLeft, const char *zRight) {
-  char *pragma_cipher_deprecated_msg = "PRAGMA cipher command is deprecated, please remove from usage.";
   struct Db *pDb = &db->aDb[iDb];
   codec_ctx *ctx = NULL;
   int rc;
@@ -152,10 +151,9 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "cipher")==0 ){
     if(ctx) {
       if( zRight ) {
-        rc = sqlcipher_codec_ctx_set_cipher(ctx, zRight); // change cipher for both
-        codec_vdbe_return_static_string(pParse, "cipher", pragma_cipher_deprecated_msg);
-        sqlite3_log(SQLITE_WARNING, pragma_cipher_deprecated_msg);
-        return rc;
+        const char* message = "PRAGMA cipher is no longer supported.";
+        codec_vdbe_return_static_string(pParse, "cipher", message);
+        sqlite3_log(SQLITE_WARNING, message);
       }else {
         codec_vdbe_return_static_string(pParse, "cipher",
           sqlcipher_codec_ctx_get_cipher(ctx));

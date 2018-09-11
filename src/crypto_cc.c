@@ -120,10 +120,6 @@ static int sqlcipher_cc_cipher(void *ctx, int mode, unsigned char *key, int key_
   return SQLITE_OK; 
 }
 
-static int sqlcipher_cc_set_cipher(void *ctx, const char *cipher_name) {
-  return SQLITE_OK;
-}
-
 static const char* sqlcipher_cc_get_cipher(void *ctx) {
   return "aes-256-cbc";
 }
@@ -182,7 +178,6 @@ int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->hmac = sqlcipher_cc_hmac;
   p->kdf = sqlcipher_cc_kdf;
   p->cipher = sqlcipher_cc_cipher;
-  p->set_cipher = sqlcipher_cc_set_cipher;
   p->get_cipher = sqlcipher_cc_get_cipher;
   p->get_key_sz = sqlcipher_cc_get_key_sz;
   p->get_iv_sz = sqlcipher_cc_get_iv_sz;

@@ -423,7 +423,7 @@ static void sqlcipher_cipher_ctx_free(codec_ctx* ctx, cipher_ctx **iCtx) {
 }
 
 static int sqlcipher_codec_ctx_reserve_setup(codec_ctx *ctx) {
-  int base_reserve = CIPHER_MAX_IV_SZ; /* base reserve size will be IV only */ 
+  int base_reserve = ctx->iv_sz;; /* base reserve size will be IV only */ 
   int reserve = base_reserve;
 
   ctx->hmac_sz = ctx->provider->get_hmac_sz(ctx->provider_ctx, ctx->hmac_algorithm); 
@@ -592,24 +592,6 @@ int sqlcipher_codec_ctx_set_pass(codec_ctx *ctx, const void *zKey, int nKey, int
 
   return SQLITE_OK;
 } 
-
-int sqlcipher_codec_ctx_set_cipher(codec_ctx *ctx, const char *cipher_name) {
-  int rc;
-
-  rc = ctx->provider->set_cipher(ctx->provider_ctx, cipher_name);
-  if(rc != SQLITE_OK){
-    sqlcipher_codec_ctx_set_error(ctx, rc);
-    return rc;
-  }
-  ctx->key_sz = ctx->provider->get_key_sz(ctx->provider_ctx);
-  ctx->iv_sz = ctx->provider->get_iv_sz(ctx->provider_ctx);
-  ctx->block_sz = ctx->provider->get_block_sz(ctx->provider_ctx);
-
-  sqlcipher_set_derive_key(ctx, 1);
-
-  sqlcipher_codec_ctx_reserve_setup(ctx);
-  return SQLITE_OK;
-}
 
 const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx) {
   return ctx->provider->get_cipher(ctx->provider_ctx);
@@ -884,9 +866,9 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   CODEC_TRACE("sqlcipher_codec_ctx_init: calling provider ctx_init\n");
   if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) return rc;
 
-  /* setup the cipher to establish the key_sz, iv_sz, etc */
-  CODEC_TRACE("sqlcipher_codec_ctx_init: setting cipher\n");
-  if((rc = sqlcipher_codec_ctx_set_cipher(ctx, CIPHER)) != SQLITE_OK) return rc;
+  ctx->key_sz = ctx->provider->get_key_sz(ctx->provider_ctx);
+  ctx->iv_sz = ctx->provider->get_iv_sz(ctx->provider_ctx);
+  ctx->block_sz = ctx->provider->get_block_sz(ctx->provider_ctx);
 
   /* establic the size for a hex-formated key specification, containing the 
      raw encryption key and the salt used to generate it format. will be x'hexkey...hexsalt'

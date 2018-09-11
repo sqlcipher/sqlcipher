@@ -37,9 +37,11 @@
 
 #define FORTUNA_MAX_SZ 32
 static prng_state prng;
-static unsigned int ltc_init = 0;
-static unsigned int ltc_ref_count = 0;
+static volatile unsigned int ltc_init = 0;
+static volatile unsigned int ltc_ref_count = 0;
 static sqlite3_mutex* ltc_rand_mutex = NULL;
+
+#define LTC_CIPHER "rijndael"
 
 static int sqlcipher_ltc_add_random(void *ctx, void *buffer, int length) {
   int rc = 0;
@@ -206,14 +208,14 @@ static int sqlcipher_ltc_kdf(void *ctx, int algorithm, const unsigned char *pass
 }
 
 static const char* sqlcipher_ltc_get_cipher(void *ctx) {
-  return "rijndael";
+  return "aes-256-cbc";
 }
 
 static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
   int rc, cipher_idx;
   symmetric_CBC cbc;
 
-  if((cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx))) == -1) return SQLITE_ERROR;
+  if((cipher_idx = find_cipher(LTC_CIPHER)) == -1) return SQLITE_ERROR;
   if((rc = cbc_start(cipher_idx, iv, key, key_sz, 0, &cbc)) != CRYPT_OK) return SQLITE_ERROR;
   rc = mode == 1 ? cbc_encrypt(in, out, in_sz, &cbc) : cbc_decrypt(in, out, in_sz, &cbc);
   if(rc != CRYPT_OK) return SQLITE_ERROR;
@@ -221,22 +223,18 @@ static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_set_cipher(void *ctx, const char *cipher_name) {
-  return SQLITE_OK;
-}
-
 static int sqlcipher_ltc_get_key_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
+  int cipher_idx = find_cipher(LTC_CIPHER);
   return cipher_descriptor[cipher_idx].max_key_length;
 }
 
 static int sqlcipher_ltc_get_iv_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
+  int cipher_idx = find_cipher(LTC_CIPHER);
   return cipher_descriptor[cipher_idx].block_length;
 }
 
 static int sqlcipher_ltc_get_block_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
+  int cipher_idx = find_cipher(LTC_CIPHER);
   return cipher_descriptor[cipher_idx].block_length;
 }
 
@@ -291,7 +289,6 @@ int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->hmac = sqlcipher_ltc_hmac;
   p->kdf = sqlcipher_ltc_kdf;
   p->cipher = sqlcipher_ltc_cipher;
-  p->set_cipher = sqlcipher_ltc_set_cipher;
   p->get_cipher = sqlcipher_ltc_get_cipher;
   p->get_key_sz = sqlcipher_ltc_get_key_sz;
   p->get_iv_sz = sqlcipher_ltc_get_iv_sz;

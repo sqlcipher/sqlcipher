@@ -611,6 +611,19 @@ do_test verify-errors-for-rekey-kdf-and-cipher-changes {
 db close
 file delete -force test.db
 
+
+setup test.db "'testkey'"
+do_test verify-errors-for-cipher-change {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher = 'aes-256-ecb';
+  } 
+} {{PRAGMA cipher is no longer supported.}}
+db close
+file delete -force test.db
+
+
 # create an unencrypted database, attach a new encrypted volume
 # copy data between, verify the encypted database is good afterwards
 do_test unencrypted-attach {
@@ -981,7 +994,6 @@ do_test attached-database-pragmas {
     COMMIT;
     ATTACH DATABASE 'test2.db' AS db2 KEY 'testkey2'; 
     PRAGMA db2.cipher_page_size = 8192;
-    PRAGMA db2.cipher = 'aes-128-cbc';
     PRAGMA db2.kdf_iter = 1000;
     PRAGMA db2.cipher_use_hmac = OFF;
     CREATE TABLE db2.t1(a,b);
@@ -994,12 +1006,11 @@ do_test attached-database-pragmas {
   execsql {
     PRAGMA key = 'testkey2';
     PRAGMA cipher_page_size = 8192;
-    PRAGMA cipher = 'aes-128-cbc';
     PRAGMA kdf_iter = 1000;
     PRAGMA cipher_use_hmac = OFF;
     SELECT count(*) FROM t1;
   }
-} {{PRAGMA cipher command is deprecated, please remove from usage.} 1000}
+} {1000}
 db close
 file delete -force test.db
 file delete -force test2.db
@@ -1380,7 +1391,6 @@ do_test cipher-options-before-keys {
   execsql {
     PRAGMA kdf_iter = 1000;
     PRAGMA cipher_page_size = 8192;
-    PRAGMA cipher = 'aes-128-cbc';
     PRAGMA cipher_use_hmac = OFF;
     PRAGMA key = 'testkey';
     CREATE table t1(a,b);
@@ -1903,19 +1913,6 @@ if_built_with_openssl verify-pragma-cipher-default {
 db close
 file delete -force test.db
 
-# verify the pragma cipher
-# reports a change in value
-if_built_with_openssl verify-pragma-cipher-changed {
-    sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
-        PRAGMA cipher = 'AES-256-ECB';
-        PRAGMA cipher;
-    }
-} {{PRAGMA cipher command is deprecated, please remove from usage.} AES-256-ECB}
-db close
-file delete -force test.db
-
 # verify the pragma cipher_hmac_salt_mask reports default
 do_test verify-pragma-hmac-salt-mask-reports-default {
     sqlite_orig db test.db
@@ -2022,13 +2019,23 @@ do_test 2.0-beta-to-2.0-migration {
 db close
 file delete -force test.db
 
+if_built_with_openssl verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
 if_built_with_libtomcrypt verify-default-cipher {
     sqlite_orig db test.db
     execsql {
         PRAGMA key='test';
         PRAGMA cipher;
     }
-} {rijndael}
+} {aes-256-cbc}
 db close
 file delete -force test.db
 
@@ -2275,27 +2282,6 @@ do_test attach_database_with_non_default_page_size {
 } {2}
 db close
 file delete -force test.db test2.db
-
-if_built_with_openssl wont-write-database-with-invalid-cipher {
-    sqlite_orig db test.db
-    catchsql {
-        PRAGMA key = 'test';
-        PRAGMA cipher = 'foobar';
-        CREATE TABLE t1(a,b);
-    }
-} {1 {SQL logic error}}
-db close
-file delete -force test.db
-
-if_built_with_openssl wont-write-database-with-invalid-cipher-2 {
-    sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
-        PRAGMA cipher = 'foobar';
-    }
-} {{PRAGMA cipher command is deprecated, please remove from usage.}}
-db close
-file delete -force test.db
 
 do_test verify-cipher-export-with-trace-configured {
   sqlite_orig db plain.db

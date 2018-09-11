@@ -85,6 +85,9 @@ static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
   return SQLITE_OK;
 }
 
+#define OPENSSL_CIPHER "aes-256-cbc"
+
+
 /* activate and initialize sqlcipher. Most importantly, this will automatically
    intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
    this function may be called multiple times as new codecs are intiialized. 
@@ -99,7 +102,7 @@ static int sqlcipher_openssl_activate(void *ctx) {
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered static master mutex");
 
-  if(openssl_init_count == 0 && EVP_get_cipherbyname(CIPHER) != NULL) {
+  if(openssl_init_count == 0 && EVP_get_cipherbyname(OPENSSL_CIPHER) != NULL) {
     /* if openssl has not yet been initialized by this library, but 
        a call to get_cipherbyname works, then the openssl library
        has been initialized externally already. */
@@ -265,15 +268,6 @@ static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int
   return SQLITE_OK; 
 }
 
-static int sqlcipher_openssl_set_cipher(void *ctx, const char *cipher_name) {
-  openssl_ctx *o_ctx = (openssl_ctx *)ctx;
-  EVP_CIPHER* cipher = (EVP_CIPHER *) EVP_get_cipherbyname(cipher_name);
-  if(cipher != NULL) {
-    o_ctx->evp_cipher = cipher;
-  }
-  return cipher != NULL ? SQLITE_OK : SQLITE_ERROR;
-}
-
 static const char* sqlcipher_openssl_get_cipher(void *ctx) {
   return EVP_CIPHER_name(((openssl_ctx *)ctx)->evp_cipher);
 }
@@ -316,10 +310,15 @@ static int sqlcipher_openssl_ctx_cmp(void *c1, void *c2) {
 }
 
 static int sqlcipher_openssl_ctx_init(void **ctx) {
+  openssl_ctx *o_ctx;
+
   *ctx = sqlcipher_malloc(sizeof(openssl_ctx));
   if(*ctx == NULL) return SQLITE_NOMEM;
   sqlcipher_openssl_activate(*ctx);
-  return SQLITE_OK;
+  
+  o_ctx = (openssl_ctx *)*ctx;
+  o_ctx->evp_cipher = (EVP_CIPHER *) EVP_get_cipherbyname(OPENSSL_CIPHER);
+  return o_ctx->evp_cipher != NULL ? SQLITE_OK : SQLITE_ERROR;
 }
 
 static int sqlcipher_openssl_ctx_free(void **ctx) {
@@ -344,7 +343,6 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->hmac = sqlcipher_openssl_hmac;
   p->kdf = sqlcipher_openssl_kdf;
   p->cipher = sqlcipher_openssl_cipher;
-  p->set_cipher = sqlcipher_openssl_set_cipher;
   p->get_cipher = sqlcipher_openssl_get_cipher;
   p->get_key_sz = sqlcipher_openssl_get_key_sz;
   p->get_iv_sz = sqlcipher_openssl_get_iv_sz;
