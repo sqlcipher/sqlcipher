@@ -44,14 +44,17 @@
 #endif
 #endif
 
-static unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
-static unsigned char hmac_salt_mask = HMAC_SALT_MASK;
-static int default_kdf_iter = PBKDF2_ITER;
-static int default_page_size = 4096;
-static int default_plaintext_header_sz = 0;
-static int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
-static int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
-static unsigned int sqlcipher_activate_count = 0;
+static volatile unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
+static volatile unsigned char hmac_salt_mask = HMAC_SALT_MASK;
+static volatile int default_kdf_iter = PBKDF2_ITER;
+static volatile int default_page_size = 4096;
+static volatile int default_plaintext_header_sz = 0;
+static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
+static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
+static volatile int mem_security_on = 1;
+static volatile int mem_security_activated = 0;
+static volatile unsigned int sqlcipher_activate_count = 0;
+static volatile sqlite3_mem_methods default_mem_methods;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
 
@@ -96,8 +99,6 @@ struct codec_ctx {
   void *provider_ctx;
 };
 
-static sqlite3_mem_methods default_mem_methods;
-
 static int sqlcipher_mem_init(void *pAppData) {
   return default_mem_methods.xInit(pAppData);
 }
@@ -105,15 +106,26 @@ static void sqlcipher_mem_shutdown(void *pAppData) {
   default_mem_methods.xShutdown(pAppData);
 }
 static void *sqlcipher_mem_malloc(int n) {
-  return default_mem_methods.xMalloc(n);
+  void *ptr = default_mem_methods.xMalloc(n);
+  if(mem_security_on) {
+    CODEC_TRACE("sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)\n", ptr, sz);
+    sqlcipher_mlock(ptr, n); 
+    if(!mem_security_activated) mem_security_activated = 1;
+  }
+  return ptr;
 }
 static int sqlcipher_mem_size(void *p) {
   return default_mem_methods.xSize(p);
 }
 static void sqlcipher_mem_free(void *p) {
-  int sz = sqlcipher_mem_size(p);
-  CODEC_TRACE("sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d)\n", p, sz);
-  sqlcipher_memset(p, 0, sz);
+  int sz;
+  if(mem_security_on) {
+    sz = sqlcipher_mem_size(p);
+    CODEC_TRACE("sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d) and sqlcipher_munlock(%p, %d) \n", p, sz, p, sz);
+    sqlcipher_memset(p, 0, sz);
+    sqlcipher_munlock(p, sz);
+    if(!mem_security_activated) mem_security_activated = 1;
+  }
   default_mem_methods.xFree(p);
 }
 static void *sqlcipher_mem_realloc(void *p, int n) {
@@ -288,6 +300,58 @@ int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
   return (result != 0);
 }
 
+void sqlcipher_mlock(void *ptr, int sz) {
+#ifndef OMIT_MEMLOCK
+  int rc;
+#if defined(__unix__) || defined(__APPLE__) 
+  unsigned long pagesize = sysconf(_SC_PAGESIZE);
+  unsigned long offset = (unsigned long) ptr % pagesize;
+
+  if(ptr == NULL || sz == 0) return;
+
+  CODEC_TRACE("sqlcipher_mem_lock: calling mlock(%p,%lu); _SC_PAGESIZE=%lu\n", ptr - offset, sz + offset, pagesize);
+  rc = mlock(ptr - offset, sz + offset);
+  if(rc!=0) {
+    CODEC_TRACE("sqlcipher_mem_lock: mlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+  }
+#elif defined(_WIN32)
+#if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
+  CODEC_TRACE("sqlcipher_mem_lock: calling VirtualLock(%p,%d)\n", ptr, sz);
+  rc = VirtualLock(ptr, sz);
+  if(rc==0) {
+    CODEC_TRACE("sqlcipher_mem_lock: VirtualLock(%p,%d) returned %d LastError=%d\n", ptr, sz, rc, GetLastError());
+  }
+#endif
+#endif
+#endif
+}
+
+void sqlcipher_munlock(void *ptr, int sz) {
+#ifndef OMIT_MEMLOCK
+  int rc;
+#if defined(__unix__) || defined(__APPLE__) 
+  unsigned long pagesize = sysconf(_SC_PAGESIZE);
+  unsigned long offset = (unsigned long) ptr % pagesize;
+
+  if(ptr == NULL || sz == 0) return;
+
+  CODEC_TRACE("sqlcipher_mem_unlock: calling munlock(%p,%lu)\n", ptr - offset, sz + offset);
+  rc = munlock(ptr - offset, sz + offset);
+  if(rc!=0) {
+    CODEC_TRACE("sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+  }
+#elif defined(_WIN32)
+#if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
+  CODEC_TRACE("sqlcipher_mem_lock: calling VirtualUnlock(%p,%d)\n", ptr, sz);
+  rc = VirtualUnlock(ptr, sz);
+  if(!rc) {
+    CODEC_TRACE("sqlcipher_mem_unlock: VirtualUnlock(%p,%d) returned %d LastError=%d\n", ptr, sz, rc, GetLastError());
+  }
+#endif
+#endif
+#endif
+}
+
 /**
   * Free and wipe memory. Uses SQLites internal sqlite3_free so that memory
   * can be countend and memory leak detection works in the test suite. 
@@ -297,36 +361,10 @@ int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
   * memory segment so it can be paged
   */
 void sqlcipher_free(void *ptr, int sz) {
-  if(ptr) {
-    if(sz > 0) {
-#ifndef OMIT_MEMLOCK
-      int rc;
-#if defined(__unix__) || defined(__APPLE__) 
-      unsigned long pagesize = sysconf(_SC_PAGESIZE);
-      unsigned long offset = (unsigned long) ptr % pagesize;
-#endif
-#endif
-      CODEC_TRACE("sqlcipher_free: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
-      sqlcipher_memset(ptr, 0, sz);
-#ifndef OMIT_MEMLOCK
-#if defined(__unix__) || defined(__APPLE__) 
-      CODEC_TRACE("sqlcipher_free: calling munlock(%p,%lu)\n", ptr - offset, sz + offset);
-      rc = munlock(ptr - offset, sz + offset);
-      if(rc!=0) {
-        CODEC_TRACE("sqlcipher_free: munlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
-      }
-#elif defined(_WIN32)
-#if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
-      rc = VirtualUnlock(ptr, sz);
-      if(!rc) {
-        CODEC_TRACE("sqlcipher_free: VirtualUnlock(%p,%d) returned %d LastError=%d\n", ptr, sz, rc, GetLastError());
-      }
-#endif
-#endif
-#endif
-    }
-    sqlite3_free(ptr);
-  }
+  CODEC_TRACE("sqlcipher_free: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
+  sqlcipher_memset(ptr, 0, sz);
+  sqlcipher_munlock(ptr, sz);
+  sqlite3_free(ptr);
 }
 
 /**
@@ -340,30 +378,9 @@ void* sqlcipher_malloc(int sz) {
   ptr = sqlite3Malloc(sz);
   CODEC_TRACE("sqlcipher_malloc: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
   sqlcipher_memset(ptr, 0, sz);
-#ifndef OMIT_MEMLOCK
-  if(ptr) {
-    int rc;
-#if defined(__unix__) || defined(__APPLE__) 
-    unsigned long pagesize = sysconf(_SC_PAGESIZE);
-    unsigned long offset = (unsigned long) ptr % pagesize;
-    CODEC_TRACE("sqlcipher_malloc: calling mlock(%p,%lu); _SC_PAGESIZE=%lu\n", ptr - offset, sz + offset, pagesize);
-    rc = mlock(ptr - offset, sz + offset);
-    if(rc!=0) {
-      CODEC_TRACE("sqlcipher_malloc: mlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
-    }
-#elif defined(_WIN32)
-#if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
-    rc = VirtualLock(ptr, sz);
-    if(rc==0) {
-      CODEC_TRACE("sqlcipher_malloc: VirtualLock(%p,%d) returned %d LastError=%d\n", ptr, sz, rc, GetLastError());
-    }
-#endif
-#endif
-  }
-#endif
+  sqlcipher_mlock(ptr, sz);
   return ptr;
 }
-
 
 /**
   * Initialize new cipher_ctx struct. This function will allocate memory
@@ -799,6 +816,16 @@ void sqlcipher_set_default_pagesize(int page_size) {
 int sqlcipher_get_default_pagesize() {
   return default_page_size;
 }
+
+void sqlcipher_set_mem_security(int on) {
+  mem_security_on = on;
+  mem_security_activated = 0;
+}
+
+int sqlcipher_get_mem_security() {
+  return mem_security_on && mem_security_activated;
+}
+
 
 int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
   int rc;

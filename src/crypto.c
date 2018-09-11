@@ -425,6 +425,15 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
         codec_vdbe_return_static_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
       }
     }
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_memory_security")==0 ){
+    if( zRight ) {
+      sqlcipher_set_mem_security(sqlite3GetBoolean(zRight,1));
+    } else {
+      char *on = sqlite3_mprintf("%d", sqlcipher_get_mem_security());
+      codec_vdbe_return_static_string(pParse, "cipher_memory_security", on);
+      sqlite3_free(on);
+    }
   }else {
     return 0;
   }

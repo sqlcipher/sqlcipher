@@ -291,6 +291,8 @@ int sqlcipher_get_default_kdf_algorithm();
 int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm);
 int sqlcipher_codec_ctx_get_kdf_algorithm(codec_ctx *ctx);
 
+void sqlcipher_set_mem_security(int);
+int sqlcipher_get_mem_security();
 
 #endif
 #endif

@@ -2790,5 +2790,24 @@ do_test verify-pragma-cipher-default-kdf-algorithm {
 db close
 file delete -force test.db
 
+# verify memory security behavior
+# initially should report ON
+# then disable, check that it is off
+# turn it back on, then check. 
+do_test verify-memory-security {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_memory_security;
+        PRAGMA cipher_memory_security = OFF;
+        PRAGMA cipher_memory_security;
+        PRAGMA cipher_memory_security = ON;
+        PRAGMA cipher_memory_security;
+        
+    }
+} {1 0 1}
+db close
+file delete -force test.db
+
+
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test
