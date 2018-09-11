@@ -438,6 +438,14 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   return 1;
 }
 
+/* these constants are used internally within SQLite's pager.c to differentiate between
+   operations on the main database or journal pages. This is important in the context
+   of a rekey operations, where the journal must be written using the original key 
+   material (to allow a transactional rollback), while the new database pages are being
+   written with the new key material*/
+#define CODEC_READ_OP 3
+#define CODEC_WRITE_OP 6
+#define CODEC_JOURNAL_OP 7
 
 /*
  * sqlite3Codec can be called in multiple modes.
@@ -470,7 +478,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   CODEC_TRACE("sqlite3Codec: switch mode=%d offset=%d\n",  mode, offset);
   switch(mode) {
-    case 3: /* decrypt */
+    case CODEC_READ_OP: /* decrypt */
       if(pgno == 1) /* copy initial part of file header or SQLite magic to buffer */ 
         memcpy(buffer, plaintext_header_sz ? pData : (void *) SQLITE_FILE_HEADER, offset); 
 
@@ -480,10 +488,10 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       return pData;
       break;
 
-    case 6: /* encrypt database page, operate on write context and fall through to case 7*/
+    case CODEC_WRITE_OP: /* encrypt database page, operate on write context and fall through to case 7, so the write context is used*/
       cctx = CIPHER_WRITE_CTX; 
 
-    case 7: /* encrypt journal page, operate on read context use to get the original page data from the database */ 
+    case CODEC_JOURNAL_OP: /* encrypt journal page, operate on read context use to get the original page data from the database */ 
       if(pgno == 1) /* copy initial part of file header or salt to buffer */ 
         memcpy(buffer, plaintext_header_sz ? pData : kdf_salt, offset); 
 
