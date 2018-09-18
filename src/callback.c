@@ -105,6 +105,7 @@ CollSeq *sqlite3GetCollSeq(
   assert( !p || p->xCmp );
   if( p==0 ){
     sqlite3ErrorMsg(pParse, "no such collation sequence: %s", zName);
+    pParse->rc = SQLITE_ERROR_MISSING_COLLSEQ;
   }
   return p;
 }
@@ -374,7 +375,7 @@ FuncDef *sqlite3FindFunction(
 
   /* If no match is found, search the built-in functions.
   **
-  ** If the SQLITE_PreferBuiltin flag is set, then search the built-in
+  ** If the DBFLAG_PreferBuiltin flag is set, then search the built-in
   ** functions even if a prior app-defined function was found.  And give
   ** priority to built-in functions.
   **
@@ -384,7 +385,7 @@ FuncDef *sqlite3FindFunction(
   ** new function.  But the FuncDefs for built-in functions are read-only.
   ** So we must not search for built-ins when creating a new function.
   */ 
-  if( !createFlag && (pBest==0 || (db->flags & SQLITE_PreferBuiltin)!=0) ){
+  if( !createFlag && (pBest==0 || (db->mDbFlags & DBFLAG_PreferBuiltin)!=0) ){
     bestScore = 0;
     h = (sqlite3UpperToLower[(u8)zName[0]] + nName) % SQLITE_FUNC_HASH_SZ;
     p = functionSearch(h, zName);
@@ -405,10 +406,12 @@ FuncDef *sqlite3FindFunction(
   if( createFlag && bestScore<FUNC_PERFECT_MATCH && 
       (pBest = sqlite3DbMallocZero(db, sizeof(*pBest)+nName+1))!=0 ){
     FuncDef *pOther;
+    u8 *z;
     pBest->zName = (const char*)&pBest[1];
     pBest->nArg = (u16)nArg;
     pBest->funcFlags = enc;
     memcpy((char*)&pBest[1], zName, nName+1);
+    for(z=(u8*)pBest->zName; *z; z++) *z = sqlite3UpperToLower[*z];
     pOther = (FuncDef*)sqlite3HashInsert(&db->aFunc, pBest->zName, pBest);
     if( pOther==pBest ){
       sqlite3DbFree(db, pBest);
@@ -457,8 +460,8 @@ void sqlite3SchemaClear(void *p){
   pSchema->pSeqTab = 0;
   if( pSchema->schemaFlags & DB_SchemaLoaded ){
     pSchema->iGeneration++;
-    pSchema->schemaFlags &= ~DB_SchemaLoaded;
   }
+  pSchema->schemaFlags &= ~(DB_SchemaLoaded|DB_ResetWanted);
 }
 
 /*

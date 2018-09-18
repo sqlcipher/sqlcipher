@@ -1325,7 +1325,8 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       saved_nTotalChange = db->nTotalChange;
       saved_xTrace = db->xTrace;
       saved_mTrace = db->mTrace;
-      db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_PreferBuiltin;
+      db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks;
+      db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum;
       db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
       db->xTrace = 0;
       db->mTrace = 0;
@@ -1343,10 +1344,10 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
       sqlite3pager_truncate(pDest->pBt->pPager, 0);
 
-      rc = sqlite3BtreeBeginTrans(pSrc, 2);
+      rc = sqlite3BtreeBeginTrans(pSrc, 2, 0);
       if( rc!=SQLITE_OK ) goto handle_error;
 
-      rc = sqlite3BtreeBeginTrans(pDest, 2);
+      rc = sqlite3BtreeBeginTrans(pDest, 2, 0);
       if( rc!=SQLITE_OK ) goto handle_error;
 
       assert( 1==sqlite3BtreeIsInTrans(pDest) );

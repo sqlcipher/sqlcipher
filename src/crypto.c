@@ -653,7 +653,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       ** 3. If that goes ok then commit and put ctx->rekey into ctx->key
       **    note: don't deallocate rekey since it may be used in a subsequent iteration 
       */
-      rc = sqlite3BtreeBeginTrans(pDb->pBt, 1); /* begin write transaction */
+      rc = sqlite3BtreeBeginTrans(pDb->pBt, 1, 0); /* begin write transaction */
       sqlite3PagerPagecount(pPager, &page_count);
       for(pgno = 1; rc == SQLITE_OK && pgno <= (unsigned int)page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
         if(!sqlite3pager_is_mj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
@@ -806,7 +806,8 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   saved_nTotalChange = db->nTotalChange;
   saved_xTrace = db->xTrace;
   saved_mTrace = db->mTrace;
-  db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_PreferBuiltin;
+  db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks; 
+  db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum;
   db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
   db->xTrace = 0;
   db->mTrace = 0;
