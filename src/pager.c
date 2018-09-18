@@ -7703,65 +7703,20 @@ int sqlite3PagerWalFramesize(Pager *pPager){
 
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
-void sqlite3pager_get_codec(Pager *pPager, void **ctx) {
-  *ctx = pPager->pCodec;
-}
 
 int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno) {
   return (PAGER_MJ_PGNO(pPager) == pgno) ? 1 : 0;
 }
 
-sqlite3_file *sqlite3Pager_get_fd(Pager *pPager) {
-  return (isOpen(pPager->fd)) ? pPager->fd : NULL;
-}
-
-void sqlite3pager_sqlite3PagerSetCodec(
-  Pager *pPager,
-  void *(*xCodec)(void*,void*,Pgno,int),
-  void (*xCodecSizeChng)(void*,int,int),
-  void (*xCodecFree)(void*),
-  void *pCodec
-){
-  sqlite3PagerSetCodec(pPager, xCodec, xCodecSizeChng, xCodecFree, pCodec); 
-}
-
-void sqlite3pager_sqlite3PagerSetError( Pager *pPager, int error) {
+void sqlite3pager_error(Pager *pPager, int error) {
   pPager->errCode = error;
+  pPager->eState = PAGER_ERROR;
   setGetterMethod(pPager);
 }
 
 int sqlite3pager_truncate(Pager *pPager, Pgno nPage){
-  int rc = SQLITE_OK;
-  assert( pPager->eState!=PAGER_ERROR );
-  assert( pPager->eState!=PAGER_READER );
-  
-  if( isOpen(pPager->fd) 
-   && (pPager->eState>=PAGER_WRITER_DBMOD || pPager->eState==PAGER_OPEN) 
-  ){
-    i64 currentSize, newSize;
-    int szPage = pPager->pageSize;
-    assert( pPager->eLock==EXCLUSIVE_LOCK );
-    /* TODO: Is it safe to use Pager.dbFileSize here? */
-    rc = sqlite3OsFileSize(pPager->fd, &currentSize);
-    newSize = szPage*(i64)nPage;
-    if( rc==SQLITE_OK && currentSize!=newSize ){
-      if( currentSize>newSize ){
-        rc = sqlite3OsTruncate(pPager->fd, newSize);
-      }else if( (currentSize+szPage)<=newSize ){
-        char *pTmp = pPager->pTmpSpace;
-        memset(pTmp, 0, szPage);
-        testcase( (newSize-szPage) == currentSize );
-        testcase( (newSize-szPage) >  currentSize );
-        rc = sqlite3OsWrite(pPager->fd, pTmp, szPage, newSize-szPage);
-      }
-      if( rc==SQLITE_OK ){
-        pPager->dbFileSize = nPage;
-      }
-    }
-  }
-  return rc;
+  return pager_truncate(pPager, nPage);
 }
-
 #endif
 /* END SQLCIPHER */
 

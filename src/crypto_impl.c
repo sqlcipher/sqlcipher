@@ -739,7 +739,7 @@ int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag) {
 
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   CODEC_TRACE("sqlcipher_codec_ctx_set_error: ctx=%p, error=%d\n", ctx, error);
-  sqlite3pager_sqlite3PagerSetError(ctx->pBt->pBt->pPager, error);
+  sqlite3pager_error(ctx->pBt->pBt->pPager, error);
   ctx->pBt->pBt->db->errCode = error;
 }
 
@@ -1357,7 +1357,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
       sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
       sqlite3CodecAttach(db, 0, key, password_sz);
-      sqlite3pager_get_codec(pDest->pBt->pPager, (void**)&ctx);
+      ctx = (codec_ctx*) sqlite3PagerGetCodec(pDest->pBt->pPager);
 
       ctx->skip_read_hmac = 1;      
 

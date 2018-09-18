@@ -37,6 +37,13 @@
 
 #include "sqliteInt.h"
 #include "btreeInt.h"
+#include "pager.h"
+
+/* extensions defined in pager.c */ 
+void *sqlite3PagerGetCodec(Pager*);
+int sqlite3pager_is_mj_pgno(Pager*, Pgno);
+void sqlite3pager_error(Pager*, int);
+int sqlite3pager_truncate(Pager*, Pgno);
 
 #if !defined (SQLCIPHER_CRYPTO_CC) \
    && !defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT) \
@@ -139,19 +146,6 @@
 #define CODEC_HEXDUMP(DESC,BUFFER,LEN)
 #endif
 
-/* extensions defined in pager.c */ 
-void sqlite3pager_get_codec(Pager *pPager, void **ctx);
-int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno);
-sqlite3_file *sqlite3Pager_get_fd(Pager *pPager);
-void sqlite3pager_sqlite3PagerSetCodec(
-  Pager *pPager,
-  void *(*xCodec)(void*,void*,Pgno,int),
-  void (*xCodecSizeChng)(void*,int,int),
-  void (*xCodecFree)(void*),
-  void *pCodec
-);
-void sqlite3pager_sqlite3PagerSetError(Pager *pPager, int error);
-int sqlite3pager_truncate(Pager *pPager, Pgno nPage);
 /* end extensions defined in pager.c */
  
 /*

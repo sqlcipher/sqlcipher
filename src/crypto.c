@@ -79,8 +79,8 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE("codec_set_pass_key: entered db=%p nDb=%d zKey=%s nKey=%d for_ctx=%d\n", db, nDb, (char *)zKey, nKey, for_ctx);
   if(pDb->pBt) {
-    codec_ctx *ctx;
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+    codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
+
     if(ctx) return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
   }
   return SQLITE_ERROR;
@@ -92,7 +92,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   int rc;
 
   if(pDb->pBt) {
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+    ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
   }
 
   CODEC_TRACE("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx);
@@ -523,8 +523,11 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   if(nKey && zKey && pDb->pBt) {
     int rc;
     Pager *pPager = pDb->pBt->pBt->pPager;
-    sqlite3_file *fd = sqlite3Pager_get_fd(pPager);
+    sqlite3_file *fd;
     codec_ctx *ctx;
+
+    /* check if the sqlite3_file is open, and if not force handle to NULL */ 
+    if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL; 
 
     CODEC_TRACE("sqlite3CodecAttach: calling sqlcipher_activate()\n");
     sqlcipher_activate(); /* perform internal initialization for sqlcipher */
@@ -546,8 +549,8 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
       return rc;
     }
 
-    CODEC_TRACE("sqlite3CodecAttach: calling sqlite3pager_sqlite3PagerSetCodec()\n");
-    sqlite3pager_sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
+    CODEC_TRACE("sqlite3CodecAttach: calling sqlite3PagerSetCodec()\n");
+    sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 
     CODEC_TRACE("sqlite3CodecAttach: calling codec_set_btree_to_codec_pagesize()\n");
     codec_set_btree_to_codec_pagesize(db, pDb, ctx);
@@ -633,7 +636,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       PgHdr *page;
       Pager *pPager = pDb->pBt->pBt->pPager;
 
-      sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+      ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
      
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
@@ -694,8 +697,8 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
   CODEC_TRACE("sqlite3CodecGetKey: entered db=%p, nDb=%d\n", db, nDb);
   if( pDb->pBt ) {
-    codec_ctx *ctx;
-    sqlite3pager_get_codec(pDb->pBt->pBt->pPager, (void **) &ctx);
+    codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
+    
     if(ctx) {
       if(sqlcipher_codec_get_store_pass(ctx) == 1) {
         sqlcipher_codec_get_pass(ctx, zKey, nKey);
