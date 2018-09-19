@@ -7714,9 +7714,10 @@ void sqlite3pager_error(Pager *pPager, int error) {
   setGetterMethod(pPager);
 }
 
-int sqlite3pager_truncate(Pager *pPager, Pgno nPage){
-  return pager_truncate(pPager, nPage);
+void sqlite3pager_reset(Pager *pPager){
+  pager_reset(pPager);
 }
+
 #endif
 /* END SQLCIPHER */
 

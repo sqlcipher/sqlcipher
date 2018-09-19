@@ -43,7 +43,7 @@
 void *sqlite3PagerGetCodec(Pager*);
 int sqlite3pager_is_mj_pgno(Pager*, Pgno);
 void sqlite3pager_error(Pager*, int);
-int sqlite3pager_truncate(Pager*, Pgno);
+void sqlite3pager_reset(Pager *pPager);
 
 #if !defined (SQLCIPHER_CRYPTO_CC) \
    && !defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT) \

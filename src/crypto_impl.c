@@ -1216,194 +1216,161 @@ cleanup:
 }
 
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
-  u32 meta;
-  int i, password_sz, key_sz, saved_flags, saved_nChange, saved_nTotalChange, nRes, user_version = 0, upgrade_from = 0, rc = 0;
-  u8 saved_mTrace;
-  int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
+  int i, pass_sz, keyspec_sz, nRes, user_version, upgrade_from, rc, oflags;
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
-  char *migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
   char *v1_pragmas = "PRAGMA cipher_use_hmac = OFF; PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;"; 
   char *v2_pragmas = "PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
   char *v3_pragmas = "PRAGMA kdf_iter = 64000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
-  char *set_user_version, *key;
+  char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL;
   Btree *pDest = NULL, *pSrc = NULL;
-  static const unsigned char aCopy[] = {
-    BTREE_SCHEMA_VERSION,     1,  /* Add one to the old schema cookie */
-    BTREE_DEFAULT_CACHE_SIZE, 0,  /* Preserve the default page cache size */
-    BTREE_TEXT_ENCODING,      0,  /* Preserve the text encoding */
-    BTREE_USER_VERSION,       0,  /* Preserve the user version */
-    BTREE_APPLICATION_ID,     0,  /* Preserve the application id */
-  };
+  const char* commands[4];
+  sqlite3_file *srcfile, *destfile;
 
   rc = user_version = upgrade_from = 0;
 
-  key_sz = ctx->read_ctx->pass_sz + 1;
-  key = sqlcipher_malloc(key_sz);
-  memset(key, 0, key_sz);
-  memcpy(key, ctx->read_ctx->pass, ctx->read_ctx->pass_sz);
-
-  if(db_filename){
-    const char* commands[4];
-    char *attach_command = sqlite3_mprintf("ATTACH DATABASE '%s-migrated' as migrate KEY '%q';",
-                                            db_filename, key);
-
-    int rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, "", &user_version);
-    if(rc == SQLITE_OK){
-      CODEC_TRACE("No upgrade required - exiting\n");
-      goto exit;
-    }
-
-    /* Version 3 - check for 64k with hmac format and 1024 page size */
-    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, v3_pragmas, &user_version);
-    if(rc == SQLITE_OK) {
-      CODEC_TRACE("Version 3 format found\n");
-      upgrade_from = 3;
-    }
+  if(!db_filename || sqlite3Strlen30(db_filename) < 1) 
+    goto exit; /* exit immediately if this is an in memory database */ 
     
-    /* Version 2 - check for 4k with hmac format and 1024 page size */
-    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, v2_pragmas, &user_version);
-    if(rc == SQLITE_OK) {
-      CODEC_TRACE("Version 2 format found\n");
-      upgrade_from = 2;
-    }
-
-    /* Version 1 - check no HMAC, 4k KDF, and 1024 page size */
-    rc = sqlcipher_check_connection(db_filename, key, ctx->read_ctx->pass_sz, v1_pragmas, &user_version);
-    if(rc == SQLITE_OK) {
-      CODEC_TRACE("Version 1 format found\n");
-      upgrade_from = 1;
-    }
-
-    set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
-    switch(upgrade_from) {
-      case 1:
-        commands[0] = v1_pragmas;
-        break;
-      case 2:
-        commands[0] = v2_pragmas;
-        break;
-      case 3:
-        commands[0] = v3_pragmas;
-        break;
-      default:
-        CODEC_TRACE("Upgrade format not determined\n");
-        goto handle_error;
-    }
-    commands[1] = attach_command;
-    commands[2] = "SELECT sqlcipher_export('migrate');";
-    commands[3] = set_user_version;
-      
-    for(i = 0; i < ArraySize(commands); i++){
-      rc = sqlite3_exec(db, commands[i], NULL, NULL, NULL);
-      if(rc != SQLITE_OK){
-        CODEC_TRACE("migration step %d failed error code %d\n", i, rc);
-        break;
-      }
-    }
-    sqlite3_free(attach_command);
-    sqlite3_free(set_user_version);
-    sqlcipher_free(key, key_sz);
-    
-    if(rc == SQLITE_OK){
-
-      if( !db->autoCommit ){
-        CODEC_TRACE("cannot migrate from within a transaction");
-        goto handle_error;
-      }
-      if( db->nVdbeActive>1 ){
-        CODEC_TRACE("cannot migrate - SQL statements in progress");
-        goto handle_error;
-      }
-
-      /* Save the current value of the database flags so that it can be
-      ** restored before returning. Then set the writable-schema flag, and
-      ** disable CHECK and foreign key constraints.  */
-      saved_flags = db->flags;
-      saved_nChange = db->nChange;
-      saved_nTotalChange = db->nTotalChange;
-      saved_xTrace = db->xTrace;
-      saved_mTrace = db->mTrace;
-      db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks;
-      db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum;
-      db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
-      db->xTrace = 0;
-      db->mTrace = 0;
-      pDest = db->aDb[0].pBt;
-      pDb = &(db->aDb[db->nDb-1]);
-      pSrc = pDb->pBt;
-
-      nRes = sqlite3BtreeGetOptimalReserve(pSrc); 
-      rc = sqlite3BtreeSetPageSize(pDest, default_page_size, nRes, 0);
-      if( rc!=SQLITE_OK ) goto handle_error;
-      CODEC_TRACE("set BTree page size to %d res %d rc %d\n", default_page_size, nRes, rc);
-
-      rc = sqlite3_exec(db, "BEGIN;", NULL, NULL, NULL);
-      if( rc!=SQLITE_OK ) goto handle_error;
-
-      sqlite3pager_truncate(pDest->pBt->pPager, 0);
-
-      rc = sqlite3BtreeBeginTrans(pSrc, 2, 0);
-      if( rc!=SQLITE_OK ) goto handle_error;
-
-      rc = sqlite3BtreeBeginTrans(pDest, 2, 0);
-      if( rc!=SQLITE_OK ) goto handle_error;
-
-      assert( 1==sqlite3BtreeIsInTrans(pDest) );
-      assert( 1==sqlite3BtreeIsInTrans(pSrc) );
-
-      CODEC_TRACE("started transactions\n");
-
-      sqlite3CodecGetKey(db, db->nDb - 1, (void**)&key, &password_sz);
-      sqlite3CodecAttach(db, 0, key, password_sz);
-      ctx = (codec_ctx*) sqlite3PagerGetCodec(pDest->pBt->pPager);
-
-      ctx->skip_read_hmac = 1;      
-
-      for(i=0; i<ArraySize(aCopy); i+=2){
-        sqlite3BtreeGetMeta(pSrc, aCopy[i], &meta);
-        rc = sqlite3BtreeUpdateMeta(pDest, aCopy[i], meta+aCopy[i+1]);
-        CODEC_TRACE("applied metadata %d %d\n",i, rc);
-        if( NEVER(rc!=SQLITE_OK) ) goto handle_error; 
-      }
-      CODEC_TRACE("finished applied metadata\n");
-
-      rc = sqlite3BtreeCopyFile(pDest, pSrc);
-      ctx->skip_read_hmac = 0;
-      if( rc!=SQLITE_OK ) goto handle_error;
-      CODEC_TRACE("copied btree %d\n", rc);
-
-      rc = sqlite3BtreeCommit(pDest);
-      if( rc!=SQLITE_OK ) goto handle_error;
-      CODEC_TRACE("committed destination transaction %d\n", rc);
-
-      db->flags = saved_flags;
-      db->nChange = saved_nChange;
-      db->nTotalChange = saved_nTotalChange;
-      db->xTrace = saved_xTrace;
-      db->mTrace = saved_mTrace;
-      db->autoCommit = 1;
-      sqlite3BtreeClose(pDb->pBt);
-      pDb->pBt = 0;
-      pDb->pSchema = 0;
-      sqlite3ResetAllSchemasOfConnection(db);
-      db->pVfs->xDelete(db->pVfs, migrated_db_filename, 0);
-      sqlite3_free(migrated_db_filename);
-    } else {
-      CODEC_TRACE("*** migration failure** error code: %d\n", rc);
-    }
-    
+  /* pull the provided password / key material off the current codec context */
+  pass_sz = ctx->read_ctx->pass_sz;
+  pass = sqlcipher_malloc(pass_sz+1);
+  memset(pass, 0, pass_sz+1);
+  memcpy(pass, ctx->read_ctx->pass, pass_sz);
+                                            
+  /* Version 4 - current, no upgrade required, so exit immediately */
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, "", &user_version);
+  if(rc == SQLITE_OK){
+    CODEC_TRACE("No upgrade required - exiting\n");
+    goto exit;
   }
+
+  /* Version 3 - check for 64k with hmac format and 1024 page size */
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v3_pragmas, &user_version);
+  if(rc == SQLITE_OK) {
+    CODEC_TRACE("Version 3 format found\n");
+    upgrade_from = 3;
+  }
+    
+  /* Version 2 - check for 4k with hmac format and 1024 page size */
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v2_pragmas, &user_version);
+  if(rc == SQLITE_OK) {
+  CODEC_TRACE("Version 2 format found\n");
+    upgrade_from = 2;
+  }
+
+  /* Version 1 - check no HMAC, 4k KDF, and 1024 page size */
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v1_pragmas, &user_version);
+  if(rc == SQLITE_OK) {
+    CODEC_TRACE("Version 1 format found\n");
+    upgrade_from = 1;
+  }
+
+  migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
+  attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate KEY '%q';", migrated_db_filename, pass); 
+  set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
+  switch(upgrade_from) {
+    case 1:
+      commands[0] = v1_pragmas;
+      break;
+    case 2:
+      commands[0] = v2_pragmas;
+      break;
+    case 3:
+      commands[0] = v3_pragmas;
+      break;
+    default:
+      CODEC_TRACE("Upgrade format not determined\n");
+      goto handle_error;
+  }
+  commands[1] = attach_command;
+  commands[2] = "SELECT sqlcipher_export('migrate');";
+  commands[3] = set_user_version;
+      
+  for(i = 0; i < ArraySize(commands); i++){
+    rc = sqlite3_exec(db, commands[i], NULL, NULL, NULL);
+    if(rc != SQLITE_OK){
+      CODEC_TRACE("migration step %d failed error code %d\n", i, rc);
+      goto handle_error;
+    }
+  }
+    
+  if( !db->autoCommit ){
+    CODEC_TRACE("cannot migrate from within a transaction");
+    goto handle_error;
+  }
+  if( db->nVdbeActive>1 ){
+    CODEC_TRACE("cannot migrate - SQL statements in progress");
+    goto handle_error;
+  }
+
+  pDest = db->aDb[0].pBt;
+  pDb = &(db->aDb[db->nDb-1]);
+  pSrc = pDb->pBt;
+
+  nRes = sqlite3BtreeGetOptimalReserve(pSrc); 
+  rc = sqlite3BtreeSetPageSize(pDest, default_page_size, nRes, 0);
+  CODEC_TRACE("set btree page size to %d res %d rc %d\n", default_page_size, nRes, rc);
+  if( rc!=SQLITE_OK ) goto handle_error;
+
+  sqlite3CodecGetKey(db, db->nDb - 1, (void**)&keyspec, &keyspec_sz);
+  sqlite3CodecAttach(db, 0, keyspec, keyspec_sz);
+     
+
+#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
+  if(!MoveFileExA(migrated_db_filename, db_filename, MOVEFILE_REPLACE_EXISTING)) {
+    rc = SQLITE_ERROR;
+    CODEC_TRACE("error occurred while renaming %d\n", rc);
+    goto handle_error;
+  }
+#else
+  if ((rc = rename(migrated_db_filename, db_filename)) != 0) {
+    CODEC_TRACE("error occurred while renaming %d\n", rc);
+    goto handle_error;
+  }
+#endif    
+  CODEC_TRACE("renamed migration database to main database: %d\n", rc);
+  
+  srcfile = sqlite3PagerFile(pSrc->pBt->pPager);
+  destfile = sqlite3PagerFile(pDest->pBt->pPager);
+
+  sqlite3OsClose(srcfile);
+  sqlite3OsClose(destfile);
+
+  rc = sqlite3OsOpen(db->pVfs, migrated_db_filename, srcfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE, &oflags);
+  CODEC_TRACE("reopened migration database: %d\n", rc);
+  if( rc!=SQLITE_OK ) goto handle_error;
+
+  rc = sqlite3OsOpen(db->pVfs, db_filename, destfile, SQLITE_OPEN_READWRITE, &oflags);
+  CODEC_TRACE("reopened main database: %d\n", rc);
+  if( rc!=SQLITE_OK ) goto handle_error;
+
+  sqlite3pager_reset(pDest->pBt->pPager);
+  CODEC_TRACE("reset pager\n");
+ 
+  rc = sqlite3BtreeClose(pSrc);
+  CODEC_TRACE("closed src btree %d\n", rc);
+  if( rc!=SQLITE_OK ) goto handle_error;
+
+  pDb->pBt = NULL;
+  pDb->pSchema = NULL;
+  sqlite3ResetAllSchemasOfConnection(db);
+
+  rc = sqlite3OsDelete(db->pVfs, migrated_db_filename, 0);
+  if( rc!=SQLITE_OK ) goto handle_error;
+    
   goto exit;
 
 handle_error:
-  if(pDest) sqlite3BtreeRollback(pDest, SQLITE_OK, 0);
-
-  CODEC_TRACE("An error occurred attempting to migrate the database\n");
+  CODEC_TRACE("An error occurred attempting to migrate the database - last error %d\n", rc);
   rc = SQLITE_ERROR;
 
 exit:
+  if(pass) sqlcipher_free(pass, pass_sz);
+  if(attach_command) sqlcipher_free(attach_command, sqlite3Strlen30(attach_command)); 
+  if(migrated_db_filename) sqlcipher_free(migrated_db_filename, sqlite3Strlen30(migrated_db_filename)); 
+  if(set_user_version) sqlcipher_free(set_user_version, sqlite3Strlen30(set_user_version)); 
   return rc;
 }
 
