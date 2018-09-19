@@ -645,9 +645,9 @@ libtclsqlite3.la:	tclsqlite.lo libsqlcipher.la
 		-version-info "8:6:8" \
 		-avoid-version
 
-sqlcipher$(TEXE):	shell.c sqlite3.c libsqlcipher.la
+sqlcipher$(TEXE):	shell.c libsqlcipher.la
 	$(LTLINK) $(READLINE_FLAGS) $(SHELL_OPT) -o $@ \
-		shell.c sqlite3.c libsqlcipher.la \
+		shell.c libsqlcipher.la \
 		$(LIBREADLINE) $(TLIBS) -rpath "$(libdir)"
 
 sqldiff$(TEXE):	$(TOP)/tool/sqldiff.c sqlite3.lo sqlite3.h
