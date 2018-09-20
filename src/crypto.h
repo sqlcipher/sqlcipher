@@ -41,6 +41,7 @@
 
 /* extensions defined in pager.c */ 
 void *sqlite3PagerGetCodec(Pager*);
+void sqlite3PagerSetCodec(Pager*, void *(*)(void*,void*,Pgno,int),  void (*)(void*,int,int),  void (*)(void*), void *);
 int sqlite3pager_is_mj_pgno(Pager*, Pgno);
 void sqlite3pager_error(Pager*, int);
 void sqlite3pager_reset(Pager *pPager);

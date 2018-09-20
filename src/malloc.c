@@ -116,8 +116,10 @@ int sqlite3MallocInit(void){
     /* install wrapping functions for memory management
        that will wipe all memory allocated by SQLite
        when freed */
-    extern void sqlcipher_init_memmethods();
-    sqlcipher_init_memmethods();
+    {
+      extern void sqlcipher_init_memmethods();
+      sqlcipher_init_memmethods();
+    }
 #endif
 /* END SQLCIPHER */
   }

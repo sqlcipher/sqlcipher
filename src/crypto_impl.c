@@ -226,7 +226,6 @@ void sqlcipher_deactivate() {
   sqlcipher_activate_count--;
   /* if no connections are using sqlcipher, cleanup globals */
   if(sqlcipher_activate_count < 1) {
-    int rc;
     CODEC_TRACE_MUTEX("sqlcipher_deactivate: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
     sqlite3_mutex_enter(sqlcipher_provider_mutex);
     CODEC_TRACE_MUTEX("sqlcipher_deactivate: entered sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
@@ -390,7 +389,6 @@ void* sqlcipher_malloc(int sz) {
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
 static int sqlcipher_cipher_ctx_init(codec_ctx *ctx, cipher_ctx **iCtx) {
-  int rc;
   cipher_ctx *c_ctx;
   CODEC_TRACE("sqlcipher_cipher_ctx_init: allocating context\n");
   *iCtx = (cipher_ctx *) sqlcipher_malloc(sizeof(cipher_ctx));
@@ -423,7 +421,7 @@ static void sqlcipher_cipher_ctx_free(codec_ctx* ctx, cipher_ctx **iCtx) {
 }
 
 static int sqlcipher_codec_ctx_reserve_setup(codec_ctx *ctx) {
-  int base_reserve = ctx->iv_sz;; /* base reserve size will be IV only */ 
+  int base_reserve = ctx->iv_sz; /* base reserve size will be IV only */ 
   int reserve = base_reserve;
 
   ctx->hmac_sz = ctx->provider->get_hmac_sz(ctx->provider_ctx, ctx->hmac_algorithm); 
@@ -1223,15 +1221,15 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   char *v1_pragmas = "PRAGMA cipher_use_hmac = OFF; PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;"; 
   char *v2_pragmas = "PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
   char *v3_pragmas = "PRAGMA kdf_iter = 64000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
-  char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL;
+  char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL, *temp = NULL;
   Btree *pDest = NULL, *pSrc = NULL;
   const char* commands[4];
   sqlite3_file *srcfile, *destfile;
 
-  rc = user_version = upgrade_from = 0;
+  pass_sz = keyspec_sz = rc = user_version = upgrade_from = 0;
 
   if(!db_filename || sqlite3Strlen30(db_filename) < 1) 
-    goto exit; /* exit immediately if this is an in memory database */ 
+    goto release; /* exit immediately if this is an in memory database */ 
     
   /* pull the provided password / key material off the current codec context */
   pass_sz = ctx->read_ctx->pass_sz;
@@ -1243,7 +1241,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   rc = sqlcipher_check_connection(db_filename, pass, pass_sz, "", &user_version);
   if(rc == SQLITE_OK){
     CODEC_TRACE("No upgrade required - exiting\n");
-    goto exit;
+    goto release;
   }
 
   /* Version 3 - check for 64k with hmac format and 1024 page size */
@@ -1267,7 +1265,13 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     upgrade_from = 1;
   }
 
-  migrated_db_filename = sqlite3_mprintf("%s-migrated", db_filename);
+  temp = sqlite3_mprintf("%s-migrated", db_filename);
+  /* overallocate migrated_db_filename, because sqlite3OsOpen will read past the null terminator
+   * to determine whether the filename was URI formatted */
+  migrated_db_filename = sqlcipher_malloc(sqlite3Strlen30(temp)+2); 
+  memcpy(migrated_db_filename, temp, sqlite3Strlen30(temp));
+  sqlcipher_free(temp, sqlite3Strlen30(temp));
+
   attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate KEY '%q';", migrated_db_filename, pass); 
   set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
   switch(upgrade_from) {
@@ -1316,27 +1320,29 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
   sqlite3CodecGetKey(db, db->nDb - 1, (void**)&keyspec, &keyspec_sz);
   sqlite3CodecAttach(db, 0, keyspec, keyspec_sz);
-     
-
-#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
-  if(!MoveFileExA(migrated_db_filename, db_filename, MOVEFILE_REPLACE_EXISTING)) {
-    rc = SQLITE_ERROR;
-    CODEC_TRACE("error occurred while renaming %d\n", rc);
-    goto handle_error;
-  }
-#else
-  if ((rc = rename(migrated_db_filename, db_filename)) != 0) {
-    CODEC_TRACE("error occurred while renaming %d\n", rc);
-    goto handle_error;
-  }
-#endif    
-  CODEC_TRACE("renamed migration database to main database: %d\n", rc);
   
   srcfile = sqlite3PagerFile(pSrc->pBt->pPager);
   destfile = sqlite3PagerFile(pDest->pBt->pPager);
 
   sqlite3OsClose(srcfile);
-  sqlite3OsClose(destfile);
+  sqlite3OsClose(destfile); 
+
+#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
+  CODEC_TRACE("performing windows MoveFileExA\n");
+  if(!MoveFileExA(migrated_db_filename, db_filename, MOVEFILE_REPLACE_EXISTING)) {
+    CODEC_TRACE("move error");
+    rc = SQLITE_ERROR;
+    CODEC_TRACE("error occurred while renaming %d\n", rc);
+    goto handle_error;
+  }
+#else
+  CODEC_TRACE("performing POSIX rename\n");
+  if ((rc = rename(migrated_db_filename, db_filename)) != 0) {
+    CODEC_TRACE("error occurred while renaming %d\n", rc);
+    goto handle_error;
+  }
+#endif    
+  CODEC_TRACE("renamed migration database %s to main database %s: %d\n", migrated_db_filename, db_filename, rc);
 
   rc = sqlite3OsOpen(db->pVfs, migrated_db_filename, srcfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE, &oflags);
   CODEC_TRACE("reopened migration database: %d\n", rc);
@@ -1355,18 +1361,21 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
   pDb->pBt = NULL;
   pDb->pSchema = NULL;
-  sqlite3ResetAllSchemasOfConnection(db);
 
   rc = sqlite3OsDelete(db->pVfs, migrated_db_filename, 0);
+  CODEC_TRACE("deleted migration database: %d\n", rc);
   if( rc!=SQLITE_OK ) goto handle_error;
-    
-  goto exit;
+
+  sqlite3ResetAllSchemasOfConnection(db);
+  CODEC_TRACE("reset all schemas\n");
+
+  goto release;
 
 handle_error:
   CODEC_TRACE("An error occurred attempting to migrate the database - last error %d\n", rc);
   rc = SQLITE_ERROR;
 
-exit:
+release:
   if(pass) sqlcipher_free(pass, pass_sz);
   if(attach_command) sqlcipher_free(attach_command, sqlite3Strlen30(attach_command)); 
   if(migrated_db_filename) sqlcipher_free(migrated_db_filename, sqlite3Strlen30(migrated_db_filename)); 
