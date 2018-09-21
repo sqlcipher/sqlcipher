@@ -1175,41 +1175,50 @@ const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx) {
 }
 
 
-static int sqlcipher_check_connection(const char *filename, char *key, int key_sz, char *sql, int *user_version) {
+static int sqlcipher_check_connection(const char *filename, char *key, int key_sz, char *sql, int *user_version, char** journal_mode) {
   int rc;
   sqlite3 *db = NULL;
   sqlite3_stmt *statement = NULL;
+  char *query_journal_mode = "PRAGMA journal_mode;";
   char *query_user_version = "PRAGMA user_version;";
-  
+ 
   rc = sqlite3_open(filename, &db);
-  if(rc != SQLITE_OK){
-    goto cleanup;
-  }
+  if(rc != SQLITE_OK) goto cleanup; 
+    
   rc = sqlite3_key(db, key, key_sz);
-  if(rc != SQLITE_OK){
-    goto cleanup;
-  }
+  if(rc != SQLITE_OK) goto cleanup; 
+    
   rc = sqlite3_exec(db, sql, NULL, NULL, NULL);
-  if(rc != SQLITE_OK){
-    goto cleanup;
-  }
+  if(rc != SQLITE_OK) goto cleanup; 
+
+  /* start by querying the user version. 
+     this will fail if the key is incorrect */
   rc = sqlite3_prepare(db, query_user_version, -1, &statement, NULL);
-  if(rc != SQLITE_OK){
+  if(rc != SQLITE_OK) goto cleanup; 
+    
+  rc = sqlite3_step(statement);
+  if(rc == SQLITE_ROW) {
+    *user_version = sqlite3_column_int(statement, 0);
+  } else {
     goto cleanup;
   }
+  sqlite3_finalize(statement); 
+
+  rc = sqlite3_prepare(db, query_journal_mode, -1, &statement, NULL);
+  if(rc != SQLITE_OK) goto cleanup; 
+    
   rc = sqlite3_step(statement);
-  if(rc == SQLITE_ROW){
-    *user_version = sqlite3_column_int(statement, 0);
-    rc = SQLITE_OK;
+  if(rc == SQLITE_ROW) {
+    *journal_mode = sqlite3_mprintf("%s", sqlite3_column_text(statement, 0)); 
+  } else {
+    goto cleanup; 
   }
+  rc = SQLITE_OK;
+  /* cleanup will finalize open statement */
   
 cleanup:
-  if(statement){
-    sqlite3_finalize(statement);
-  }
-  if(db){
-    sqlite3_close(db);
-  }
+  if(statement) sqlite3_finalize(statement); 
+  if(db) sqlite3_close(db); 
   return rc;
 }
 
@@ -1221,16 +1230,16 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   char *v1_pragmas = "PRAGMA cipher_use_hmac = OFF; PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;"; 
   char *v2_pragmas = "PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
   char *v3_pragmas = "PRAGMA kdf_iter = 64000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
-  char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL, *temp = NULL;
+  char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL, *temp = NULL, *journal_mode = NULL, *set_journal_mode = NULL;
   Btree *pDest = NULL, *pSrc = NULL;
-  const char* commands[4];
+  const char* commands[5];
   sqlite3_file *srcfile, *destfile;
 
   pass_sz = keyspec_sz = rc = user_version = upgrade_from = 0;
 
   if(!db_filename || sqlite3Strlen30(db_filename) < 1) 
-    goto release; /* exit immediately if this is an in memory database */ 
-    
+    goto cleanup; /* exit immediately if this is an in memory database */ 
+  
   /* pull the provided password / key material off the current codec context */
   pass_sz = ctx->read_ctx->pass_sz;
   pass = sqlcipher_malloc(pass_sz+1);
@@ -1238,28 +1247,28 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   memcpy(pass, ctx->read_ctx->pass, pass_sz);
                                             
   /* Version 4 - current, no upgrade required, so exit immediately */
-  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, "", &user_version);
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, "", &user_version, &journal_mode);
   if(rc == SQLITE_OK){
-    CODEC_TRACE("No upgrade required - exiting\n");
-    goto release;
+    printf("No upgrade required - exiting\n");
+    goto cleanup;
   }
 
   /* Version 3 - check for 64k with hmac format and 1024 page size */
-  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v3_pragmas, &user_version);
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v3_pragmas, &user_version, &journal_mode);
   if(rc == SQLITE_OK) {
     CODEC_TRACE("Version 3 format found\n");
     upgrade_from = 3;
   }
     
   /* Version 2 - check for 4k with hmac format and 1024 page size */
-  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v2_pragmas, &user_version);
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v2_pragmas, &user_version, &journal_mode);
   if(rc == SQLITE_OK) {
-  CODEC_TRACE("Version 2 format found\n");
+    CODEC_TRACE("Version 2 format found\n");
     upgrade_from = 2;
   }
 
   /* Version 1 - check no HMAC, 4k KDF, and 1024 page size */
-  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v1_pragmas, &user_version);
+  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v1_pragmas, &user_version, &journal_mode);
   if(rc == SQLITE_OK) {
     CODEC_TRACE("Version 1 format found\n");
     upgrade_from = 1;
@@ -1288,10 +1297,11 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
       CODEC_TRACE("Upgrade format not determined\n");
       goto handle_error;
   }
-  commands[1] = attach_command;
-  commands[2] = "SELECT sqlcipher_export('migrate');";
-  commands[3] = set_user_version;
-      
+  commands[1] = "PRAGMA journal_mode = delete;"; /* force journal mode to DELETE, we will set it back later if different */
+  commands[2] = attach_command;
+  commands[3] = "SELECT sqlcipher_export('migrate');";
+  commands[4] = set_user_version;
+
   for(i = 0; i < ArraySize(commands); i++){
     rc = sqlite3_exec(db, commands[i], NULL, NULL, NULL);
     if(rc != SQLITE_OK){
@@ -1354,13 +1364,10 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 
   sqlite3pager_reset(pDest->pBt->pPager);
   CODEC_TRACE("reset pager\n");
- 
-  rc = sqlite3BtreeClose(pSrc);
-  CODEC_TRACE("closed src btree %d\n", rc);
-  if( rc!=SQLITE_OK ) goto handle_error;
 
-  pDb->pBt = NULL;
-  pDb->pSchema = NULL;
+  rc = sqlite3_exec(db, "DETACH DATABASE migrate;", NULL, NULL, NULL);
+  CODEC_TRACE("DETACH DATABASE called %d\n", rc);
+  if(rc != SQLITE_OK) goto cleanup; 
 
   rc = sqlite3OsDelete(db->pVfs, migrated_db_filename, 0);
   CODEC_TRACE("deleted migration database: %d\n", rc);
@@ -1369,17 +1376,24 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   sqlite3ResetAllSchemasOfConnection(db);
   CODEC_TRACE("reset all schemas\n");
 
-  goto release;
+  set_journal_mode = sqlite3_mprintf("PRAGMA journal_mode = %s;", journal_mode);
+  rc = sqlite3_exec(db, set_journal_mode, NULL, NULL, NULL); 
+  CODEC_TRACE("%s: %d\n", set_journal_mode, rc);
+  if( rc!=SQLITE_OK ) goto handle_error;
+
+  goto cleanup;
 
 handle_error:
   CODEC_TRACE("An error occurred attempting to migrate the database - last error %d\n", rc);
   rc = SQLITE_ERROR;
 
-release:
+cleanup:
   if(pass) sqlcipher_free(pass, pass_sz);
   if(attach_command) sqlcipher_free(attach_command, sqlite3Strlen30(attach_command)); 
   if(migrated_db_filename) sqlcipher_free(migrated_db_filename, sqlite3Strlen30(migrated_db_filename)); 
   if(set_user_version) sqlcipher_free(set_user_version, sqlite3Strlen30(set_user_version)); 
+  if(set_journal_mode) sqlcipher_free(set_journal_mode, sqlite3Strlen30(set_journal_mode)); 
+  if(journal_mode) sqlcipher_free(journal_mode, sqlite3Strlen30(journal_mode)); 
   return rc;
 }
 
