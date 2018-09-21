@@ -1359,11 +1359,11 @@ migrate:
 #endif    
   CODEC_TRACE("renamed migration database %s to main database %s: %d\n", migrated_db_filename, db_filename, rc);
 
-  rc = sqlite3OsOpen(db->pVfs, migrated_db_filename, srcfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE, &oflags);
+  rc = sqlite3OsOpen(db->pVfs, migrated_db_filename, srcfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_MAIN_DB, &oflags);
   CODEC_TRACE("reopened migration database: %d\n", rc);
   if( rc!=SQLITE_OK ) goto handle_error;
 
-  rc = sqlite3OsOpen(db->pVfs, db_filename, destfile, SQLITE_OPEN_READWRITE, &oflags);
+  rc = sqlite3OsOpen(db->pVfs, db_filename, destfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_MAIN_DB, &oflags);
   CODEC_TRACE("reopened main database: %d\n", rc);
   if( rc!=SQLITE_OK ) goto handle_error;
 

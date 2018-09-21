@@ -2098,10 +2098,42 @@ do_test migrate-3-0-database-to-current-format {
   execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM sqlite_master;
+    PRAGMA journal_mode;
   }
-} {1}
+} {1 delete}
 db close
 file delete -force test.db
+
+do_test migrate-wal-database-to-current {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+  sqlite_orig db test.db
+  set rc {}
+
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 1024; PRAGMA kdf_iter = 64000; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
+    PRAGMA journal_mode = wal;
+  }]
+  db close
+    
+  sqlite_orig db test.db
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_migrate;
+    PRAGMA journal_mode;
+  }]
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_master;
+    PRAGMA journal_mode;
+  }]
+} {wal {0 wal} {1 wal}}
+db close
+file delete -force test.db
+
 
 do_test key-database-by-name {
     sqlite_orig db test.db
