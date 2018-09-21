@@ -209,63 +209,86 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
 
 static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   unsigned int outlen;
-  HMAC_CTX* hctx = HMAC_CTX_new();
-  if(hctx == NULL || in == NULL) return SQLITE_ERROR;
+  int rc = SQLITE_OK;
+  HMAC_CTX* hctx = NULL;
+
+  if(in == NULL) goto error;
+
+  hctx = HMAC_CTX_new();
+  if(hctx == NULL) goto error;
 
   switch(algorithm) {
     case SQLCIPHER_HMAC_SHA1:
-      HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL);
+      if(!HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL)) goto error;
       break;
     case SQLCIPHER_HMAC_SHA256:
-      HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha256(), NULL);
-      return EVP_MD_size(EVP_sha256());;
+      if(!HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha256(), NULL)) goto error;
       break;
     case SQLCIPHER_HMAC_SHA512:
-      HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha512(), NULL);
+      if(!HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha512(), NULL)) goto error;
       break;
     default:
-      return SQLITE_ERROR;
+      goto error;
   }
 
-  HMAC_Update(hctx, in, in_sz);
-  if(in2 != NULL) HMAC_Update(hctx, in2, in2_sz);
-  HMAC_Final(hctx, out, &outlen);
-  HMAC_CTX_free(hctx);
-  return SQLITE_OK; 
+  if(!HMAC_Update(hctx, in, in_sz)) goto error;
+  if(in2 != NULL) {
+    if(!HMAC_Update(hctx, in2, in2_sz)) goto error;
+  }
+  if(!HMAC_Final(hctx, out, &outlen)) goto error;
+  
+  goto cleanup;
+error:
+  rc = SQLITE_ERROR;
+cleanup:
+  if(hctx) HMAC_CTX_free(hctx);
+  return rc;
 }
 
 static int sqlcipher_openssl_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+  int rc = SQLITE_OK; 
+
   switch(algorithm) {
     case SQLCIPHER_HMAC_SHA1:
-      PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha1(), key_sz, key);
+      if(!PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha1(), key_sz, key)) goto error;
       break;
     case SQLCIPHER_HMAC_SHA256:
-      PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha256(), key_sz, key);
+      if(!PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha256(), key_sz, key)) goto error;
       break;
     case SQLCIPHER_HMAC_SHA512:
-      PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha512(), key_sz, key);
+      if(!PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sha512(), key_sz, key)) goto error;
       break;
     default:
       return SQLITE_ERROR;
   }
-  return SQLITE_OK; 
+
+  goto cleanup;
+error:
+  rc = SQLITE_ERROR;
+cleanup:
+  return rc;
 }
 
 static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
-  int tmp_csz, csz;
+  int tmp_csz, csz, rc = SQLITE_OK;
   EVP_CIPHER_CTX* ectx = EVP_CIPHER_CTX_new();
-  if(ectx == NULL) return SQLITE_ERROR;
-  EVP_CipherInit_ex(ectx, ((openssl_ctx *)ctx)->evp_cipher, NULL, NULL, NULL, mode);
-  EVP_CIPHER_CTX_set_padding(ectx, 0); /* no padding */
-  EVP_CipherInit_ex(ectx, NULL, NULL, key, iv, mode);
-  EVP_CipherUpdate(ectx, out, &tmp_csz, in, in_sz);
+  if(ectx == NULL) goto error;
+  if(!EVP_CipherInit_ex(ectx, ((openssl_ctx *)ctx)->evp_cipher, NULL, NULL, NULL, mode)) goto error; 
+  if(!EVP_CIPHER_CTX_set_padding(ectx, 0)) goto error; /* no padding */
+  if(!EVP_CipherInit_ex(ectx, NULL, NULL, key, iv, mode)) goto error;
+  if(!EVP_CipherUpdate(ectx, out, &tmp_csz, in, in_sz)) goto error;
   csz = tmp_csz;  
   out += tmp_csz;
-  EVP_CipherFinal_ex(ectx, out, &tmp_csz);
+  if(!EVP_CipherFinal_ex(ectx, out, &tmp_csz)) goto error;
   csz += tmp_csz;
-  EVP_CIPHER_CTX_free(ectx);
   assert(in_sz == csz);
-  return SQLITE_OK; 
+
+  goto cleanup;
+error:
+  rc = SQLITE_ERROR;
+cleanup:
+  if(ectx) EVP_CIPHER_CTX_free(ectx);
+  return rc; 
 }
 
 static const char* sqlcipher_openssl_get_cipher(void *ctx) {

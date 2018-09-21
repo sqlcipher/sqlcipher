@@ -43,7 +43,7 @@ static int sqlcipher_cc_add_random(void *ctx, void *buffer, int length) {
 
 /* generate a defined number of random bytes */
 static int sqlcipher_cc_random (void *ctx, void *buffer, int length) {
-  return (SecRandomCopyBytes(kSecRandomDefault, length, (uint8_t *)buffer) == 0) ? SQLITE_OK : SQLITE_ERROR;
+  return (SecRandomCopyBytes(kSecRandomDefault, length, (uint8_t *)buffer) == kCCSuccess) ? SQLITE_OK : SQLITE_ERROR;
 }
 
 static const char* sqlcipher_cc_get_provider_name(void *ctx) {
@@ -89,13 +89,13 @@ static int sqlcipher_cc_hmac(void *ctx, int algorithm, unsigned char *hmac_key, 
 static int sqlcipher_cc_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   switch(algorithm) {
     case SQLCIPHER_HMAC_SHA1:
-      CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA1, workfactor, key, key_sz);
+      if(CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA1, workfactor, key, key_sz) != kCCSuccess) return SQLITE_ERROR;
       break;
     case SQLCIPHER_HMAC_SHA256:
-      CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA256, workfactor, key, key_sz);
+      if(CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA256, workfactor, key, key_sz) != kCCSuccess) return SQLITE_ERROR;
       break;
     case SQLCIPHER_HMAC_SHA512:
-      CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA512, workfactor, key, key_sz);
+      if(CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA512, workfactor, key, key_sz) != kCCSuccess) return SQLITE_ERROR;
       break;
     default:
       return SQLITE_ERROR;
@@ -108,13 +108,13 @@ static int sqlcipher_cc_cipher(void *ctx, int mode, unsigned char *key, int key_
   size_t tmp_csz, csz;
   CCOperation op = mode == CIPHER_ENCRYPT ? kCCEncrypt : kCCDecrypt;
 
-  CCCryptorCreate(op, kCCAlgorithmAES128, 0, key, kCCKeySizeAES256, iv, &cryptor);
-  CCCryptorUpdate(cryptor, in, in_sz, out, in_sz, &tmp_csz);
+  if(CCCryptorCreate(op, kCCAlgorithmAES128, 0, key, kCCKeySizeAES256, iv, &cryptor) != kCCSuccess) return SQLITE_ERROR;
+  if(CCCryptorUpdate(cryptor, in, in_sz, out, in_sz, &tmp_csz) != kCCSuccess) return SQLITE_ERROR;
   csz = tmp_csz;
   out += tmp_csz;
-  CCCryptorFinal(cryptor, out, in_sz - csz, &tmp_csz);
+  if(CCCryptorFinal(cryptor, out, in_sz - csz, &tmp_csz) != kCCSuccess) return SQLITE_ERROR;
   csz += tmp_csz;
-  CCCryptorRelease(cryptor);
+  if(CCCryptorRelease(cryptor) != kCCSuccess) return SQLITE_ERROR;
   assert(in_sz == csz);
 
   return SQLITE_OK; 

@@ -175,9 +175,6 @@ static int sqlcipher_ltc_hmac(void *ctx, int algorithm, unsigned char *hmac_key,
 static int sqlcipher_ltc_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   int rc, hash_idx;
   unsigned long outlen = key_sz;
-  unsigned long random_buffer_sz = sizeof(char) * 256;
-  unsigned char *random_buffer = sqlcipher_malloc(random_buffer_sz);
-  sqlcipher_memset(random_buffer, 0, random_buffer_sz);
 
   switch(algorithm) {
     case SQLCIPHER_HMAC_SHA1:
@@ -198,12 +195,6 @@ static int sqlcipher_ltc_kdf(void *ctx, int algorithm, const unsigned char *pass
                        workfactor, hash_idx, key, &outlen)) != CRYPT_OK) {
     return SQLITE_ERROR;
   }
-  if((rc = pkcs_5_alg2(key, key_sz, salt, salt_sz,
-                       1, hash_idx, random_buffer, &random_buffer_sz)) != CRYPT_OK) {
-    return SQLITE_ERROR;
-  }
-  sqlcipher_ltc_add_random(ctx, random_buffer, random_buffer_sz);
-  sqlcipher_free(random_buffer, random_buffer_sz);
   return SQLITE_OK;
 }
 

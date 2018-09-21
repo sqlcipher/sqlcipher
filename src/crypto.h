@@ -262,7 +262,7 @@ void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value);
 int sqlcipher_codec_fips_status(codec_ctx *ctx);
 const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx);
 
-int sqlcipher_codec_hmac(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
+int sqlcipher_codec_hmac_sha1(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
                          unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
                          unsigned char *out);
 

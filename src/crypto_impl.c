@@ -969,12 +969,11 @@ static int sqlcipher_page_hmac(codec_ctx *ctx, cipher_ctx *c_ctx, Pgno pgno, uns
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
-  ctx->provider->hmac(
+  return ctx->provider->hmac(
     ctx->provider_ctx, ctx->hmac_algorithm, c_ctx->hmac_key,
     ctx->key_sz, in,
     in_sz, (unsigned char*) &pgno_raw,
     sizeof(pgno), out);
-  return SQLITE_OK; 
 }
 
 /*
@@ -1007,22 +1006,20 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   /* the key size should never be zero. If it is, error out. */
   if(ctx->key_sz == 0) {
     CODEC_TRACE("codec_cipher: error possible context corruption, key_sz is zero for pgno=%d\n", pgno);
-    sqlcipher_memset(out, 0, page_sz); 
-    return SQLITE_ERROR;
+    goto error;
   } 
 
   if(mode == CIPHER_ENCRYPT) {
     /* start at front of the reserve block, write random data to the end */
-    if(ctx->provider->random(ctx->provider_ctx, iv_out, ctx->reserve_sz) != SQLITE_OK) return SQLITE_ERROR; 
+    if(ctx->provider->random(ctx->provider_ctx, iv_out, ctx->reserve_sz) != SQLITE_OK) goto error;
   } else { /* CIPHER_DECRYPT */
     memcpy(iv_out, iv_in, ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
 
   if((ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT) && !ctx->skip_read_hmac) {
     if(sqlcipher_page_hmac(ctx, c_ctx, pgno, in, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
-      sqlcipher_memset(out, 0, page_sz); 
-      CODEC_TRACE("codec_cipher: hmac operations failed for pgno=%d\n", pgno);
-      return SQLITE_ERROR;
+      CODEC_TRACE("codec_cipher: hmac operation on decrypt failed for pgno=%d\n", pgno);
+      goto error;
     }
 
     CODEC_TRACE("codec_cipher: comparing hmac on in=%p out=%p hmac_sz=%d\n", hmac_in, hmac_out, ctx->hmac_sz);
@@ -1040,21 +1037,29 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
            since the check failed, the page was either tampered with or corrupted. wipe the output buffer,
            and return SQLITE_ERROR to the caller */
         CODEC_TRACE("codec_cipher: hmac check failed for pgno=%d returning SQLITE_ERROR\n", pgno);
-        sqlcipher_memset(out, 0, page_sz); 
-        return SQLITE_ERROR;
+        goto error;
       }
     }
   } 
   
-  ctx->provider->cipher(ctx->provider_ctx, mode, c_ctx->key, ctx->key_sz, iv_out, in, size, out);
+  if(ctx->provider->cipher(ctx->provider_ctx, mode, c_ctx->key, ctx->key_sz, iv_out, in, size, out) != SQLITE_OK) {
+    CODEC_TRACE("codec_cipher: cipher operation mode=%d failed for pgno=%d returning SQLITE_ERROR\n", mode, pgno);
+    goto error;
+  };
 
   if((ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
-    sqlcipher_page_hmac(ctx, c_ctx, pgno, out_start, size + ctx->iv_sz, hmac_out); 
+    if(sqlcipher_page_hmac(ctx, c_ctx, pgno, out_start, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
+      CODEC_TRACE("codec_cipher: hmac operation on encrypt failed for pgno=%d\n", pgno);
+      goto error;
+    }; 
   }
 
   CODEC_HEXDUMP("codec_cipher: output page data", out_start, page_sz);
 
   return SQLITE_OK;
+error:
+  sqlcipher_memset(out, 0, page_sz); 
+  return SQLITE_ERROR;
 }
 
 /**
@@ -1099,9 +1104,9 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       cipher_hex2bin(z + (ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
     } else { 
       CODEC_TRACE("cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter); 
-      ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz, 
+      if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz, 
                     ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
-                    ctx->key_sz, c_ctx->key);
+                    ctx->key_sz, c_ctx->key) != SQLITE_OK) return SQLITE_ERROR;
     }
 
     /* set the context "keyspec" containing the hex-formatted key and salt to be used when attaching databases */
@@ -1127,9 +1132,9 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
         c_ctx->fast_kdf_iter); 
 
       
-      ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, ctx->key_sz, 
+      if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, ctx->key_sz, 
                     ctx->hmac_kdf_salt, ctx->kdf_salt_sz, ctx->fast_kdf_iter,
-                    ctx->key_sz, c_ctx->hmac_key); 
+                    ctx->key_sz, c_ctx->hmac_key) != SQLITE_OK) return SQLITE_ERROR;
     }
 
     c_ctx->derive_key = 0;
@@ -1465,11 +1470,10 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
   return ctx->provider->get_provider_version(ctx->provider_ctx);
 }
 
-int sqlcipher_codec_hmac(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
+int sqlcipher_codec_hmac_sha1(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
                          unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
                          unsigned char *out) {
-  ctx->provider->hmac(ctx->provider_ctx, SQLCIPHER_HMAC_SHA1, (unsigned char *)hmac_key, key_sz, in, in_sz, in2, in2_sz, out);
-  return SQLITE_OK;
+  return ctx->provider->hmac(ctx->provider_ctx, SQLCIPHER_HMAC_SHA1, (unsigned char *)hmac_key, key_sz, in, in_sz, in2, in2_sz, out);
 }
 
 
