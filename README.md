@@ -53,7 +53,7 @@ key data without key derivation.
 
 	PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
 
-To encrypt a database programatically you can use the `sqlite3_key` function. 
+To encrypt a database programmatically you can use the `sqlite3_key` function. 
 The data provided in `pKey` is converted to an encryption key according to the 
 same rules as `PRAGMA key`. 
 
@@ -73,7 +73,7 @@ The hex rekey pragma may be used to rekey to a specific binary value
 
 	PRAGMA rekey = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
 
-This can be accomplished programtically by using sqlite3_rekey;
+This can be accomplished programmatically by using sqlite3_rekey;
   
 	sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey)
 
