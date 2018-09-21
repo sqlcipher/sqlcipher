@@ -70,7 +70,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_READWRITE_CTX 2
 
 #ifndef PBKDF2_ITER
-#define PBKDF2_ITER 128000
+#define PBKDF2_ITER 256000
 #endif
 
 /* possible flags for cipher_ctx->flags */
