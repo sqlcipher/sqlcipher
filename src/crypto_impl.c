@@ -1258,6 +1258,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   if(rc == SQLITE_OK) {
     CODEC_TRACE("Version 3 format found\n");
     upgrade_from = 3;
+    goto migrate;
   }
     
   /* Version 2 - check for 4k with hmac format and 1024 page size */
@@ -1265,6 +1266,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   if(rc == SQLITE_OK) {
     CODEC_TRACE("Version 2 format found\n");
     upgrade_from = 2;
+    goto migrate;
   }
 
   /* Version 1 - check no HMAC, 4k KDF, and 1024 page size */
@@ -1272,7 +1274,10 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   if(rc == SQLITE_OK) {
     CODEC_TRACE("Version 1 format found\n");
     upgrade_from = 1;
+    goto migrate;
   }
+
+migrate:
 
   temp = sqlite3_mprintf("%s-migrated", db_filename);
   /* overallocate migrated_db_filename, because sqlite3OsOpen will read past the null terminator
