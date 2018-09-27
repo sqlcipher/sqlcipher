@@ -764,6 +764,84 @@ db2 close
 file delete -force test.db
 file delete -force test2.db
 
+# create an unencrypted database, attach an encrypted database
+# then copy the data to it via sqlcipher_export and verify results
+do_test unencrypted-to-encrypted-export {
+  sqlite_orig db test.db
+
+  execsql {
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,$r);" 
+  }
+
+  execsql {
+    COMMIT;
+    ATTACH DATABASE 'test2.db' AS test2 KEY 'testkey2';
+    SELECT sqlcipher_export('test2');
+    DETACH DATABASE test2;
+  } 
+  db close
+
+  sqlite_orig db test2.db
+  execsql {
+    PRAGMA key = 'testkey2';
+    SELECT count(*) FROM t1;
+  } 
+
+  execsql {
+    SELECT count(*) FROM t1;
+  }
+} {1000}
+db close
+file delete -force test.db
+file delete -force test2.db
+
+# create an encrypted database, attach an unencrypted database
+# with data in it, then import the data back into the encrypted DB
+# and verify
+do_test unencrypted-to-encrypted-import {
+  sqlite_orig db test.db
+
+  execsql {
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,$r);"
+  }
+
+  execsql {
+    COMMIT;
+  }
+  db close
+
+  sqlite_orig db test2.db
+
+  execsql {
+    PRAGMA key = 'testkey2';
+    ATTACH DATABASE 'test.db' AS test KEY '';
+    SELECT sqlcipher_export('main', 'test');
+    DETACH DATABASE test;
+  }
+  db close
+
+  sqlite_orig db test2.db
+  execsql {
+    PRAGMA key = 'testkey2';
+    SELECT count(*) FROM t1;
+  }
+} {1000}
+db close
+file delete -force test.db
+file delete -force test2.db
+
 # create an unencrypted database, attach an unencrypted volume
 # copy data between, verify the unencypted database is good afterwards
 do_test unencrypted-attach-unencrypted {
