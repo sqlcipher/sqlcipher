@@ -1096,6 +1096,79 @@ db close
 file delete -force test.db
 file delete -force test2.db
 
+# use the sqlcipher_export function
+# to copy a complicated attached database to the main database
+do_test export-attached-database {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE TABLE t1(a INTEGER PRIMARY KEY AUTOINCREMENT, b, c);
+    CREATE UNIQUE INDEX b_idx ON t1(b);
+    CREATE INDEX c_idx ON t1(c);
+
+    CREATE TABLE t2(b,c);
+    CREATE TRIGGER t2_after_insert AFTER INSERT ON t2
+    BEGIN
+      INSERT INTO t1(b,c) VALUES (new.b, new.c);
+    END;
+
+    CREATE VIEW v1 AS
+      SELECT c FROM t1;
+
+    CREATE VIRTUAL TABLE fts USING fts5(a,b);
+
+    BEGIN;
+    -- start with one known value
+    INSERT INTO t2 VALUES(1000000,'value 1000000');
+  }
+
+  for {set i 1} {$i<=999} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t2 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    INSERT INTO fts SELECT b,c FROM t1;
+    COMMIT;
+  }
+  db close
+
+  sqlite_orig db test2.db
+  execsql {
+    PRAGMA key = 'testkey2';
+
+    CREATE TABLE t3(a INTEGER PRIMARY KEY AUTOINCREMENT, b, c);
+    CREATE UNIQUE INDEX d_idx ON t3(b);
+    INSERT INTO t3(b,c) VALUES ('one', 'two');
+ 
+    ATTACH DATABASE 'test.db' AS db KEY 'testkey';
+
+    SELECT sqlcipher_export('main', 'db');
+
+    DETACH DATABASE db;
+    INSERT INTO t3(b,c) VALUES ('three', 'four');
+  }
+  db close
+
+  sqlite_orig db test2.db
+  execsql {
+    PRAGMA key = 'testkey2';
+    SELECT count(*) FROM t1;
+    SELECT count(*) FROM v1;
+    SELECT count(*) FROM sqlite_sequence;
+    SELECT seq FROM sqlite_sequence WHERE name = 't1';
+    INSERT INTO t2 VALUES(10001, 'value 938383');
+    SELECT count(*) FROM t1; -- verify the trigger worked
+    SELECT seq FROM sqlite_sequence WHERE name = 't1'; -- verify that autoincrement worked
+    SELECT a FROM fts WHERE b MATCH '1000000';
+    SELECT count(*) FROM t3;
+  }
+} {1000 1000 1 1000 1001 1001 1000000 2}
+db close
+file delete -force test.db
+file delete -force test2.db
+
 # 1. create a database with WAL journal mode
 # 2. create table and insert operations should work
 # 3. close database, open it again
