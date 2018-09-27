@@ -1447,15 +1447,11 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
   }else if(sqlite3StrICmp(destination, "off") == 0){
     f = 0;
   }else{
-#if defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT)
-    if(fopen_s(&f, destination, "a") != 0){
+#if !defined(SQLCIPHER_PROFILE_USE_FOPEN) && (defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT))
+    if(fopen_s(&f, destination, "a") != 0) return SQLITE_ERROR;
 #else
-    f = fopen(destination, "a");
-    if(f == 0){
+    if((f = fopen(destination, "a")) == 0) return SQLITE_ERROR;
 #endif    
-    return SQLITE_ERROR;
-  }
-
   }
   sqlite3_profile(db, sqlcipher_profile_callback, f);
   return SQLITE_OK;
