@@ -35,6 +35,10 @@
 #include "sqlcipher.h"
 #include "crypto.h"
 
+#ifdef SQLCIPHER_LICENSE
+#include "sqlcipher-license.h"
+#endif
+
 static const char* codec_get_cipher_version() {
   return CIPHER_VERSION;
 }
@@ -97,6 +101,22 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
 
   CODEC_TRACE("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx);
   
+#ifdef SQLCIPHER_LICENSE
+  if( sqlite3StrICmp(zLeft, "cipher_license")==0 && zRight ){
+    char *license_result = sqlite3_mprintf("%d", sqlcipher_license_key(zRight));
+    codec_vdbe_return_static_string(pParse, "cipher_license", license_result);
+    sqlite3_free(license_result);
+  } else
+    if( sqlite3StrICmp(zLeft, "cipher_license")==0 && !zRight ){
+      if(ctx) {
+        char *license_result = sqlite3_mprintf("%d", ctx
+                                               ? sqlcipher_license_key_status(ctx)
+                                               : SQLITE_ERROR);
+        codec_vdbe_return_static_string(pParse, "cipher_license", license_result);
+        sqlite3_free(license_result);
+      }
+  } else
+#endif
   if( sqlite3StrICmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
     if(ctx) {
       char *fips_mode_status = sqlite3_mprintf("%d", sqlcipher_codec_fips_status(ctx));
@@ -466,6 +486,10 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   CODEC_TRACE("sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
 
+#ifdef SQLCIPHER_LICENSE
+  if(sqlcipher_license_check(ctx) != SQLITE_OK) return NULL;
+#endif
+
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
    sqlcipher_codec_ctx_set_error(ctx, rc); 
@@ -536,6 +560,13 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     sqlite3_mutex_enter(db->mutex);
     CODEC_TRACE_MUTEX("sqlite3CodecAttach: entered database mutex %p\n", db->mutex);
 
+#ifdef SQLCIPHER_LICENSE
+    if((rc = sqlite3_set_authorizer(db, sqlcipher_license_authorizer, db)) != SQLITE_OK) {
+      sqlite3_mutex_leave(db->mutex);
+      return rc;
+    }
+#endif
+
     /* point the internal codec argument against the contet to be prepared */
     CODEC_TRACE("sqlite3CodecAttach: calling sqlcipher_codec_ctx_init()\n");
     rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey); 
@@ -577,20 +608,6 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
 void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
-}
-
-static int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
-  int db_index;
-  if(zDb == NULL){
-    return 0;
-  }
-  for(db_index = 0; db_index < db->nDb; db_index++) {
-    struct Db *pDb = &db->aDb[db_index];
-    if(strcmp(pDb->zDbSName, zDb) == 0) {
-      return db_index;
-    }
-  }
-  return 0;
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {

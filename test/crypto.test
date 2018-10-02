@@ -107,6 +107,10 @@ proc trace_proc sql {
   lappend TRACE_OUT [string trim $sql]
 }
 
+if {[file exist "$testdir/sqlcipher-license.test"]} {
+  source $testdir/sqlcipher-license.test
+}
+
 # The database is initially empty.
 # set an hex key create some basic data
 # create table and insert operations should work
@@ -2976,7 +2980,6 @@ do_test verify-memory-security {
 } {1 0 1}
 db close
 file delete -force test.db
-
 
 sqlite3_test_control_pending_byte $old_pending_byte
 finish_test
