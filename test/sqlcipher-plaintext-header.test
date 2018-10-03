@@ -1,0 +1,434 @@
+# SQLCipher
+# codec.test developed by Stephen Lombardo (Zetetic LLC)
+# sjlombardo at zetetic dot net
+# http://zetetic.net
+#
+# Copyright (c) 2018, ZETETIC LLC
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the ZETETIC LLC nor the
+#       names of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# This file implements regression tests for SQLite library.  The
+# focus of this script is testing code cipher features.
+#
+# NOTE: tester.tcl has overridden the definition of sqlite3 to
+# automatically pass in a key value. Thus tests in this file
+# should explicitly close and open db with sqlite_orig in order
+# to bypass default key assignment.
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+source $testdir/sqlcipher.tcl
+
+set hexkeyspec "\"x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648101010101010101010101010101010101'\""
+
+# verify pragma cipher_salt returns the first 16 bytes 
+# of an existing database
+do_test test-pragma-salt-get {
+  sqlite_orig db test.db
+  set salt [execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    PRAGMA cipher_salt;
+  }]
+  set header [string tolower [hexio_read test.db 0 16]]
+  string equal $header $salt
+} {1}
+file delete -force test.db
+
+# explicitly set the salt of a new database 
+do_test test-pragma-salt-set {
+  set rc {}
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test';
+    PRAGMA cipher_salt = "x'01010101010101010101010101010101'";
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  db close
+  
+  lappend rc [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = 'test';
+    SELECT count(*) FROM t1;
+    PRAGMA cipher_salt;
+  "]
+
+} {01010101010101010101010101010101 {1 01010101010101010101010101010101}}
+file delete -force test.db
+
+
+# verify that a raw key with a fixed salt will work
+# the first 16 bytes of database should be equal to the specified salt
+# which is the last 32 characters of the hex key spec.
+# also verify return value of cipher_salt
+do_test test-raw-key-with-salt-spec {
+  set rc {}
+  sqlite_orig db test.db
+  execsql " 
+    PRAGMA key = $hexkeyspec;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  " 
+  db close
+
+  lappend rc [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = $hexkeyspec;
+    SELECT count(*) FROM t1;
+    PRAGMA cipher_salt;
+  "]
+} {01010101010101010101010101010101 {1 01010101010101010101010101010101}}
+db close
+file delete -force test.db
+
+# verify that a raw key with an invalid salt will not work to
+# open an existing database.
+# should cause hmac failure due to invalid generated HMAC key
+do_test test-raw-key-with-invalid-salt-spec {
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkeyspec;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  "
+  db close
+
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key="x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648100000000000000000000000000000001'";
+    SELECT count(*) FROM t1;
+  } 
+} {1 {file is not a database}}
+db close
+file delete -force test.db
+
+# verify that a raw key with a bad salt *will* work if page HMAC is disabled
+# in this case the salt will not actually be used for anything
+# because the encryption key is provided explicitly
+do_test test-raw-key-with-invalid-salt-spec-no-hmac {
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_use_hmac = OFF;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  "
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key="x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648100000000000000000000000000000001'";
+    PRAGMA cipher_use_hmac = OFF;
+    SELECT count(*) FROM t1;
+  }
+} {1}
+db close
+file delete -force test.db
+
+# verify that invalid cipher_plaintext_header_sizes don't work
+# 1. less than zero
+# 2. Larger than available page size
+# 2. Not a multiple of block size
+do_test test-invalid-plaintext-header-sizes {
+  set rc {}
+  sqlite_orig db test.db
+  lappend rc [catchsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_plaintext_header_size = -1;
+    CREATE TABLE t1(a,b);
+  "]
+  db close
+  sqlite_orig db test.db
+  lappend rc [catchsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_plaintext_header_size = 4096;
+    CREATE TABLE t1(a,b);
+  "]
+  db close
+  sqlite_orig db test.db
+  lappend rc [catchsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_plaintext_header_size = 24; 
+    CREATE TABLE t1(a,b);
+  "]
+} {{1 {SQL logic error}} {1 {SQL logic error}} {1 {SQL logic error}}}
+db close
+file delete -force test.db
+
+# verify that a valid cipher_plaintext_header_size leaves the
+# start of the database unencrypted, i.e. "SQLite format 3\0"
+do_test test-valid-plaintext-header-size {
+  set rc {}
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_plaintext_header_size = 16;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  "
+  db close
+
+  lappend rc [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_plaintext_header_size = 16;
+    SELECT count(*) FROM t1;
+    PRAGMA cipher_plaintext_header_size;
+  "]
+} {53514C69746520666F726D6174203300 {1 16}}
+db close
+file delete -force test.db
+
+# when using a standard mode database and 32 byte
+# plaintext header, ensure that bytes 16 - 19
+# corresponding to the page size and file versions, and reserve size
+# are readable and equal to 1024, 1, 1, and 80 respectively
+do_test test-plaintext-header-journal-delete-mode-readable {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test';
+    PRAGMA cipher_plaintext_header_size = 32;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  db close
+  string equal [hexio_read test.db 16 5] "1000010150"
+} {1}
+file delete -force test.db
+
+
+# when using a WAL mode database and 32 byte
+# plaintext header, ensure that bytes 16 - 19
+# corresponding to the page size and file versions, and reserve size
+# are readable and equal to 1024, 2, 2 and 80 respectively
+do_test test-plaintext-header-journal-wal-mode-readable {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test';
+    PRAGMA cipher_plaintext_header_size = 32;
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  db close
+  string equal [hexio_read test.db 16 5] "1000020250"
+} {1}
+file delete -force test.db
+
+# verify that a valid default_cipher_plaintext_header_size leaves the
+# start of the database unencrypted right from the start
+# , i.e. "SQLite format 3\0"
+do_test test-valid-default-plaintext-header-size {
+  set rc {}
+  sqlite_orig db test.db
+  set salt [execsql {
+    PRAGMA cipher_default_plaintext_header_size = 16;
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+    PRAGMA cipher_salt;
+  }]
+  db close
+
+  lappend rc [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = 'test';
+    PRAGMA cipher_salt = \"x'$salt'\";
+    SELECT count(*) FROM t1;
+    PRAGMA cipher_plaintext_header_size;
+  "]
+
+  # reset the default back to 0 or subsequent tests will fail
+  execsql "PRAGMA cipher_default_plaintext_header_size = 0;"
+
+  lappend rc [string equal $salt "53514c69746520666f726d6174203300"]
+} {53514C69746520666F726D6174203300 {1 16} 0}
+db close
+file delete -force test.db
+
+# verify that a valid default_cipher_plaintext_header_size 
+# operates properly on an attached database, and that the 
+# salt pragma operates on the attached database as well
+do_test test-valid-default-plaintext-header-size-attach {
+  set rc {}
+  sqlite_orig db test.db
+  set salt [execsql {
+    PRAGMA cipher_default_plaintext_header_size = 16;
+    PRAGMA key = 'test';
+    CREATE TABLE temp(a);
+    ATTACH DATABASE 'test2.db' as db2;
+    CREATE TABLE db2.t2(a,b);
+    INSERT INTO db2.t2(a,b) VALUES (1,2);
+    PRAGMA db2.cipher_salt;
+    DETACH DATABASE db2;
+  }]
+  db close
+  lappend rc [hexio_read test2.db 0 16]
+
+  sqlite_orig db test2.db
+  lappend rc [execsql "
+    PRAGMA key = 'test';
+    PRAGMA cipher_salt = \"x'$salt'\";
+    SELECT count(*) FROM t2;
+    PRAGMA cipher_plaintext_header_size;
+  "]
+
+  # reset the default back to 0 or subsequent tests will fail
+  execsql "PRAGMA cipher_default_plaintext_header_size = 0;"
+
+  lappend rc [string equal $salt "53514c69746520666f726d6174203300"]
+} {53514C69746520666F726D6174203300 {1 16} 0}
+db close
+file delete -force test.db
+file delete -force test2.db
+
+
+# migrate a standard database in place to use a 
+# plaintext header offset by opening it, adjusting
+# the pragma, and rewriting the first page
+do_test test-plaintext-header-migrate-journal-delete {
+  set rc {}
+  sqlite_orig db test.db
+  execsql " 
+    PRAGMA key = $hexkeyspec;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  " 
+  db close
+
+  lappend rc [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkeyspec;
+    SELECT count(*) FROM t1;
+    PRAGMA cipher_plaintext_header_size = 32;
+    PRAGMA user_version = 1;
+  "
+  db close
+  lappend rc [hexio_read test.db 0 21]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_plaintext_header_size = 32;
+    SELECT count(*) FROM t1;
+  "]
+
+} {01010101010101010101010101010101 53514C69746520666F726D61742033001000010150 1}
+db close
+file delete -force test.db
+
+# migrate a wal mode database in place to use a 
+# plaintext header offset by opening it, adjusting
+# the pragma, and rewriting the first page
+do_test test-plaintext-header-migrate-journal-wal {
+  set rc {}
+  sqlite_orig db test.db
+  execsql " 
+    PRAGMA key = $hexkeyspec;
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  " 
+  db close
+
+  lappend rc [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = $hexkeyspec;
+    SELECT count(*) FROM t1;
+    PRAGMA journal_mode;
+    PRAGMA cipher_plaintext_header_size = 32;
+    PRAGMA user_version = 1;
+    PRAGMA wal_checkpoint(FULL);
+  "]
+  db close
+  lappend rc [hexio_read test.db 0 21]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = $hexkeyspec;
+    PRAGMA cipher_plaintext_header_size = 32;
+    SELECT count(*) FROM t1;
+    PRAGMA journal_mode;
+  "]
+
+} {01010101010101010101010101010101 {1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {1 wal}}
+db close
+file delete -force test.db
+
+# migrate a wal mode database in place to use a plaintext header
+# but instead of using a raw key syntax, use a derived key
+# but explicitly set the salt using cipher_salt
+do_test test-plaintext-header-migrate-journal-wal-string-key-random-salt {
+  set rc {}
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test';
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  db close
+
+  set salt [hexio_read test.db 0 16]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = 'test';
+    SELECT count(*) FROM t1;
+    PRAGMA journal_mode;
+    PRAGMA cipher_plaintext_header_size = 32;
+    PRAGMA user_version = 1;
+    PRAGMA wal_checkpoint(FULL);
+  "]
+  db close
+
+  lappend rc [hexio_read test.db 0 21]
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = 'test';
+    PRAGMA cipher_salt = \"x'$salt'\";
+    PRAGMA cipher_plaintext_header_size = 32;
+    SELECT count(*) FROM t1;
+    PRAGMA journal_mode;
+  "]
+
+
+} {{1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {1 wal}}
+db close
+file delete -force test.db
+
+
+finish_test

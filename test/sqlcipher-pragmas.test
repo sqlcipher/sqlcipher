@@ -1,0 +1,379 @@
+# SQLCipher
+# codec.test developed by Stephen Lombardo (Zetetic LLC)
+# sjlombardo at zetetic dot net
+# http://zetetic.net
+#
+# Copyright (c) 2018, ZETETIC LLC
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the ZETETIC LLC nor the
+#       names of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# This file implements regression tests for SQLite library.  The
+# focus of this script is testing code cipher features.
+#
+# NOTE: tester.tcl has overridden the definition of sqlite3 to
+# automatically pass in a key value. Thus tests in this file
+# should explicitly close and open db with sqlite_orig in order
+# to bypass default key assignment.
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+source $testdir/sqlcipher.tcl
+
+# verify the pragma cipher_version
+# returns the currently configured
+# sqlcipher version
+do_test verify-pragma-cipher-version {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_version;
+    }
+} {3.4.2}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_use_hmac
+# is set to true be default
+do_test verify-pragma-cipher-use-hmac-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_use_hmac;
+    }
+} {1}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_use_hmac
+# reports the flag turned off
+do_test verify-pragma-cipher-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_use_hmac = off;
+        PRAGMA cipher_use_hmac;
+    }
+} {0}
+db close
+file delete -force test.db
+
+# verify the pragma default_cipher_use_hmac
+# is set to true by default
+do_test verify-pragma-cipher-default-use-hmac-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_use_hmac;
+    }
+} {1}
+db close
+file delete -force test.db
+
+# verify the pragma default_cipher_use_hmac
+# reports the flag turned off
+do_test verify-pragma-cipher-default-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_use_hmac = off;
+        PRAGMA cipher_default_use_hmac;
+        -- Be sure to turn cipher_default_use_hmac
+        -- back on or it will break later tests 
+        -- (it's a global flag)
+        PRAGMA cipher_default_use_hmac = ON;
+    }
+} {0}
+db close
+file delete -force test.db
+
+# verify the pragma default_cipher_kdf_iter
+# is set to 256000 by default
+do_test verify-pragma-cipher-default-kdf-iter-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_kdf_iter;
+    }
+} {256000}
+db close
+file delete -force test.db
+
+
+# verify the pragma default_cipher_kdf_ter
+# reports changes
+do_test verify-pragma-cipher-default-use-hmac-off {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_kdf_iter = 1000;
+        PRAGMA cipher_default_kdf_iter;
+        PRAGMA cipher_default_kdf_iter = 256000;
+    }
+} {1000}
+db close
+file delete -force test.db
+
+# verify the pragma kdf_iter
+# reports the default value
+do_test verify-pragma-kdf-iter-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA kdf_iter;
+    }
+} {256000}
+db close
+file delete -force test.db
+
+# verify the pragma kdf_iter
+# reports value changed
+do_test verify-pragma-kdf-iter-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA kdf_iter = 8000;
+        PRAGMA kdf_iter;
+    }
+ } {8000}
+db close
+file delete -force test.db
+
+# verify the pragma fast_kdf_iter
+# reports the default value
+do_test verify-pragma-fast-kdf-iter-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA fast_kdf_iter;
+    }
+} {2}
+db close
+file delete -force test.db
+
+# verify the pragma fast_kdf_iter
+# reports value changed
+do_test verify-pragma-kdf-iter-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA fast_kdf_iter = 4000;
+        PRAGMA fast_kdf_iter;
+    }
+} {4000}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_page_size
+# reports default value
+do_test verify-pragma-cipher-page-size-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size;
+    }
+} {4096}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_page_size
+# reports change in value
+do_test verify-pragma-cipher-page-size-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_page_size = 8192;
+        PRAGMA cipher_page_size;
+    }
+} {8192}
+db close
+file delete -force test.db
+
+# verify setting cipher_store_pass before key
+# does not cause segfault
+do_test verify-cipher-store-pass-before-key-does-not-segfault {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_store_pass = 1;
+        PRAGMA key = 'test';
+    }
+} {}
+db close
+file delete -force test.db
+
+# verify the pragma cipher
+# reports the default value
+if_built_with_openssl verify-pragma-cipher-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_salt_mask reports default
+do_test verify-pragma-hmac-salt-mask-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_salt_mask;
+    }
+} {3a}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_salt_mask reports
+# reports value changed
+do_test verify-pragma-hmac-salt-mask-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_salt_mask = "x'11'";
+        PRAGMA cipher_hmac_salt_mask;
+    }
+} {11}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_pgno reports default
+do_test verify-pragma-hmac-pgno-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_pgno;
+    }
+} {le}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_pgno 
+# reports value changed
+do_test verify-pragma-hmac-pgno-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_pgno = be;
+        PRAGMA cipher_hmac_pgno;
+        PRAGMA cipher_hmac_pgno = native;
+        PRAGMA cipher_hmac_pgno;
+        PRAGMA cipher_hmac_pgno = le;
+        PRAGMA cipher_hmac_pgno;
+    }
+} {be native le}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_hmac_algorithm works properly
+do_test verify-pragma-cipher-hmac-algorithm-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_algorithm;
+    }
+} {HMAC_SHA512}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-hmac-algorithm-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+        PRAGMA cipher_hmac_algorithm;
+    }
+} {HMAC_SHA1}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-default-hmac-algorithm {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_hmac_algorithm;
+        PRAGMA cipher_default_hmac_algorithm = HMAC_SHA1;
+        PRAGMA cipher_default_hmac_algorithm;
+        PRAGMA cipher_default_hmac_algorithm = HMAC_SHA512;
+    }
+} {HMAC_SHA512 HMAC_SHA1}
+db close
+file delete -force test.db
+
+# verify the pragma cipher_kdf_algorithm works properly
+do_test verify-pragma-cipher-kdf-algorithm-reports-default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_kdf_algorithm;
+    }
+} {PBKDF2_HMAC_SHA512}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-kdf-algorithm-reports-value-changed {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
+        PRAGMA cipher_kdf_algorithm;
+    }
+} {PBKDF2_HMAC_SHA1}
+db close
+file delete -force test.db
+
+do_test verify-pragma-cipher-default-kdf-algorithm {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_kdf_algorithm;
+        PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA1;
+        PRAGMA cipher_default_kdf_algorithm;
+        PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;
+    }
+} {PBKDF2_HMAC_SHA512 PBKDF2_HMAC_SHA1}
+db close
+file delete -force test.db
+
+if_built_with_openssl verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {AES-256-CBC}
+db close
+file delete -force test.db
+
+if_built_with_libtomcrypt verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {aes-256-cbc}
+db close
+file delete -force test.db
+
+if_built_with_commoncrypto verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {aes-256-cbc}
+db close
+file delete -force test.db
+
+finish_test

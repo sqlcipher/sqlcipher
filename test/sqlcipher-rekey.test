@@ -1,0 +1,329 @@
+# SQLCipher
+# codec.test developed by Stephen Lombardo (Zetetic LLC)
+# sjlombardo at zetetic dot net
+# http://zetetic.net
+#
+# Copyright (c) 2018, ZETETIC LLC
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the ZETETIC LLC nor the
+#       names of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# This file implements regression tests for SQLite library.  The
+# focus of this script is testing code cipher features.
+#
+# NOTE: tester.tcl has overridden the definition of sqlite3 to
+# automatically pass in a key value. Thus tests in this file
+# should explicitly close and open db with sqlite_orig in order
+# to bypass default key assignment.
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+source $testdir/sqlcipher.tcl
+
+# Test rekey as first operation on an empty database. should be a no-op
+do_test rekey-as-first-op {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=100} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {100}
+db close
+file delete -force test.db
+
+# Test rekey as first operation follwed by key
+do_test rekey-then-key-as-first-ops {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = '1234';
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=100} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA rekey = '4321';
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {100}
+db close
+file delete -force test.db
+
+
+# test a rekey operation as the first op on a database
+# then test that now the new key opens the database
+# now close database re-open with new key
+setup test.db "'testkey'"
+do_test rekey-as-first-operation {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA rekey = 'testkeynew';
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkeynew';
+    SELECT name FROM sqlite_master WHERE type='table';
+  }
+} {t1}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# then rekey it with the same password
+do_test rekey-same-passkey {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+    PRAGMA rekey = 'test123';
+    SELECT count(*) FROM t1;
+  }
+} {1000 1000}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# then rekey it. Make sure it is immediately
+# readable. Then close it and make sure it can be
+# read back 
+do_test rekey-and-query-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+    SELECT count(*) FROM t1;
+    PRAGMA rekey = 'test321';
+    SELECT count(*) FROM t1;
+  }
+} {1000 1000}
+
+db close
+
+do_test rekey-and-query-2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test321';
+    SELECT count(*) FROM t1;
+  }
+} {1000}
+db close
+file delete -force test.db
+
+# create a new database, insert some data
+# delete about 50% of the data
+# write some new data
+# delete another 50%
+# then rekey it. Make sure it is immediately
+# readable. Then close it and make sure it can be
+# read back. This test will ensure that Secure Delete
+# is enabled and all pages are being written and are not
+# being optimized out by sqlite3PagerDontWrite
+do_test rekey-delete-and-query-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    CREATE INDEX ta_a ON t1(a);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<1000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  set r1 [expr {int(rand()*32767)}]
+  execsql "UPDATE t1 SET b = $r WHERE a < $r1;"
+
+  set r [expr {int(rand()*32767)}]
+
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {1}
+db close
+
+do_test rekey-delete-and-query-2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA rekey = 'test321';
+    SELECT count(*) > 1 FROM t1;
+    PRAGMA integrity_check;
+  }
+} {1 ok}
+db close
+
+do_test rekey-delete-and-query-3 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test321';
+    SELECT count(*) > 1 FROM t1;
+  }
+} {1}
+db close
+file delete -force test.db
+
+
+# same as previous test, but use WAL
+do_test rekey-delete-and-query-wal-1 {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE t1(a,b);
+    CREATE INDEX ta_a ON t1(a);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<1000} {incr i} {
+    set r [expr {int(rand()*32767)}]
+    set r1 [expr {int(rand()*32767)}]
+    execsql "INSERT INTO t1 VALUES($r,$r1);"
+  }
+  set r [expr {int(rand()*32767)}]
+  set r1 [expr {int(rand()*32767)}]
+  execsql "UPDATE t1 SET b = $r WHERE a < $r1;"
+
+  set r [expr {int(rand()*32767)}]
+
+  execsql "DELETE FROM t1 WHERE a < $r;"
+
+  execsql {
+    COMMIT;
+    SELECT (count(*) > 0) FROM t1;
+  }
+} {1}
+db close
+
+do_test rekey-delete-and-query-wal-2 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test123';
+    PRAGMA journal_mode = WAL;
+    PRAGMA rekey = 'test321';
+    SELECT count(*) > 1 FROM t1;
+    PRAGMA integrity_check;
+  }
+} {wal 1 ok}
+db close
+
+do_test rekey-delete-and-query-wal-3 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test321';
+    PRAGMA journal_mode = WAL;
+    SELECT count(*) > 1 FROM t1;
+  }
+} {wal 1}
+db close
+file delete -force test.db
+
+do_test rekey-database-by-name {
+    sqlite_orig db test.db
+    execsql {
+        attach database 'new.db' as new;
+        pragma new.key = 'foo';
+        create table new.t1(a,b);
+        insert into new.t1(a,b) values('foo', 'bar');
+        pragma new.rekey = 'bar';
+        detach database new;
+    }
+    db close
+
+    sqlite_orig db new.db
+    execsql {
+        pragma key = 'bar';
+        select * from t1;
+    }
+} {foo bar}
+db close
+file delete -force test.db
+file delete -force new.db
+
+finish_test
