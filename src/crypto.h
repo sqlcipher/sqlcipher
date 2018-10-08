@@ -284,19 +284,7 @@ int sqlcipher_codec_ctx_get_kdf_algorithm(codec_ctx *ctx);
 void sqlcipher_set_mem_security(int);
 int sqlcipher_get_mem_security();
 
-int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
-  int db_index;
-  if(zDb == NULL){
-    return 0;
-  }
-  for(db_index = 0; db_index < db->nDb; db_index++) {
-    struct Db *pDb = &db->aDb[db_index];
-    if(strcmp(pDb->zDbSName, zDb) == 0) {
-      return db_index;
-    }
-  }
-  return 0;
-}
+int sqlcipher_find_db_index(sqlite3 *db, const char *zDb);
 
 #endif
 #endif

@@ -606,6 +606,20 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   return SQLITE_OK;
 }
 
+int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
+  int db_index;
+  if(zDb == NULL){
+    return 0;
+  }
+  for(db_index = 0; db_index < db->nDb; db_index++) {
+    struct Db *pDb = &db->aDb[db_index];
+    if(strcmp(pDb->zDbSName, zDb) == 0) {
+      return db_index;
+    }
+  }
+  return 0;
+}
+
 void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
 }
@@ -813,11 +827,11 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   sqlite3 *db = sqlite3_context_db_handle(context);
   const char* targetDb, *sourceDb; 
 
-  int saved_flags;        /* Saved value of the db->flags */
-  int saved_nChange;      /* Saved value of db->nChange */
-  int saved_nTotalChange; /* Saved value of db->nTotalChange */
-  u8 saved_mTrace;        /* Saved value of db->mTrace */
-  int (*saved_xTrace)(u32,void*,void*,void*); /* Saved db->xTrace */
+  int saved_flags = db->flags;        /* Saved value of the db->flags */
+  int saved_nChange = db->nChange;      /* Saved value of db->nChange */
+  int saved_nTotalChange = db->nTotalChange; /* Saved value of db->nTotalChange */
+  u8 saved_mTrace = db->mTrace;        /* Saved value of db->mTrace */
+  int (*saved_xTrace)(u32,void*,void*,void*) = db->xTrace; /* Saved db->xTrace */
   int rc = SQLITE_OK;     /* Return code from service routines */
   char *zSql = NULL;         /* SQL statements */
   char *pzErrMsg = NULL;
@@ -831,11 +845,6 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   targetDb = (const char*) sqlite3_value_text(argv[0]);
   sourceDb = (argc == 2) ? (char *) sqlite3_value_text(argv[1]) : "main";
 
-  saved_flags = db->flags;
-  saved_nChange = db->nChange;
-  saved_nTotalChange = db->nTotalChange;
-  saved_xTrace = db->xTrace;
-  saved_mTrace = db->mTrace;
   db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks; 
   db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum;
   db->flags &= ~(SQLITE_ForeignKeys | SQLITE_ReverseOrder);
