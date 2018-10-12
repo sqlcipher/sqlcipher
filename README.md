@@ -47,7 +47,7 @@ obtain the encryption key for the database
 	PRAGMA key = 'passphrase';
 
 Alternately, you can specify an exact byte sequence using a blob literal. If you
-use this method it is your responsibility to ensure that the data you provide a
+use this method it is your responsibility to ensure that the data you provide is a
 64 character hex string, which will be converted directly to 32 bytes (256 bits) of 
 key data without key derivation.
 

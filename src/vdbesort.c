@@ -815,9 +815,9 @@ static int vdbeSorterCompareText(
   int n2;
   int res;
 
-  getVarint32(&p1[1], n1); n1 = (n1 - 13) / 2;
-  getVarint32(&p2[1], n2); n2 = (n2 - 13) / 2;
-  res = memcmp(v1, v2, MIN(n1, n2));
+  getVarint32(&p1[1], n1);
+  getVarint32(&p2[1], n2);
+  res = memcmp(v1, v2, (MIN(n1, n2) - 13)/2);
   if( res==0 ){
     res = n1 - n2;
   }
@@ -858,37 +858,36 @@ static int vdbeSorterCompareInt(
   assert( (s1>0 && s1<7) || s1==8 || s1==9 );
   assert( (s2>0 && s2<7) || s2==8 || s2==9 );
 
-  if( s1>7 && s2>7 ){
+  if( s1==s2 ){
+    /* The two values have the same sign. Compare using memcmp(). */
+    static const u8 aLen[] = {0, 1, 2, 3, 4, 6, 8, 0, 0, 0 };
+    const u8 n = aLen[s1];
+    int i;
+    res = 0;
+    for(i=0; i<n; i++){
+      if( (res = v1[i] - v2[i])!=0 ){
+        if( ((v1[0] ^ v2[0]) & 0x80)!=0 ){
+          res = v1[0] & 0x80 ? -1 : +1;
+        }
+        break;
+      }
+    }
+  }else if( s1>7 && s2>7 ){
     res = s1 - s2;
   }else{
-    if( s1==s2 ){
-      if( (*v1 ^ *v2) & 0x80 ){
-        /* The two values have different signs */
-        res = (*v1 & 0x80) ? -1 : +1;
-      }else{
-        /* The two values have the same sign. Compare using memcmp(). */
-        static const u8 aLen[] = {0, 1, 2, 3, 4, 6, 8 };
-        int i;
-        res = 0;
-        for(i=0; i<aLen[s1]; i++){
-          if( (res = v1[i] - v2[i]) ) break;
-        }
-      }
+    if( s2>7 ){
+      res = +1;
+    }else if( s1>7 ){
+      res = -1;
     }else{
-      if( s2>7 ){
-        res = +1;
-      }else if( s1>7 ){
-        res = -1;
-      }else{
-        res = s1 - s2;
-      }
-      assert( res!=0 );
+      res = s1 - s2;
+    }
+    assert( res!=0 );
 
-      if( res>0 ){
-        if( *v1 & 0x80 ) res = -1;
-      }else{
-        if( *v2 & 0x80 ) res = +1;
-      }
+    if( res>0 ){
+      if( *v1 & 0x80 ) res = -1;
+    }else{
+      if( *v2 & 0x80 ) res = +1;
     }
   }
 
@@ -959,7 +958,7 @@ int sqlite3VdbeSorterInit(
   }
 #endif
 
-  assert( pCsr->pKeyInfo && pCsr->pBt==0 );
+  assert( pCsr->pKeyInfo && pCsr->pBtx==0 );
   assert( pCsr->eCurType==CURTYPE_SORTER );
   szKeyInfo = sizeof(KeyInfo) + (pCsr->pKeyInfo->nField-1)*sizeof(CollSeq*);
   sz = sizeof(VdbeSorter) + nWorker * sizeof(SortSubtask);
@@ -1327,12 +1326,8 @@ static int vdbeSorterOpenTempFile(
 */
 static int vdbeSortAllocUnpacked(SortSubtask *pTask){
   if( pTask->pUnpacked==0 ){
-    char *pFree;
-    pTask->pUnpacked = sqlite3VdbeAllocUnpackedRecord(
-        pTask->pSorter->pKeyInfo, 0, 0, &pFree
-    );
-    assert( pTask->pUnpacked==(UnpackedRecord*)pFree );
-    if( pFree==0 ) return SQLITE_NOMEM_BKPT;
+    pTask->pUnpacked = sqlite3VdbeAllocUnpackedRecord(pTask->pSorter->pKeyInfo);
+    if( pTask->pUnpacked==0 ) return SQLITE_NOMEM_BKPT;
     pTask->pUnpacked->nField = pTask->pSorter->pKeyInfo->nField;
     pTask->pUnpacked->errCode = 0;
   }
@@ -2617,9 +2612,13 @@ int sqlite3VdbeSorterRewind(const VdbeCursor *pCsr, int *pbEof){
 }
 
 /*
-** Advance to the next element in the sorter.
+** Advance to the next element in the sorter.  Return value:
+**
+**    SQLITE_OK     success
+**    SQLITE_DONE   end of data
+**    otherwise     some kind of error.
 */
-int sqlite3VdbeSorterNext(sqlite3 *db, const VdbeCursor *pCsr, int *pbEof){
+int sqlite3VdbeSorterNext(sqlite3 *db, const VdbeCursor *pCsr){
   VdbeSorter *pSorter;
   int rc;                         /* Return code */
 
@@ -2633,21 +2632,22 @@ int sqlite3VdbeSorterNext(sqlite3 *db, const VdbeCursor *pCsr, int *pbEof){
 #if SQLITE_MAX_WORKER_THREADS>0
     if( pSorter->bUseThreads ){
       rc = vdbePmaReaderNext(pSorter->pReader);
-      *pbEof = (pSorter->pReader->pFd==0);
+      if( rc==SQLITE_OK && pSorter->pReader->pFd==0 ) rc = SQLITE_DONE;
     }else
 #endif
     /*if( !pSorter->bUseThreads )*/ {
+      int res = 0;
       assert( pSorter->pMerger!=0 );
       assert( pSorter->pMerger->pTask==(&pSorter->aTask[0]) );
-      rc = vdbeMergeEngineStep(pSorter->pMerger, pbEof);
+      rc = vdbeMergeEngineStep(pSorter->pMerger, &res);
+      if( rc==SQLITE_OK && res ) rc = SQLITE_DONE;
     }
   }else{
     SorterRecord *pFree = pSorter->list.pList;
     pSorter->list.pList = pFree->u.pNext;
     pFree->u.pNext = 0;
     if( pSorter->list.aMemory==0 ) vdbeSorterRecordFree(db, pFree);
-    *pbEof = !pSorter->list.pList;
-    rc = SQLITE_OK;
+    rc = pSorter->list.pList ? SQLITE_OK : SQLITE_DONE;
   }
   return rc;
 }
@@ -2733,9 +2733,7 @@ int sqlite3VdbeSorterCompare(
   r2 = pSorter->pUnpacked;
   pKeyInfo = pCsr->pKeyInfo;
   if( r2==0 ){
-    char *p;
-    r2 = pSorter->pUnpacked = sqlite3VdbeAllocUnpackedRecord(pKeyInfo,0,0,&p);
-    assert( pSorter->pUnpacked==(UnpackedRecord*)p );
+    r2 = pSorter->pUnpacked = sqlite3VdbeAllocUnpackedRecord(pKeyInfo);
     if( r2==0 ) return SQLITE_NOMEM_BKPT;
     r2->nField = nKeyCol;
   }

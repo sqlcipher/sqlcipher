@@ -221,6 +221,7 @@ struct yyParser {
   yyStackEntry yystk0;          /* First stack entry */
 #else
   yyStackEntry yystack[YYSTACKDEPTH];  /* The parser's stack */
+  yyStackEntry *yystackEnd;            /* Last entry in the stack */
 #endif
 };
 typedef struct yyParser yyParser;
@@ -316,6 +317,34 @@ static int yyGrowStack(yyParser *p){
 # define YYMALLOCARGTYPE size_t
 #endif
 
+/* Initialize a new parser that has already been allocated.
+*/
+void ParseInit(void *yypParser){
+  yyParser *pParser = (yyParser*)yypParser;
+#ifdef YYTRACKMAXSTACKDEPTH
+  pParser->yyhwm = 0;
+#endif
+#if YYSTACKDEPTH<=0
+  pParser->yytos = NULL;
+  pParser->yystack = NULL;
+  pParser->yystksz = 0;
+  if( yyGrowStack(pParser) ){
+    pParser->yystack = &pParser->yystk0;
+    pParser->yystksz = 1;
+  }
+#endif
+#ifndef YYNOERRORRECOVERY
+  pParser->yyerrcnt = -1;
+#endif
+  pParser->yytos = pParser->yystack;
+  pParser->yystack[0].stateno = 0;
+  pParser->yystack[0].major = 0;
+#if YYSTACKDEPTH>0
+  pParser->yystackEnd = &pParser->yystack[YYSTACKDEPTH-1];
+#endif
+}
+
+#ifndef Parse_ENGINEALWAYSONSTACK
 /* 
 ** This function allocates a new parser.
 ** The only argument is a pointer to a function which works like
@@ -331,28 +360,11 @@ static int yyGrowStack(yyParser *p){
 void *ParseAlloc(void *(*mallocProc)(YYMALLOCARGTYPE)){
   yyParser *pParser;
   pParser = (yyParser*)(*mallocProc)( (YYMALLOCARGTYPE)sizeof(yyParser) );
-  if( pParser ){
-#ifdef YYTRACKMAXSTACKDEPTH
-    pParser->yyhwm = 0;
-#endif
-#if YYSTACKDEPTH<=0
-    pParser->yytos = NULL;
-    pParser->yystack = NULL;
-    pParser->yystksz = 0;
-    if( yyGrowStack(pParser) ){
-      pParser->yystack = &pParser->yystk0;
-      pParser->yystksz = 1;
-    }
-#endif
-#ifndef YYNOERRORRECOVERY
-    pParser->yyerrcnt = -1;
-#endif
-    pParser->yytos = pParser->yystack;
-    pParser->yystack[0].stateno = 0;
-    pParser->yystack[0].major = 0;
-  }
+  if( pParser ) ParseInit(pParser);
   return pParser;
 }
+#endif /* Parse_ENGINEALWAYSONSTACK */
+
 
 /* The following function deletes the "minor type" or semantic value
 ** associated with a symbol.  The symbol can be either a terminal
@@ -406,6 +418,18 @@ static void yy_pop_parser_stack(yyParser *pParser){
   yy_destructor(pParser, yytos->major, &yytos->minor);
 }
 
+/*
+** Clear all secondary memory allocations from the parser
+*/
+void ParseFinalize(void *p){
+  yyParser *pParser = (yyParser*)p;
+  while( pParser->yytos>pParser->yystack ) yy_pop_parser_stack(pParser);
+#if YYSTACKDEPTH<=0
+  if( pParser->yystack!=&pParser->yystk0 ) free(pParser->yystack);
+#endif
+}
+
+#ifndef Parse_ENGINEALWAYSONSTACK
 /* 
 ** Deallocate and destroy a parser.  Destructors are called for
 ** all stack elements before shutting the parser down.
@@ -418,16 +442,13 @@ void ParseFree(
   void *p,                    /* The parser to be deleted */
   void (*freeProc)(void*)     /* Function used to reclaim memory */
 ){
-  yyParser *pParser = (yyParser*)p;
 #ifndef YYPARSEFREENEVERNULL
-  if( pParser==0 ) return;
+  if( p==0 ) return;
 #endif
-  while( pParser->yytos>pParser->yystack ) yy_pop_parser_stack(pParser);
-#if YYSTACKDEPTH<=0
-  if( pParser->yystack!=&pParser->yystk0 ) free(pParser->yystack);
-#endif
-  (*freeProc)((void*)pParser);
+  ParseFinalize(p);
+  (*freeProc)(p);
 }
+#endif /* Parse_ENGINEALWAYSONSTACK */
 
 /*
 ** Return the peak depth of the stack for a parser.
@@ -538,7 +559,6 @@ static int yy_find_reduce_action(
 */
 static void yyStackOverflow(yyParser *yypParser){
    ParseARG_FETCH;
-   yypParser->yytos--;
 #ifndef NDEBUG
    if( yyTraceFILE ){
      fprintf(yyTraceFILE,"%sStack Overflow!\n",yyTracePrompt);
@@ -591,13 +611,15 @@ static void yy_shift(
   }
 #endif
 #if YYSTACKDEPTH>0 
-  if( yypParser->yytos>=&yypParser->yystack[YYSTACKDEPTH] ){
+  if( yypParser->yytos>yypParser->yystackEnd ){
+    yypParser->yytos--;
     yyStackOverflow(yypParser);
     return;
   }
 #else
   if( yypParser->yytos>=&yypParser->yystack[yypParser->yystksz] ){
     if( yyGrowStack(yypParser) ){
+      yypParser->yytos--;
       yyStackOverflow(yypParser);
       return;
     }
@@ -617,8 +639,8 @@ static void yy_shift(
 ** is used during the reduce.
 */
 static const struct {
-  YYCODETYPE lhs;         /* Symbol on the left-hand side of the rule */
-  unsigned char nrhs;     /* Number of right-hand side symbols in the rule */
+  YYCODETYPE lhs;       /* Symbol on the left-hand side of the rule */
+  signed char nrhs;     /* Negative of the number of RHS symbols in the rule */
 } yyRuleInfo[] = {
 %%
 };
@@ -643,7 +665,7 @@ static void yy_reduce(
   if( yyTraceFILE && yyruleno<(int)(sizeof(yyRuleName)/sizeof(yyRuleName[0])) ){
     yysize = yyRuleInfo[yyruleno].nrhs;
     fprintf(yyTraceFILE, "%sReduce [%s], go to state %d.\n", yyTracePrompt,
-      yyRuleName[yyruleno], yymsp[-yysize].stateno);
+      yyRuleName[yyruleno], yymsp[yysize].stateno);
   }
 #endif /* NDEBUG */
 
@@ -658,7 +680,7 @@ static void yy_reduce(
     }
 #endif
 #if YYSTACKDEPTH>0 
-    if( yypParser->yytos>=&yypParser->yystack[YYSTACKDEPTH-1] ){
+    if( yypParser->yytos>=yypParser->yystackEnd ){
       yyStackOverflow(yypParser);
       return;
     }
@@ -689,20 +711,24 @@ static void yy_reduce(
   assert( yyruleno<sizeof(yyRuleInfo)/sizeof(yyRuleInfo[0]) );
   yygoto = yyRuleInfo[yyruleno].lhs;
   yysize = yyRuleInfo[yyruleno].nrhs;
-  yyact = yy_find_reduce_action(yymsp[-yysize].stateno,(YYCODETYPE)yygoto);
-  if( yyact <= YY_MAX_SHIFTREDUCE ){
-    if( yyact>YY_MAX_SHIFT ){
-      yyact += YY_MIN_REDUCE - YY_MIN_SHIFTREDUCE;
-    }
-    yymsp -= yysize-1;
+  yyact = yy_find_reduce_action(yymsp[yysize].stateno,(YYCODETYPE)yygoto);
+
+  /* There are no SHIFTREDUCE actions on nonterminals because the table
+  ** generator has simplified them to pure REDUCE actions. */
+  assert( !(yyact>YY_MAX_SHIFT && yyact<=YY_MAX_SHIFTREDUCE) );
+
+  /* It is not possible for a REDUCE to be followed by an error */
+  assert( yyact!=YY_ERROR_ACTION );
+
+  if( yyact==YY_ACCEPT_ACTION ){
+    yypParser->yytos += yysize;
+    yy_accept(yypParser);
+  }else{
+    yymsp += yysize+1;
     yypParser->yytos = yymsp;
     yymsp->stateno = (YYACTIONTYPE)yyact;
     yymsp->major = (YYCODETYPE)yygoto;
     yyTraceShift(yypParser, yyact);
-  }else{
-    assert( yyact == YY_ACCEPT_ACTION );
-    yypParser->yytos -= yysize;
-    yy_accept(yypParser);
   }
 }
 

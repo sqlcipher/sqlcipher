@@ -30,7 +30,7 @@ typedef struct Vdbe Vdbe;
 ** The names of the following types declared in vdbeInt.h are required
 ** for the VdbeOp definition.
 */
-typedef struct Mem Mem;
+typedef struct sqlite3_value Mem;
 typedef struct SubProgram SubProgram;
 
 /*
@@ -41,8 +41,7 @@ typedef struct SubProgram SubProgram;
 struct VdbeOp {
   u8 opcode;          /* What operation to perform */
   signed char p4type; /* One of the P4_xxx constants for p4 */
-  u8 notUsed1;
-  u8 p5;              /* Fifth parameter is an unsigned character */
+  u16 p5;             /* Fifth parameter is an unsigned 16-bit integer */
   int p1;             /* First operand */
   int p2;             /* Second parameter (often the jump destination) */
   int p3;             /* The third parameter */
@@ -64,7 +63,7 @@ struct VdbeOp {
 #ifdef SQLITE_ENABLE_CURSOR_HINTS
     Expr *pExpr;           /* Used when p4type is P4_EXPR */
 #endif
-    int (*xAdvance)(BtCursor *, int *);
+    int (*xAdvance)(BtCursor *, int);
   } p4;
 #ifdef SQLITE_ENABLE_EXPLAIN_COMMENTS
   char *zComment;          /* Comment to improve readability */
@@ -88,6 +87,7 @@ struct SubProgram {
   int nOp;                      /* Elements in aOp[] */
   int nMem;                     /* Number of memory cells required */
   int nCsr;                     /* Number of cursors required */
+  u8 *aOnce;                    /* Array of OP_Once flags */
   void *token;                  /* id that may be used to recursive triggers */
   SubProgram *pNext;            /* Next sub-program already visited */
 };
@@ -107,25 +107,26 @@ typedef struct VdbeOpList VdbeOpList;
 /*
 ** Allowed values of VdbeOp.p4type
 */
-#define P4_NOTUSED    0   /* The P4 parameter is not used */
-#define P4_DYNAMIC  (-1)  /* Pointer to a string obtained from sqliteMalloc() */
-#define P4_STATIC   (-2)  /* Pointer to a static string */
-#define P4_COLLSEQ  (-4)  /* P4 is a pointer to a CollSeq structure */
-#define P4_FUNCDEF  (-5)  /* P4 is a pointer to a FuncDef structure */
-#define P4_KEYINFO  (-6)  /* P4 is a pointer to a KeyInfo structure */
-#define P4_EXPR     (-7)  /* P4 is a pointer to an Expr tree */
-#define P4_MEM      (-8)  /* P4 is a pointer to a Mem*    structure */
-#define P4_TRANSIENT  0   /* P4 is a pointer to a transient string */
-#define P4_VTAB     (-10) /* P4 is a pointer to an sqlite3_vtab structure */
-#define P4_MPRINTF  (-11) /* P4 is a string obtained from sqlite3_mprintf() */
-#define P4_REAL     (-12) /* P4 is a 64-bit floating point value */
-#define P4_INT64    (-13) /* P4 is a 64-bit signed integer */
-#define P4_INT32    (-14) /* P4 is a 32-bit signed integer */
-#define P4_INTARRAY (-15) /* P4 is a vector of 32-bit integers */
-#define P4_SUBPROGRAM  (-18) /* P4 is a pointer to a SubProgram structure */
-#define P4_ADVANCE  (-19) /* P4 is a pointer to BtreeNext() or BtreePrev() */
-#define P4_TABLE    (-20) /* P4 is a pointer to a Table structure */
-#define P4_FUNCCTX  (-21) /* P4 is a pointer to an sqlite3_context object */
+#define P4_NOTUSED      0   /* The P4 parameter is not used */
+#define P4_TRANSIENT    0   /* P4 is a pointer to a transient string */
+#define P4_STATIC     (-1)  /* Pointer to a static string */
+#define P4_COLLSEQ    (-2)  /* P4 is a pointer to a CollSeq structure */
+#define P4_INT32      (-3)  /* P4 is a 32-bit signed integer */
+#define P4_SUBPROGRAM (-4)  /* P4 is a pointer to a SubProgram structure */
+#define P4_ADVANCE    (-5)  /* P4 is a pointer to BtreeNext() or BtreePrev() */
+#define P4_TABLE      (-6)  /* P4 is a pointer to a Table structure */
+/* Above do not own any resources.  Must free those below */
+#define P4_FREE_IF_LE (-7)
+#define P4_DYNAMIC    (-7)  /* Pointer to memory from sqliteMalloc() */
+#define P4_FUNCDEF    (-8)  /* P4 is a pointer to a FuncDef structure */
+#define P4_KEYINFO    (-9)  /* P4 is a pointer to a KeyInfo structure */
+#define P4_EXPR       (-10) /* P4 is a pointer to an Expr tree */
+#define P4_MEM        (-11) /* P4 is a pointer to a Mem*    structure */
+#define P4_VTAB       (-12) /* P4 is a pointer to an sqlite3_vtab structure */
+#define P4_REAL       (-13) /* P4 is a 64-bit floating point value */
+#define P4_INT64      (-14) /* P4 is a 64-bit signed integer */
+#define P4_INTARRAY   (-15) /* P4 is a vector of 32-bit integers */
+#define P4_FUNCCTX    (-16) /* P4 is a pointer to an sqlite3_context object */
 
 /* Error message codes for OP_Halt */
 #define P5_ConstraintNotNull 1
@@ -167,6 +168,12 @@ typedef struct VdbeOpList VdbeOpList;
 #include "opcodes.h"
 
 /*
+** Additional non-public SQLITE_PREPARE_* flags
+*/
+#define SQLITE_PREPARE_SAVESQL  0x80  /* Preserve SQL text */
+#define SQLITE_PREPARE_MASK     0x0f  /* Mask of public flags */
+
+/*
 ** Prototypes for the VDBE interface.  See comments on the implementation
 ** for a description of what each of these routines does.
 */
@@ -184,8 +191,10 @@ int sqlite3VdbeAddOp4Int(Vdbe*,int,int,int,int,int);
 void sqlite3VdbeEndCoroutine(Vdbe*,int);
 #if defined(SQLITE_DEBUG) && !defined(SQLITE_TEST_REALLOC_STRESS)
   void sqlite3VdbeVerifyNoMallocRequired(Vdbe *p, int N);
+  void sqlite3VdbeVerifyNoResultRow(Vdbe *p);
 #else
 # define sqlite3VdbeVerifyNoMallocRequired(A,B)
+# define sqlite3VdbeVerifyNoResultRow(A)
 #endif
 VdbeOp *sqlite3VdbeAddOpList(Vdbe*, int nOp, VdbeOpList const *aOp, int iLineno);
 void sqlite3VdbeAddParseSchemaOp(Vdbe*,int,char*);
@@ -193,11 +202,12 @@ void sqlite3VdbeChangeOpcode(Vdbe*, u32 addr, u8);
 void sqlite3VdbeChangeP1(Vdbe*, u32 addr, int P1);
 void sqlite3VdbeChangeP2(Vdbe*, u32 addr, int P2);
 void sqlite3VdbeChangeP3(Vdbe*, u32 addr, int P3);
-void sqlite3VdbeChangeP5(Vdbe*, u8 P5);
+void sqlite3VdbeChangeP5(Vdbe*, u16 P5);
 void sqlite3VdbeJumpHere(Vdbe*, int addr);
 int sqlite3VdbeChangeToNoop(Vdbe*, int addr);
 int sqlite3VdbeDeletePriorOpcode(Vdbe*, u8 op);
 void sqlite3VdbeChangeP4(Vdbe*, int addr, const char *zP4, int N);
+void sqlite3VdbeAppendP4(Vdbe*, void *pP4, int p4type);
 void sqlite3VdbeSetP4KeyInfo(Parse*, Index*);
 void sqlite3VdbeUsesBtree(Vdbe*, int);
 VdbeOp *sqlite3VdbeGetOp(Vdbe*, int);
@@ -220,7 +230,8 @@ void sqlite3VdbeSetNumCols(Vdbe*,int);
 int sqlite3VdbeSetColName(Vdbe*, int, int, const char *, void(*)(void*));
 void sqlite3VdbeCountChanges(Vdbe*);
 sqlite3 *sqlite3VdbeDb(Vdbe*);
-void sqlite3VdbeSetSql(Vdbe*, const char *z, int n, int);
+u8 sqlite3VdbePrepareFlags(Vdbe*);
+void sqlite3VdbeSetSql(Vdbe*, const char *z, int n, u8);
 void sqlite3VdbeSwap(Vdbe*,Vdbe*);
 VdbeOp *sqlite3VdbeTakeOpArray(Vdbe*, int*, int*);
 sqlite3_value *sqlite3VdbeGetBoundValue(Vdbe*, int, u8);
@@ -233,7 +244,7 @@ int sqlite3MemCompare(const Mem*, const Mem*, const CollSeq*);
 void sqlite3VdbeRecordUnpack(KeyInfo*,int,const void*,UnpackedRecord*);
 int sqlite3VdbeRecordCompare(int,const void*,UnpackedRecord*);
 int sqlite3VdbeRecordCompareWithSkip(int, const void *, UnpackedRecord *, int);
-UnpackedRecord *sqlite3VdbeAllocUnpackedRecord(KeyInfo *, char *, int, char **);
+UnpackedRecord *sqlite3VdbeAllocUnpackedRecord(KeyInfo*);
 
 typedef int (*RecordCompare)(int,const void*,UnpackedRecord*);
 RecordCompare sqlite3VdbeFindCompare(UnpackedRecord*);
@@ -241,6 +252,8 @@ RecordCompare sqlite3VdbeFindCompare(UnpackedRecord*);
 #ifndef SQLITE_OMIT_TRIGGER
 void sqlite3VdbeLinkSubProgram(Vdbe *, SubProgram *);
 #endif
+
+int sqlite3NotPureFunc(sqlite3_context*);
 
 /* Use SQLITE_ENABLE_COMMENTS to enable generation of extra comments on
 ** each VDBE opcode.

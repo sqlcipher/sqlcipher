@@ -3,6 +3,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased][unreleased]
 
+## [3.4.2] - 2017-12-21
+### Added
+- Added support for building with LibreSSL
+
+### Changed
+- Merge upstream SQLite 3.20.1
+- Text strings for `SQLITE_ERROR` and `SQLITE_NOTADB` changed to match upstream SQLite
+- Remove static modifier for codec password functions
+- Page alignment for `mlock`
+- Fix segfault in `sqlcipher_cipher_ctx_cmp` during rekey operation
+- Fix `sqlcipher_export` and `cipher_migrate` when tracing API in use
+- Validate codec page size when setting
+- Guard OpenSSL initialization and cleanup routines
+- Allow additional linker options to be passed via command line for Windows platforms
+
 ## [3.4.1] - 2016-12-28
 ### Added
 - Added support for OpenSSL 1.1.0
@@ -73,7 +88,8 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.1...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.2...prerelease
+[3.4.2]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.1...v3.4.2
 [3.4.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.3.0...v3.3.1
