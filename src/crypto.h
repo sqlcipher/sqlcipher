@@ -55,11 +55,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define FILE_HEADER_SZ 16
 
 #ifndef CIPHER_VERSION
-#ifdef SQLCIPHER_FIPS
-#define CIPHER_VERSION "3.4.2 FIPS"
-#else
-#define CIPHER_VERSION "3.4.2"
-#endif
+#define CIPHER_VERSION "4.0.0 community"
 #endif
 
 #define CIPHER_DECRYPT 0
