@@ -54,8 +54,15 @@ void sqlite3pager_reset(Pager *pPager);
 
 #define FILE_HEADER_SZ 16
 
-#ifndef CIPHER_VERSION
-#define CIPHER_VERSION "4.0.0 community"
+#define CIPHER_XSTR(s) CIPHER_STR(s)
+#define CIPHER_STR(s) #s
+
+#ifndef CIPHER_VERSION_NUMBER
+#define CIPHER_VERSION_NUMBER 4.0.0
+#endif
+
+#ifndef CIPHER_VERSION_BUILD
+#define CIPHER_VERSION_BUILD community
 #endif
 
 #define CIPHER_DECRYPT 0

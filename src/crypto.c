@@ -39,10 +39,6 @@
 #include "sqlcipher-license.h"
 #endif
 
-static const char* codec_get_cipher_version() {
-  return CIPHER_VERSION;
-}
-
 /* Generate code to return a string value */
 static void codec_vdbe_return_static_string(Parse *pParse, const char *zLabel, const char *value){
   Vdbe *v = sqlite3GetVdbe(pParse);
@@ -166,7 +162,13 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     }
   } else
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
-    codec_vdbe_return_static_string(pParse, "cipher_version", codec_get_cipher_version());
+#ifdef CIPHER_VERSION_QUALIFIER
+    char *version = sqlite3_mprintf("%s %s %s", CIPHER_XSTR(CIPHER_VERSION_NUMBER), CIPHER_XSTR(CIPHER_VERSION_QUALIFIER), CIPHER_XSTR(CIPHER_VERSION_BUILD));
+#else
+    char *version = sqlite3_mprintf("%s %s", CIPHER_XSTR(CIPHER_VERSION_NUMBER), CIPHER_XSTR(CIPHER_VERSION_BUILD));
+#endif
+    codec_vdbe_return_static_string(pParse, "cipher_version", version);
+    sqlite3_free(version);
   }else
   if( sqlite3StrICmp(zLeft, "cipher")==0 ){
     if(ctx) {
