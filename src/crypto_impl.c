@@ -1241,7 +1241,10 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   Btree *pDest = NULL, *pSrc = NULL;
   const char* commands[5];
   sqlite3_file *srcfile, *destfile;
-
+#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
+  LPWSTR w_db_filename = NULL, w_migrated_db_filename = NULL;
+  int w_db_filename_sz = 0, w_migrated_db_filename_sz = 0;
+#endif
   pass_sz = keyspec_sz = rc = user_version = upgrade_from = 0;
 
   if(!db_filename || sqlite3Strlen30(db_filename) < 1) 
@@ -1351,7 +1354,16 @@ migrate:
 
 #if defined(_WIN32) || defined(SQLITE_OS_WINRT)
   CODEC_TRACE("performing windows MoveFileExA\n");
-  if(!MoveFileExA(migrated_db_filename, db_filename, MOVEFILE_REPLACE_EXISTING)) {
+
+  w_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) db_filename, -1, NULL, 0);
+  w_db_filename = sqlcipher_malloc(w_db_filename_sz * sizeof(wchar_t));
+  w_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) db_filename, -1, (const LPWSTR) w_db_filename, w_db_filename_sz);
+
+  w_migrated_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) migrated_db_filename, -1, NULL, 0);
+  w_migrated_db_filename = sqlcipher_malloc(w_migrated_db_filename_sz * sizeof(wchar_t));
+  w_migrated_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) migrated_db_filename, -1, (const LPWSTR) w_migrated_db_filename, w_migrated_db_filename_sz);
+
+  if(!MoveFileExW(w_migrated_db_filename, w_db_filename, MOVEFILE_REPLACE_EXISTING)) {
     CODEC_TRACE("move error");
     rc = SQLITE_ERROR;
     CODEC_TRACE("error occurred while renaming %d\n", rc);
@@ -1406,6 +1418,10 @@ cleanup:
   if(set_user_version) sqlcipher_free(set_user_version, sqlite3Strlen30(set_user_version)); 
   if(set_journal_mode) sqlcipher_free(set_journal_mode, sqlite3Strlen30(set_journal_mode)); 
   if(journal_mode) sqlcipher_free(journal_mode, sqlite3Strlen30(journal_mode)); 
+#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
+  if(w_db_filename) sqlcipher_free(w_db_filename, w_db_filename_sz);
+  if(w_migrated_db_filename) sqlcipher_free(w_migrated_db_filename, w_migrated_db_filename_sz);
+#endif
   return rc;
 }
 
