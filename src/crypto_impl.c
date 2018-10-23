@@ -301,8 +301,8 @@ int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
 
 void sqlcipher_mlock(void *ptr, int sz) {
 #ifndef OMIT_MEMLOCK
-  int rc;
 #if defined(__unix__) || defined(__APPLE__) 
+  int rc;
   unsigned long pagesize = sysconf(_SC_PAGESIZE);
   unsigned long offset = (unsigned long) ptr % pagesize;
 
@@ -315,6 +315,7 @@ void sqlcipher_mlock(void *ptr, int sz) {
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
+  int rc;
   CODEC_TRACE("sqlcipher_mem_lock: calling VirtualLock(%p,%d)\n", ptr, sz);
   rc = VirtualLock(ptr, sz);
   if(rc==0) {
@@ -327,8 +328,8 @@ void sqlcipher_mlock(void *ptr, int sz) {
 
 void sqlcipher_munlock(void *ptr, int sz) {
 #ifndef OMIT_MEMLOCK
-  int rc;
 #if defined(__unix__) || defined(__APPLE__) 
+  int rc;
   unsigned long pagesize = sysconf(_SC_PAGESIZE);
   unsigned long offset = (unsigned long) ptr % pagesize;
 
@@ -341,6 +342,7 @@ void sqlcipher_munlock(void *ptr, int sz) {
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
+  int rc;
   CODEC_TRACE("sqlcipher_mem_lock: calling VirtualUnlock(%p,%d)\n", ptr, sz);
   rc = VirtualUnlock(ptr, sz);
   if(!rc) {

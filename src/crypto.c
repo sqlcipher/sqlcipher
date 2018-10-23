@@ -336,7 +336,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft,"cipher_hmac_algorithm")==0 ){
     if(ctx) {
       if(zRight) {
-        int rc = SQLITE_ERROR;
+        rc = SQLITE_ERROR;
         if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA1_LABEL) == 0) {
           rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA1);
         } else if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA256_LABEL) == 0) {
@@ -361,7 +361,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   }else 
   if( sqlite3StrICmp(zLeft,"cipher_default_hmac_algorithm")==0 ){
     if(zRight) {
-      int rc = SQLITE_ERROR;
+      rc = SQLITE_ERROR;
       if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA1_LABEL) == 0) {
         rc = sqlcipher_set_default_hmac_algorithm(SQLCIPHER_HMAC_SHA1);
       } else if(sqlite3StrICmp(zRight, SQLCIPHER_HMAC_SHA256_LABEL) == 0) {
@@ -384,7 +384,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft,"cipher_kdf_algorithm")==0 ){
     if(ctx) {
       if(zRight) {
-        int rc = SQLITE_ERROR;
+        rc = SQLITE_ERROR;
         if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA1_LABEL) == 0) {
           rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA1);
         } else if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL) == 0) {
@@ -407,7 +407,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   }else 
   if( sqlite3StrICmp(zLeft,"cipher_default_kdf_algorithm")==0 ){
     if(zRight) {
-      int rc = SQLITE_ERROR;
+      rc = SQLITE_ERROR;
       if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA1_LABEL) == 0) {
         rc = sqlcipher_set_default_kdf_algorithm(SQLCIPHER_PBKDF2_HMAC_SHA1);
       } else if(sqlite3StrICmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL) == 0) {
