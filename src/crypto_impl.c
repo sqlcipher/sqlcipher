@@ -52,6 +52,7 @@ static volatile int default_plaintext_header_sz = 0;
 static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
 static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
 static volatile int mem_security_on = 1;
+static volatile int mem_security_initialized = 0;
 static volatile int mem_security_activated = 0;
 static volatile unsigned int sqlcipher_activate_count = 0;
 static volatile sqlite3_mem_methods default_mem_methods;
@@ -147,8 +148,12 @@ static sqlite3_mem_methods sqlcipher_mem_methods = {
 };
 
 void sqlcipher_init_memmethods() {
-  sqlite3_config(SQLITE_CONFIG_GETMALLOC, &default_mem_methods);
-  sqlite3_config(SQLITE_CONFIG_MALLOC, &sqlcipher_mem_methods);
+  if(mem_security_initialized) return;
+  if(sqlite3_config(SQLITE_CONFIG_GETMALLOC, &default_mem_methods) != SQLITE_OK ||
+     sqlite3_config(SQLITE_CONFIG_MALLOC, &sqlcipher_mem_methods)  != SQLITE_OK) {
+    mem_security_on = mem_security_activated = 0;
+  }
+  mem_security_initialized = 1;
 }
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
