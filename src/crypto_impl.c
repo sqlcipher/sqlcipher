@@ -52,6 +52,7 @@ static volatile int default_plaintext_header_sz = 0;
 static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
 static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
 static volatile int mem_security_on = 1;
+static volatile int mem_security_initialized = 0;
 static volatile int mem_security_activated = 0;
 static volatile unsigned int sqlcipher_activate_count = 0;
 static volatile sqlite3_mem_methods default_mem_methods;
@@ -147,8 +148,12 @@ static sqlite3_mem_methods sqlcipher_mem_methods = {
 };
 
 void sqlcipher_init_memmethods() {
-  sqlite3_config(SQLITE_CONFIG_GETMALLOC, &default_mem_methods);
-  sqlite3_config(SQLITE_CONFIG_MALLOC, &sqlcipher_mem_methods);
+  if(mem_security_initialized) return;
+  if(sqlite3_config(SQLITE_CONFIG_GETMALLOC, &default_mem_methods) != SQLITE_OK ||
+     sqlite3_config(SQLITE_CONFIG_MALLOC, &sqlcipher_mem_methods)  != SQLITE_OK) {
+    mem_security_on = mem_security_activated = 0;
+  }
+  mem_security_initialized = 1;
 }
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
@@ -301,8 +306,8 @@ int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
 
 void sqlcipher_mlock(void *ptr, int sz) {
 #ifndef OMIT_MEMLOCK
-  int rc;
 #if defined(__unix__) || defined(__APPLE__) 
+  int rc;
   unsigned long pagesize = sysconf(_SC_PAGESIZE);
   unsigned long offset = (unsigned long) ptr % pagesize;
 
@@ -315,6 +320,7 @@ void sqlcipher_mlock(void *ptr, int sz) {
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
+  int rc;
   CODEC_TRACE("sqlcipher_mem_lock: calling VirtualLock(%p,%d)\n", ptr, sz);
   rc = VirtualLock(ptr, sz);
   if(rc==0) {
@@ -327,8 +333,8 @@ void sqlcipher_mlock(void *ptr, int sz) {
 
 void sqlcipher_munlock(void *ptr, int sz) {
 #ifndef OMIT_MEMLOCK
-  int rc;
 #if defined(__unix__) || defined(__APPLE__) 
+  int rc;
   unsigned long pagesize = sysconf(_SC_PAGESIZE);
   unsigned long offset = (unsigned long) ptr % pagesize;
 
@@ -341,6 +347,7 @@ void sqlcipher_munlock(void *ptr, int sz) {
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
+  int rc;
   CODEC_TRACE("sqlcipher_mem_lock: calling VirtualUnlock(%p,%d)\n", ptr, sz);
   rc = VirtualUnlock(ptr, sz);
   if(!rc) {
@@ -1239,7 +1246,10 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   Btree *pDest = NULL, *pSrc = NULL;
   const char* commands[5];
   sqlite3_file *srcfile, *destfile;
-
+#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
+  LPWSTR w_db_filename = NULL, w_migrated_db_filename = NULL;
+  int w_db_filename_sz = 0, w_migrated_db_filename_sz = 0;
+#endif
   pass_sz = keyspec_sz = rc = user_version = upgrade_from = 0;
 
   if(!db_filename || sqlite3Strlen30(db_filename) < 1) 
@@ -1349,7 +1359,16 @@ migrate:
 
 #if defined(_WIN32) || defined(SQLITE_OS_WINRT)
   CODEC_TRACE("performing windows MoveFileExA\n");
-  if(!MoveFileExA(migrated_db_filename, db_filename, MOVEFILE_REPLACE_EXISTING)) {
+
+  w_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) db_filename, -1, NULL, 0);
+  w_db_filename = sqlcipher_malloc(w_db_filename_sz * sizeof(wchar_t));
+  w_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) db_filename, -1, (const LPWSTR) w_db_filename, w_db_filename_sz);
+
+  w_migrated_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) migrated_db_filename, -1, NULL, 0);
+  w_migrated_db_filename = sqlcipher_malloc(w_migrated_db_filename_sz * sizeof(wchar_t));
+  w_migrated_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) migrated_db_filename, -1, (const LPWSTR) w_migrated_db_filename, w_migrated_db_filename_sz);
+
+  if(!MoveFileExW(w_migrated_db_filename, w_db_filename, MOVEFILE_REPLACE_EXISTING)) {
     CODEC_TRACE("move error");
     rc = SQLITE_ERROR;
     CODEC_TRACE("error occurred while renaming %d\n", rc);
@@ -1404,6 +1423,10 @@ cleanup:
   if(set_user_version) sqlcipher_free(set_user_version, sqlite3Strlen30(set_user_version)); 
   if(set_journal_mode) sqlcipher_free(set_journal_mode, sqlite3Strlen30(set_journal_mode)); 
   if(journal_mode) sqlcipher_free(journal_mode, sqlite3Strlen30(journal_mode)); 
+#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
+  if(w_db_filename) sqlcipher_free(w_db_filename, w_db_filename_sz);
+  if(w_migrated_db_filename) sqlcipher_free(w_migrated_db_filename, w_migrated_db_filename_sz);
+#endif
   return rc;
 }
 
