@@ -108,7 +108,7 @@ static void sqlcipher_mem_shutdown(void *pAppData) {
 static void *sqlcipher_mem_malloc(int n) {
   void *ptr = default_mem_methods.xMalloc(n);
   if(mem_security_on) {
-    CODEC_TRACE("sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)\n", ptr, sz);
+    CODEC_TRACE("sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)\n", ptr, n);
     sqlcipher_mlock(ptr, n); 
     if(!mem_security_activated) mem_security_activated = 1;
   }
