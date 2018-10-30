@@ -111,7 +111,7 @@ int sqlite3MallocInit(void){
   int rc;
   if( sqlite3GlobalConfig.m.xMalloc==0 ){
     sqlite3MemSetDefault();
-
+  }
   memset(&mem0, 0, sizeof(mem0));
   mem0.mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MEM);
   if( sqlite3GlobalConfig.pPage==0 || sqlite3GlobalConfig.szPage<512
@@ -121,18 +121,17 @@ int sqlite3MallocInit(void){
   }
   rc = sqlite3GlobalConfig.m.xInit(sqlite3GlobalConfig.m.pAppData);
   if( rc!=SQLITE_OK ) memset(&mem0, 0, sizeof(mem0));
-  /* BEGIN SQLCIPHER */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
-    /* install wrapping functions for memory management
-       that will wipe all memory allocated by SQLite
-       when freed */
-    {
-      extern void sqlcipher_init_memmethods();
-      sqlcipher_init_memmethods();
-    }
+  /* install wrapping functions for memory management
+     that will wipe all memory allocated by SQLite
+     when freed */
+  if( rc==SQLITE_OK ) {
+    extern void sqlcipher_init_memmethods();
+    sqlcipher_init_memmethods();
+  }
 #endif
 /* END SQLCIPHER */
-  }
   return rc;
 }
 
