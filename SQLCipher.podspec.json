@@ -15,10 +15,10 @@
   "requires_arc": false,
   "source": {
     "git": "https://github.com/sqlcipher/sqlcipher.git",
-    "tag": "v3.4.2"
+    "tag": "v4.0.0"
   },
   "summary": "Full Database Encryption for SQLite.",
-  "version": "3.4.2",
+  "version": "4.0.0",
   "subspecs": [
     {
       "compiler_flags": [
