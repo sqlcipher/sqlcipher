@@ -639,7 +639,11 @@ static char *one_input_line(FILE *in, char *zPrior, int isContinuation){
        PRAGMA rekey statements from being stored in readline history. 
        Note that this will only prevent single line statements, but that
        will be sufficient for common cases. */ 
-    if(zResult && *zResult && sqlite3_strlike("%pragma%key%=%", zResult, 0)==0) return zResult;
+    if(zResult && *zResult && (
+        sqlite3_strlike("%pragma%key%=%", zResult, 0)==0 ||
+        sqlite3_strlike("%attach%database%as%key%", zResult, 0)==0
+      )
+    ) return zResult;
 #endif
 /* END SQLCIPHER */
     if( zResult && *zResult ) shell_add_history(zResult);
