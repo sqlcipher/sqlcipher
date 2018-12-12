@@ -107,6 +107,17 @@ db2 close
 file delete -force test.db
 file delete -force test2.db
 
+# open a 4.0 database 
+do_test compat-open-4.0-database {
+  sqlite_orig db $sampleDir/sqlcipher-4.0-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 78536}
+db close
+
 # create an encrypted database, attach an default-key encrypted volume
 # copy data between, verify the second database
 do_test encrypted-attach-default-key {
@@ -1227,6 +1238,99 @@ set TRACE_OUT {}
 db close
 file delete -force plain.db
 file delete -force encrypted.db
+
+# open a 1.1.8 database using cipher_compatibility
+do_test compat-open-1.1.8-database {
+  sqlite_orig db $sampleDir/sqlcipher-1.1.8-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 1;
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 75709}
+db close
+
+# open a 2.0 database using cipher_compatibility
+do_test compat-open-2.0-database {
+  sqlite_orig db $sampleDir/sqlcipher-2.0-le-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 2;
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 78536}
+db close
+
+# open a 3.0 database using cipher_compatibility
+do_test compat-open-3.0-database {
+  sqlite_orig db $sampleDir/sqlcipher-3.0-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 3;
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 78536}
+db close
+
+# open a 4.0 database using cipher_compatibility
+do_test compat-open-4.0-database {
+  sqlite_orig db $sampleDir/sqlcipher-4.0-testkey.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 4;
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 78536}
+db close
+
+# open a 1.1.8 database using cipher_default_compatibility
+do_test default-compat-open-1.1.8-database {
+  sqlite_orig db $sampleDir/sqlcipher-1.1.8-testkey.db
+  execsql {
+    PRAGMA cipher_default_compatibility = 1;
+    PRAGMA key = 'testkey';
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 75709}
+db close
+
+# open a 2.0 database using cipher_default_compatibility
+do_test default-compat-open-2.0-database {
+  sqlite_orig db $sampleDir/sqlcipher-2.0-le-testkey.db
+  execsql {
+    PRAGMA cipher_default_compatibility = 2;
+    PRAGMA key = 'testkey';
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 78536}
+
+# open a 3.0 database using cipher_default_compatibility
+do_test default-compat-open-3.0-database {
+  sqlite_orig db $sampleDir/sqlcipher-3.0-testkey.db
+  execsql {
+    PRAGMA cipher_default_compatibility = 3;
+    PRAGMA key = 'testkey';
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 78536}
+
+# re-open a 4.0 database using cipher_default_compatibility
+do_test default-compat-open-4.0-database {
+  sqlite_orig db $sampleDir/sqlcipher-4.0-testkey.db
+  execsql {
+    PRAGMA cipher_default_compatibility = 4;
+    PRAGMA key = 'testkey';
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  } 
+} {ok 78536}
 
 sqlite3_test_control_pending_byte $old_pending_byte
 

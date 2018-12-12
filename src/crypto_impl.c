@@ -1235,14 +1235,11 @@ cleanup:
 }
 
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
-  int i, pass_sz, keyspec_sz, nRes, user_version, upgrade_from, rc, oflags;
+  int i, pass_sz, keyspec_sz, nRes, user_version, rc, oflags;
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
-  char *v1_pragmas = "PRAGMA cipher_use_hmac = OFF; PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;"; 
-  char *v2_pragmas = "PRAGMA kdf_iter = 4000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
-  char *v3_pragmas = "PRAGMA kdf_iter = 64000; PRAGMA cipher_page_size = 1024; PRAGMA cipher_hmac_algorithm = HMAC_SHA1; PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;";
-  char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL, *temp = NULL, *journal_mode = NULL, *set_journal_mode = NULL;
+  char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL, *temp = NULL, *journal_mode = NULL, *set_journal_mode = NULL, *pragma_compat = NULL;
   Btree *pDest = NULL, *pSrc = NULL;
   const char* commands[5];
   sqlite3_file *srcfile, *destfile;
@@ -1250,7 +1247,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   LPWSTR w_db_filename = NULL, w_migrated_db_filename = NULL;
   int w_db_filename_sz = 0, w_migrated_db_filename_sz = 0;
 #endif
-  pass_sz = keyspec_sz = rc = user_version = upgrade_from = 0;
+  pass_sz = keyspec_sz = rc = user_version = 0;
 
   if(!db_filename || sqlite3Strlen30(db_filename) < 1) 
     goto cleanup; /* exit immediately if this is an in memory database */ 
@@ -1268,29 +1265,19 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     goto cleanup;
   }
 
-  /* Version 3 - check for 64k with hmac format and 1024 page size */
-  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v3_pragmas, &user_version, &journal_mode);
-  if(rc == SQLITE_OK) {
-    CODEC_TRACE("Version 3 format found\n");
-    upgrade_from = 3;
-    goto migrate;
+  for(int i = 3; i > 0; i--) {
+    pragma_compat = sqlite3_mprintf("PRAGMA cipher_compatibility = %d;", i);
+    rc = sqlcipher_check_connection(db_filename, pass, pass_sz, pragma_compat, &user_version, &journal_mode);
+    if(rc == SQLITE_OK) {
+      CODEC_TRACE("Version %d format found\n", i);
+      goto migrate;
+    }
+    if(pragma_compat) sqlcipher_free(pragma_compat, sqlite3Strlen30(pragma_compat)); 
+    pragma_compat = NULL;
   }
-    
-  /* Version 2 - check for 4k with hmac format and 1024 page size */
-  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v2_pragmas, &user_version, &journal_mode);
-  if(rc == SQLITE_OK) {
-    CODEC_TRACE("Version 2 format found\n");
-    upgrade_from = 2;
-    goto migrate;
-  }
-
-  /* Version 1 - check no HMAC, 4k KDF, and 1024 page size */
-  rc = sqlcipher_check_connection(db_filename, pass, pass_sz, v1_pragmas, &user_version, &journal_mode);
-  if(rc == SQLITE_OK) {
-    CODEC_TRACE("Version 1 format found\n");
-    upgrade_from = 1;
-    goto migrate;
-  }
+  /* if we exit the loop normally we failed to determine the version, this is an error */
+  CODEC_TRACE("Upgrade format not determined\n");
+  goto handle_error;
 
 migrate:
 
@@ -1303,20 +1290,8 @@ migrate:
 
   attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate KEY '%q';", migrated_db_filename, pass); 
   set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
-  switch(upgrade_from) {
-    case 1:
-      commands[0] = v1_pragmas;
-      break;
-    case 2:
-      commands[0] = v2_pragmas;
-      break;
-    case 3:
-      commands[0] = v3_pragmas;
-      break;
-    default:
-      CODEC_TRACE("Upgrade format not determined\n");
-      goto handle_error;
-  }
+
+  commands[0] = pragma_compat;
   commands[1] = "PRAGMA journal_mode = delete;"; /* force journal mode to DELETE, we will set it back later if different */
   commands[2] = attach_command;
   commands[3] = "SELECT sqlcipher_export('migrate');";
@@ -1423,6 +1398,7 @@ cleanup:
   if(set_user_version) sqlcipher_free(set_user_version, sqlite3Strlen30(set_user_version)); 
   if(set_journal_mode) sqlcipher_free(set_journal_mode, sqlite3Strlen30(set_journal_mode)); 
   if(journal_mode) sqlcipher_free(journal_mode, sqlite3Strlen30(journal_mode)); 
+  if(pragma_compat) sqlcipher_free(pragma_compat, sqlite3Strlen30(pragma_compat)); 
 #if defined(_WIN32) || defined(SQLITE_OS_WINRT)
   if(w_db_filename) sqlcipher_free(w_db_filename, w_db_filename_sz);
   if(w_migrated_db_filename) sqlcipher_free(w_migrated_db_filename, w_migrated_db_filename_sz);
