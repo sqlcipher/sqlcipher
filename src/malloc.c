@@ -127,7 +127,7 @@ int sqlite3MallocInit(void){
      that will wipe all memory allocated by SQLite
      when freed */
   if( rc==SQLITE_OK ) {
-    extern void sqlcipher_init_memmethods();
+    extern void sqlcipher_init_memmethods(void);
     sqlcipher_init_memmethods();
   }
 #endif

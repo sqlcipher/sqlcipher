@@ -199,11 +199,11 @@ void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 
 /* crypto_impl.c functions */
 
-void sqlcipher_init_memmethods();
+void sqlcipher_init_memmethods(void);
 
 /* activation and initialization */
-void sqlcipher_activate();
-void sqlcipher_deactivate();
+void sqlcipher_activate(void);
+void sqlcipher_deactivate(void);
 
 int sqlcipher_codec_ctx_init(codec_ctx **, Db *, Pager *, sqlite3_file *, const void *, int);
 void sqlcipher_codec_ctx_free(codec_ctx **);
@@ -225,10 +225,10 @@ int sqlcipher_codec_ctx_get_pagesize(codec_ctx *);
 int sqlcipher_codec_ctx_get_reservesize(codec_ctx *);
 
 void sqlcipher_set_default_pagesize(int page_size);
-int sqlcipher_get_default_pagesize();
+int sqlcipher_get_default_pagesize(void);
 
 void sqlcipher_set_default_kdf_iter(int iter);
-int sqlcipher_get_default_kdf_iter();
+int sqlcipher_get_default_kdf_iter(void);
 int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx);
 
@@ -243,10 +243,10 @@ const char* sqlcipher_codec_ctx_get_cipher(codec_ctx *ctx);
 void* sqlcipher_codec_ctx_get_data(codec_ctx *);
 
 void sqlcipher_set_default_use_hmac(int use);
-int sqlcipher_get_default_use_hmac();
+int sqlcipher_get_default_use_hmac(void);
 
 void sqlcipher_set_hmac_salt_mask(unsigned char mask);
-unsigned char sqlcipher_get_hmac_salt_mask();
+unsigned char sqlcipher_get_hmac_salt_mask(void);
 
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use);
 int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx);
@@ -270,22 +270,22 @@ int sqlcipher_codec_hmac_sha1(const codec_ctx *ctx, const unsigned char *hmac_ke
                          unsigned char *out);
 
 int sqlcipher_set_default_plaintext_header_size(int size);
-int sqlcipher_get_default_plaintext_header_size();
+int sqlcipher_get_default_plaintext_header_size(void);
 int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size);
 int sqlcipher_codec_ctx_get_plaintext_header_size(codec_ctx *ctx);
 
 int sqlcipher_set_default_hmac_algorithm(int algorithm);
-int sqlcipher_get_default_hmac_algorithm();
+int sqlcipher_get_default_hmac_algorithm(void);
 int sqlcipher_codec_ctx_set_hmac_algorithm(codec_ctx *ctx, int algorithm);
 int sqlcipher_codec_ctx_get_hmac_algorithm(codec_ctx *ctx);
 
 int sqlcipher_set_default_kdf_algorithm(int algorithm);
-int sqlcipher_get_default_kdf_algorithm();
+int sqlcipher_get_default_kdf_algorithm(void);
 int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm);
 int sqlcipher_codec_ctx_get_kdf_algorithm(codec_ctx *ctx);
 
 void sqlcipher_set_mem_security(int);
-int sqlcipher_get_mem_security();
+int sqlcipher_get_mem_security(void);
 
 int sqlcipher_find_db_index(sqlite3 *db, const char *zDb);
 

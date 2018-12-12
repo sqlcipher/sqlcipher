@@ -85,7 +85,7 @@ void sqlcipher_free(void *, int);
 
 /* provider interfaces */
 int sqlcipher_register_provider(sqlcipher_provider *);
-sqlcipher_provider* sqlcipher_get_provider();
+sqlcipher_provider* sqlcipher_get_provider(void);
 
 #endif
 #endif

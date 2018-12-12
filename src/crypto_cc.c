@@ -37,6 +37,8 @@
 #include <Security/SecRandom.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+int sqlcipher_cc_setup(sqlcipher_provider *p);
+
 static int sqlcipher_cc_add_random(void *ctx, void *buffer, int length) {
   return SQLITE_OK;
 }
