@@ -124,7 +124,7 @@ static void set_options(Tcl_Interp *interp){
       STRINGVALUE(SQLITE_MAX_WORKER_THREADS), TCL_GLOBAL_ONLY
   );
 
-#if 1 /* def SQLITE_MEMDEBUG */
+#ifdef SQLITE_MEMDEBUG 
   Tcl_SetVar2(interp, "sqlite_options", "memdebug", "1", TCL_GLOBAL_ONLY);
 #else
   Tcl_SetVar2(interp, "sqlite_options", "memdebug", "0", TCL_GLOBAL_ONLY);
@@ -760,6 +760,12 @@ Tcl_SetVar2(interp, "sqlite_options", "mergesort", "1", TCL_GLOBAL_ONLY);
   Tcl_SetVar2(interp, "sqlite_options", "uri_00_error", "1", TCL_GLOBAL_ONLY);
 #else
   Tcl_SetVar2(interp, "sqlite_options", "uri_00_error", "0", TCL_GLOBAL_ONLY);
+#endif
+
+#if defined(SQLITE_ENABLE_NORMALIZE)
+  Tcl_SetVar2(interp, "sqlite_options", "normalize", "1", TCL_GLOBAL_ONLY);
+#else
+  Tcl_SetVar2(interp, "sqlite_options", "normalize", "0", TCL_GLOBAL_ONLY);
 #endif
 
 #ifdef SQLITE_OMIT_WINDOWFUNC

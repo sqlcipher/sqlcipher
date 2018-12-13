@@ -2894,17 +2894,25 @@ case OP_MakeRecord: {
     if( nVarint<sqlite3VarintLen(nHdr) ) nHdr++;
   }
   nByte = nHdr+nData;
-  if( nByte+nZero>db->aLimit[SQLITE_LIMIT_LENGTH] ){
-    goto too_big;
-  }
 
   /* Make sure the output register has a buffer large enough to store 
   ** the new record. The output register (pOp->p3) is not allowed to
   ** be one of the input registers (because the following call to
   ** sqlite3VdbeMemClearAndResize() could clobber the value before it is used).
   */
-  if( sqlite3VdbeMemClearAndResize(pOut, (int)nByte) ){
-    goto no_mem;
+  if( nByte+nZero<=pOut->szMalloc ){
+    /* The output register is already large enough to hold the record.
+    ** No error checks or buffer enlargement is required */
+    pOut->z = pOut->zMalloc;
+  }else{
+    /* Need to make sure that the output is not too big and then enlarge
+    ** the output register to hold the full result */
+    if( nByte+nZero>db->aLimit[SQLITE_LIMIT_LENGTH] ){
+      goto too_big;
+    }
+    if( sqlite3VdbeMemClearAndResize(pOut, (int)nByte) ){
+      goto no_mem;
+    }
   }
   zNewRecord = (u8 *)pOut->z;
 
@@ -5760,7 +5768,7 @@ case OP_ParseSchema: {
   {
     zMaster = MASTER_NAME;
     initData.db = db;
-    initData.iDb = pOp->p1;
+    initData.iDb = iDb;
     initData.pzErrMsg = &p->zErrMsg;
     initData.mInitFlags = 0;
     zSql = sqlite3MPrintf(db,
@@ -6957,10 +6965,11 @@ case OP_VFilter: {   /* jump */
 **
 ** If the VColumn opcode is being used to fetch the value of
 ** an unchanging column during an UPDATE operation, then the P5
-** value is 1.  Otherwise, P5 is 0.  The P5 value is returned
-** by sqlite3_vtab_nochange() routine and can be used
-** by virtual table implementations to return special "no-change"
-** marks which can be more efficient, depending on the virtual table.
+** value is OPFLAG_NOCHNG.  This will cause the sqlite3_vtab_nochange()
+** function to return true inside the xColumn method of the virtual
+** table implementation.  The P5 column might also contain other
+** bits (OPFLAG_LENGTHARG or OPFLAG_TYPEOFARG) but those bits are
+** unused by OP_VColumn.
 */
 case OP_VColumn: {
   sqlite3_vtab *pVtab;
@@ -6982,7 +6991,8 @@ case OP_VColumn: {
   assert( pModule->xColumn );
   memset(&sContext, 0, sizeof(sContext));
   sContext.pOut = pDest;
-  if( pOp->p5 ){
+  testcase( (pOp->p5 & OPFLAG_NOCHNG)==0 && pOp->p5!=0 );
+  if( pOp->p5 & OPFLAG_NOCHNG ){
     sqlite3VdbeMemSetNull(pDest);
     pDest->flags = MEM_Null|MEM_Zero;
     pDest->u.nZero = 0;

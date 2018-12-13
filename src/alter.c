@@ -667,10 +667,16 @@ static void renameTokenCheckAll(Parse *pParse, void *pPtr){
 #endif
 
 /*
-** Add a new RenameToken object mapping parse tree element pPtr into
-** token *pToken to the Parse object currently under construction.
+** Remember that the parser tree element pPtr was created using
+** the token pToken.
 **
-** Return a copy of pPtr.
+** In other words, construct a new RenameToken object and add it
+** to the list of RenameToken objects currently being built up
+** in pParse->pRename.
+**
+** The pPtr argument is returned so that this routine can be used
+** with tail recursion in tokenExpr() routine, for a small performance
+** improvement.
 */
 void *sqlite3RenameTokenMap(Parse *pParse, void *pPtr, Token *pToken){
   RenameToken *pNew;
@@ -803,7 +809,7 @@ static int renameColumnExprCb(Walker *pWalker, Expr *pExpr){
     renameTokenFind(pWalker->pParse, p, (void*)pExpr);
   }else if( pExpr->op==TK_COLUMN 
    && pExpr->iColumn==p->iCol 
-   && p->pTab==pExpr->pTab
+   && p->pTab==pExpr->y.pTab
   ){
     renameTokenFind(pWalker->pParse, p, (void*)pExpr);
   }
@@ -1061,9 +1067,14 @@ static int renameResolveTrigger(Parse *pParse, const char *zDb){
       db->aDb[sqlite3SchemaToIndex(db, pNew->pTabSchema)].zDbSName
   );
   pParse->eTriggerOp = pNew->op;
+  /* ALWAYS() because if the table of the trigger does not exist, the
+  ** error would have been hit before this point */
+  if( ALWAYS(pParse->pTriggerTab) ){
+    rc = sqlite3ViewGetColumnNames(pParse, pParse->pTriggerTab);
+  }
 
   /* Resolve symbols in WHEN clause */
-  if( pNew->pWhen ){
+  if( rc==SQLITE_OK && pNew->pWhen ){
     rc = sqlite3ResolveExprNames(&sNC, pNew->pWhen);
   }
 
@@ -1177,15 +1188,8 @@ static void renameParseCleanup(Parse *pParse){
 ** into zNew.  The name should be quoted if bQuote is true.
 **
 ** This function is used internally by the ALTER TABLE RENAME COLUMN command.
-** Though accessible to application code, it is not intended for use by
-** applications.  The existance of this function, and the way it works,
-** is subject to change without notice.
-**
-** If any of the parameters are out-of-bounds, then simply return NULL.
-** An out-of-bounds parameter can only occur when the application calls
-** this function directly.  The parameters will always be well-formed when
-** this routine is invoked by the bytecode for a legitimate ALTER TABLE
-** statement.
+** It is only accessible to SQL created using sqlite3NestedParse().  It is
+** not reachable from ordinary SQL passed into sqlite3_prepare().
 */
 static void renameColumnFunc(
   sqlite3_context *context,
@@ -1341,8 +1345,8 @@ renameColumnFunc_done:
 */
 static int renameTableExprCb(Walker *pWalker, Expr *pExpr){
   RenameCtx *p = pWalker->u.pRename;
-  if( pExpr->op==TK_COLUMN && p->pTab==pExpr->pTab ){
-    renameTokenFind(pWalker->pParse, p, (void*)&pExpr->pTab);
+  if( pExpr->op==TK_COLUMN && p->pTab==pExpr->y.pTab ){
+    renameTokenFind(pWalker->pParse, p, (void*)&pExpr->y.pTab);
   }
   return WRC_Continue;
 }
@@ -1439,7 +1443,7 @@ static void renameTableFunc(
         }else{
           /* Modify any FK definitions to point to the new table. */
 #ifndef SQLITE_OMIT_FOREIGN_KEY
-          if( db->flags & SQLITE_ForeignKeys ){
+          if( isLegacy==0 || (db->flags & SQLITE_ForeignKeys) ){
             FKey *pFKey;
             for(pFKey=pTab->pFKey; pFKey; pFKey=pFKey->pNextFrom){
               if( sqlite3_stricmp(pFKey->zTo, zOld)==0 ){
@@ -1593,9 +1597,9 @@ static void renameTableTest(
 */
 void sqlite3AlterFunctions(void){
   static FuncDef aAlterTableFuncs[] = {
-    FUNCTION(sqlite_rename_column,  9, 0, 0, renameColumnFunc),
-    FUNCTION(sqlite_rename_table,  7, 0, 0, renameTableFunc),
-    FUNCTION(sqlite_rename_test,  5, 0, 0, renameTableTest),
+    INTERNAL_FUNCTION(sqlite_rename_column, 9, renameColumnFunc),
+    INTERNAL_FUNCTION(sqlite_rename_table,  7, renameTableFunc),
+    INTERNAL_FUNCTION(sqlite_rename_test,   5, renameTableTest),
   };
   sqlite3InsertBuiltinFuncs(aAlterTableFuncs, ArraySize(aAlterTableFuncs));
 }
