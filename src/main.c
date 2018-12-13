@@ -835,6 +835,7 @@ int sqlite3_db_config(sqlite3 *db, int op, ...){
         { SQLITE_DBCONFIG_ENABLE_QPSG,           SQLITE_EnableQPSG     },
         { SQLITE_DBCONFIG_TRIGGER_EQP,           SQLITE_TriggerEQP     },
         { SQLITE_DBCONFIG_RESET_DATABASE,        SQLITE_ResetDatabase  },
+        { SQLITE_DBCONFIG_DEFENSIVE,             SQLITE_Defensive      },
       };
       unsigned int i;
       rc = SQLITE_ERROR; /* IMP: R-42790-23372 */
@@ -3062,6 +3063,9 @@ static int openDatabase(
 #if defined(SQLITE_ENABLE_QPSG)
                  | SQLITE_EnableQPSG
 #endif
+#if defined(SQLITE_DEFAULT_DEFENSIVE)
+                 | SQLITE_Defensive
+#endif
       ;
   sqlite3HashInit(&db->aCollSeq);
 #ifndef SQLITE_OMIT_VIRTUALTABLE
@@ -3949,12 +3953,23 @@ int sqlite3_test_control(int op, ...){
 
     /*   sqlite3_test_control(SQLITE_TESTCTRL_LOCALTIME_FAULT, int onoff);
     **
-    ** If parameter onoff is non-zero, configure the wrappers so that all
-    ** subsequent calls to localtime() and variants fail. If onoff is zero,
-    ** undo this setting.
+    ** If parameter onoff is non-zero, subsequent calls to localtime()
+    ** and its variants fail. If onoff is zero, undo this setting.
     */
     case SQLITE_TESTCTRL_LOCALTIME_FAULT: {
       sqlite3GlobalConfig.bLocaltimeFault = va_arg(ap, int);
+      break;
+    }
+
+    /*   sqlite3_test_control(SQLITE_TESTCTRL_INTERNAL_FUNCS, int onoff);
+    **
+    ** If parameter onoff is non-zero, internal-use-only SQL functions
+    ** are visible to ordinary SQL.  This is useful for testing but is
+    ** unsafe because invalid parameters to those internal-use-only functions
+    ** can result in crashes or segfaults.
+    */
+    case SQLITE_TESTCTRL_INTERNAL_FUNCTIONS: {
+      sqlite3GlobalConfig.bInternalFunctions = va_arg(ap, int);
       break;
     }
 

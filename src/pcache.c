@@ -32,7 +32,7 @@
 **   The PCache.pSynced variable is used to optimize searching for a dirty
 **   page to eject from the cache mid-transaction. It is better to eject
 **   a page that does not require a journal sync than one that does. 
-**   Therefore, pSynced is maintained to that it *almost* always points
+**   Therefore, pSynced is maintained so that it *almost* always points
 **   to either the oldest page in the pDirty/pDirtyTail list that has a
 **   clear PGHDR_NEED_SYNC flag or to a page that is older than this one
 **   (so that the right page to eject can be found by following pDirtyPrev
@@ -855,6 +855,15 @@ int sqlite3PCachePercentDirty(PCache *pCache){
   for(pDirty=pCache->pDirty; pDirty; pDirty=pDirty->pDirtyNext) nDirty++;
   return nCache ? (int)(((i64)nDirty * 100) / nCache) : 0;
 }
+
+#ifdef SQLITE_DIRECT_OVERFLOW_READ
+/* 
+** Return true if there are one or more dirty pages in the cache. Else false.
+*/
+int sqlite3PCacheIsDirty(PCache *pCache){
+  return (pCache->pDirty!=0);
+}
+#endif
 
 #if defined(SQLITE_CHECK_PAGES) || defined(SQLITE_DEBUG)
 /*
