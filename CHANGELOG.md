@@ -2,6 +2,11 @@
 All notable changes to this project will be documented in this file.
 
 ## [unreleased] - [unreleased]
+- Based on upstream SQLite 3.26.0 (addresses SQLite “Magellan” issue)
+- Adds PRAGMA cipher_compatibility and cipher_default_compatibility which take automatcially configure appropriate compatibility settings for the specified SQLCipher major version number
+- Filters attach statements with KEY parameters from readline history
+- Fixes crash in command line shell with empty input (i.e. ^D)
+- Fixes warnings when compiled with strict-prototypes
 
 ## [4.0.0] - 2018-11-30
 ### Changed
