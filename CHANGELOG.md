@@ -2,6 +2,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [unreleased] - [unreleased]
+
+## [4.0.1] - [unreleased]
 - Based on upstream SQLite 3.26.0 (addresses SQLite “Magellan” issue)
 - Adds PRAGMA cipher_compatibility and cipher_default_compatibility which take automatcially configure appropriate compatibility settings for the specified SQLCipher major version number
 - Filters attach statements with KEY parameters from readline history
@@ -126,7 +128,8 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.0.0...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.0.1...prerelease
+[4.0.1]: https://github.com/sqlcipher/sqlcipher/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.2...v4.0.0
 [3.4.2]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.1...v3.4.2
 [3.4.1]: https://github.com/sqlcipher/sqlcipher/compare/v3.4.0...v3.4.1
