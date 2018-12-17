@@ -1265,7 +1265,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     goto cleanup;
   }
 
-  for(int i = 3; i > 0; i--) {
+  for(i = 3; i > 0; i--) {
     pragma_compat = sqlite3_mprintf("PRAGMA cipher_compatibility = %d;", i);
     rc = sqlcipher_check_connection(db_filename, pass, pass_sz, pragma_compat, &user_version, &journal_mode);
     if(rc == SQLITE_OK) {
