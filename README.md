@@ -4,6 +4,8 @@ SQLCipher extends the [SQLite](https://www.sqlite.org) database library to add s
 
 SQLCipher is maintained by Zetetic, LLC, the official site can be found [here](https://www.zetetic.net/sqlcipher/).
 
+_**Warning**: If you recently updated to SQLCipher 4 and something isn't working, please check out [the migration guide](https://discuss.zetetic.net/t/upgrading-to-sqlcipher-4/3283) before opening a new issue._
+
 ## Features
 
 - Fast performance with as little as 5-15% overhead for encryption on many operations
