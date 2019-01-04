@@ -711,4 +711,58 @@ do_test verify-memory-security {
 db close
 file delete -force test.db
 
+# create two new database files, write to each
+# and verify that they have different (i.e. random)
+# salt values
+do_test test-random-salt {
+  sqlite_orig db test.db
+  sqlite_orig db2 test2.db
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  } db2
+  db close
+  db2 close
+  string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]
+} {0}
+file delete -force test.db
+file delete -force test2.db
+
+# test scenario where multiple handles are opened
+# to a file that does not exist, where both handles
+# use the same key
+do_test multiple-handles-same-key-and-salt {
+  sqlite_orig db test.db
+  sqlite_orig dba test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+  }
+  execsql {
+    PRAGMA key = 'testkey';
+  } dba
+
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1 VALUES(1,2);
+  }
+
+  execsql {
+    SELECT count(*) FROM t1;
+  }
+  execsql {
+    SELECT count(*) FROM t1;
+  } dba
+
+} {1}
+db close
+dba close
+file delete -force test.db
+
 finish_test

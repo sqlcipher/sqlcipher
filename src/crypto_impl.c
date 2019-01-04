@@ -814,7 +814,7 @@ int sqlcipher_get_mem_security() {
 }
 
 
-int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
+int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const void *zKey, int nKey) {
   int rc;
   codec_ctx *ctx;
 
@@ -846,11 +846,8 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   /* setup default flags */
   ctx->flags = default_flags;
 
-  /* read salt from header, if present */
-  CODEC_TRACE("sqlcipher_codec_ctx_init: reading file header\n");
-  if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
-    ctx->need_kdf_salt = 1;
-  }
+  /* defer attempt to read KDF salt until first use */
+  ctx->need_kdf_salt = 1;
 
   /* setup the crypto provider  */
   CODEC_TRACE("sqlcipher_codec_ctx_init: allocating provider\n");
@@ -1094,9 +1091,14 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 
   
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
-
     if(ctx->need_kdf_salt) {
-      if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) return SQLITE_ERROR;
+      sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
+      /* read salt from header, if present, otherwise generate a new random salt */
+      CODEC_TRACE("sqlcipher_cipher_ctx_key_derive: obtaining salt\n");
+      if(fd == NULL || fd->pMethods == 0 || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
+        CODEC_TRACE("sqlcipher_cipher_ctx_key_derive: unable to read salt from file header, generating random\n");
+        if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) return SQLITE_ERROR;
+      }
       ctx->need_kdf_salt = 0;
     }
     if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) { 

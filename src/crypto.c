@@ -651,7 +651,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     /* point the internal codec argument against the contet to be prepared */
     CODEC_TRACE("sqlite3CodecAttach: calling sqlcipher_codec_ctx_init()\n");
-    rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey); 
+    rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, zKey, nKey);
 
     if(rc != SQLITE_OK) {
       /* initialization failed, do not attach potentially corrupted context */

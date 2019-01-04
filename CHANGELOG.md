@@ -2,6 +2,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [unreleased] - [unreleased]
+- Defer reading salt from header until key derivation is triggered
 
 ## [4.0.1] - 2018-12-17
 - Based on upstream SQLite 3.26.0 (addresses SQLite “Magellan” issue)
