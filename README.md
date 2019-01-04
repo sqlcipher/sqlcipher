@@ -2,7 +2,7 @@
 
 SQLCipher extends the [SQLite](https://www.sqlite.org) database library to add security enhancements that make it more suitable for encrypted local data storage such as on-the-fly encryption, tamper evidence, and key derivation. Based on SQLite, SQLCipher closely tracks SQLite and periodically integrates stable SQLite release features.
 
-SQLCipher is maintained by Zetetic, LLC, the official site can be found [here](https://www.zetetic.net/sqlcipher/).
+SQLCipher is maintained by Zetetic, LLC, and additional information and documentation is available on the official [SQLCipher site](https://www.zetetic.net/sqlcipher/).
 
 ## Features
 
@@ -13,9 +13,15 @@ SQLCipher is maintained by Zetetic, LLC, the official site can be found [here](h
 - Algorithms provided by the peer reviewed OpenSSL crypto library.
 - Configurable crypto providers
 
+## Compatibility
+
+SQLCipher maintains database format compatibility within the same major version number so an application on any platform can open databases created by any other application provided the major version of SQLCipher is the same between them. However, major version updates (e.g. from 3.x to 4.x) often include changes to default settings. This means that newer major versions of SQLCipher will not open databases created by older versions without using special settings. For example, SQLCipher 4 introduces many new performance and security enhancements. The new default algorithms, increased KDF iterations, and larger page size mean that SQLCipher 4 will not open databases created by SQLCipher 1.x, 2.x, or 3.x by default. Instead, an application would either need to migrate the older databases to use the new format or enable a special backwards-compatibility mode. The available options are described in SQLCipher's [upgrade documentation](https://discuss.zetetic.net/t/upgrading-to-sqlcipher-4/3283). 
+
+SQLCipher is also compatible with standard SQLite databases. When a key is not provided, SQLCipher will behave just like the standard SQLite library. It is also possible to convert from a plaintext database (standard SQLite) to an encrypted SQLCipher database using [ATTACH and the sqlcipher_export() convenience function](https://discuss.zetetic.net/t/how-to-encrypt-a-plaintext-sqlite-database-to-use-sqlcipher-and-avoid-file-is-encrypted-or-is-not-a-database-errors/868).
+
 ## Contributions
 
-We welcome contributions, to contribute to SQLCipher, a [contributor agreement](https://www.zetetic.net/contributions/) needs to be submitted.  All submissions should be based on the `prerelease` branch.
+The SQLCipher team welcomes contributions to the core library. All contributions including pull requests and patches should be based on the `prerelease` branch, and must be accompanied by a [contributor agreement](https://www.zetetic.net/contributions/). For large changes we strongly encourage [discussion](https://discuss.zetetic.net/c/sqlcipher) of the proposed change prior to development and submission.
 
 ## Compiling
 
