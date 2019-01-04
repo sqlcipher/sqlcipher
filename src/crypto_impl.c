@@ -504,10 +504,10 @@ static int sqlcipher_cipher_ctx_copy(codec_ctx *ctx, cipher_ctx *target, cipher_
   sqlcipher_free(target->keyspec, ctx->keyspec_sz); 
   memcpy(target, source, sizeof(cipher_ctx));
 
-  target->key = key; //restore pointer to previously allocated key data
+  target->key = key; /* restore pointer to previously allocated key data */
   memcpy(target->key, source->key, ctx->key_sz);
 
-  target->hmac_key = hmac_key; //restore pointer to previously allocated hmac key data
+  target->hmac_key = hmac_key; /* restore pointer to previously allocated hmac key data */
   memcpy(target->hmac_key, source->hmac_key, ctx->key_sz);
 
   if(source->pass && source->pass_sz) {
@@ -1090,7 +1090,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, ctx->key_sz); 
                 
   
-  if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
+  if(c_ctx->pass && c_ctx->pass_sz) { /* if pass is not null */
     if(ctx->need_kdf_salt) {
       sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
       /* read salt from header, if present, otherwise generate a new random salt */

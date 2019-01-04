@@ -180,7 +180,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   }else
   if( sqlite3StrICmp(zLeft,"cipher_default_kdf_iter")==0 ){
     if( zRight ) {
-      sqlcipher_set_default_kdf_iter(atoi(zRight)); // change default KDF iterations
+      sqlcipher_set_default_kdf_iter(atoi(zRight)); /* change default KDF iterations */
     } else {
       char *kdf_iter = sqlite3_mprintf("%d", sqlcipher_get_default_kdf_iter());
       codec_vdbe_return_string(pParse, "cipher_default_kdf_iter", kdf_iter, P4_DYNAMIC);
@@ -189,7 +189,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "kdf_iter")==0 ){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight)); // change of RW PBKDF2 iteration 
+        sqlcipher_codec_ctx_set_kdf_iter(ctx, atoi(zRight)); /* change of RW PBKDF2 iteration */
       } else {
         char *kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_kdf_iter(ctx));
         codec_vdbe_return_string(pParse, "kdf_iter", kdf_iter, P4_DYNAMIC);
@@ -199,7 +199,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0){
     if(ctx) {
       if( zRight ) {
-        sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight)); // change of RW PBKDF2 iteration 
+        sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight)); /* change of RW PBKDF2 iteration */
       } else {
         char *fast_kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_fast_kdf_iter(ctx));
         codec_vdbe_return_string(pParse, "fast_kdf_iter", fast_kdf_iter, P4_DYNAMIC);
@@ -258,7 +258,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft,"cipher_hmac_pgno")==0 ){
     if(ctx) {
       if(zRight) {
-        // clear both pgno endian flags
+        /* clear both pgno endian flags */
         if(sqlite3StrICmp(zRight, "le") == 0) {
           sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
           sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_LE_PGNO);
@@ -616,7 +616,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 static void sqlite3FreeCodecArg(void *pCodecArg) {
   codec_ctx *ctx = (codec_ctx *) pCodecArg;
   if(pCodecArg == NULL) return;
-  sqlcipher_codec_ctx_free(&ctx); // wipe and free allocated memory for the context 
+  sqlcipher_codec_ctx_free(&ctx); /* wipe and free allocated memory for the context */
   sqlcipher_deactivate(); /* cleanup related structures, OpenSSL etc, when codec is detatched */
 }
 
