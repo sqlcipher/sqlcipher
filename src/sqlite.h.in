@@ -5539,6 +5539,22 @@ int sqlite3_key_v2(
 ** The code to implement this API is not available in the public release
 ** of SQLite.
 */
+/* BEGIN SQLCIPHER
+   SQLCipher usage note:
+
+   If the current database is plaintext SQLCipher will NOT encrypt it.
+   If the current database is encrypted and pNew==0 or nNew==0, SQLCipher
+   will NOT decrypt it.
+
+   This routine will ONLY work on an already encrypted database in order
+   to change the key.
+
+   Conversion from plaintext-to-encrypted or encrypted-to-plaintext should
+   use an ATTACHed database and the sqlcipher_export() convenience function
+   as per the SQLCipher Documentation.
+
+   END SQLCIPHER
+*/
 int sqlite3_rekey(
   sqlite3 *db,                   /* Database to be rekeyed */
   const void *pKey, int nKey     /* The new key */
