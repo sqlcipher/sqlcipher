@@ -225,6 +225,68 @@ db2 close
 file delete -force test.db
 file delete -force test2.db
 
+# attach an empty encrypted database as the first op
+# on a keyed database and verify different 
+# salts but same keys (because derivation of the key spec
+# has not occured yet)
+setup test.db "'testkey'"
+do_test attach-empty-database-with-default-key-first-op {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA  key='testkey';
+    ATTACH DATABASE 'test2.db' AS test;
+    CREATE TABLE test.t1(a,b);
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  }
+
+  sqlite_orig db2 test2.db
+
+  lappend rc [execsql {
+    PRAGMA  key='testkey';
+    SELECT count(*) FROM t1;
+  } db2]
+
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {1 0}
+db close
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an empty encrypted database 
+# on a keyed database when PRAGMA cipher_store_pass = 1
+# and verify different salts
+setup test.db "'testkey'"
+do_test attach-empty-database-with-cipher-store-pass {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA  key='testkey';
+    PRAGMA cipher_store_pass = 1;
+    INSERT INTO t1(a,b) VALUES (1,2);
+    ATTACH DATABASE 'test2.db' AS test;
+    CREATE TABLE test.t1(a,b);
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  }
+
+  sqlite_orig db2 test2.db
+
+  lappend rc [execsql {
+    PRAGMA  key='testkey';
+    SELECT count(*) FROM t1;
+  } db2]
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {2 0}
+db close
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
 # attach an encrypted database
 # without specifying key, verify it attaches
 # correctly when PRAGMA cipher_store_pass = 1
