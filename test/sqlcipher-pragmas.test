@@ -245,6 +245,7 @@ do_test verify-pragma-hmac-salt-mask-reports-value-changed {
         PRAGMA key = 'test';
         PRAGMA cipher_hmac_salt_mask = "x'11'";
         PRAGMA cipher_hmac_salt_mask;
+        PRAGMA cipher_hmac_salt_mask = "x'3a'";
     }
 } {11}
 db close
@@ -373,6 +374,27 @@ if_built_with_commoncrypto verify-default-cipher {
         PRAGMA cipher;
     }
 } {aes-256-cbc}
+db close
+file delete -force test.db
+
+do_test verify-cipher_settings_default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_settings;
+    }
+} {{PRAGMA kdf_iter = 256000;} {PRAGMA fast_kdf_iter = 2;} {PRAGMA cipher_page_size = 4096;} {PRAGMA cipher_use_hmac = 1;} {PRAGMA cipher_hmac_pgno = le;} {PRAGMA cipher_hmac_salt_mask = 3a;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
+db close
+file delete -force test.db
+
+do_test verify-cipher_settings_v1 {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_compatibility = 1;
+        PRAGMA cipher_settings;
+    }
+} {{PRAGMA kdf_iter = 4000;} {PRAGMA fast_kdf_iter = 2;} {PRAGMA cipher_page_size = 1024;} {PRAGMA cipher_use_hmac = 0;} {PRAGMA cipher_hmac_pgno = le;} {PRAGMA cipher_hmac_salt_mask = 3a;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA1;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;}} 
 db close
 file delete -force test.db
 
