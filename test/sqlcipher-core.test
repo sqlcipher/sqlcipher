@@ -184,11 +184,43 @@ do_test attach-database-with-default-key {
     INSERT INTO t2 VALUES ('test1', 'test2'); 
   } db2
  
-  catchsql {
+  lappend rc [catchsql {
     ATTACH 'test.db' AS db;
-  } db2
-    
-} {1 {file is not a database}}
+  } db2]
+
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+
+} {{1 {file is not a database}} 0}
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an empty encrypted database
+# without specifying key, verify the database has the same
+# salt and as the original 
+setup test.db "'testkey'"
+do_test attach-empty-database-with-default-key {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA  key='testkey';
+    INSERT INTO t1(a,b) values (1,2);
+    ATTACH DATABASE 'test2.db' AS test;
+    CREATE TABLE test.t1(a,b);
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  }
+
+  sqlite_orig db2 test2.db
+
+  lappend rc [execsql {
+    PRAGMA  key='testkey';
+    SELECT count(*) FROM t1;
+  } db2]
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {2 1}
+db close
 db2 close
 file delete -force test.db
 file delete -force test2.db
@@ -196,9 +228,8 @@ file delete -force test2.db
 # attach an encrypted database
 # without specifying key, verify it attaches
 # correctly when PRAGMA cipher_store_pass = 1
-# is set.
+# is set
 do_test attach-database-with-default-key-using-cipher-store-pass {
- 
     sqlite_orig db1 test.db  
     execsql {
         PRAGMA key = 'testkey';
@@ -238,10 +269,13 @@ file delete -force test2.db
 
 # attach an encrypted database
 # where both database have the same
-# key explicitly
+# key explicitly and verify they have different
+# salt values
 setup test.db "'testkey'"
 do_test attach-database-with-same-key {
   sqlite_orig db2 test2.db
+  
+  set rc {}
 
   execsql {
     PRAGMA key = 'testkey';
@@ -249,13 +283,14 @@ do_test attach-database-with-same-key {
     INSERT INTO t2 VALUES ('test1', 'test2'); 
   } db2
  
-  execsql {
+  lappend rc [execsql {
     SELECT count(*) FROM t2;
     ATTACH 'test.db' AS db KEY 'testkey';
     SELECT count(*) FROM db.t1;
-  } db2
-
-} {1 1}
+  } db2]
+  
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {{1 1} 0}
 db2 close
 file delete -force test.db
 file delete -force test2.db
