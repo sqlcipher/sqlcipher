@@ -247,7 +247,7 @@ do_test verify-pragma-hmac-salt-mask-reports-value-changed {
         PRAGMA cipher_hmac_salt_mask;
         PRAGMA cipher_hmac_salt_mask = "x'3a'";
     }
-} {11}
+} {{PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 11 {PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use}}
 db close
 file delete -force test.db
 
@@ -275,7 +275,7 @@ do_test verify-pragma-hmac-pgno-reports-value-changed {
         PRAGMA cipher_hmac_pgno = le;
         PRAGMA cipher_hmac_pgno;
     }
-} {be native le}
+} {{PRAGMA cipher_hmac_pgno is deprecated, please remove from use} be {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} native {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} le}
 db close
 file delete -force test.db
 
@@ -383,7 +383,7 @@ do_test verify-cipher_settings_default {
         PRAGMA key = 'test';
         PRAGMA cipher_settings;
     }
-} {{PRAGMA kdf_iter = 256000;} {PRAGMA fast_kdf_iter = 2;} {PRAGMA cipher_page_size = 4096;} {PRAGMA cipher_use_hmac = 1;} {PRAGMA cipher_hmac_pgno = le;} {PRAGMA cipher_hmac_salt_mask = 3a;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
+} {{PRAGMA kdf_iter = 256000;} {PRAGMA fast_kdf_iter = 2;} {PRAGMA cipher_page_size = 4096;} {PRAGMA cipher_use_hmac = 1;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
 db close
 file delete -force test.db
 
@@ -394,7 +394,7 @@ do_test verify-cipher_settings_v1 {
         PRAGMA cipher_compatibility = 1;
         PRAGMA cipher_settings;
     }
-} {{PRAGMA kdf_iter = 4000;} {PRAGMA fast_kdf_iter = 2;} {PRAGMA cipher_page_size = 1024;} {PRAGMA cipher_use_hmac = 0;} {PRAGMA cipher_hmac_pgno = le;} {PRAGMA cipher_hmac_salt_mask = 3a;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA1;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;}} 
+} {{PRAGMA kdf_iter = 4000;} {PRAGMA fast_kdf_iter = 2;} {PRAGMA cipher_page_size = 1024;} {PRAGMA cipher_use_hmac = 0;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA1;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;}} 
 db close
 file delete -force test.db
 

@@ -884,7 +884,7 @@ do_test open-2.0-be-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {78536 1 1 one one 1 2 one two}
+} {{PRAGMA cipher_hmac_pgno is deprecated, please remove from use} 78536 1 1 one one 1 2 one two}
 db close
 
 # open a 2.0 database with big-endian hmac page numbers
@@ -936,7 +936,7 @@ do_test open-2.0-beta-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {38768 test-0-0 test-0-1 test-1-0 test-1-1}
+} {{PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 38768 test-0-0 test-0-1 test-1-0 test-1-1}
 db close
 
 # open a 2.0 beta database 
