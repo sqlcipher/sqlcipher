@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 - Clarify usage of sqlite3_rekey for plaintext databases in header
 - Normalize attach behavior when key is not yet derived
 - Adds PRAGMA cipher_settings to query current database codec settings
+- Adds PRAGMA cipher_default_settings to query current default SQLCipher options
 - PRAGMA cipher_hmac_pgno and cipher_hmac_salt_mask are now deprecated
 
 ## [4.0.1] - 2018-12-17

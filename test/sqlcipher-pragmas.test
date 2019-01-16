@@ -398,4 +398,26 @@ do_test verify-cipher_settings_v1 {
 db close
 file delete -force test.db
 
+do_test verify-cipher_default_settings_v1 {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_compatibility = 1;
+        PRAGMA cipher_default_settings;
+        PRAGMA cipher_default_compatibility = 4;
+    }
+} {{PRAGMA cipher_default_kdf_iter = 4000;} {PRAGMA cipher_default_page_size = 1024;} {PRAGMA cipher_default_use_hmac = 0;} {PRAGMA cipher_default_plaintext_header_size = 0;} {PRAGMA cipher_default_hmac_algorithm = HMAC_SHA1;} {PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA1;}} 
+db close
+file delete -force test.db
+
+do_test verify-cipher_default_settings_default {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA cipher_default_settings;
+    }
+} {{PRAGMA cipher_default_kdf_iter = 256000;} {PRAGMA cipher_default_page_size = 4096;} {PRAGMA cipher_default_use_hmac = 1;} {PRAGMA cipher_default_plaintext_header_size = 0;} {PRAGMA cipher_default_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
+db close
+file delete -force test.db
+
+
+
 finish_test
