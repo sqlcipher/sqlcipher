@@ -233,7 +233,7 @@ int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_kdf_iter(codec_ctx *ctx);
 
 int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int sz);
-void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx);
+int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void **salt);
 
 int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *, int);
 int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *);

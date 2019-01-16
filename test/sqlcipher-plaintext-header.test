@@ -430,8 +430,9 @@ do_test test-plaintext-header-migrate-journal-wal-string-key-random-salt {
 db close
 file delete -force test.db
 
-# when cipher_salt is the first statement the values are zeros
-# after the databse is first used and key derivation occurs it will change
+# when cipher_salt is the first statement a new salt should be generated
+# and it should match the salt after key derviation occurs. At no point
+# should the salt be zero
 do_test plaintext-header-size-salt-first-op {
   set rc {}
   sqlite_orig db test.db
@@ -447,10 +448,10 @@ do_test plaintext-header-size-salt-first-op {
     PRAGMA cipher_salt;
   }]
 
-  lappend rc $salt1
   lappend rc [string equal $salt1 "00000000000000000000000000000000"] 
   lappend rc [string equal $salt2 "00000000000000000000000000000000"] 
-} {00000000000000000000000000000000 1 0}
+  lappend rc [string equal $salt1 $salt2]
+} {0 0 1}
 db close
 file delete -force test.db
 

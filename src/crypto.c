@@ -337,9 +337,15 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
           sqlite3_free(salt);
         }
       } else {
-          char *salt = (char*) sqlite3_malloc((FILE_HEADER_SZ*2)+1);
-          cipher_bin2hex(sqlcipher_codec_ctx_get_kdf_salt(ctx), FILE_HEADER_SZ, salt);
-          codec_vdbe_return_string(pParse, "cipher_salt", salt, P4_DYNAMIC);
+        void *salt;
+        char *hexsalt = (char*) sqlite3_malloc((FILE_HEADER_SZ*2)+1);
+        if((rc = sqlcipher_codec_ctx_get_kdf_salt(ctx, &salt)) == SQLITE_OK) {
+          cipher_bin2hex(salt, FILE_HEADER_SZ, hexsalt);
+          codec_vdbe_return_string(pParse, "cipher_salt", hexsalt, P4_DYNAMIC);
+        } else {
+          sqlite3_free(hexsalt);
+          sqlcipher_codec_ctx_set_error(ctx, rc);
+        }
       }
     }
   }else
@@ -651,7 +657,6 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   int page_sz = sqlcipher_codec_ctx_get_pagesize(ctx); 
   unsigned char *pData = (unsigned char *) data;
   void *buffer = sqlcipher_codec_ctx_get_data(ctx);
-  void *kdf_salt = sqlcipher_codec_ctx_get_kdf_salt(ctx);
   int plaintext_header_sz = sqlcipher_codec_ctx_get_plaintext_header_size(ctx);
   int cctx = CIPHER_READ_CTX;
 
@@ -687,9 +692,15 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       cctx = CIPHER_WRITE_CTX; 
 
     case CODEC_JOURNAL_OP: /* encrypt journal page, operate on read context use to get the original page data from the database */ 
-      if(pgno == 1) /* copy initial part of file header or salt to buffer */ 
+      if(pgno == 1) { /* copy initial part of file header or salt to buffer */ 
+        void *kdf_salt = NULL; 
+        /* retrieve the kdf salt */
+        if((rc = sqlcipher_codec_ctx_get_kdf_salt(ctx, &kdf_salt)) != SQLITE_OK) {
+          sqlcipher_codec_ctx_set_error(ctx, rc); 
+          return NULL;
+        }
         memcpy(buffer, plaintext_header_sz ? pData : kdf_salt, offset); 
-
+      }
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
       if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       return buffer; /* return persistent buffer data, pData remains intact */

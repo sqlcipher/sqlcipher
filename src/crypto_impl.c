@@ -756,6 +756,23 @@ void* sqlcipher_codec_ctx_get_data(codec_ctx *ctx) {
   return ctx->buffer;
 }
 
+static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
+  sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
+
+  if(!ctx->need_kdf_salt) {
+    return SQLITE_OK; /* don't reload salt when not needed */
+  }
+
+  /* read salt from header, if present, otherwise generate a new random salt */
+  CODEC_TRACE("sqlcipher_codec_ctx_init_kdf_salt: obtaining salt\n");
+  if(fd == NULL || fd->pMethods == 0 || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
+    CODEC_TRACE("sqlcipher_codec_ctx_init_kdf_salt: unable to read salt from file header, generating random\n");
+    if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) return SQLITE_ERROR;
+  }
+  ctx->need_kdf_salt = 0;
+  return SQLITE_OK; 
+}
+
 int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int size) {
   if(size >= ctx->kdf_salt_sz) {
     memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
@@ -765,8 +782,13 @@ int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int si
   return SQLITE_ERROR;
 }
 
-void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx) {
-  return ctx->kdf_salt;
+int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
+  int rc = SQLITE_OK;
+  if(ctx->need_kdf_salt) {
+    rc = sqlcipher_codec_ctx_init_kdf_salt(ctx);
+  }
+  *salt = ctx->kdf_salt;
+  return rc;
 }
 
 void sqlcipher_codec_get_keyspec(codec_ctx *ctx, void **zKey, int *nKey) {
@@ -1090,17 +1112,13 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, ctx->key_sz); 
                 
   
-  if(c_ctx->pass && c_ctx->pass_sz) { /* if pass is not null */
+  if(c_ctx->pass && c_ctx->pass_sz) {  /* if key material is present on the context for derivation */ 
+   
+    /* if necessary, initialize the salt from the header or random source */
     if(ctx->need_kdf_salt) {
-      sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
-      /* read salt from header, if present, otherwise generate a new random salt */
-      CODEC_TRACE("sqlcipher_cipher_ctx_key_derive: obtaining salt\n");
-      if(fd == NULL || fd->pMethods == 0 || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
-        CODEC_TRACE("sqlcipher_cipher_ctx_key_derive: unable to read salt from file header, generating random\n");
-        if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) return SQLITE_ERROR;
-      }
-      ctx->need_kdf_salt = 0;
+      if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) return rc;
     }
+ 
     if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
