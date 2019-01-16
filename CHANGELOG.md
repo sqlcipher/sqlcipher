@@ -7,7 +7,9 @@ All notable changes to this project will be documented in this file.
 - Normalize attach behavior when key is not yet derived
 - Adds PRAGMA cipher_settings to query current database codec settings
 - Adds PRAGMA cipher_default_settings to query current default SQLCipher options
-- PRAGMA cipher_hmac_pgno and cipher_hmac_salt_mask are now deprecated
+- PRAGMA cipher_hmac_pgno is now deprecated
+- PRAGMA cipher_hmac_salt_mask is now deprecated
+- PRAGMA fast_kdf_iter is now deprecated
 
 ## [4.0.1] - 2018-12-17
 - Based on upstream SQLite 3.26.0 (addresses SQLite “Magellan” issue)

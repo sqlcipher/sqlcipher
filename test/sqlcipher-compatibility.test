@@ -936,7 +936,7 @@ do_test open-2.0-beta-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {{PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 38768 test-0-0 test-0-1 test-1-0 test-1-1}
+} {{PRAGMA fast_kdf_iter is deprecated, please remove from use} {PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 38768 test-0-0 test-0-1 test-1-0 test-1-1}
 db close
 
 # open a 2.0 beta database 

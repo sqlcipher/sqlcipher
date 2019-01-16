@@ -199,7 +199,10 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft, "fast_kdf_iter")==0){
     if(ctx) {
       if( zRight ) {
+        char *deprecation = "PRAGMA fast_kdf_iter is deprecated, please remove from use";
         sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, atoi(zRight)); /* change of RW PBKDF2 iteration */
+        codec_vdbe_return_string(pParse, "fast_kdf_iter", deprecation, P4_TRANSIENT);
+        sqlite3_log(SQLITE_WARNING, deprecation);
       } else {
         char *fast_kdf_iter = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_fast_kdf_iter(ctx));
         codec_vdbe_return_string(pParse, "fast_kdf_iter", fast_kdf_iter, P4_DYNAMIC);
@@ -548,9 +551,6 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       char *pragma;
 
       pragma = sqlite3_mprintf("PRAGMA kdf_iter = %d;", sqlcipher_codec_ctx_get_kdf_iter(ctx));
-      codec_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
-
-      pragma = sqlite3_mprintf("PRAGMA fast_kdf_iter = %d;", sqlcipher_codec_ctx_get_fast_kdf_iter(ctx));
       codec_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
 
       pragma = sqlite3_mprintf("PRAGMA cipher_page_size = %d;", sqlcipher_codec_ctx_get_pagesize(ctx));
