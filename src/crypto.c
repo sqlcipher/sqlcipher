@@ -683,7 +683,10 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         memcpy(buffer, plaintext_header_sz ? pData : (void *) SQLITE_FILE_HEADER, offset); 
 
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
+        sqlcipher_memset(buffer+offset, 0, page_sz-offset);
+        sqlcipher_codec_ctx_set_error(ctx, rc);
+      }
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
       break;
@@ -702,7 +705,10 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         memcpy(buffer, plaintext_header_sz ? pData : kdf_salt, offset); 
       }
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
-      if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+      if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
+        sqlcipher_memset(buffer+offset, 0, page_sz-offset);
+        sqlcipher_codec_ctx_set_error(ctx, rc);
+      }
       return buffer; /* return persistent buffer data, pData remains intact */
       break;
 
