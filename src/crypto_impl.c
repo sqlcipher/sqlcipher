@@ -1339,6 +1339,8 @@ migrate:
   pSrc = pDb->pBt;
 
   nRes = sqlite3BtreeGetOptimalReserve(pSrc); 
+  /* unset the BTS_PAGESIZE_FIXED flag to avoid SQLITE_READONLY */
+  pDest->pBt->btsFlags &= ~BTS_PAGESIZE_FIXED; 
   rc = sqlite3BtreeSetPageSize(pDest, default_page_size, nRes, 0);
   CODEC_TRACE("set btree page size to %d res %d rc %d\n", default_page_size, nRes, rc);
   if( rc!=SQLITE_OK ) goto handle_error;
