@@ -653,6 +653,13 @@ int sqlite3_config(int op, ...){
     }
 #endif /* SQLITE_ENABLE_SORTER_REFERENCES */
 
+#ifdef SQLITE_ENABLE_DESERIALIZE
+    case SQLITE_CONFIG_MEMDB_MAXSIZE: {
+      sqlite3GlobalConfig.mxMemdbSize = va_arg(ap, sqlite3_int64);
+      break;
+    }
+#endif /* SQLITE_ENABLE_DESERIALIZE */
+
     default: {
       rc = SQLITE_ERROR;
       break;
@@ -843,11 +850,11 @@ int sqlite3_db_config(sqlite3 *db, int op, ...){
         if( aFlagOp[i].op==op ){
           int onoff = va_arg(ap, int);
           int *pRes = va_arg(ap, int*);
-          u32 oldFlags = db->flags;
+          u64 oldFlags = db->flags;
           if( onoff>0 ){
             db->flags |= aFlagOp[i].mask;
           }else if( onoff==0 ){
-            db->flags &= ~aFlagOp[i].mask;
+            db->flags &= ~(u64)aFlagOp[i].mask;
           }
           if( oldFlags!=db->flags ){
             sqlite3ExpirePreparedStatements(db, 0);
@@ -1310,7 +1317,7 @@ void sqlite3RollbackAll(sqlite3 *db, int tripCode){
   /* Any deferred constraint violations have now been resolved. */
   db->nDeferredCons = 0;
   db->nDeferredImmCons = 0;
-  db->flags &= ~SQLITE_DeferFKs;
+  db->flags &= ~(u64)SQLITE_DeferFKs;
 
   /* If one has been configured, invoke the rollback-hook callback */
   if( db->xRollbackCallback && (inTrans || !db->autoCommit) ){
@@ -2052,6 +2059,8 @@ void *sqlite3_profile(
   pOld = db->pProfileArg;
   db->xProfile = xProfile;
   db->pProfileArg = pArg;
+  db->mTrace &= SQLITE_TRACE_NONLEGACY_MASK;
+  if( db->xProfile ) db->mTrace |= SQLITE_TRACE_XPROFILE;
   sqlite3_mutex_leave(db->mutex);
   return pOld;
 }
@@ -2403,7 +2412,7 @@ const char *sqlite3_errmsg(sqlite3 *db){
     z = sqlite3ErrStr(SQLITE_NOMEM_BKPT);
   }else{
     testcase( db->pErr==0 );
-    z = (char*)sqlite3_value_text(db->pErr);
+    z = db->errCode ? (char*)sqlite3_value_text(db->pErr) : 0;
     assert( !db->mallocFailed );
     if( z==0 ){
       z = sqlite3ErrStr(db->errCode);
@@ -2933,6 +2942,40 @@ int sqlite3ParseUri(
   return rc;
 }
 
+#if defined(SQLITE_HAS_CODEC)
+/*
+** Process URI filename query parameters relevant to the SQLite Encryption
+** Extension.  Return true if any of the relevant query parameters are
+** seen and return false if not.
+*/
+int sqlite3CodecQueryParameters(
+  sqlite3 *db,           /* Database connection */
+  const char *zDb,       /* Which schema is being created/attached */
+  const char *zUri       /* URI filename */
+){
+  const char *zKey;
+  if( (zKey = sqlite3_uri_parameter(zUri, "hexkey"))!=0 && zKey[0] ){
+    u8 iByte;
+    int i;
+    char zDecoded[40];
+    for(i=0, iByte=0; i<sizeof(zDecoded)*2 && sqlite3Isxdigit(zKey[i]); i++){
+      iByte = (iByte<<4) + sqlite3HexToInt(zKey[i]);
+      if( (i&1)!=0 ) zDecoded[i/2] = iByte;
+    }
+    sqlite3_key_v2(db, zDb, zDecoded, i/2);
+    return 1;
+  }else if( (zKey = sqlite3_uri_parameter(zUri, "key"))!=0 ){
+    sqlite3_key_v2(db, zDb, zKey, sqlite3Strlen30(zKey));
+    return 1;
+  }else if( (zKey = sqlite3_uri_parameter(zUri, "textkey"))!=0 ){
+    sqlite3_key_v2(db, zDb, zKey, -1);
+    return 1;
+  }else{
+    return 0;
+  }
+}
+#endif
+
 
 /*
 ** This routine does the work of opening a database on behalf of
@@ -3278,25 +3321,12 @@ opendb_out:
   }
 #endif
 #if defined(SQLITE_HAS_CODEC)
-  if( rc==SQLITE_OK ){
-    const char *zKey;
-    if( (zKey = sqlite3_uri_parameter(zOpen, "hexkey"))!=0 && zKey[0] ){
-      u8 iByte;
-      int i;
-      char zDecoded[40];
-      for(i=0, iByte=0; i<sizeof(zDecoded)*2 && sqlite3Isxdigit(zKey[i]); i++){
-        iByte = (iByte<<4) + sqlite3HexToInt(zKey[i]);
-        if( (i&1)!=0 ) zDecoded[i/2] = iByte;
-      }
-      sqlite3_key_v2(db, 0, zDecoded, i/2);
-    }else if( (zKey = sqlite3_uri_parameter(zOpen, "key"))!=0 ){
-      sqlite3_key_v2(db, 0, zKey, sqlite3Strlen30(zKey));
-    }
-  }
+  if( rc==SQLITE_OK ) sqlite3CodecQueryParameters(db, 0, zOpen);
 #endif
   sqlite3_free(zOpen);
   return rc & 0xff;
 }
+
 
 /*
 ** Open a new database handle.

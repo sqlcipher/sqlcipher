@@ -106,16 +106,16 @@ SELECT 1;
        [regexp {Autoindex Inserts} $res]
 } {1 1 1}
 
+ifcapable trace {
 do_test shell4-2.1 {
-  catchcmd ":memory:" "CREATE TABLE t1(x);\n.trace"
-} {1 {Usage: .trace FILE|off}}
+  catchcmd ":memory:" "CREATE TABLE t1(x);\n.trace --unknown"
+} {1 {Unknown option "--unknown" on ".trace"}}
 do_test shell4-2.2 {
   catchcmd ":memory:" "CREATE TABLE t1(x);\n.trace off\n.trace off\n"
 } {0 {}}
 do_test shell4-2.3 {
-  catchcmd ":memory:" ".trace stdout\n.trace\n.trace off\n.dump\n"
-} {/^1 {PRAGMA.*Usage:.*}$/}
-ifcapable trace {
+  catchcmd ":memory:" ".trace stdout\n.dump\n.trace off\n"
+} {/^0 {PRAGMA.*}$/}
 do_test shell4-2.4 {
   catchcmd ":memory:" ".trace stdout\nCREATE TABLE t1(x);SELECT * FROM t1;"
 } {0 {CREATE TABLE t1(x);
