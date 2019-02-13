@@ -553,7 +553,8 @@ file delete -force test2.db
 # then delete it and run a manual vacuum
 # verify that the file has become smaller
 # but can still be opened with the proper
-# key
+# key. also test vacuum into functionality introduced
+# in sqlite 3.27.1
 do_test vacuum {
   sqlite_orig db test.db
   set rc {}
@@ -579,17 +580,28 @@ do_test vacuum {
 
   execsql {
     DELETE FROM t1 WHERE rowid > 5000;
+    VACUUM into 'test-vacuum.db';
     VACUUM;
   } 
   db close
 
-  # grab new file size, post
-  # autovacuum
-  set sz2 [file size test.db]
+  # grab separate vacuum file size
+  set sz2 [file size test-vacuum.db]
+
+  # grab test.db file size, post vacuum
+  set sz3 [file size test.db]
 
   # verify that the new size is 
   # smaller than the old size
   if {$sz > $sz2} { lappend rc true }
+  if {$sz > $sz3} { lappend rc true }
+
+  sqlite_orig db test-vacuum.db
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }]
+  db close
 
   sqlite_orig db test.db
   lappend rc [execsql {
@@ -597,9 +609,10 @@ do_test vacuum {
     SELECT count(*) FROM t1;
   }]
 
-} {10000 true 5000}
+} {10000 true true 5000 5000}
 db close
 file delete -force test.db
+file delete -force test-vacuum.db
 
 # open a 1.1.8 database (no HMAC, 4K iter), then 
 # try to open another 1.1.8 database. The
