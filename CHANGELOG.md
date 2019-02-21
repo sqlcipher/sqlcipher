@@ -1,7 +1,7 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
-## [unreleased] - [unreleased]
+## [4.1.0] - [unreleased]
 - Defer reading salt from header until key derivation is triggered
 - Clarify usage of sqlite3_rekey for plaintext databases in header
 - Normalize attach behavior when key is not yet derived
@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
 - PRAGMA cipher_hmac_pgno is now deprecated
 - PRAGMA cipher_hmac_salt_mask is now deprecated
 - PRAGMA fast_kdf_iter is now deprecated
+- Clear codec data buffers if a crypographic provider operation fails
+- Disable backup API for encrypted databases (this was previously documented as not-working and non-supported, but will now explicitly error out on initialization)
+- Updates baseline to upstream SQLite 3.27.1
 
 ## [4.0.1] - 2018-12-17
 - Based on upstream SQLite 3.26.0 (addresses SQLite “Magellan” issue)
