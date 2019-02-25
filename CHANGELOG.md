@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file.
 - PRAGMA fast_kdf_iter is now deprecated
 - Clear codec data buffers if a crypographic provider operation fails
 - Disable backup API for encrypted databases (this was previously documented as not-working and non-supported, but will now explicitly error out on initialization)
-- Updates baseline to upstream SQLite 3.27.1
+- Updates baseline to upstream SQLite 3.27.2
 
 ## [4.0.1] - 2018-12-17
 - Based on upstream SQLite 3.26.0 (addresses SQLite “Magellan” issue)
