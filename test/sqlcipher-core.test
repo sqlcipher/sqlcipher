@@ -74,6 +74,23 @@ do_test will-open-with-correct-derived-key {
 db close
 file delete -force test.db
 
+# set an encryption key (non-hex) and create
+# temp tables, verify you can read from
+# sqlite_temp_master
+setup test.db "'testkey'"
+do_test test-temp-master {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE TEMPORARY TABLE temp_t1(a,b);
+    INSERT INTO temp_t1(a,b) VALUES ('test1', 'test2');
+    SELECT name FROM sqlite_temp_master WHERE type='table';
+    SELECT * from temp_t1;
+  }
+} {temp_t1 test1 test2}
+db close
+file delete -force test.db
+
 # verify that a when a standard database is encrypted the first
 # 16 bytes are not "SQLite format 3\0" 
 do_test test-sqlcipher-header-overwrite {
