@@ -504,10 +504,10 @@ static int sqlcipher_cipher_ctx_copy(codec_ctx *ctx, cipher_ctx *target, cipher_
   sqlcipher_free(target->keyspec, ctx->keyspec_sz); 
   memcpy(target, source, sizeof(cipher_ctx));
 
-  target->key = key; //restore pointer to previously allocated key data
+  target->key = key; /* restore pointer to previously allocated key data */
   memcpy(target->key, source->key, ctx->key_sz);
 
-  target->hmac_key = hmac_key; //restore pointer to previously allocated hmac key data
+  target->hmac_key = hmac_key; /* restore pointer to previously allocated hmac key data */
   memcpy(target->hmac_key, source->hmac_key, ctx->key_sz);
 
   if(source->pass && source->pass_sz) {
@@ -756,6 +756,23 @@ void* sqlcipher_codec_ctx_get_data(codec_ctx *ctx) {
   return ctx->buffer;
 }
 
+static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
+  sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
+
+  if(!ctx->need_kdf_salt) {
+    return SQLITE_OK; /* don't reload salt when not needed */
+  }
+
+  /* read salt from header, if present, otherwise generate a new random salt */
+  CODEC_TRACE("sqlcipher_codec_ctx_init_kdf_salt: obtaining salt\n");
+  if(fd == NULL || fd->pMethods == 0 || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
+    CODEC_TRACE("sqlcipher_codec_ctx_init_kdf_salt: unable to read salt from file header, generating random\n");
+    if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) return SQLITE_ERROR;
+  }
+  ctx->need_kdf_salt = 0;
+  return SQLITE_OK; 
+}
+
 int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int size) {
   if(size >= ctx->kdf_salt_sz) {
     memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
@@ -765,8 +782,13 @@ int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int si
   return SQLITE_ERROR;
 }
 
-void* sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx) {
-  return ctx->kdf_salt;
+int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
+  int rc = SQLITE_OK;
+  if(ctx->need_kdf_salt) {
+    rc = sqlcipher_codec_ctx_init_kdf_salt(ctx);
+  }
+  *salt = ctx->kdf_salt;
+  return rc;
 }
 
 void sqlcipher_codec_get_keyspec(codec_ctx *ctx, void **zKey, int *nKey) {
@@ -814,7 +836,7 @@ int sqlcipher_get_mem_security() {
 }
 
 
-int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
+int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const void *zKey, int nKey) {
   int rc;
   codec_ctx *ctx;
 
@@ -846,11 +868,8 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   /* setup default flags */
   ctx->flags = default_flags;
 
-  /* read salt from header, if present */
-  CODEC_TRACE("sqlcipher_codec_ctx_init: reading file header\n");
-  if(fd == NULL || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
-    ctx->need_kdf_salt = 1;
-  }
+  /* defer attempt to read KDF salt until first use */
+  ctx->need_kdf_salt = 1;
 
   /* setup the crypto provider  */
   CODEC_TRACE("sqlcipher_codec_ctx_init: allocating provider\n");
@@ -1087,18 +1106,19 @@ error:
 static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   int rc;
   CODEC_TRACE("cipher_ctx_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
-                ctx->kdf_salt=%p ctx->kdf_salt_sz=%d c_ctx->kdf_iter=%d \
-                ctx->hmac_kdf_salt=%p, c_ctx->fast_kdf_iter=%d ctx->key_sz=%d\n", 
-                c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->kdf_iter, 
-                ctx->hmac_kdf_salt, c_ctx->fast_kdf_iter, ctx->key_sz); 
+                ctx->kdf_salt=%p ctx->kdf_salt_sz=%d ctx->kdf_iter=%d \
+                ctx->hmac_kdf_salt=%p, ctx->fast_kdf_iter=%d ctx->key_sz=%d\n",
+                c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
+                ctx->hmac_kdf_salt, ctx->fast_kdf_iter, ctx->key_sz);
                 
   
-  if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
-
+  if(c_ctx->pass && c_ctx->pass_sz) {  /* if key material is present on the context for derivation */ 
+   
+    /* if necessary, initialize the salt from the header or random source */
     if(ctx->need_kdf_salt) {
-      if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) return SQLITE_ERROR;
-      ctx->need_kdf_salt = 0;
+      if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) return rc;
     }
+ 
     if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
@@ -1110,7 +1130,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       cipher_hex2bin(z, (ctx->key_sz * 2), c_ctx->key);
       cipher_hex2bin(z + (ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
     } else { 
-      CODEC_TRACE("cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations\n", c_ctx->kdf_iter); 
+      CODEC_TRACE("cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations\n", ctx->kdf_iter);
       if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz, 
                     ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
                     ctx->key_sz, c_ctx->key) != SQLITE_OK) return SQLITE_ERROR;
@@ -1136,7 +1156,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       } 
 
       CODEC_TRACE("cipher_ctx_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations\n", 
-        c_ctx->fast_kdf_iter); 
+        ctx->fast_kdf_iter);
 
       
       if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, ctx->key_sz, 
@@ -1319,6 +1339,8 @@ migrate:
   pSrc = pDb->pBt;
 
   nRes = sqlite3BtreeGetOptimalReserve(pSrc); 
+  /* unset the BTS_PAGESIZE_FIXED flag to avoid SQLITE_READONLY */
+  pDest->pBt->btsFlags &= ~BTS_PAGESIZE_FIXED; 
   rc = sqlite3BtreeSetPageSize(pDest, default_page_size, nRes, 0);
   CODEC_TRACE("set btree page size to %d res %d rc %d\n", default_page_size, nRes, rc);
   if( rc!=SQLITE_OK ) goto handle_error;

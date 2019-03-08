@@ -74,6 +74,23 @@ do_test will-open-with-correct-derived-key {
 db close
 file delete -force test.db
 
+# set an encryption key (non-hex) and create
+# temp tables, verify you can read from
+# sqlite_temp_master
+setup test.db "'testkey'"
+do_test test-temp-master {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE TEMPORARY TABLE temp_t1(a,b);
+    INSERT INTO temp_t1(a,b) VALUES ('test1', 'test2');
+    SELECT name FROM sqlite_temp_master WHERE type='table';
+    SELECT * from temp_t1;
+  }
+} {temp_t1 test1 test2}
+db close
+file delete -force test.db
+
 # verify that a when a standard database is encrypted the first
 # 16 bytes are not "SQLite format 3\0" 
 do_test test-sqlcipher-header-overwrite {
@@ -184,11 +201,105 @@ do_test attach-database-with-default-key {
     INSERT INTO t2 VALUES ('test1', 'test2'); 
   } db2
  
-  catchsql {
+  lappend rc [catchsql {
     ATTACH 'test.db' AS db;
-  } db2
-    
-} {1 {file is not a database}}
+  } db2]
+
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+
+} {{1 {file is not a database}} 0}
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an empty encrypted database
+# without specifying key, verify the database has the same
+# salt and as the original 
+setup test.db "'testkey'"
+do_test attach-empty-database-with-default-key {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA  key='testkey';
+    INSERT INTO t1(a,b) values (1,2);
+    ATTACH DATABASE 'test2.db' AS test;
+    CREATE TABLE test.t1(a,b);
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  }
+
+  sqlite_orig db2 test2.db
+
+  lappend rc [execsql {
+    PRAGMA  key='testkey';
+    SELECT count(*) FROM t1;
+  } db2]
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {2 1}
+db close
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an empty encrypted database as the first op
+# on a keyed database and verify different 
+# salts but same keys (because derivation of the key spec
+# has not occured yet)
+setup test.db "'testkey'"
+do_test attach-empty-database-with-default-key-first-op {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA  key='testkey';
+    ATTACH DATABASE 'test2.db' AS test;
+    CREATE TABLE test.t1(a,b);
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  }
+
+  sqlite_orig db2 test2.db
+
+  lappend rc [execsql {
+    PRAGMA  key='testkey';
+    SELECT count(*) FROM t1;
+  } db2]
+
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {1 0}
+db close
+db2 close
+file delete -force test.db
+file delete -force test2.db
+
+# attach an empty encrypted database 
+# on a keyed database when PRAGMA cipher_store_pass = 1
+# and verify different salts
+setup test.db "'testkey'"
+do_test attach-empty-database-with-cipher-store-pass {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA  key='testkey';
+    PRAGMA cipher_store_pass = 1;
+    INSERT INTO t1(a,b) VALUES (1,2);
+    ATTACH DATABASE 'test2.db' AS test;
+    CREATE TABLE test.t1(a,b);
+    INSERT INTO test.t1 SELECT * FROM t1;
+    DETACH DATABASE test;
+  }
+
+  sqlite_orig db2 test2.db
+
+  lappend rc [execsql {
+    PRAGMA  key='testkey';
+    SELECT count(*) FROM t1;
+  } db2]
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {2 0}
+db close
 db2 close
 file delete -force test.db
 file delete -force test2.db
@@ -196,9 +307,8 @@ file delete -force test2.db
 # attach an encrypted database
 # without specifying key, verify it attaches
 # correctly when PRAGMA cipher_store_pass = 1
-# is set.
+# is set
 do_test attach-database-with-default-key-using-cipher-store-pass {
- 
     sqlite_orig db1 test.db  
     execsql {
         PRAGMA key = 'testkey';
@@ -238,10 +348,13 @@ file delete -force test2.db
 
 # attach an encrypted database
 # where both database have the same
-# key explicitly
+# key explicitly and verify they have different
+# salt values
 setup test.db "'testkey'"
 do_test attach-database-with-same-key {
   sqlite_orig db2 test2.db
+  
+  set rc {}
 
   execsql {
     PRAGMA key = 'testkey';
@@ -249,13 +362,14 @@ do_test attach-database-with-same-key {
     INSERT INTO t2 VALUES ('test1', 'test2'); 
   } db2
  
-  execsql {
+  lappend rc [execsql {
     SELECT count(*) FROM t2;
     ATTACH 'test.db' AS db KEY 'testkey';
     SELECT count(*) FROM db.t1;
-  } db2
-
-} {1 1}
+  } db2]
+  
+  lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
+} {{1 1} 0}
 db2 close
 file delete -force test.db
 file delete -force test2.db
@@ -571,7 +685,7 @@ do_test custom-hmac-kdf-iter {
 
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA fast_kdf_iter = 10;
+    PRAGMA kdf_iter = 10;
     CREATE table t1(a,b);
     BEGIN;
   }
@@ -590,7 +704,7 @@ do_test custom-hmac-kdf-iter {
 
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA fast_kdf_iter = 10;
+    PRAGMA kdf_iter = 10;
     SELECT count(*) FROM t1;
   }
 
@@ -710,5 +824,122 @@ do_test verify-memory-security {
 } {1 0 1}
 db close
 file delete -force test.db
+
+# create two new database files, write to each
+# and verify that they have different (i.e. random)
+# salt values
+do_test test-random-salt {
+  sqlite_orig db test.db
+  sqlite_orig db2 test2.db
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  } db2
+  db close
+  db2 close
+  string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]
+} {0}
+file delete -force test.db
+file delete -force test2.db
+
+# test scenario where multiple handles are opened
+# to a file that does not exist, where both handles
+# use the same key
+do_test multiple-handles-same-key-and-salt {
+  sqlite_orig db test.db
+  sqlite_orig dba test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+  }
+  execsql {
+    PRAGMA key = 'testkey';
+  } dba
+
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1 VALUES(1,2);
+  }
+
+  execsql {
+    SELECT count(*) FROM t1;
+  }
+  execsql {
+    SELECT count(*) FROM t1;
+  } dba
+
+} {1}
+db close
+dba close
+file delete -force test.db
+
+do_test backup-encrypted-to-plain {
+  sqlite_orig db test.db
+  sqlite_orig db2 backup.db
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  list [catch { sqlite3_backup B db2 main db main } msg] $msg
+} {1 {sqlite3_backup_init() failed}}
+db close
+db2 close
+file delete -force test.db
+file delete -force backup.db
+
+do_test backup-plain-to-encrypted {
+  sqlite_orig db test.db
+  sqlite_orig db2 backup.db
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  execsql {
+    PRAGMA key = 'test';
+  } db2
+
+  list [catch { sqlite3_backup B db2 main db main } msg] $msg
+} {1 {sqlite3_backup_init() failed}}
+db close
+db2 close
+file delete -force test.db
+file delete -force backup.db
+
+do_test backup-encrypted-to-encrypted {
+  sqlite_orig db test.db
+  sqlite_orig db2 backup.db
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  execsql {
+    PRAGMA key = 'test';
+  } db2
+  list [catch { sqlite3_backup B db2 main db main } msg] $msg
+} {1 {sqlite3_backup_init() failed}}
+db close
+db2 close
+file delete -force test.db
+file delete -force backup.db
+
+do_test backup-plain-to-plain {
+  sqlite_orig db test.db
+  sqlite_orig db2 backup.db
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+  sqlite3_backup B db2 main db main
+  B step -1
+  B finish
+} {SQLITE_OK}
 
 finish_test

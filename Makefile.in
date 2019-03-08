@@ -472,6 +472,7 @@ TESTSRC += \
   $(TOP)/ext/misc/nextchar.c \
   $(TOP)/ext/misc/normalize.c \
   $(TOP)/ext/misc/percentile.c \
+  $(TOP)/ext/misc/prefixes.c \
   $(TOP)/ext/misc/regexp.c \
   $(TOP)/ext/misc/remember.c \
   $(TOP)/ext/misc/series.c \
@@ -608,7 +609,8 @@ FUZZDATA = \
   $(TOP)/test/fuzzdata4.db \
   $(TOP)/test/fuzzdata5.db \
   $(TOP)/test/fuzzdata6.db \
-  $(TOP)/test/fuzzdata7.db
+  $(TOP)/test/fuzzdata7.db \
+  $(TOP)/test/fuzzdata8.db
 
 # Standard options to testfixture
 #
@@ -631,6 +633,12 @@ FUZZERSHELL_OPT = -DSQLITE_ENABLE_JSON1
 FUZZCHECK_OPT = -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_OSS_FUZZ
 FUZZCHECK_OPT += -DSQLITE_MAX_MEMORY=50000000
 FUZZCHECK_OPT += -DSQLITE_PRINTF_PRECISION_LIMIT=1000
+FUZZCHECK_OPT += -DSQLITE_ENABLE_DESERIALIZE
+FUZZCHECK_OPT += -DSQLITE_ENABLE_FTS4
+#FUZZCHECK_OPT += -DSQLITE_ENABLE_FTS5
+FUZZCHECK_OPT += -DSQLITE_ENABLE_RTREE
+FUZZCHECK_OPT += -DSQLITE_ENABLE_GEOPOLY
+FUZZCHECK_OPT += -DSQLITE_ENABLE_DBSTAT_VTAB
 FUZZCHECK_SRC = $(TOP)/test/fuzzcheck.c $(TOP)/test/ossfuzz.c
 DBFUZZ_OPT =
 
@@ -689,7 +697,7 @@ ossshell$(TEXE):	$(TOP)/test/ossfuzz.c $(TOP)/test/ossshell.c sqlite3.c sqlite3.
              $(TOP)/test/ossfuzz.c sqlite3.c $(TLIBS)
 
 sessionfuzz$(TEXE):	$(TOP)/test/sessionfuzz.c sqlite3.c sqlite3.h
-	$(CC) $(CFLAGS) -I. -o $@ $(TOP)/test/sessionfuzz.c $(TLIBS)
+	$(LTLINK) -o $@ $(TOP)/test/sessionfuzz.c $(TLIBS)
 
 dbfuzz$(TEXE):	$(TOP)/test/dbfuzz.c sqlite3.c sqlite3.h
 	$(LTLINK) -o $@ $(DBFUZZ_OPT) $(TOP)/test/dbfuzz.c sqlite3.c $(TLIBS)
@@ -702,11 +710,26 @@ DBFUZZ2_OPTS = \
   -DSQLITE_ENABLE_DBSTAT_VTAB \
   -DSQLITE_ENABLE_RTREE \
   -DSQLITE_ENABLE_FTS4 \
-  -DSQLITE_EANBLE_FTS5
+  -DSQLITE_ENABLE_FTS5
 
-dbfuzz2:	$(TOP)/test/dbfuzz2.c sqlite3.c sqlite3.h
-	clang-6.0 -I. -g -O0 -fsanitize=fuzzer,undefined,address -o dbfuzz2 \
-		$(DBFUZZ2_OPTS) $(TOP)/test/dbfuzz2.c sqlite3.c
+dbfuzz2$(TEXE):	$(TOP)/test/dbfuzz2.c sqlite3.c sqlite3.h
+	$(CC) $(OPT_FEATURE_FLAGS) $(OPTS) -I. -g -O0 \
+		-DSTANDALONE -o dbfuzz2 \
+		$(DBFUZZ2_OPTS) $(TOP)/test/dbfuzz2.c sqlite3.c $(TLIBS)
+	mkdir -p dbfuzz2-dir
+	cp $(TOP)/test/dbfuzz2-seed* dbfuzz2-dir
+
+dbfuzz2-asan:	$(TOP)/test/dbfuzz2.c sqlite3.c sqlite3.h
+	clang-6.0 $(OPT_FEATURE_FLAGS) $(OPTS) -I. -g -O0 \
+		-fsanitize=fuzzer,undefined,address -o dbfuzz2-asan \
+		$(DBFUZZ2_OPTS) $(TOP)/test/dbfuzz2.c sqlite3.c $(TLIBS)
+	mkdir -p dbfuzz2-dir
+	cp $(TOP)/test/dbfuzz2-seed* dbfuzz2-dir
+
+dbfuzz2-msan:	$(TOP)/test/dbfuzz2.c sqlite3.c sqlite3.h
+	clang-6.0 $(OPT_FEATURE_FLAGS) $(OPTS) -I. -g -O0 \
+		-fsanitize=fuzzer,undefined,memory -o dbfuzz2-msan \
+		$(DBFUZZ2_OPTS) $(TOP)/test/dbfuzz2.c sqlite3.c $(TLIBS)
 	mkdir -p dbfuzz2-dir
 	cp $(TOP)/test/dbfuzz2-seed* dbfuzz2-dir
 
@@ -1085,6 +1108,7 @@ SHELL_SRC = \
 	$(TOP)/ext/expert/sqlite3expert.c \
 	$(TOP)/ext/expert/sqlite3expert.h \
 	$(TOP)/ext/misc/zipfile.c \
+	$(TOP)/ext/misc/memtrace.c \
         $(TOP)/src/test_windirent.c
 
 shell.c:	$(SHELL_SRC) $(TOP)/tool/mkshellc.tcl
@@ -1222,6 +1246,7 @@ TESTFIXTURE_FLAGS += -DSQLITE_SERIES_CONSTRAINT_VERIFY=1
 TESTFIXTURE_FLAGS += -DSQLITE_DEFAULT_PAGE_SIZE=1024
 TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_STMTVTAB
 TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_DBPAGE_VTAB
+TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_DESERIALIZE
 
 TESTFIXTURE_SRC0 = $(TESTSRC2) libsqlcipher.la
 TESTFIXTURE_SRC1 = sqlite3.c
@@ -1324,6 +1349,9 @@ dbdump$(TEXE): $(TOP)/ext/misc/dbdump.c sqlite3.lo
 	$(LTLINK) -DDBDUMP_STANDALONE -o $@ \
            $(TOP)/ext/misc/dbdump.c sqlite3.lo $(TLIBS)
 
+dbtotxt$(TEXE): $(TOP)/tool/dbtotxt.c
+	$(LTLINK)-o $@ $(TOP)/tool/dbtotxt.c
+
 showdb$(TEXE):	$(TOP)/tool/showdb.c sqlite3.lo
 	$(LTLINK) -o $@ $(TOP)/tool/showdb.c sqlite3.lo $(TLIBS)
 
@@ -1338,6 +1366,9 @@ showwal$(TEXE):	$(TOP)/tool/showwal.c sqlite3.lo
 
 showshm$(TEXE):	$(TOP)/tool/showshm.c
 	$(LTLINK) -o $@ $(TOP)/tool/showshm.c
+
+index_usage$(TEXE): $(TOP)/tool/index_usage.c sqlite3.lo
+	$(LTLINK) $(SHELL_OPT) -o $@ $(TOP)/tool/index_usage.c sqlite3.lo $(TLIBS)
 
 changeset$(TEXE):	$(TOP)/ext/session/changeset.c sqlite3.lo
 	$(LTLINK) -o $@ $(TOP)/ext/session/changeset.c sqlite3.lo $(TLIBS)
