@@ -228,6 +228,41 @@ db close
 file delete -force test.db
 file delete -force test2.db
 
+do_test unencrypted-corrupt-to-encrypted-export {
+  sqlite_orig db test.db
+
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1 VALUES (1,2);
+
+    PRAGMA writable_schema = ON;
+
+    UPDATE sqlite_master SET sql = 'CREATE TABLE IF NOT EXISTS t1(a,b)' 
+    WHERE tbl_name = 't1';
+
+    PRAGMA writable_schema = OFF;
+    INSERT INTO t1 VALUES (3,4);
+
+    SELECT * FROM t1;
+
+    ATTACH DATABASE 'test2.db' AS test2 KEY 'testkey2';
+
+    SELECT sqlcipher_export('test2');
+  }
+  db close
+
+  sqlite_orig db test2.db
+  execsql {
+    PRAGMA key = 'testkey2';
+    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM t1;
+  }
+} {1 2}
+db close
+file delete -force test.db
+file delete -force test2.db
+
+
 # create an encrypted database, attach an unencrypted database
 # with data in it, then import the data back into the encrypted DB
 # and verify
@@ -520,7 +555,7 @@ do_test export-attached-database {
     CREATE TABLE t3(a INTEGER PRIMARY KEY AUTOINCREMENT, b, c);
     CREATE UNIQUE INDEX d_idx ON t3(b);
     INSERT INTO t3(b,c) VALUES ('one', 'two');
- 
+
     ATTACH DATABASE 'test.db' AS db KEY 'testkey';
 
     SELECT sqlcipher_export('main', 'db');
@@ -543,7 +578,7 @@ do_test export-attached-database {
     SELECT a FROM fts WHERE b MATCH '1000000';
     SELECT count(*) FROM t3;
   }
-} {1000 1000 1 1000 1001 1001 1000000 2}
+} {1000 1000 2 1000 1001 1001 1000000 2}
 db close
 file delete -force test.db
 file delete -force test2.db
