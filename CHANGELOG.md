@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - PRAGMA cipher_hmac_pgno is now deprecated
 - PRAGMA cipher_hmac_salt_mask is now deprecated
 - PRAGMA fast_kdf_iter is now deprecated
+- Improve sqlcipher_export routine and restore all database flags
 - Clear codec data buffers if a crypographic provider operation fails
 - Disable backup API for encrypted databases (this was previously documented as not-working and non-supported, but will now explicitly error out on initialization)
 - Updates baseline to upstream SQLite 3.27.2
