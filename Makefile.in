@@ -148,6 +148,7 @@ CRYPTOLIBOBJ = \
   crypto_impl.lo \
   crypto_openssl.lo \
   crypto_libtomcrypt.lo \
+  crypto_mbedtls.lo \
   crypto_cc.lo
   
 CRYPTOSRC = \
@@ -157,6 +158,7 @@ CRYPTOSRC = \
   $(TOP)/src/crypto_impl.c \
 	$(TOP)/src/crypto_libtomcrypt.c \
 	$(TOP)/src/crypto_openssl.c \
+	$(TOP)/src/crypto_mbedtls.c \
 	$(TOP)/src/crypto_cc.c
 
 # END CRYPTO
@@ -820,6 +822,8 @@ crypto_impl.lo:	$(TOP)/src/crypto_impl.c $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/crypto_impl.c
 crypto_openssl.lo:	$(TOP)/src/crypto_openssl.c $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/crypto_openssl.c
+crypto_mbedtls.lo:	$(TOP)/src/crypto_mbedtls.c $(HDR)
+	$(LTCOMPILE) -c $(TOP)/src/crypto_mbedtls.c
 crypto_libtomcrypt.lo:	$(TOP)/src/crypto_libtomcrypt.c $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/crypto_libtomcrypt.c
 crypto_cc.lo:	$(TOP)/src/crypto_cc.c $(HDR)

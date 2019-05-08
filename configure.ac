@@ -219,11 +219,17 @@ else
       AC_CHECK_LIB([tomcrypt], [register_cipher], ,
                    AC_MSG_ERROR([Library crypto not found. Install libtomcrypt!"]))
     else
-        CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-	      AC_MSG_RESULT([openssl])
-        AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+      if test "$crypto_lib" = "mbedtls"; then
+        CFLAGS+=" -DSQLCIPHER_CRYPTO_MBEDTLS"
+        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_MBEDTLS"
+        AC_MSG_RESULT([libmbedtls])
+        else
+            CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+            BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+              AC_MSG_RESULT([openssl])
+            AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+                         AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+      fi
     fi
   fi
 fi

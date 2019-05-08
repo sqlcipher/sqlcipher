@@ -208,6 +208,9 @@ void sqlcipher_activate() {
 #elif defined (SQLCIPHER_CRYPTO_OPENSSL)
     extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
     sqlcipher_openssl_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_MBEDTLS)
+    extern int sqlcipher_mbedtls_setup(sqlcipher_provider *p);
+    sqlcipher_mbedtls_setup(p);
 #else
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
