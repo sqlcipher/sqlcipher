@@ -537,7 +537,7 @@ static int vdbePmaReadBlob(
     /* Extend the p->aAlloc[] allocation if required. */
     if( p->nAlloc<nByte ){
       u8 *aNew;
-      int nNew = MAX(128, p->nAlloc*2);
+      sqlite3_int64 nNew = MAX(128, 2*(sqlite3_int64)p->nAlloc);
       while( nByte>nNew ) nNew = nNew*2;
       aNew = sqlite3Realloc(p->aAlloc, nNew);
       if( !aNew ) return SQLITE_NOMEM_BKPT;
@@ -1828,15 +1828,19 @@ int sqlite3VdbeSorterWrite(
 
     if( nMin>pSorter->nMemory ){
       u8 *aNew;
-      int iListOff = (u8*)pSorter->list.pList - pSorter->list.aMemory;
-      int nNew = pSorter->nMemory * 2;
+      sqlite3_int64 nNew = 2 * (sqlite3_int64)pSorter->nMemory;
+      int iListOff = -1;
+      if( pSorter->list.pList ){
+        iListOff = (u8*)pSorter->list.pList - pSorter->list.aMemory;
+      }
       while( nNew < nMin ) nNew = nNew*2;
       if( nNew > pSorter->mxPmaSize ) nNew = pSorter->mxPmaSize;
       if( nNew < nMin ) nNew = nMin;
-
       aNew = sqlite3Realloc(pSorter->list.aMemory, nNew);
       if( !aNew ) return SQLITE_NOMEM_BKPT;
-      pSorter->list.pList = (SorterRecord*)&aNew[iListOff];
+      if( iListOff>=0 ){
+        pSorter->list.pList = (SorterRecord*)&aNew[iListOff];
+      }
       pSorter->list.aMemory = aNew;
       pSorter->nMemory = nNew;
     }
