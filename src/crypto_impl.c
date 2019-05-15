@@ -1362,7 +1362,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   /* Version 4 - current, no upgrade required, so exit immediately */
   rc = sqlcipher_check_connection(db_filename, pass, pass_sz, "", &user_version, &journal_mode);
   if(rc == SQLITE_OK){
-    CODEC_TRACE("No upgrade required - exiting\n");
+    printf("No upgrade required - exiting\n");
     goto cleanup;
   }
 
