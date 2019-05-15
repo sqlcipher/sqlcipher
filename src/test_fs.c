@@ -129,7 +129,7 @@ struct FsdirCsr {
   char *zDir;                     /* Buffer containing directory scanned */
   DIR *pDir;                      /* Open directory */
   sqlite3_int64 iRowid;
-  struct DIRENT entry;            /* Current entry */
+  struct DIRENT *pEntry;
 };
 
 /*
@@ -236,16 +236,8 @@ static int fsdirNext(sqlite3_vtab_cursor *cur){
   FsdirCsr *pCsr = (FsdirCsr*)cur;
 
   if( pCsr->pDir ){
-    struct DIRENT *pRes = 0;
-#if defined(__MINGW_H)
-    pRes = readdir(pCsr->pDir);
-    if( pRes!=0 ){
-      memcpy(&pCsr->entry, pRes, sizeof(struct DIRENT));
-    }
-#else
-    readdir_r(pCsr->pDir, &pCsr->entry, &pRes);
-#endif
-    if( pRes==0 ){
+    pCsr->pEntry = readdir(pCsr->pDir);
+    if( pCsr->pEntry==0 ){
       closedir(pCsr->pDir);
       pCsr->pDir = 0;
     }
@@ -308,7 +300,7 @@ static int fsdirColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
       break;
 
     case 1: /* name */
-      sqlite3_result_text(ctx, pCsr->entry.d_name, -1, SQLITE_TRANSIENT);
+      sqlite3_result_text(ctx, pCsr->pEntry->d_name, -1, SQLITE_TRANSIENT);
       break;
 
     default:
@@ -744,7 +736,7 @@ static int fsColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
     fstat(fd, &sbuf);
 
     if( sbuf.st_size>=pCur->nAlloc ){
-      int nNew = sbuf.st_size*2;
+      sqlite3_int64 nNew = sbuf.st_size*2;
       char *zNew;
       if( nNew<1024 ) nNew = 1024;
 
