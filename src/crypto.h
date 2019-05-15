@@ -289,6 +289,8 @@ int sqlcipher_get_mem_security(void);
 
 int sqlcipher_find_db_index(sqlite3 *db, const char *zDb);
 
+int sqlcipher_codec_ctx_integrity_check(codec_ctx *, Parse *, char *);
+
 #endif
 #endif
 /* END SQLCIPHER */

@@ -1,0 +1,332 @@
+# SQLCipher
+# codec.test developed by Stephen Lombardo (Zetetic LLC)
+# sjlombardo at zetetic dot net
+# http://zetetic.net
+#
+# Copyright (c) 2018, ZETETIC LLC
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the ZETETIC LLC nor the
+#       names of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# This file implements regression tests for SQLite library.  The
+# focus of this script is testing code cipher features.
+#
+# NOTE: tester.tcl has overridden the definition of sqlite3 to
+# automatically pass in a key value. Thus tests in this file
+# should explicitly close and open db with sqlite_orig in order
+# to bypass default key assignment.
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+source $testdir/sqlcipher.tcl
+
+# 1. create a database and insert a bunch of data, close the database
+# 2. seek to the middle of the first database page and write some junk
+# 3. Open the database and verify that the database is no longer readable
+do_test hmac-tamper-resistence-first-page {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+
+  # write some junk into the hmac segment, leaving
+  # the page data valid but with an invalid signature
+  hexio_write test.db 1000 0000
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {1 {file is not a database}}
+db close
+file delete -force test.db
+
+# 1. create a database and insert a bunch of data, close the database
+# 2. seek to the middle of a database page and write some junk
+# 3. Open the database and verify that the database is still readable
+do_test nohmac-not-tamper-resistent {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_use_hmac = OFF;
+    PRAGMA cipher_page_size = 1024;
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
+  }
+
+  execsql {
+    COMMIT;
+  } 
+
+  db close
+
+  # write some junk into the middle of the page
+  hexio_write test.db 2560 00
+
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_use_hmac = OFF;
+    PRAGMA cipher_page_size = 1024;
+    SELECT count(*) FROM t1;
+  }
+
+} {1000}
+db close
+file delete -force test.db
+
+# 1. create a database and insert a bunch of data, close the database
+# 2. seek to the middle of a database page (not the first page) and write bad data
+# 3. Open the database and verify that the database is no longer readable
+do_test hmac-tamper-resistence {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+  }
+
+  db close
+
+  # write some junk into the hmac segment, leaving
+  # the page data valid but with an invalid signature
+  hexio_write test.db 16500 0000
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {1 {database disk image is malformed}}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on an in-memory database
+# which should fail because the file doesn't exist
+do_test memory-integrity-check-should-fail {
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) values (1,2);
+    PRAGMA cipher_integrity_check;
+  } 
+} {{database file is undefined}}
+db close
+
+# try cipher_integrity_check on a valid 1.1.8 database
+# should fail because version 1.0 doesn't use HMAC
+do_test version-1-integrity-check-fail-no-hmac {
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db test.db
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 1;
+    PRAGMA cipher_integrity_check;
+  } 
+} {{HMAC is not enabled, unable to integrity check}}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on a valid 2 database
+do_test version-2-integrity-check-valid {
+  file copy -force $sampleDir/sqlcipher-2.0-le-testkey.db test.db
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 2;
+    PRAGMA cipher_integrity_check;
+  } 
+} {}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on a corrupted version 2 database
+do_test version-2-integrity-check-invalid {
+  file copy -force $sampleDir/sqlcipher-2.0-le-testkey.db test.db
+  hexio_write test.db 8202 00
+  hexio_write test.db 10250 00
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 2;
+    PRAGMA cipher_integrity_check;
+  } 
+} {{HMAC verification failed for page 9} {HMAC verification failed for page 11}}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on a valid version 3 database
+do_test version-3-integrity-check-valid {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 3;
+    PRAGMA cipher_integrity_check;
+  } 
+} {}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on a corrupted version 3 database
+do_test version-3-integrity-check-invalid {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+  hexio_write test.db 8202 00
+  hexio_write test.db 10250 00
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 3;
+    PRAGMA cipher_integrity_check;
+  } 
+} {{HMAC verification failed for page 9} {HMAC verification failed for page 11}}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on a valid version 4 database
+do_test version-4-integrity-check-valid {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+  } 
+} {}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on a corrupted version 4 database
+do_test version-4-integrity-check-invalid {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  # corrupt page data 
+  hexio_write test.db 5120 00 
+  # corrupt iv 
+  hexio_write test.db 12208 00 
+  # corrupt the mac segment 
+  hexio_write test.db 16320 00 
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+  } 
+} {{HMAC verification failed for page 2} {HMAC verification failed for page 3} {HMAC verification failed for page 4}}
+db close
+file delete -force test.db
+
+# try cipher_integrity_check on a corrupted version 4 database
+do_test version-4-integrity-check-invalid-last-page {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  hexio_write test.db 978944 0000 
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+  } 
+} {{page 240 has an invalid size of 2 bytes}}
+db close
+file delete -force test.db
+
+# verify cipher_integrity_check works on a plaintext header db
+do_test integrity-check-plaintext-header {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA key = 'test';
+    PRAGMA cipher_plaintext_header_size = 32;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+
+  lappend rc [execsql {
+    PRAGMA cipher_integrity_check;
+  }]
+
+  lappend rc [string equal [hexio_read test.db 16 5] "1000010150"]
+  
+  hexio_write test.db 120 00 
+  hexio_write test.db 5120 00 
+
+  lappend rc [execsql {
+    PRAGMA cipher_integrity_check;
+  }]
+} {{} 1 {{HMAC verification failed for page 1} {HMAC verification failed for page 2}}}
+file delete -force test.db
+
+# verify database locking for cipher_integrity_check
+do_test integrity-check-locking {
+  sqlite_orig db test.db
+  sqlite_orig db2 test.db
+
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    BEGIN EXCLUSIVE;
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+
+  execsql {
+    PRAGMA key = 'test';
+    PRAGMA cipher_integrity_check;
+  } db2
+} {{unable to lock database}}
+sqlite_orig db test.db
+sqlite_orig db2 test.db
+file delete -force test.db
+
+finish_test

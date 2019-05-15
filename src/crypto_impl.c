@@ -1254,6 +1254,87 @@ cleanup:
   return rc;
 }
 
+int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *column) {
+  Pgno page = 1;
+  int i, trans_rc, rc = 0;
+  char *result;
+  unsigned char *hmac_out = NULL;
+  sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
+  i64 file_sz;
+
+  Vdbe *v = sqlite3GetVdbe(pParse);
+  sqlite3VdbeSetNumCols(v, 1);
+  sqlite3VdbeSetColName(v, 0, COLNAME_NAME, column, SQLITE_STATIC);
+
+  if(fd == NULL || fd->pMethods == 0) {
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "database file is undefined", P4_TRANSIENT);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    goto cleanup;
+  }
+
+  if(!(ctx->flags & CIPHER_FLAG_HMAC)) {
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "HMAC is not enabled, unable to integrity check", P4_TRANSIENT);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    goto cleanup;
+  }
+
+  if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to derive keys", P4_TRANSIENT);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    goto cleanup;
+  }
+
+  /* establish an exclusive lock on the database */
+  if((trans_rc = sqlite3BtreeBeginTrans(ctx->pBt, 2, 0)) != SQLITE_OK) {
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to lock database", P4_TRANSIENT);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    goto cleanup;
+  }
+
+  sqlite3OsFileSize(fd, &file_sz);
+  hmac_out = sqlcipher_malloc(ctx->hmac_sz);
+
+  for(page = 1; page <= file_sz / ctx->page_sz; page++) {
+    int offset = (page - 1) * ctx->page_sz;
+    int payload_sz = ctx->page_sz - ctx->reserve_sz + ctx->iv_sz;
+    int read_sz = ctx->page_sz;
+
+    if(page==1) {
+      int page1_offset = ctx->plaintext_header_sz ? ctx->plaintext_header_sz : FILE_HEADER_SZ;
+      read_sz = read_sz - page1_offset;
+      payload_sz = payload_sz - page1_offset;
+      offset += page1_offset;
+    }
+
+    sqlcipher_memset(ctx->buffer, 0, ctx->page_sz);
+    sqlcipher_memset(hmac_out, 0, ctx->hmac_sz);
+    if(sqlite3OsRead(fd, ctx->buffer, read_sz, offset) != SQLITE_OK) {
+      result = sqlite3_mprintf("error reading %d bytes from file page %d at offset %d\n", read_sz, page, offset);
+      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    } else if(sqlcipher_page_hmac(ctx, ctx->read_ctx, page, ctx->buffer, payload_sz, hmac_out) != SQLITE_OK) {
+      result = sqlite3_mprintf("HMAC operation failed for page %d", page);
+      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    } else if(sqlcipher_memcmp(ctx->buffer + payload_sz, hmac_out, ctx->hmac_sz) != 0) {
+      result = sqlite3_mprintf("HMAC verification failed for page %d", page);
+      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    }
+  }
+
+  if(file_sz % ctx->page_sz != 0) {
+    result = sqlite3_mprintf("page %d has an invalid size of %d bytes", page, file_sz - ((file_sz / ctx->page_sz) * ctx->page_sz));
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+  }
+
+cleanup:
+  if(trans_rc == SQLITE_OK) sqlite3BtreeRollback(ctx->pBt, SQLITE_OK, 0);
+  if(hmac_out != NULL) sqlcipher_free(hmac_out, ctx->hmac_sz);
+  return SQLITE_OK;
+}
+
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   int i, pass_sz, keyspec_sz, nRes, user_version, rc, oflags;
   Db *pDb = 0;

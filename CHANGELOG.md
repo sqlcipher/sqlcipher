@@ -1,6 +1,9 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [unreleased] - (TBD - [unreleased])
+-  Adds PRAGMA cipher_integrity_check to perform external verification of page HMACs
+
 ## [4.1.0] - (March 2019 - [4.1.0 changes])
 - Defer reading salt from header until key derivation is triggered
 - Clarify usage of sqlite3_rekey for plaintext databases in header

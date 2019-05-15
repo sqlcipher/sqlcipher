@@ -629,6 +629,11 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       pragma = sqlite3_mprintf("PRAGMA cipher_default_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
     }
     codec_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_integrity_check")==0 ){
+    if(ctx) {
+      sqlcipher_codec_ctx_integrity_check(ctx, pParse, "cipher_integrity_check");
+    }
   }else {
     return 0;
   }
