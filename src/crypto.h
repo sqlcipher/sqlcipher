@@ -58,7 +58,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_STR(s) #s
 
 #ifndef CIPHER_VERSION_NUMBER
-#define CIPHER_VERSION_NUMBER 4.1.0
+#define CIPHER_VERSION_NUMBER 4.2.0
 #endif
 
 #ifndef CIPHER_VERSION_BUILD
@@ -288,6 +288,8 @@ void sqlcipher_set_mem_security(int);
 int sqlcipher_get_mem_security(void);
 
 int sqlcipher_find_db_index(sqlite3 *db, const char *zDb);
+
+int sqlcipher_codec_ctx_integrity_check(codec_ctx *, Parse *, char *);
 
 #endif
 #endif

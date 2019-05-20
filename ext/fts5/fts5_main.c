@@ -633,7 +633,7 @@ static int fts5OpenMethod(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCsr){
     pCsr = (Fts5Cursor*)sqlite3_malloc64(nByte);
     if( pCsr ){
       Fts5Global *pGlobal = pTab->pGlobal;
-      memset(pCsr, 0, nByte);
+      memset(pCsr, 0, (size_t)nByte);
       pCsr->aColumnSize = (int*)&pCsr[1];
       pCsr->pNext = pGlobal->pCsr;
       pGlobal->pCsr = pCsr;
@@ -914,7 +914,7 @@ static int fts5CursorFirstSorted(
   nByte = sizeof(Fts5Sorter) + sizeof(int) * (nPhrase-1);
   pSorter = (Fts5Sorter*)sqlite3_malloc64(nByte);
   if( pSorter==0 ) return SQLITE_NOMEM;
-  memset(pSorter, 0, nByte);
+  memset(pSorter, 0, (size_t)nByte);
   pSorter->nIdx = nPhrase;
 
   /* TODO: It would be better to have some system for reusing statement
@@ -2468,14 +2468,14 @@ static int fts5CreateAux(
   int rc = sqlite3_overload_function(pGlobal->db, zName, -1);
   if( rc==SQLITE_OK ){
     Fts5Auxiliary *pAux;
-    int nName;                      /* Size of zName in bytes, including \0 */
-    int nByte;                      /* Bytes of space to allocate */
+    sqlite3_int64 nName;            /* Size of zName in bytes, including \0 */
+    sqlite3_int64 nByte;            /* Bytes of space to allocate */
 
-    nName = (int)strlen(zName) + 1;
+    nName = strlen(zName) + 1;
     nByte = sizeof(Fts5Auxiliary) + nName;
-    pAux = (Fts5Auxiliary*)sqlite3_malloc(nByte);
+    pAux = (Fts5Auxiliary*)sqlite3_malloc64(nByte);
     if( pAux ){
-      memset(pAux, 0, nByte);
+      memset(pAux, 0, (size_t)nByte);
       pAux->zFunc = (char*)&pAux[1];
       memcpy(pAux->zFunc, zName, nName);
       pAux->pGlobal = pGlobal;
@@ -2505,15 +2505,15 @@ static int fts5CreateTokenizer(
 ){
   Fts5Global *pGlobal = (Fts5Global*)pApi;
   Fts5TokenizerModule *pNew;
-  int nName;                      /* Size of zName and its \0 terminator */
-  int nByte;                      /* Bytes of space to allocate */
+  sqlite3_int64 nName;            /* Size of zName and its \0 terminator */
+  sqlite3_int64 nByte;            /* Bytes of space to allocate */
   int rc = SQLITE_OK;
 
-  nName = (int)strlen(zName) + 1;
+  nName = strlen(zName) + 1;
   nByte = sizeof(Fts5TokenizerModule) + nName;
-  pNew = (Fts5TokenizerModule*)sqlite3_malloc(nByte);
+  pNew = (Fts5TokenizerModule*)sqlite3_malloc64(nByte);
   if( pNew ){
-    memset(pNew, 0, nByte);
+    memset(pNew, 0, (size_t)nByte);
     pNew->zName = (char*)&pNew[1];
     memcpy(pNew->zName, zName, nName);
     pNew->pUserData = pUserData;

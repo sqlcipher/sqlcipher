@@ -139,11 +139,11 @@ build_vacuum_end:
 /*
 ** This routine implements the OP_Vacuum opcode of the VDBE.
 */
-int sqlite3RunVacuum(
+SQLITE_NOINLINE int sqlite3RunVacuum(
   char **pzErrMsg,        /* Write error message here */
   sqlite3 *db,            /* Database connection */
   int iDb,                /* Which attached DB to vacuum */
-  sqlite3_value *pOut     /* Write results here, if not NULL */
+  sqlite3_value *pOut     /* Write results here, if not NULL. VACUUM INTO */
 ){
   int rc = SQLITE_OK;     /* Return code from service routines */
   Btree *pMain;           /* The database being vacuumed */
@@ -152,6 +152,7 @@ int sqlite3RunVacuum(
   u64 saved_flags;        /* Saved value of db->flags */
   int saved_nChange;      /* Saved value of db->nChange */
   int saved_nTotalChange; /* Saved value of db->nTotalChange */
+  u32 saved_openFlags;    /* Saved value of db->openFlags */
   u8 saved_mTrace;        /* Saved trace settings */
   Db *pDb = 0;            /* Database to detach at end of vacuum */
   int isMemDb;            /* True if vacuuming a :memory: database */
@@ -162,18 +163,21 @@ int sqlite3RunVacuum(
 
   if( !db->autoCommit ){
     sqlite3SetString(pzErrMsg, db, "cannot VACUUM from within a transaction");
-    return SQLITE_ERROR;
+    return SQLITE_ERROR; /* IMP: R-12218-18073 */
   }
   if( db->nVdbeActive>1 ){
     sqlite3SetString(pzErrMsg, db,"cannot VACUUM - SQL statements in progress");
-    return SQLITE_ERROR;
+    return SQLITE_ERROR; /* IMP: R-15610-35227 */
   }
+  saved_openFlags = db->openFlags;
   if( pOut ){
     if( sqlite3_value_type(pOut)!=SQLITE_TEXT ){
       sqlite3SetString(pzErrMsg, db, "non-text filename");
       return SQLITE_ERROR;
     }
     zOut = (const char*)sqlite3_value_text(pOut);
+    db->openFlags &= ~SQLITE_OPEN_READONLY;
+    db->openFlags |= SQLITE_OPEN_CREATE|SQLITE_OPEN_READWRITE;
   }else{
     zOut = "";
   }
@@ -212,6 +216,7 @@ int sqlite3RunVacuum(
   */
   nDb = db->nDb;
   rc = execSqlF(db, pzErrMsg, "ATTACH %Q AS vacuum_db", zOut);
+  db->openFlags = saved_openFlags;
   if( rc!=SQLITE_OK ) goto end_of_vacuum;
   assert( (db->nDb-1)==nDb );
   pDb = &db->aDb[nDb];
@@ -225,6 +230,7 @@ int sqlite3RunVacuum(
       sqlite3SetString(pzErrMsg, db, "output file already exists");
       goto end_of_vacuum;
     }
+    db->mDbFlags |= DBFLAG_VacuumInto;
   }
   nRes = sqlite3BtreeGetOptimalReserve(pMain);
 

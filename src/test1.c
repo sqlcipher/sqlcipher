@@ -2675,6 +2675,33 @@ static int SQLITE_TCLAPI test_stmt_readonly(
 }
 
 /*
+** Usage:  sqlite3_stmt_isexplain  STMT
+**
+** Return 1, 2, or 0 respectively if STMT is an EXPLAIN statement, an
+** EXPLAIN QUERY PLAN statement or an ordinary statement or NULL pointer.
+*/
+static int SQLITE_TCLAPI test_stmt_isexplain(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  sqlite3_stmt *pStmt;
+  int rc;
+
+  if( objc!=2 ){
+    Tcl_AppendResult(interp, "wrong # args: should be \"",
+        Tcl_GetStringFromObj(objv[0], 0), " STMT", 0);
+    return TCL_ERROR;
+  }
+
+  if( getStmtPointer(interp, Tcl_GetString(objv[1]), &pStmt) ) return TCL_ERROR;
+  rc = sqlite3_stmt_isexplain(pStmt);
+  Tcl_SetObjResult(interp, Tcl_NewIntObj(rc));
+  return TCL_OK;
+}
+
+/*
 ** Usage:  sqlite3_stmt_busy  STMT
 **
 ** Return true if STMT is a non-NULL pointer to a statement
@@ -4245,13 +4272,15 @@ static int SQLITE_TCLAPI test_prepare_v2(
   }
   pzTail = objc>=5 ? &zTail : 0;
   rc = sqlite3_prepare_v2(db, zCopy, bytes, &pStmt, pzTail);
+  if( objc>=5 ){
+    zTail = &zSql[(zTail - zCopy)];
+  }
   free(zCopy);
-  zTail = &zSql[(zTail - zCopy)];
 
   assert(rc==SQLITE_OK || pStmt==0);
   Tcl_ResetResult(interp);
   if( sqlite3TestErrCode(interp, db, rc) ) return TCL_ERROR;
-  if( rc==SQLITE_OK && zTail && objc>=5 ){
+  if( rc==SQLITE_OK && objc>=5 && zTail ){
     if( bytes>=0 ){
       bytes = bytes - (int)(zTail-zSql);
     }
@@ -7840,6 +7869,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
 #endif
      { "sqlite3_next_stmt",             test_next_stmt     ,0 },
      { "sqlite3_stmt_readonly",         test_stmt_readonly ,0 },
+     { "sqlite3_stmt_isexplain",        test_stmt_isexplain,0 },
      { "sqlite3_stmt_busy",             test_stmt_busy     ,0 },
      { "uses_stmt_journal",             uses_stmt_journal ,0 },
 

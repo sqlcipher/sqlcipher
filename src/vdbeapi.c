@@ -67,7 +67,7 @@ static SQLITE_NOINLINE void invokeProfileCallback(sqlite3 *db, Vdbe *p){
   assert( p->zSql!=0 );
   sqlite3OsCurrentTimeInt64(db->pVfs, &iNow);
   iElapse = (iNow - p->startTime)*1000000;
-#ifndef SQLITE_OMIT_DEPRECATED  	
+#ifndef SQLITE_OMIT_DEPRECATED
   if( db->xProfile ){
     db->xProfile(db->pProfileArg, p->zSql, iElapse);
   }
@@ -273,6 +273,11 @@ int sqlite3_value_type(sqlite3_value* pVal){
 /* Return true if a parameter to xUpdate represents an unchanged column */
 int sqlite3_value_nochange(sqlite3_value *pVal){
   return (pVal->flags&(MEM_Null|MEM_Zero))==(MEM_Null|MEM_Zero);
+}
+
+/* Return true if a parameter value originated from an sqlite3_bind() */
+int sqlite3_value_frombind(sqlite3_value *pVal){
+  return (pVal->flags&MEM_FromBind)!=0;
 }
 
 /* Make a copy of an sqlite3_value object
@@ -1120,10 +1125,10 @@ int sqlite3_column_type(sqlite3_stmt *pStmt, int i){
 ** or a constant) then useTypes 2, 3, and 4 return NULL.
 */
 static const void *columnName(
-  sqlite3_stmt *pStmt,
-  int N,
-  const void *(*xFunc)(Mem*),
-  int useType
+  sqlite3_stmt *pStmt,     /* The statement */
+  int N,                   /* Which column to get the name for */
+  int useUtf16,            /* True to return the name as UTF16 */
+  int useType              /* What type of name */
 ){
   const void *ret;
   Vdbe *p;
@@ -1144,8 +1149,15 @@ static const void *columnName(
     N += useType*n;
     sqlite3_mutex_enter(db->mutex);
     assert( db->mallocFailed==0 );
-    ret = xFunc(&p->aColName[N]);
-     /* A malloc may have failed inside of the xFunc() call. If this
+#ifndef SQLITE_OMIT_UTF16
+    if( useUtf16 ){
+      ret = sqlite3_value_text16((sqlite3_value*)&p->aColName[N]);
+    }else
+#endif
+    {
+      ret = sqlite3_value_text((sqlite3_value*)&p->aColName[N]);
+    }
+    /* A malloc may have failed inside of the _text() call. If this
     ** is the case, clear the mallocFailed flag and return NULL.
     */
     if( db->mallocFailed ){
@@ -1162,13 +1174,11 @@ static const void *columnName(
 ** statement pStmt.
 */
 const char *sqlite3_column_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_NAME);
+  return columnName(pStmt, N, 0, COLNAME_NAME);
 }
 #ifndef SQLITE_OMIT_UTF16
 const void *sqlite3_column_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_NAME);
+  return columnName(pStmt, N, 1, COLNAME_NAME);
 }
 #endif
 
@@ -1187,13 +1197,11 @@ const void *sqlite3_column_name16(sqlite3_stmt *pStmt, int N){
 ** of the result set of SQL statement pStmt.
 */
 const char *sqlite3_column_decltype(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_DECLTYPE);
+  return columnName(pStmt, N, 0, COLNAME_DECLTYPE);
 }
 #ifndef SQLITE_OMIT_UTF16
 const void *sqlite3_column_decltype16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_DECLTYPE);
+  return columnName(pStmt, N, 1, COLNAME_DECLTYPE);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 #endif /* SQLITE_OMIT_DECLTYPE */
@@ -1205,13 +1213,11 @@ const void *sqlite3_column_decltype16(sqlite3_stmt *pStmt, int N){
 ** anything else which is not an unambiguous reference to a database column.
 */
 const char *sqlite3_column_database_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_DATABASE);
+  return columnName(pStmt, N, 0, COLNAME_DATABASE);
 }
 #ifndef SQLITE_OMIT_UTF16
 const void *sqlite3_column_database_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_DATABASE);
+  return columnName(pStmt, N, 1, COLNAME_DATABASE);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 
@@ -1221,13 +1227,11 @@ const void *sqlite3_column_database_name16(sqlite3_stmt *pStmt, int N){
 ** anything else which is not an unambiguous reference to a database column.
 */
 const char *sqlite3_column_table_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_TABLE);
+  return columnName(pStmt, N, 0, COLNAME_TABLE);
 }
 #ifndef SQLITE_OMIT_UTF16
 const void *sqlite3_column_table_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_TABLE);
+  return columnName(pStmt, N, 1, COLNAME_TABLE);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 
@@ -1237,13 +1241,11 @@ const void *sqlite3_column_table_name16(sqlite3_stmt *pStmt, int N){
 ** anything else which is not an unambiguous reference to a database column.
 */
 const char *sqlite3_column_origin_name(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text, COLNAME_COLUMN);
+  return columnName(pStmt, N, 0, COLNAME_COLUMN);
 }
 #ifndef SQLITE_OMIT_UTF16
 const void *sqlite3_column_origin_name16(sqlite3_stmt *pStmt, int N){
-  return columnName(
-      pStmt, N, (const void*(*)(Mem*))sqlite3_value_text16, COLNAME_COLUMN);
+  return columnName(pStmt, N, 1, COLNAME_COLUMN);
 }
 #endif /* SQLITE_OMIT_UTF16 */
 #endif /* SQLITE_ENABLE_COLUMN_METADATA */
@@ -1609,6 +1611,14 @@ sqlite3 *sqlite3_db_handle(sqlite3_stmt *pStmt){
 */
 int sqlite3_stmt_readonly(sqlite3_stmt *pStmt){
   return pStmt ? ((Vdbe*)pStmt)->readOnly : 1;
+}
+
+/*
+** Return 1 if the statement is an EXPLAIN and return 2 if the
+** statement is an EXPLAIN QUERY PLAN
+*/
+int sqlite3_stmt_isexplain(sqlite3_stmt *pStmt){
+  return pStmt ? ((Vdbe*)pStmt)->explain : 0;
 }
 
 /*

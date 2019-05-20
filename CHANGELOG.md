@@ -1,6 +1,10 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [4.2.0] - (May 2019 - [4.2.0 changes])
+- Adds PRAGMA cipher_integrity_check to perform independent verification of page HMACs
+- Updates baseline to upstream SQLite 3.28.0
+
 ## [4.1.0] - (March 2019 - [4.1.0 changes])
 - Defer reading salt from header until key derivation is triggered
 - Clarify usage of sqlite3_rekey for plaintext databases in header
@@ -140,7 +144,9 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.1.0...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.2.0...prerelease
+[4.2.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.2.0
+[4.2.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.1.0...v4.2.0
 [4.1.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.1.0
 [4.1.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.0.1...v4.1.0
 [4.0.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.0.1
