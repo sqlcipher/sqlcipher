@@ -85,6 +85,12 @@ proc if_built_with_commoncrypto {name cmd expected} {
      }
 }
 
+proc if_built_with_nss {name cmd expected} {
+     if {[get_cipher_provider] == "nss"} {
+        do_test $name $cmd $expected
+     }
+}
+
 proc cmpFilesChunked {file1 file2 {chunksize 16384}} {
     set f1 [open $file1]; fconfigure $f1 -translation binary
     set f2 [open $file2]; fconfigure $f2 -translation binary

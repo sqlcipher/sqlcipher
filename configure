@@ -12029,6 +12029,59 @@ else
 fi
 
     else
+      if test "$crypto_lib" = "nss"; then
+        CFLAGS+=" -DSQLCIPHER_CRYPTO_NSS"
+        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_NSS"
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: nss3" >&5
+$as_echo "nss3" >&6; }
+        { $as_echo "$as_me:${as_lineno-$LINENO}: checking for PK11_Decrypt in -lnss3" >&5
+$as_echo_n "checking for PK11_Decrypt in -lnss3... " >&6; }
+if ${ac_cv_lib_nss3_PK11_Decrypt+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lnss3  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char PK11_Decrypt ();
+int
+main ()
+{
+return PK11_Decrypt ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_nss3_PK11_Decrypt=yes
+else
+  ac_cv_lib_nss3_PK11_Decrypt=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nss3_PK11_Decrypt" >&5
+$as_echo "$ac_cv_lib_nss3_PK11_Decrypt" >&6; }
+if test "x$ac_cv_lib_nss3_PK11_Decrypt" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBNSS3 1
+_ACEOF
+
+  LIBS="-lnss3 $LIBS"
+
+else
+  as_fn_error $? "Library crypto not found. Install nss!\"" "$LINENO" 5
+fi
+
+      else
         CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
         BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
 	      { $as_echo "$as_me:${as_lineno-$LINENO}: result: openssl" >&5
@@ -12080,6 +12133,7 @@ else
   as_fn_error $? "Library crypto not found. Install openssl!\"" "$LINENO" 5
 fi
 
+      fi
     fi
   fi
 fi
