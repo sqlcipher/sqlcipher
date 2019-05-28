@@ -308,25 +308,4 @@ do_test integrity-check-plaintext-header {
 } {{} 1 {{HMAC verification failed for page 1} {HMAC verification failed for page 2}}}
 file delete -force test.db
 
-# verify database locking for cipher_integrity_check
-do_test integrity-check-locking {
-  sqlite_orig db test.db
-  sqlite_orig db2 test.db
-
-  execsql {
-    PRAGMA key = 'test';
-    CREATE TABLE t1(a,b);
-    BEGIN EXCLUSIVE;
-    INSERT INTO t1(a,b) VALUES (1,2);
-  }
-
-  execsql {
-    PRAGMA key = 'test';
-    PRAGMA cipher_integrity_check;
-  } db2
-} {{unable to lock database}}
-sqlite_orig db test.db
-sqlite_orig db2 test.db
-file delete -force test.db
-
 finish_test

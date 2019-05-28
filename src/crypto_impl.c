@@ -1256,7 +1256,7 @@ cleanup:
 
 int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *column) {
   Pgno page = 1;
-  int i, trans_rc, rc = 0;
+  int i, rc = 0;
   char *result;
   unsigned char *hmac_out = NULL;
   sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
@@ -1280,13 +1280,6 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
 
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
     sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to derive keys", P4_TRANSIENT);
-    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
-    goto cleanup;
-  }
-
-  /* establish an exclusive lock on the database */
-  if((trans_rc = sqlite3BtreeBeginTrans(ctx->pBt, 2, 0)) != SQLITE_OK) {
-    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to lock database", P4_TRANSIENT);
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     goto cleanup;
   }
@@ -1330,7 +1323,6 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
   }
 
 cleanup:
-  if(trans_rc == SQLITE_OK) sqlite3BtreeRollback(ctx->pBt, SQLITE_OK, 0);
   if(hmac_out != NULL) sqlcipher_free(hmac_out, ctx->hmac_sz);
   return SQLITE_OK;
 }
