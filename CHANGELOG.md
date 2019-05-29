@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 ## [4.2.0] - (May 2019 - [4.2.0 changes])
 - Adds PRAGMA cipher_integrity_check to perform independent verification of page HMACs
 - Updates baseline to upstream SQLite 3.28.0
+- Improves PRAGMA cipher_migrate to handle keys containing non-terminating zero bytes
 
 ## [4.1.0] - (March 2019 - [4.1.0 changes])
 - Defer reading salt from header until key derivation is triggered
