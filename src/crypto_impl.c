@@ -1256,7 +1256,7 @@ cleanup:
 
 int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *column) {
   Pgno page = 1;
-  int i, trans_rc, rc = 0;
+  int i, rc = 0;
   char *result;
   unsigned char *hmac_out = NULL;
   sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
@@ -1280,13 +1280,6 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
 
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
     sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to derive keys", P4_TRANSIENT);
-    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
-    goto cleanup;
-  }
-
-  /* establish an exclusive lock on the database */
-  if((trans_rc = sqlite3BtreeBeginTrans(ctx->pBt, 2, 0)) != SQLITE_OK) {
-    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to lock database", P4_TRANSIENT);
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     goto cleanup;
   }
@@ -1330,7 +1323,6 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
   }
 
 cleanup:
-  if(trans_rc == SQLITE_OK) sqlite3BtreeRollback(ctx->pBt, SQLITE_OK, 0);
   if(hmac_out != NULL) sqlcipher_free(hmac_out, ctx->hmac_sz);
   return SQLITE_OK;
 }
@@ -1342,7 +1334,6 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   const char *db_filename = sqlite3_db_filename(db, "main");
   char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, *keyspec = NULL, *temp = NULL, *journal_mode = NULL, *set_journal_mode = NULL, *pragma_compat = NULL;
   Btree *pDest = NULL, *pSrc = NULL;
-  const char* commands[5];
   sqlite3_file *srcfile, *destfile;
 #if defined(_WIN32) || defined(SQLITE_OS_WINRT)
   LPWSTR w_db_filename = NULL, w_migrated_db_filename = NULL;
@@ -1389,23 +1380,46 @@ migrate:
   memcpy(migrated_db_filename, temp, sqlite3Strlen30(temp));
   sqlcipher_free(temp, sqlite3Strlen30(temp));
 
-  attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate KEY '%q';", migrated_db_filename, pass); 
+  attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate;", migrated_db_filename, pass); 
   set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
 
-  commands[0] = pragma_compat;
-  commands[1] = "PRAGMA journal_mode = delete;"; /* force journal mode to DELETE, we will set it back later if different */
-  commands[2] = attach_command;
-  commands[3] = "SELECT sqlcipher_export('migrate');";
-  commands[4] = set_user_version;
-
-  for(i = 0; i < ArraySize(commands); i++){
-    rc = sqlite3_exec(db, commands[i], NULL, NULL, NULL);
-    if(rc != SQLITE_OK){
-      CODEC_TRACE("migration step %d failed error code %d\n", i, rc);
-      goto handle_error;
-    }
+  rc = sqlite3_exec(db, pragma_compat, NULL, NULL, NULL);
+  if(rc != SQLITE_OK){
+    CODEC_TRACE("set compatibility mode failed, error code %d\n", rc);
+    goto handle_error;
   }
-    
+
+  /* force journal mode to DELETE, we will set it back later if different */
+  rc = sqlite3_exec(db, "PRAGMA journal_mode = delete;", NULL, NULL, NULL);
+  if(rc != SQLITE_OK){
+    CODEC_TRACE("force journal mode DELETE failed, error code %d\n", rc);
+    goto handle_error;
+  }
+
+  rc = sqlite3_exec(db, attach_command, NULL, NULL, NULL);
+  if(rc != SQLITE_OK){
+    CODEC_TRACE("attach failed, error code %d\n", rc);
+    goto handle_error;
+  }
+
+  rc = sqlite3_key_v2(db, "migrate", pass, pass_sz);
+  if(rc != SQLITE_OK){
+    CODEC_TRACE("keying attached database failed, error code %d\n", rc);
+    goto handle_error;
+  }
+
+  rc = sqlite3_exec(db, "SELECT sqlcipher_export('migrate');", NULL, NULL, NULL);
+  if(rc != SQLITE_OK){
+    CODEC_TRACE("sqlcipher_export failed, error code %d\n", rc);
+    goto handle_error;
+  }
+
+  rc = sqlite3_exec(db, set_user_version, NULL, NULL, NULL);
+  if(rc != SQLITE_OK){
+    CODEC_TRACE("set user version failed, error code %d\n", rc);
+    goto handle_error;
+  }
+
   if( !db->autoCommit ){
     CODEC_TRACE("cannot migrate from within a transaction");
     goto handle_error;
