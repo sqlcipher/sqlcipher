@@ -1151,5 +1151,9 @@ end_of_export:
 
 #endif
 
+#ifdef SQLCIPHER_FUNCS
+#include "sqlcipher-func.c"
+#endif
+
 /* END SQLCIPHER */
 #endif

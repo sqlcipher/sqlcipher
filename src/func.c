@@ -1791,13 +1791,6 @@ static void groupConcatValue(sqlite3_context *context){
 */
 void sqlite3RegisterPerConnectionBuiltinFunctions(sqlite3 *db){
   int rc = sqlite3_overload_function(db, "MATCH", 2);
-/* BEGIN SQLCIPHER */
-#ifdef SQLITE_HAS_CODEC
-#ifndef OMIT_EXPORT
-  extern void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
-#endif
-#endif
-/* END SQLCIPHER */
   assert( rc==SQLITE_NOMEM || rc==SQLITE_OK );
   if( rc==SQLITE_NOMEM ){
     sqlite3OomFault(db);
@@ -1805,7 +1798,13 @@ void sqlite3RegisterPerConnectionBuiltinFunctions(sqlite3 *db){
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 #ifndef OMIT_EXPORT
-  sqlite3CreateFunc(db, "sqlcipher_export", -1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0, 0, 0);
+  {
+    extern void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
+    sqlite3CreateFunc(db, "sqlcipher_export", -1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0, 0, 0);
+  }
+#endif
+#ifdef SQLCIPHER_FUNCS
+#include "sqlcipher-func.h"
 #endif
 #endif
 /* END SQLCIPHER */
