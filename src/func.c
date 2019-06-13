@@ -1804,7 +1804,7 @@ void sqlite3RegisterPerConnectionBuiltinFunctions(sqlite3 *db){
   }
 #endif
 #ifdef SQLCIPHER_FUNCS
-#include "sqlcipher-func.h"
+#include "sqlcipher_funcs_init.h"
 #endif
 #endif
 /* END SQLCIPHER */
