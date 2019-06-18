@@ -110,6 +110,8 @@ AC_CHECK_HEADERS([sys/types.h stdlib.h stdint.h inttypes.h malloc.h])
 #
 AC_CHECK_FUNCS([fdatasync gmtime_r isnan localtime_r localtime_s malloc_usable_size strchrnul usleep utime pread pread64 pwrite pwrite64])
 
+PKG_PROG_PKG_CONFIG
+
 #########
 # By default, we use the amalgamation (this may be changed below...)
 #
@@ -222,8 +224,7 @@ else
         CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
         BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
 	      AC_MSG_RESULT([openssl])
-        AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+        PKG_CHECK_MODULES([CRYPTO], [libcrypto])
     fi
   fi
 fi
