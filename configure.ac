@@ -219,11 +219,19 @@ else
       AC_CHECK_LIB([tomcrypt], [register_cipher], ,
                    AC_MSG_ERROR([Library crypto not found. Install libtomcrypt!"]))
     else
-        CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-	      AC_MSG_RESULT([openssl])
-        AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+        if test "$crypto_lib" = "libsodium"; then
+          CFLAGS+=" -DSQLCIPHER_CRYPTO_SODIUM"
+          BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_SODIUM"
+          AC_MSG_RESULT([libsodium])
+          AC_CHECK_LIB([sodium], [sodium_init], ,
+                       AC_MSG_ERROR([Library crypto not found. Install libsodium!"]))
+        else
+          CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+          BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+	        AC_MSG_RESULT([openssl])
+          AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+                       AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+      fi
     fi
   fi
 fi
