@@ -49,81 +49,25 @@ typedef struct {
     const mbedtls_cipher_info_t *cipher_info;
 } mbedtls_ctx;
 
-static int mbedtls_init_count = 0;
-static int mbedtls_external_init = 0;
-
 static int sqlcipher_mbedtls_add_random(void *ctx, void *buffer, int length) {
     mbedtls_ctx *ctximpl = (mbedtls_ctx*)ctx;
     mbedtls_ctr_drbg_random_with_add(&ctximpl->ctr_drbg, (unsigned char*)buffer, length, NULL, 0);
   return SQLITE_OK;
 }
 
-/* activate and initialize sqlcipher. Most importantly, this will automatically
-   intialize OpenSSL's EVP system if it hasn't already be externally. Note that 
-   this function may be called multiple times as new codecs are intiialized. 
-   Thus it performs some basic counting to ensure that only the last and final
-   sqlcipher_mbedtls_deactivate() will free the EVP structures. 
+/* activate and initialize sqlcipher. Note that this function may be called
+   multiple times as new codecs are initialized. Thus it performs some basic
+   counting to ensure that only the last and final sqlcipher_mbedtls_deactivate()
+   will free the global mbedtls structures.
 */
 static int sqlcipher_mbedtls_activate(void *ctx) {
-  /* initialize mbedtls and increment the internal init counter
-     but only if it hasn't been initalized outside of SQLCipher by this program 
-     e.g. on startup */
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_activate: entering static master mutex");
-  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_activate: entered static master mutex");
-
-#if 0
-  if(mbedtls_init_count == 0 && (check inited) != NULL) {
-    /* if mbedtls has not yet been initialized by this library, but 
-       a call to get_cipherbyname works, then the mbedtls library
-       has been initialized externally already. */
-    mbedtls_external_init = 1;
-  }
-
-#ifdef SQLCIPHER_FIPS
-  /*
-  if(!FIPS_mode()){
-    if(!FIPS_mode_set(1)){
-      ERR_load_crypto_strings();
-      ERR_print_errors_fp(stderr);
-    }
-  }
-   */
-#endif
-
-  if(mbedtls_init_count == 0 && mbedtls_external_init == 0)  {
-      // initialize
-  }
-#endif
-
-  mbedtls_init_count++; 
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_activate: leaving static master mutex");
-  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_activate: left static master mutex");
   return SQLITE_OK;
 }
 
 /* deactivate SQLCipher, most imporantly decremeting the activation count and
-   freeing the EVP structures on the final deactivation to ensure that 
-   OpenSSL memory is cleaned up */
+   freeing the mbedtls structures on the final deactivation to ensure that
+   mbedtls memory is cleaned up */
 static int sqlcipher_mbedtls_deactivate(void *ctx) {
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_deactivate: entering static master mutex");
-  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_deactivate: entered static master mutex");
-  mbedtls_init_count--;
-
-  if(mbedtls_init_count == 0) {
-#if 0
-    if(mbedtls_external_init == 0) {
-        // deinitialize
-    } else {
-        mbedtls_external_init = 0;
-    }
-#endif
-  }
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_deactivate: leaving static master mutex");
-  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_mbedtls_deactivate: left static master mutex");
   return SQLITE_OK;
 }
 
@@ -224,7 +168,7 @@ static int sqlcipher_mbedtls_kdf(void *ctx, int algorithm, const unsigned char *
       return SQLITE_ERROR;
   }
 
-  mbedtls_md_setup(&md_ctx, mbedtls_md_info_from_type(md_type) , 1); //use hmac
+  mbedtls_md_setup(&md_ctx, mbedtls_md_info_from_type(md_type), 1);
   librc = mbedtls_pkcs5_pbkdf2_hmac(&md_ctx, (const unsigned char*)pass, pass_sz, (const unsigned char*)salt, salt_sz, workfactor, key_sz, key);
   if(librc == 0)
       rc = SQLITE_OK;
@@ -368,7 +312,6 @@ static int sqlcipher_mbedtls_ctx_init(void **ctx) {
 
   o_ctx->cipher_info = mbedtls_cipher_info_from_type(MBEDTLS_CIPHER_AES_256_CBC);
 
-  // non-threadsafable
   librc = mbedtls_ctr_drbg_seed( &o_ctx->ctr_drbg , mbedtls_entropy_func, &o_ctx->entropy,
                      (const unsigned char *) personalization,
                      strlen( personalization ) );

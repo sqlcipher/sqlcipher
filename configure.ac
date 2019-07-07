@@ -223,12 +223,14 @@ else
         CFLAGS+=" -DSQLCIPHER_CRYPTO_MBEDTLS"
         BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_MBEDTLS"
         AC_MSG_RESULT([libmbedtls])
-        else
-            CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-            BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-              AC_MSG_RESULT([openssl])
-            AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                         AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+        AC_CHECK_LIB([mbedcrypto], [mbedtls_cipher_list], ,
+                     AC_MSG_ERROR([Library mbedtls not found. Install mbedtls!]))
+      else
+        CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+        AC_MSG_RESULT([openssl])
+        AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
       fi
     fi
   fi
