@@ -377,6 +377,16 @@ if_built_with_commoncrypto verify-default-cipher {
 db close
 file delete -force test.db
 
+if_built_with_nss verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {aes-256-cbc}
+db close
+file delete -force test.db
+
 do_test verify-cipher_settings_default {
     sqlite_orig db test.db
     execsql {
