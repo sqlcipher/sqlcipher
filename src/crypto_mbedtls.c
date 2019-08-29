@@ -205,7 +205,7 @@ static int sqlcipher_mbedtls_cipher(void *ctx, int mode, unsigned char *key, int
   {
     goto error;
   }
-  if((librc = mbedtls_cipher_set_iv(&cipher_ctx, iv, 0)) != 0)
+  if((librc = mbedtls_cipher_set_iv(&cipher_ctx, iv, ctximpl->cipher_info->iv_size)) != 0)
   {
     goto error;
   }
