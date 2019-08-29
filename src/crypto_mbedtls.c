@@ -89,6 +89,7 @@ static int sqlcipher_mbedtls_random (void *ctx, void *buffer, int length) {
 static int sqlcipher_mbedtls_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   unsigned int outlen;
   int rc = SQLITE_OK;
+  int librc;
   mbedtls_md_context_t md_ctx;
   mbedtls_md_type_t md_type;
 
