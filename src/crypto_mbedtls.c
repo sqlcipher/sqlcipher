@@ -320,7 +320,7 @@ static int sqlcipher_mbedtls_ctx_init(void **ctx) {
 }
 
 static int sqlcipher_mbedtls_ctx_free(void **ctx) {
-  mbedtls_ctx *ctximpl = (mbedtls_ctx*)ctx;
+  mbedtls_ctx *ctximpl = (mbedtls_ctx*)*ctx;
   mbedtls_ctr_drbg_free(&ctximpl->ctr_drbg);
   mbedtls_entropy_free(&ctximpl->entropy);
   sqlcipher_mbedtls_deactivate(*ctx);
