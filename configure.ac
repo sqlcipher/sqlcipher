@@ -226,11 +226,19 @@ else
         AC_CHECK_LIB([mbedcrypto], [mbedtls_cipher_list], ,
                      AC_MSG_ERROR([Library mbedtls not found. Install mbedtls!]))
       else
-        CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-        AC_MSG_RESULT([openssl])
-        AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+        if test "$crypto_lib" = "nss"; then
+          CFLAGS+=" -DSQLCIPHER_CRYPTO_NSS"
+          BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_NSS"
+          AC_MSG_RESULT([nss3])
+          AC_CHECK_LIB([nss3], [PK11_Decrypt], ,
+                       AC_MSG_ERROR([Library crypto not found. Install nss!"]))
+        else
+          CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+          BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+          AC_MSG_RESULT([openssl])
+          AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+                       AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+        fi
       fi
     fi
   fi

@@ -36,6 +36,9 @@
 /* Define to 1 if you have the `mbedcrypto' library (-lmbedcrypto). */
 #undef HAVE_LIBMBEDCRYPTO
 
+/* Define to 1 if you have the `nss3' library (-lnss3). */
+#undef HAVE_LIBNSS3
+
 /* Define to 1 if you have the `tomcrypt' library (-ltomcrypt). */
 #undef HAVE_LIBTOMCRYPT
 
