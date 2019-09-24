@@ -36,6 +36,7 @@
 #include "sqlcipher.h"
 #include <openssl/rand.h>
 #include <openssl/evp.h>
+#include <openssl/objects.h>
 #include <openssl/hmac.h>
 #include <openssl/err.h>
 
@@ -292,7 +293,7 @@ cleanup:
 }
 
 static const char* sqlcipher_openssl_get_cipher(void *ctx) {
-  return EVP_CIPHER_name(((openssl_ctx *)ctx)->evp_cipher);
+  return OBJ_nid2sn(EVP_CIPHER_nid(((openssl_ctx *)ctx)->evp_cipher));
 }
 
 static int sqlcipher_openssl_get_key_sz(void *ctx) {
