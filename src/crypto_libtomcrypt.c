@@ -264,6 +264,14 @@ static int sqlcipher_ltc_fips_status(void *ctx) {
   return 0;
 }
 
+static int sqlcipher_ltc_id(void *ctx) {
+  return 4658016;
+}
+
+static void* sqlcipher_ltc_status(void *ctx) {
+  return NULL;
+}
+
 int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->activate = sqlcipher_ltc_activate;
   p->deactivate = sqlcipher_ltc_deactivate;
@@ -282,6 +290,8 @@ int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->add_random = sqlcipher_ltc_add_random;
   p->fips_status = sqlcipher_ltc_fips_status;
   p->get_provider_version = sqlcipher_ltc_get_provider_version;
+  p->id = sqlcipher_ltc_id;
+  p->status = sqlcipher_ltc_status;
   return SQLITE_OK;
 }
 

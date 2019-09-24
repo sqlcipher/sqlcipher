@@ -264,14 +264,6 @@ static int sqlcipher_nss_cipher(void *ctx, int mode, unsigned char *key, int key
     return rc;
 }
 
-static int sqlcipher_nss_ctx_copy(void *target_ctx, void *source_ctx) {
-  return SQLITE_OK;
-}
-
-static int sqlcipher_nss_ctx_cmp(void *c1, void *c2) {
-  return 1; /* always indicate contexts are the same */
-}
-
 static int sqlcipher_nss_ctx_init(void **ctx) {
   sqlcipher_nss_activate(NULL);
   return SQLITE_OK;
@@ -284,6 +276,14 @@ static int sqlcipher_nss_ctx_free(void **ctx) {
 
 static int sqlcipher_nss_fips_status(void *ctx) {
   return 0;
+}
+
+static int sqlcipher_nss_id(void *ctx) {
+  return 6342402;
+}
+
+static void* sqlcipher_nss_status(void *ctx) {
+  return NULL;
 }
 
 int sqlcipher_nss_setup(sqlcipher_provider *p) {
@@ -299,13 +299,13 @@ int sqlcipher_nss_setup(sqlcipher_provider *p) {
   p->get_iv_sz = sqlcipher_nss_get_iv_sz;
   p->get_block_sz = sqlcipher_nss_get_block_sz;
   p->get_hmac_sz = sqlcipher_nss_get_hmac_sz;
-  p->ctx_copy = sqlcipher_nss_ctx_copy;
-  p->ctx_cmp = sqlcipher_nss_ctx_cmp;
   p->ctx_init = sqlcipher_nss_ctx_init;
   p->ctx_free = sqlcipher_nss_ctx_free;
   p->add_random = sqlcipher_nss_add_random;
   p->fips_status = sqlcipher_nss_fips_status;
   p->get_provider_version = sqlcipher_nss_get_provider_version;
+  p->id = sqlcipher_nss_id;
+  p->status = sqlcipher_nss_status;
   return SQLITE_OK;
 }
 

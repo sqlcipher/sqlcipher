@@ -349,6 +349,14 @@ static int sqlcipher_openssl_fips_status(void *ctx) {
 #endif
 }
 
+static int sqlcipher_openssl_id(void *ctx) {
+  return 2678498;
+}
+
+static void* sqlcipher_openssl_status(void *ctx) {
+  return NULL;
+}
+
 int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->activate = sqlcipher_openssl_activate;  
   p->deactivate = sqlcipher_openssl_deactivate;
@@ -367,6 +375,8 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->add_random = sqlcipher_openssl_add_random;
   p->fips_status = sqlcipher_openssl_fips_status;
   p->get_provider_version = sqlcipher_openssl_get_provider_version;
+  p->id = sqlcipher_openssl_id;
+  p->status = sqlcipher_openssl_status;
   return SQLITE_OK;
 }
 
