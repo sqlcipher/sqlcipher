@@ -323,15 +323,6 @@ static int sqlcipher_openssl_get_hmac_sz(void *ctx, int algorithm) {
   }
 }
 
-static int sqlcipher_openssl_ctx_copy(void *target_ctx, void *source_ctx) {
-  memcpy(target_ctx, source_ctx, sizeof(openssl_ctx));
-  return SQLITE_OK;
-}
-
-static int sqlcipher_openssl_ctx_cmp(void *c1, void *c2) {
-  return ((openssl_ctx *)c1)->evp_cipher == ((openssl_ctx *)c2)->evp_cipher;
-}
-
 static int sqlcipher_openssl_ctx_init(void **ctx) {
   openssl_ctx *o_ctx;
 
@@ -371,8 +362,6 @@ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
   p->get_iv_sz = sqlcipher_openssl_get_iv_sz;
   p->get_block_sz = sqlcipher_openssl_get_block_sz;
   p->get_hmac_sz = sqlcipher_openssl_get_hmac_sz;
-  p->ctx_copy = sqlcipher_openssl_ctx_copy;
-  p->ctx_cmp = sqlcipher_openssl_ctx_cmp;
   p->ctx_init = sqlcipher_openssl_ctx_init;
   p->ctx_free = sqlcipher_openssl_ctx_free;
   p->add_random = sqlcipher_openssl_add_random;

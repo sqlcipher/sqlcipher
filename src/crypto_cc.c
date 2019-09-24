@@ -154,14 +154,6 @@ static int sqlcipher_cc_get_hmac_sz(void *ctx, int algorithm) {
   }
 }
 
-static int sqlcipher_cc_ctx_copy(void *target_ctx, void *source_ctx) {
-  return SQLITE_OK;
-}
-
-static int sqlcipher_cc_ctx_cmp(void *c1, void *c2) {
-  return 1; /* always indicate contexts are the same */
-}
-
 static int sqlcipher_cc_ctx_init(void **ctx) {
   return SQLITE_OK;
 }
@@ -185,8 +177,6 @@ int sqlcipher_cc_setup(sqlcipher_provider *p) {
   p->get_iv_sz = sqlcipher_cc_get_iv_sz;
   p->get_block_sz = sqlcipher_cc_get_block_sz;
   p->get_hmac_sz = sqlcipher_cc_get_hmac_sz;
-  p->ctx_copy = sqlcipher_cc_ctx_copy;
-  p->ctx_cmp = sqlcipher_cc_ctx_cmp;
   p->ctx_init = sqlcipher_cc_ctx_init;
   p->ctx_free = sqlcipher_cc_ctx_free;
   p->add_random = sqlcipher_cc_add_random;

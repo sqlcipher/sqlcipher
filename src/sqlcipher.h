@@ -65,8 +65,6 @@ typedef struct {
   int (*get_iv_sz)(void *ctx);
   int (*get_block_sz)(void *ctx);
   int (*get_hmac_sz)(void *ctx, int algorithm);
-  int (*ctx_copy)(void *target_ctx, void *source_ctx);
-  int (*ctx_cmp)(void *c1, void *c2);
   int (*ctx_init)(void **ctx);
   int (*ctx_free)(void **ctx);
   int (*fips_status)(void *ctx);
