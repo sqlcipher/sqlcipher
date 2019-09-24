@@ -1803,7 +1803,7 @@ void sqlite3RegisterPerConnectionBuiltinFunctions(sqlite3 *db){
     sqlite3CreateFunc(db, "sqlcipher_export", -1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0, 0, 0);
   }
 #endif
-#ifdef SQLCIPHER_FUNCS
+#ifdef SQLCIPHER_EXT
 #include "sqlcipher_funcs_init.h"
 #endif
 #endif

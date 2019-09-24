@@ -43,6 +43,9 @@
 #include <windows.h>
 #endif
 #endif
+#ifdef SQLCIPHER_EXT
+#include "sqlcipher_ext.h"
+#endif
 
 static volatile unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static volatile unsigned char hmac_salt_mask = HMAC_SALT_MASK;
@@ -212,6 +215,9 @@ void sqlcipher_activate() {
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
     CODEC_TRACE("sqlcipher_activate: calling sqlcipher_register_provider(%p)\n", p);
+#ifdef SQLCIPHER_EXT
+    sqlcipher_ext_provider_setup(p);
+#endif
     sqlcipher_register_provider(p);
     CODEC_TRACE("sqlcipher_activate: called sqlcipher_register_provider(%p)\n",p);
   }
@@ -252,6 +258,9 @@ void sqlcipher_deactivate() {
     sqlcipher_provider_mutex = NULL;
 
     sqlcipher_activate_count = 0; /* reset activation count */
+#ifdef SQLCIPHER_EXT
+    sqlcipher_ext_provider_destroy();
+#endif
   }
 
   CODEC_TRACE_MUTEX("sqlcipher_deactivate: leaving static master mutex\n");
