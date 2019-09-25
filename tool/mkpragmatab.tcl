@@ -301,6 +301,7 @@ set pragma_def {
 
   NAME: case_sensitive_like
   FLAG: NoColumns
+  IF:   !defined(SQLITE_OMIT_CASE_SENSITIVE_LIKE_PRAGMA)
 
   NAME: integrity_check
   FLAG: NeedSchema Result0 Result1
@@ -380,12 +381,12 @@ set pragma_def {
   IF:   defined(SQLITE_HAS_CODEC)
 
   NAME: hexkey
-  TYPE: HEXKEY
+  TYPE: KEY
   ARG:  2
   IF:   defined(SQLITE_HAS_CODEC)
 
   NAME: hexrekey
-  TYPE: HEXKEY
+  TYPE: KEY
   ARG:  3
   IF:   defined(SQLITE_HAS_CODEC)
 
