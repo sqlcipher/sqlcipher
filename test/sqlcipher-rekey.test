@@ -65,7 +65,7 @@ do_test rekey-as-first-op {
     SELECT count(*) FROM t1;
   }
 
-} {100}
+} {ok 100}
 db close
 file delete -force test.db
 
@@ -98,7 +98,7 @@ do_test rekey-then-key-as-first-ops {
     SELECT count(*) FROM t1;
   }
 
-} {100}
+} {ok ok 100}
 db close
 file delete -force test.db
 
@@ -120,7 +120,7 @@ do_test rekey-as-first-operation {
     PRAGMA key = 'testkeynew';
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {t1}
+} {ok t1}
 db close
 file delete -force test.db
 
@@ -146,7 +146,7 @@ do_test rekey-same-passkey {
     PRAGMA rekey = 'test123';
     SELECT count(*) FROM t1;
   }
-} {1000 1000}
+} {1000 ok 1000}
 db close
 file delete -force test.db
 
@@ -174,7 +174,7 @@ do_test rekey-and-query-1 {
     PRAGMA rekey = 'test321';
     SELECT count(*) FROM t1;
   }
-} {1000 1000}
+} {1000 ok 1000}
 
 db close
 
@@ -184,7 +184,7 @@ do_test rekey-and-query-2 {
     PRAGMA key = 'test321';
     SELECT count(*) FROM t1;
   }
-} {1000}
+} {ok 1000}
 db close
 file delete -force test.db
 
@@ -235,7 +235,7 @@ do_test rekey-delete-and-query-2 {
     SELECT count(*) > 1 FROM t1;
     PRAGMA integrity_check;
   }
-} {1 ok}
+} {ok ok 1 ok}
 db close
 
 do_test rekey-delete-and-query-3 {
@@ -244,7 +244,7 @@ do_test rekey-delete-and-query-3 {
     PRAGMA key = 'test321';
     SELECT count(*) > 1 FROM t1;
   }
-} {1}
+} {ok 1}
 db close
 file delete -force test.db
 
@@ -290,7 +290,7 @@ do_test rekey-delete-and-query-wal-2 {
     SELECT count(*) > 1 FROM t1;
     PRAGMA integrity_check;
   }
-} {wal 1 ok}
+} {ok wal ok 1 ok}
 db close
 
 do_test rekey-delete-and-query-wal-3 {
@@ -300,7 +300,7 @@ do_test rekey-delete-and-query-wal-3 {
     PRAGMA journal_mode = WAL;
     SELECT count(*) > 1 FROM t1;
   }
-} {wal 1}
+} {ok wal 1}
 db close
 file delete -force test.db
 
@@ -321,7 +321,7 @@ do_test rekey-database-by-name {
         pragma key = 'bar';
         select * from t1;
     }
-} {foo bar}
+} {ok foo bar}
 db close
 file delete -force test.db
 file delete -force new.db

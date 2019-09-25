@@ -68,7 +68,7 @@ do_test unencrypted-attach {
     PRAGMA  key='testkey';
     SELECT count(*) FROM t1;
   } db2 
-} {1000}
+} {ok 1000}
 db2 close
 file delete -force test.db
 file delete -force test2.db
@@ -102,7 +102,7 @@ do_test unencrypted-attach-raw-key {
     PRAGMA key="x'10483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
     SELECT count(*) FROM t1;
   } db2 
-} {1000}
+} {ok 1000}
 db2 close
 file delete -force test.db
 file delete -force test2.db
@@ -115,7 +115,7 @@ do_test compat-open-4.0-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 78536}
+} {ok ok 78536}
 db close
 
 # create an encrypted database, attach an default-key encrypted volume
@@ -148,7 +148,7 @@ do_test encrypted-attach-default-key {
     PRAGMA  key='testkey';
     SELECT count(*) FROM t1;
   } db2
-} {1000}
+} {ok 1000}
 db close
 db2 close
 file delete -force test.db
@@ -257,7 +257,7 @@ do_test unencrypted-corrupt-to-encrypted-export {
     SELECT count(*) FROM sqlite_master;
     SELECT count(*) FROM t1;
   }
-} {1 2}
+} {ok 1 2}
 db close
 file delete -force test.db
 file delete -force test2.db
@@ -299,7 +299,7 @@ do_test unencrypted-to-encrypted-import {
     PRAGMA key = 'testkey2';
     SELECT count(*) FROM t1;
   }
-} {1000}
+} {ok 1000}
 db close
 file delete -force test.db
 file delete -force test2.db
@@ -354,7 +354,7 @@ do_test open-1.1.8-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {75709 1 1 one one 1 2 one two 1 2}
+} {ok 75709 1 1 one one 1 2 one two 1 2}
 db close
 file delete -force test.db
 
@@ -381,7 +381,7 @@ do_test attach-and-copy-1.1.8 {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   }
-} {75709 1 1 one one 1 2 one two 1 2}
+} {ok 75709 1 1 one one 1 2 one two 1 2}
 db close
 file delete -force test.db
 
@@ -424,7 +424,7 @@ do_test attached-database-pragmas {
     PRAGMA cipher_use_hmac = OFF;
     SELECT count(*) FROM t1;
   }
-} {1000}
+} {ok 1000}
 db close
 file delete -force test.db
 file delete -force test2.db
@@ -505,7 +505,7 @@ do_test export-database {
     SELECT seq FROM sqlite_sequence WHERE name = 't1'; -- verify that autoincrement worked
     SELECT a FROM fts WHERE b MATCH '1000000';  
   }
-} {1000 1000 1 1000 1001 1001 1000000}
+} {ok 1000 1000 1 1000 1001 1001 1000000}
 db close
 file delete -force test.db
 file delete -force test2.db
@@ -578,7 +578,7 @@ do_test export-attached-database {
     SELECT a FROM fts WHERE b MATCH '1000000';
     SELECT count(*) FROM t3;
   }
-} {1000 1000 2 1000 1001 1001 1000000 2}
+} {ok 1000 1000 2 1000 1001 1001 1000000 2}
 db close
 file delete -force test.db
 file delete -force test2.db
@@ -644,7 +644,7 @@ do_test vacuum {
     SELECT count(*) FROM t1;
   }]
 
-} {10000 true true 5000 5000}
+} {10000 true true {ok 5000} {ok 5000}}
 db close
 file delete -force test.db
 file delete -force test-vacuum.db
@@ -671,7 +671,7 @@ do_test default-hmac-kdf-attach {
     PRAGMA cipher_default_page_size = 4096;
     PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;
   } 
-} {75709 75709}
+} {ok 75709 75709}
 db close
 file delete -force test.db
 file delete -force sqlcipher-1.1.8-testkey.db
@@ -722,7 +722,7 @@ do_test change-default-hmac-kdf-attach {
     PRAGMA cipher_default_page_size = 4096;
     PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;
   } 
-} {1 75709}
+} {ok 1 75709}
 db close
 file delete -force test.db
 file delete -force sqlcipher-1.1.8-testkey.db
@@ -818,7 +818,7 @@ do_test multipage-schema {
     SELECT count(*) FROM sqlite_master where type = 'table';
   } db
 
-} {300}
+} {ok 300}
 db close
 file delete -force test.db
 
@@ -852,7 +852,7 @@ do_test multipage-schema-autovacuum-shortread {
     SELECT count(*) FROM sqlite_master where type = 'table';
   } db
 
-} {300}
+} {ok 300}
 db close
 file delete -force test.db
 
@@ -882,7 +882,7 @@ do_test multipage-schema-autovacuum-shortread-wal {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM sqlite_master where type = 'table';
   } db
-} {300}
+} {ok 300}
 db close
 file delete -force test.db
 
@@ -899,7 +899,7 @@ do_test open-3.0-le-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {78536 1 1 one one 1 2 one two}
+} {ok 78536 1 1 one one 1 2 one two}
 db close
 
 # open a 2.0 database with little endian hmac page numbers (default)
@@ -915,7 +915,7 @@ do_test open-2.0-le-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {78536 1 1 one one 1 2 one two}
+} {ok 78536 1 1 one one 1 2 one two}
 db close
 
 # open a 2.0 database with big-endian hmac page numbers
@@ -932,7 +932,7 @@ do_test open-2.0-be-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {{PRAGMA cipher_hmac_pgno is deprecated, please remove from use} 78536 1 1 one one 1 2 one two}
+} {ok {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} 78536 1 1 one one 1 2 one two}
 db close
 
 # open a 2.0 database with big-endian hmac page numbers
@@ -962,7 +962,7 @@ do_test be-to-le-migration {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   }
-} {78536 1 1 one one 1 2 one two}
+} {ok 78536 1 1 one one 1 2 one two}
 db close
 file delete -force test.db
 
@@ -984,7 +984,7 @@ do_test open-2.0-beta-database {
     SELECT count(*) FROM t1;
     SELECT distinct * FROM t1;
   } 
-} {{PRAGMA fast_kdf_iter is deprecated, please remove from use} {PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 38768 test-0-0 test-0-1 test-1-0 test-1-1}
+} {ok {PRAGMA fast_kdf_iter is deprecated, please remove from use} {PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 38768 test-0-0 test-0-1 test-1-0 test-1-1}
 db close
 
 # open a 2.0 beta database 
@@ -1018,7 +1018,7 @@ do_test 2.0-beta-to-2.0-migration {
     PRAGMA key = 'testkey';
     SELECT distinct * FROM t1;
   }
-} {test-0-0 test-0-1 test-1-0 test-1-1}
+} {ok test-0-0 test-0-1 test-1-0 test-1-1}
 db close
 file delete -force test.db
 
@@ -1036,7 +1036,7 @@ do_test migrate-1.1.8-database-to-current-format {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM sqlite_master;
   }
-} {1}
+} {ok 1}
 db close
 file delete -force test.db test.db-migrated test.db-journal
 
@@ -1054,7 +1054,7 @@ do_test migrate-2-0-le-database-to-current-format {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM sqlite_master;
   }
-} {1}
+} {ok 1}
 db close
 file delete -force test.db test.db-migrated test.db-journal
 
@@ -1073,7 +1073,7 @@ do_test migrate-3-0-database-to-current-format {
     SELECT count(*) FROM sqlite_master;
     PRAGMA journal_mode;
   }
-} {1 delete}
+} {ok 1 delete}
 db close
 file delete -force test.db
 
@@ -1103,7 +1103,7 @@ do_test migrate-wal-database-to-current {
     SELECT count(*) FROM sqlite_master;
     PRAGMA journal_mode;
   }]
-} {wal {0 wal} {1 wal}}
+} {{ok wal} {ok 0 wal} {ok 1 wal}}
 db close
 file delete -force test.db
 
@@ -1124,7 +1124,7 @@ do_test key-database-by-name {
         pragma key = 'foo';
         select * from t1;
     }
-} {foo bar}
+} {ok foo bar}
 db close
 file delete -force test.db
 file delete -force new.db
@@ -1150,7 +1150,7 @@ do_test key-multiple-databases-with-different-keys-using-pragma {
         select * from t1;
         select * from test.t1;
     }
-} {foo bar baz qux}
+} {ok foo bar baz qux}
 db close
 file delete -force test.db
 file delete -force new.db
@@ -1213,7 +1213,7 @@ do_test can-migrate-with-keys-longer-than-64-characters {
         PRAGMA key = "012345678901234567890123456789012345678901234567890123456789012345";
         PRAGMA user_version;
     }
-} {5}
+} {ok 5}
 db close
 file delete -force test.db
 
@@ -1240,7 +1240,7 @@ do_test can-migrate-with-raw-hex-key {
         PRAGMA user_version;
     }
     
-} {5}
+} {ok 5}
 db close
 file delete -force test.db
 
@@ -1263,7 +1263,7 @@ do_test attach_database_with_non_default_page_size {
         SELECT count(*) FROM test2.t1;
         PRAGMA cipher_default_page_size = 4096;
     }
-} {2}
+} {ok 2}
 db close
 file delete -force test.db test2.db
 
@@ -1296,7 +1296,7 @@ do_test compat-open-1.1.8-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 75709}
+} {ok ok 75709}
 db close
 
 # open a 2.0 database using cipher_compatibility
@@ -1308,7 +1308,7 @@ do_test compat-open-2.0-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 78536}
+} {ok ok 78536}
 db close
 
 # open a 3.0 database using cipher_compatibility
@@ -1320,7 +1320,7 @@ do_test compat-open-3.0-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 78536}
+} {ok ok 78536}
 db close
 
 # open a 4.0 database using cipher_compatibility
@@ -1332,7 +1332,7 @@ do_test compat-open-4.0-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 78536}
+} {ok ok 78536}
 db close
 
 # open a 1.1.8 database using cipher_default_compatibility
@@ -1344,7 +1344,7 @@ do_test default-compat-open-1.1.8-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 75709}
+} {ok ok 75709}
 db close
 
 # open a 2.0 database using cipher_default_compatibility
@@ -1356,7 +1356,7 @@ do_test default-compat-open-2.0-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 78536}
+} {ok ok 78536}
 
 # open a 3.0 database using cipher_default_compatibility
 do_test default-compat-open-3.0-database {
@@ -1367,7 +1367,7 @@ do_test default-compat-open-3.0-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 78536}
+} {ok ok 78536}
 
 # re-open a 4.0 database using cipher_default_compatibility
 do_test default-compat-open-4.0-database {
@@ -1378,7 +1378,7 @@ do_test default-compat-open-4.0-database {
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
   } 
-} {ok 78536}
+} {ok ok 78536}
 
 sqlite3_test_control_pending_byte $old_pending_byte
 

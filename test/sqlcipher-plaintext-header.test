@@ -44,8 +44,8 @@ set hexkeyspec "\"x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483
 # of an existing database
 do_test test-pragma-salt-get {
   sqlite_orig db test.db
+  execsql { PRAGMA key = 'test'; } 
   set salt [execsql {
-    PRAGMA key = 'test';
     CREATE TABLE t1(a,b);
     PRAGMA cipher_salt;
   }]
@@ -75,7 +75,7 @@ do_test test-pragma-salt-set {
     PRAGMA cipher_salt;
   "]
 
-} {01010101010101010101010101010101 {1 01010101010101010101010101010101}}
+} {01010101010101010101010101010101 {ok 1 01010101010101010101010101010101}}
 file delete -force test.db
 
 
@@ -101,7 +101,7 @@ do_test test-raw-key-with-salt-spec {
     SELECT count(*) FROM t1;
     PRAGMA cipher_salt;
   "]
-} {01010101010101010101010101010101 {1 01010101010101010101010101010101}}
+} {01010101010101010101010101010101 {ok 1 01010101010101010101010101010101}}
 db close
 file delete -force test.db
 
@@ -145,7 +145,7 @@ do_test test-raw-key-with-invalid-salt-spec-no-hmac {
     PRAGMA cipher_use_hmac = OFF;
     SELECT count(*) FROM t1;
   }
-} {1}
+} {ok 1}
 db close
 file delete -force test.db
 
@@ -201,7 +201,7 @@ do_test test-valid-plaintext-header-size {
     SELECT count(*) FROM t1;
     PRAGMA cipher_plaintext_header_size;
   "]
-} {53514C69746520666F726D6174203300 {1 16}}
+} {53514C69746520666F726D6174203300 {ok 1 16}}
 db close
 file delete -force test.db
 
@@ -247,9 +247,12 @@ file delete -force test.db
 do_test test-valid-default-plaintext-header-size {
   set rc {}
   sqlite_orig db test.db
-  set salt [execsql {
+  execsql {
     PRAGMA cipher_default_plaintext_header_size = 16;
     PRAGMA key = 'test';
+  }
+
+  set salt [execsql {
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
     PRAGMA cipher_salt;
@@ -259,8 +262,8 @@ do_test test-valid-default-plaintext-header-size {
   lappend rc [hexio_read test.db 0 16]
 
   sqlite_orig db test.db
+  execsql { PRAGMA key = 'test'; } 
   lappend rc [execsql "
-    PRAGMA key = 'test';
     PRAGMA cipher_salt = \"x'$salt'\";
     SELECT count(*) FROM t1;
     PRAGMA cipher_plaintext_header_size;
@@ -280,9 +283,11 @@ file delete -force test.db
 do_test test-valid-default-plaintext-header-size-attach {
   set rc {}
   sqlite_orig db test.db
-  set salt [execsql {
+  execsql {
     PRAGMA cipher_default_plaintext_header_size = 16;
     PRAGMA key = 'test';
+  }
+  set salt [execsql {
     CREATE TABLE temp(a);
     ATTACH DATABASE 'test2.db' as db2;
     CREATE TABLE db2.t2(a,b);
@@ -294,8 +299,8 @@ do_test test-valid-default-plaintext-header-size-attach {
   lappend rc [hexio_read test2.db 0 16]
 
   sqlite_orig db test2.db
+  execsql { PRAGMA key = 'test'; } 
   lappend rc [execsql "
-    PRAGMA key = 'test';
     PRAGMA cipher_salt = \"x'$salt'\";
     SELECT count(*) FROM t2;
     PRAGMA cipher_plaintext_header_size;
@@ -343,7 +348,7 @@ do_test test-plaintext-header-migrate-journal-delete {
     SELECT count(*) FROM t1;
   "]
 
-} {01010101010101010101010101010101 53514C69746520666F726D61742033001000010150 1}
+} {01010101010101010101010101010101 53514C69746520666F726D61742033001000010150 {ok 1}}
 db close
 file delete -force test.db
 
@@ -383,7 +388,7 @@ do_test test-plaintext-header-migrate-journal-wal {
     PRAGMA journal_mode;
   "]
 
-} {01010101010101010101010101010101 {1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {1 wal}}
+} {01010101010101010101010101010101 {ok 1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {ok 1 wal}}
 db close
 file delete -force test.db
 
@@ -426,7 +431,7 @@ do_test test-plaintext-header-migrate-journal-wal-string-key-random-salt {
   "]
 
 
-} {{1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {1 wal}}
+} {{ok 1 wal 0 1 1} 53514C69746520666F726D61742033001000020250 {ok 1 wal}}
 db close
 file delete -force test.db
 
@@ -436,8 +441,8 @@ file delete -force test.db
 do_test plaintext-header-size-salt-first-op {
   set rc {}
   sqlite_orig db test.db
+  execsql { PRAGMA key = 'test'; } 
   set salt1 [execsql {
-    PRAGMA key = 'test';
     PRAGMA cipher_plaintext_header_size = 16;
     PRAGMA cipher_salt;
   }]

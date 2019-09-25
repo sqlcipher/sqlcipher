@@ -52,7 +52,7 @@ do_test will-open-with-correct-raw-key {
     SELECT name FROM sqlite_master WHERE type='table';
     SELECT * from t1;
   }
-} {t1 test1 test2}
+} {ok t1 test1 test2}
 db close
 file delete -force test.db
 
@@ -70,7 +70,7 @@ do_test will-open-with-correct-derived-key {
     SELECT name FROM sqlite_master WHERE type='table';
     SELECT * from t1;
   }
-} {t1 test1 test2}
+} {ok t1 test1 test2}
 db close
 file delete -force test.db
 
@@ -87,7 +87,7 @@ do_test test-temp-master {
     SELECT name FROM sqlite_temp_master WHERE type='table';
     SELECT * from temp_t1;
   }
-} {temp_t1 test1 test2}
+} {ok temp_t1 test1 test2}
 db close
 file delete -force test.db
 
@@ -236,7 +236,7 @@ do_test attach-empty-database-with-default-key {
     SELECT count(*) FROM t1;
   } db2]
   lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
-} {2 1}
+} {{ok 2} 1}
 db close
 db2 close
 file delete -force test.db
@@ -267,7 +267,7 @@ do_test attach-empty-database-with-default-key-first-op {
   } db2]
 
   lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
-} {1 0}
+} {{ok 1} 0}
 db close
 db2 close
 file delete -force test.db
@@ -298,7 +298,7 @@ do_test attach-empty-database-with-cipher-store-pass {
     SELECT count(*) FROM t1;
   } db2]
   lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
-} {2 0}
+} {{ok 2} 0}
 db close
 db2 close
 file delete -force test.db
@@ -341,7 +341,7 @@ do_test attach-database-with-default-key-using-cipher-store-pass {
         SELECT * FROM t1;
     } db2
 
-} {foo bar}
+} {ok foo bar}
 db2 close
 file delete -force test.db
 file delete -force test2.db
@@ -451,7 +451,7 @@ do_test alter-schema {
     SELECT * FROM t1a;
   } 
 
-} {3 2 teststring}
+} {ok 3 2 teststring}
 db close
 file delete -force test.db
 
@@ -465,7 +465,7 @@ do_test verify-errors-for-rekey-kdf-and-cipher-changes {
     PRAGMA rekey_kdf_iter = 1000;
     PRAGMA rekey_cipher = 'aes-256-ecb';
   } 
-} {{PRAGMA rekey_kdf_iter is no longer supported.} {PRAGMA rekey_cipher is no longer supported.}}
+} {ok {PRAGMA rekey_kdf_iter is no longer supported.} {PRAGMA rekey_cipher is no longer supported.}}
 db close
 file delete -force test.db
 
@@ -477,7 +477,7 @@ do_test verify-errors-for-cipher-change {
     PRAGMA key = 'testkey';
     PRAGMA cipher = 'aes-256-ecb';
   } 
-} {{PRAGMA cipher is no longer supported.}}
+} {ok {PRAGMA cipher is no longer supported.}}
 db close
 file delete -force test.db
 
@@ -516,7 +516,7 @@ do_test custom-pagesize {
     SELECT count(*) FROM t1;
   }
 
-} {1000}
+} {ok 1000}
 db close
 
 # open the database with the default page size
@@ -565,7 +565,7 @@ do_test journal-mode-wal {
     PRAGMA journal_mode;
   }
 
-} {1000 wal}
+} {ok 1000 wal}
 db close
 file delete -force test.db
 
@@ -577,7 +577,7 @@ do_test multiple-key-calls-safe-1 {
     PRAGMA cache_size = 0; 
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {t1} 
+} {ok t1} 
 
 do_test multiple-key-calls-safe-2 {
   catchsql {
@@ -591,7 +591,7 @@ do_test multiple-key-calls-safe-3 {
     PRAGMA key = 'testkey'; 
     SELECT name FROM sqlite_master WHERE type='table';
   }
-} {t1} 
+} {ok t1} 
 
 db close
 file delete -force test.db
@@ -630,7 +630,7 @@ do_test custom-hmac-kdf-iter {
     SELECT count(*) FROM t1;
   }
 
-} {1000}
+} {ok 1000}
 db close
 
 # open the database with the default hmac
@@ -698,7 +698,7 @@ do_test auto-vacuum {
     SELECT count(*) FROM t1;
   }]
 
-} {10000 true 5000}
+} {10000 true {ok 5000}}
 db close
 file delete -force test.db
 
@@ -725,7 +725,7 @@ do_test cipher-options-before-keys {
     SELECT count(*) FROM t1;
   }
 
-} {1}
+} {ok 1}
 db close
 file delete -force test.db
 

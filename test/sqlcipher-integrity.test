@@ -113,7 +113,7 @@ do_test nohmac-not-tamper-resistent {
     SELECT count(*) FROM t1;
   }
 
-} {1000}
+} {ok 1000}
 db close
 file delete -force test.db
 
@@ -165,7 +165,7 @@ do_test memory-integrity-check-should-fail {
     INSERT INTO t1(a,b) values (1,2);
     PRAGMA cipher_integrity_check;
   } 
-} {{database file is undefined}}
+} {ok {database file is undefined}}
 db close
 
 # try cipher_integrity_check on a valid 1.1.8 database
@@ -178,7 +178,7 @@ do_test version-1-integrity-check-fail-no-hmac {
     PRAGMA cipher_compatibility = 1;
     PRAGMA cipher_integrity_check;
   } 
-} {{HMAC is not enabled, unable to integrity check}}
+} {ok {HMAC is not enabled, unable to integrity check}}
 db close
 file delete -force test.db
 
@@ -191,7 +191,7 @@ do_test version-2-integrity-check-valid {
     PRAGMA cipher_compatibility = 2;
     PRAGMA cipher_integrity_check;
   } 
-} {}
+} {ok}
 db close
 file delete -force test.db
 
@@ -206,7 +206,7 @@ do_test version-2-integrity-check-invalid {
     PRAGMA cipher_compatibility = 2;
     PRAGMA cipher_integrity_check;
   } 
-} {{HMAC verification failed for page 9} {HMAC verification failed for page 11}}
+} {ok {HMAC verification failed for page 9} {HMAC verification failed for page 11}}
 db close
 file delete -force test.db
 
@@ -219,7 +219,7 @@ do_test version-3-integrity-check-valid {
     PRAGMA cipher_compatibility = 3;
     PRAGMA cipher_integrity_check;
   } 
-} {}
+} {ok}
 db close
 file delete -force test.db
 
@@ -234,7 +234,7 @@ do_test version-3-integrity-check-invalid {
     PRAGMA cipher_compatibility = 3;
     PRAGMA cipher_integrity_check;
   } 
-} {{HMAC verification failed for page 9} {HMAC verification failed for page 11}}
+} {ok {HMAC verification failed for page 9} {HMAC verification failed for page 11}}
 db close
 file delete -force test.db
 
@@ -246,7 +246,7 @@ do_test version-4-integrity-check-valid {
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
   } 
-} {}
+} {ok}
 db close
 file delete -force test.db
 
@@ -264,7 +264,7 @@ do_test version-4-integrity-check-invalid {
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
   } 
-} {{HMAC verification failed for page 2} {HMAC verification failed for page 3} {HMAC verification failed for page 4}}
+} {ok {HMAC verification failed for page 2} {HMAC verification failed for page 3} {HMAC verification failed for page 4}}
 db close
 file delete -force test.db
 
@@ -277,7 +277,7 @@ do_test version-4-integrity-check-invalid-last-page {
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
   } 
-} {{page 240 has an invalid size of 2 bytes}}
+} {ok {page 240 has an invalid size of 2 bytes}}
 db close
 file delete -force test.db
 
