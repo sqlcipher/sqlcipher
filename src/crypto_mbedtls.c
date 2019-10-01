@@ -42,6 +42,7 @@
 #include <mbedtls/sha1.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/sha512.h>
+#include <mbedtls/pkcs5.h>
 
 typedef struct {
     mbedtls_ctr_drbg_context ctr_drbg;
