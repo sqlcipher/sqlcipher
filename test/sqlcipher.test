@@ -48,5 +48,6 @@ slave_test_file $testdir/sqlcipher-rekey.test
 slave_test_file $testdir/sqlcipher-plaintext-header.test
 slave_test_file $testdir/sqlcipher-pragmas.test
 slave_test_file $testdir/sqlcipher-integrity.test
+slave_test_file $testdir/sqlcipher-backup.test
 
 finish_test

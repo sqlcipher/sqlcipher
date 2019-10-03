@@ -165,7 +165,8 @@ sqlite3_backup *sqlite3_backup_init(
     sqlite3CodecGetKey(pDestDb, sqlcipher_find_db_index(pDestDb, zDestDb), &zKey, &destNKey);
     zKey = NULL;
 
-    if(srcNKey || destNKey) {
+    /* either both databases must be plaintext, or both must be encrypted */
+    if((srcNKey == 0 && destNKey > 0) || (srcNKey > 0 && destNKey == 0)) {
       sqlite3ErrorWithMsg(pDestDb, SQLITE_ERROR, "backup is not supported with encrypted databases");
       return NULL;
     }
