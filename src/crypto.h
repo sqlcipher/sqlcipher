@@ -115,16 +115,6 @@ void sqlite3pager_reset(Pager *pPager);
 #include <android/log.h>
 #endif
 
-#ifdef CODEC_DEBUG_MUTEX
-#ifdef __ANDROID__
-#define CODEC_TRACE_MUTEX(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
-#else
-#define CODEC_TRACE_MUTEX(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
-#endif
-#else
-#define CODEC_TRACE_MUTEX(...)
-#endif
-
 #ifdef CODEC_DEBUG
 #ifdef __ANDROID__
 #define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
@@ -133,6 +123,18 @@ void sqlite3pager_reset(Pager *pPager);
 #endif
 #else
 #define CODEC_TRACE(...)
+#endif
+
+#ifdef CODEC_DEBUG_MUTEX
+#define CODEC_TRACE_MUTEX(...)  CODEC_TRACE(__VA_ARGS__)
+#else
+#define CODEC_TRACE_MUTEX(...)
+#endif
+
+#ifdef CODEC_DEBUG_MEMORY
+#define CODEC_TRACE_MEMORY(...)  CODEC_TRACE(__VA_ARGS__)
+#else
+#define CODEC_TRACE_MEMORY(...)
 #endif
 
 #ifdef CODEC_DEBUG_PAGEDATA

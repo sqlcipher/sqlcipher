@@ -112,7 +112,7 @@ static void sqlcipher_mem_shutdown(void *pAppData) {
 static void *sqlcipher_mem_malloc(int n) {
   void *ptr = default_mem_methods.xMalloc(n);
   if(mem_security_on) {
-    CODEC_TRACE("sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)\n", ptr, n);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)\n", ptr, n);
     sqlcipher_mlock(ptr, n); 
     if(!mem_security_activated) mem_security_activated = 1;
   }
@@ -125,7 +125,7 @@ static void sqlcipher_mem_free(void *p) {
   int sz;
   if(mem_security_on) {
     sz = sqlcipher_mem_size(p);
-    CODEC_TRACE("sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d) and sqlcipher_munlock(%p, %d) \n", p, sz, p, sz);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d) and sqlcipher_munlock(%p, %d) \n", p, sz, p, sz);
     sqlcipher_memset(p, 0, sz);
     sqlcipher_munlock(p, sz);
     if(!mem_security_activated) mem_security_activated = 1;
@@ -281,7 +281,7 @@ void* sqlcipher_memset(void *v, unsigned char value, int len) {
 
   if (v == NULL) return v;
 
-  CODEC_TRACE("sqlcipher_memset: setting %p[0-%d]=%d)\n", a, len, value);
+  CODEC_TRACE_MEMORY("sqlcipher_memset: setting %p[0-%d]=%d)\n", a, len, value);
   for(i = 0; i < len; i++) {
     a[i] = value;
   }
@@ -325,10 +325,10 @@ void sqlcipher_mlock(void *ptr, int sz) {
 
   if(ptr == NULL || sz == 0) return;
 
-  CODEC_TRACE("sqlcipher_mem_lock: calling mlock(%p,%lu); _SC_PAGESIZE=%lu\n", ptr - offset, sz + offset, pagesize);
+  CODEC_TRACE_MEMORY("sqlcipher_mem_lock: calling mlock(%p,%lu); _SC_PAGESIZE=%lu\n", ptr - offset, sz + offset, pagesize);
   rc = mlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    CODEC_TRACE("sqlcipher_mem_lock: mlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_lock: mlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
@@ -352,10 +352,10 @@ void sqlcipher_munlock(void *ptr, int sz) {
 
   if(ptr == NULL || sz == 0) return;
 
-  CODEC_TRACE("sqlcipher_mem_unlock: calling munlock(%p,%lu)\n", ptr - offset, sz + offset);
+  CODEC_TRACE_MEMORY("sqlcipher_mem_unlock: calling munlock(%p,%lu)\n", ptr - offset, sz + offset);
   rc = munlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    CODEC_TRACE("sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
@@ -379,7 +379,7 @@ void sqlcipher_munlock(void *ptr, int sz) {
   * memory segment so it can be paged
   */
 void sqlcipher_free(void *ptr, int sz) {
-  CODEC_TRACE("sqlcipher_free: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
+  CODEC_TRACE_MEMORY("sqlcipher_free: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
   sqlcipher_memset(ptr, 0, sz);
   sqlcipher_munlock(ptr, sz);
   sqlite3_free(ptr);
@@ -392,9 +392,9 @@ void sqlcipher_free(void *ptr, int sz) {
   */
 void* sqlcipher_malloc(int sz) {
   void *ptr;
-  CODEC_TRACE("sqlcipher_malloc: calling sqlite3Malloc(%d)\n", sz);
+  CODEC_TRACE_MEMORY("sqlcipher_malloc: calling sqlite3Malloc(%d)\n", sz);
   ptr = sqlite3Malloc(sz);
-  CODEC_TRACE("sqlcipher_malloc: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
+  CODEC_TRACE_MEMORY("sqlcipher_malloc: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
   sqlcipher_memset(ptr, 0, sz);
   sqlcipher_mlock(ptr, sz);
   return ptr;
