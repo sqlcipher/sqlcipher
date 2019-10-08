@@ -35,8 +35,8 @@
 #include "sqlcipher.h"
 #include "crypto.h"
 
-#ifdef SQLCIPHER_LICENSE
-#include "sqlcipher-license.h"
+#ifdef SQLCIPHER_EXT
+#include "sqlcipher_ext.h"
 #endif
 
 /* Generate code to return a string value */
@@ -97,7 +97,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
 
   CODEC_TRACE("sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p\n", db, iDb, pParse, zLeft, zRight, ctx);
   
-#ifdef SQLCIPHER_LICENSE
+#ifdef SQLCIPHER_EXT
   if( sqlite3StrICmp(zLeft, "cipher_license")==0 && zRight ){
     char *license_result = sqlite3_mprintf("%d", sqlcipher_license_key(zRight));
     codec_vdbe_return_string(pParse, "cipher_license", license_result, P4_DYNAMIC);
@@ -667,7 +667,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   CODEC_TRACE("sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
 
-#ifdef SQLCIPHER_LICENSE
+#ifdef SQLCIPHER_EXT
   if(sqlcipher_license_check(ctx) != SQLITE_OK) return NULL;
 #endif
 
@@ -753,7 +753,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     sqlite3_mutex_enter(db->mutex);
     CODEC_TRACE_MUTEX("sqlite3CodecAttach: entered database mutex %p\n", db->mutex);
 
-#ifdef SQLCIPHER_LICENSE
+#ifdef SQLCIPHER_EXT
     if((rc = sqlite3_set_authorizer(db, sqlcipher_license_authorizer, db)) != SQLITE_OK) {
       sqlite3_mutex_leave(db->mutex);
       return rc;

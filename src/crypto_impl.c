@@ -43,9 +43,6 @@
 #include <windows.h>
 #endif
 #endif
-#ifdef SQLCIPHER_EXT
-#include "sqlcipher_ext.h"
-#endif
 
 static volatile unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static volatile unsigned char hmac_salt_mask = HMAC_SALT_MASK;
