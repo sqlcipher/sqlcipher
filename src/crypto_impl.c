@@ -1265,7 +1265,7 @@ cleanup:
 
 int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *column) {
   Pgno page = 1;
-  int i, rc = 0;
+  int rc = 0;
   char *result;
   unsigned char *hmac_out = NULL;
   sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
