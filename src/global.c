@@ -214,6 +214,7 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
    SQLITE_USE_URI,            /* bOpenUri */
    SQLITE_ALLOW_COVERING_INDEX_SCAN,   /* bUseCis */
    0,                         /* bSmallMalloc */
+   1,                         /* bExtraSchemaChecks */
    0x7ffffffe,                /* mxStrlen */
    0,                         /* neverCorrupt */
    SQLITE_DEFAULT_LOOKASIDE,  /* szLookaside, nLookaside */
@@ -260,6 +261,7 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
    0,                         /* bInternalFunctions */
    0x7ffffffe,                /* iOnceResetThreshold */
    SQLITE_DEFAULT_SORTERREF_SIZE,   /* szSorterRef */
+   0,                         /* iPrngSeed */
 };
 
 /*
@@ -268,14 +270,6 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
 ** read-only.
 */
 FuncDefHash sqlite3BuiltinFunctions;
-
-/*
-** Constant tokens for values 0 and 1.
-*/
-const Token sqlite3IntTokens[] = {
-   { "0", 1 },
-   { "1", 1 }
-};
 
 #ifdef VDBE_PROFILE
 /*
