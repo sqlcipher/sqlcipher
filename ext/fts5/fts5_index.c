@@ -690,6 +690,7 @@ static Fts5Data *fts5DataRead(Fts5Index *p, i64 iRowid){
       }else{
         /* TODO1: Fix this */
         pRet->p[nByte] = 0x00;
+        pRet->p[nByte+1] = 0x00;
         pRet->szLeaf = fts5GetU16(&pRet->p[2]);
       }
     }
@@ -712,7 +713,7 @@ static void fts5DataRelease(Fts5Data *pData){
 static Fts5Data *fts5LeafRead(Fts5Index *p, i64 iRowid){
   Fts5Data *pRet = fts5DataRead(p, iRowid);
   if( pRet ){
-    if( pRet->szLeaf>pRet->nn ){
+    if( pRet->nn<4 || pRet->szLeaf>pRet->nn ){
       p->rc = FTS5_CORRUPT;
       fts5DataRelease(pRet);
       pRet = 0;
@@ -4996,9 +4997,12 @@ static void fts5MergePrefixLists(
         Fts5PoslistWriter writer;
         memset(&writer, 0, sizeof(writer));
 
+        /* See the earlier comment in this function for an explanation of why
+        ** corrupt input position lists might cause the output to consume
+        ** at most 20 bytes of unexpected space. */
         fts5MergeAppendDocid(&out, iLastRowid, i2.iRowid);
         fts5BufferZero(&tmp);
-        sqlite3Fts5BufferSize(&p->rc, &tmp, i1.nPoslist + i2.nPoslist);
+        sqlite3Fts5BufferSize(&p->rc, &tmp, i1.nPoslist + i2.nPoslist + 10 + 10);
         if( p->rc ) break;
 
         sqlite3Fts5PoslistNext64(a1, i1.nPoslist, &iOff1, &iPos1);
@@ -5046,6 +5050,12 @@ static void fts5MergePrefixLists(
         }
 
         /* WRITEPOSLISTSIZE */
+        assert_nc( tmp.n<=i1.nPoslist+i2.nPoslist );
+        assert( tmp.n<=i1.nPoslist+i2.nPoslist+10+10 );
+        if( tmp.n>i1.nPoslist+i2.nPoslist ){
+          if( p->rc==SQLITE_OK ) p->rc = FTS5_CORRUPT;
+          break;
+        }
         fts5BufferSafeAppendVarint(&out, tmp.n * 2);
         fts5BufferSafeAppendBlob(&out, tmp.p, tmp.n);
         fts5DoclistIterNext(&i1);
