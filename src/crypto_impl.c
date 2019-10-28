@@ -59,47 +59,6 @@ static volatile sqlite3_mem_methods default_mem_methods;
 static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
 
-/* the default implementation of SQLCipher uses a cipher_ctx
-   to keep track of read / write state separately. The following
-   struct and associated functions are defined here */
-typedef struct {
-  int derive_key; 
-  int pass_sz;
-  unsigned char *key;
-  unsigned char *hmac_key;
-  unsigned char *pass;
-  char *keyspec;
-} cipher_ctx;
-
-
-struct codec_ctx {
-  int store_pass; 
-  int kdf_iter; 
-  int fast_kdf_iter; 
-  int kdf_salt_sz;
-  int key_sz; 
-  int iv_sz;
-  int block_sz;
-  int page_sz;
-  int keyspec_sz; 
-  int reserve_sz;
-  int hmac_sz;
-  int plaintext_header_sz;
-  int hmac_algorithm;
-  int kdf_algorithm;
-  unsigned int skip_read_hmac;
-  unsigned int need_kdf_salt;
-  unsigned int flags;
-  unsigned char *kdf_salt;
-  unsigned char *hmac_kdf_salt;
-  unsigned char *buffer;
-  Btree *pBt;
-  cipher_ctx *read_ctx;
-  cipher_ctx *write_ctx;
-  sqlcipher_provider *provider;
-  void *provider_ctx;
-};
-
 static int sqlcipher_mem_init(void *pAppData) {
   return default_mem_methods.xInit(pAppData);
 }
@@ -1590,13 +1549,6 @@ int sqlcipher_codec_fips_status(codec_ctx *ctx) {
 const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
   return ctx->provider->get_provider_version(ctx->provider_ctx);
 }
-
-int sqlcipher_codec_hmac_sha1(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
-                         unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
-                         unsigned char *out) {
-  return ctx->provider->hmac(ctx->provider_ctx, SQLCIPHER_HMAC_SHA1, (unsigned char *)hmac_key, key_sz, in, in_sz, in2, in2_sz, out);
-}
-
 
 #endif
 /* END SQLCIPHER */

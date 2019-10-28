@@ -105,7 +105,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if( sqlite3StrICmp(zLeft, "cipher_license")==0 && !zRight ){
       if(ctx) {
         char *license_result = sqlite3_mprintf("%d", ctx
-                                               ? sqlcipher_license_key_status(ctx)
+                                               ? sqlcipher_license_key_status(ctx->provider)
                                                : SQLITE_ERROR);
         codec_vdbe_return_string(pParse, "cipher_license", license_result, P4_DYNAMIC);
       }
