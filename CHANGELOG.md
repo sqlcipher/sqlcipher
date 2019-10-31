@@ -1,6 +1,17 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [4.3.0] - (November 2019 - [4.3.0 changes])
+- Updates baseline to upstream SQLite 3.30.1
+- PRAGMA key now returns text result value "ok" after execution
+- Adjusts backup API so that encrypted to encrypted backups are permitted
+- Adds NSS crypto provider implementation
+- Fixes OpenSSL provider compatibility with BoringSSL
+- Separates memory related traces to reduce verbosity of logging
+- Fixes output of PRAGMA cipher_integrity_check on big endian platforms
+- Cryptograpic provider interface cleanup
+- Resolves miscellaneous build warnings
+
 ## [4.2.0] - (May 2019 - [4.2.0 changes])
 - Adds PRAGMA cipher_integrity_check to perform independent verification of page HMACs
 - Updates baseline to upstream SQLite 3.28.0
@@ -145,7 +156,9 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.2.0...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.3.0...prerelease
+[4.3.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.3.0
+[4.3.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.2.0
 [4.2.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.1.0...v4.2.0
 [4.1.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.1.0
