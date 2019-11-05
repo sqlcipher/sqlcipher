@@ -47,6 +47,7 @@ typedef struct {
 static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
 static sqlite3_mutex* openssl_rand_mutex = NULL;
+static sqlite3_mutex* openssl_activate_mutex = NULL;
 
 #if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x10100000L) || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x20700000L)
 static HMAC_CTX *HMAC_CTX_new(void)
@@ -99,9 +100,16 @@ static int sqlcipher_openssl_activate(void *ctx) {
   /* initialize openssl and increment the internal init counter
      but only if it hasn't been initalized outside of SQLCipher by this program 
      e.g. on startup */
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entering static master mutex");
-  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered static master mutex");
+ 
+  if(openssl_activate_mutex == NULL){
+     CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocating openssl_activate_mutex");
+     openssl_activate_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
+     CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocated openssl_activate_mutex %p", openssl_activate_mutex);
+  }
+
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entering openssl_activate_mutex %p\n", openssl_activate_mutex);
+  sqlite3_mutex_enter(openssl_activate_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered openssl_activate_mutex %p\n", openssl_activate_mutex);
 
   if(openssl_init_count == 0 && EVP_get_cipherbyname(OPENSSL_CIPHER) != NULL) {
     /* if openssl has not yet been initialized by this library, but 
@@ -136,9 +144,9 @@ static int sqlcipher_openssl_activate(void *ctx) {
 #endif
 
   openssl_init_count++; 
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving static master mutex");
-  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left static master mutex");
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving openssl_activate_mutex %p\n", openssl_activate_mutex);
+  sqlite3_mutex_leave(openssl_activate_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left openssl_activate_mutex %p\n", openssl_activate_mutex);
   return SQLITE_OK;
 }
 
@@ -146,12 +154,13 @@ static int sqlcipher_openssl_activate(void *ctx) {
    freeing the EVP structures on the final deactivation to ensure that 
    OpenSSL memory is cleaned up */
 static int sqlcipher_openssl_deactivate(void *ctx) {
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: entering static master mutex");
-  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: entered static master mutex");
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entering openssl_activate_mutex %p\n", openssl_activate_mutex);
+  sqlite3_mutex_enter(openssl_activate_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered openssl_activate_mutex %p\n", openssl_activate_mutex);
   openssl_init_count--;
 
   if(openssl_init_count == 0) {
+    sqlite3_mutex *temp_mutex;
     if(openssl_external_init == 0) {
     /* if OpenSSL hasn't be initialized externally, and the counter reaches zero 
        after it's decremented, release EVP memory
@@ -170,10 +179,19 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
     CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freed openssl_rand_mutex %p", openssl_rand_mutex);
     openssl_rand_mutex = NULL;
 #endif
+    temp_mutex = openssl_activate_mutex;
+    openssl_activate_mutex = NULL; 
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving openssl_activate_mutex %p\n", openssl_activate_mutex);
+    sqlite3_mutex_leave(temp_mutex);
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left openssl_activate_mutex %p\n", openssl_activate_mutex);
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freeing openssl_activate_mutex %p", openssl_activate_mutex);
+    sqlite3_mutex_free(temp_mutex);
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freed openssl_activate_mutex %p", openssl_activate_mutex);
+  } else {
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving openssl_activate_mutex %p\n", openssl_activate_mutex);
+    sqlite3_mutex_leave(openssl_activate_mutex);
+    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left openssl_activate_mutex %p\n", openssl_activate_mutex);
   }
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: leaving static master mutex");
-  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: left static master mutex");
   return SQLITE_OK;
 }
 
