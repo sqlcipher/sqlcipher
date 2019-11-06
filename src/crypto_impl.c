@@ -124,7 +124,7 @@ void sqlcipher_init_memmethods() {
 int sqlcipher_register_provider(sqlcipher_provider *p) {
   CODEC_TRACE_MUTEX("sqlcipher_register_provider: entering SQLCIPHER_MUTEX_PROVIDER\n");
   sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entered SQLCIPHER_MUTEX_PROVIDER"\n);
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entered SQLCIPHER_MUTEX_PROVIDER\n");
 
   if(default_provider != NULL && default_provider != p) {
     /* only free the current registerd provider if it has been initialized
