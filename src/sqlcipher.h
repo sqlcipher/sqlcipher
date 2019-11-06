@@ -87,6 +87,16 @@ void sqlcipher_free(void *, int);
 int sqlcipher_register_provider(sqlcipher_provider *);
 sqlcipher_provider* sqlcipher_get_provider(void);
 
+#define SQLCIPHER_MUTEX_PROVIDER          0
+#define SQLCIPHER_MUTEX_PROVIDER_ACTIVATE 1
+#define SQLCIPHER_MUTEX_PROVIDER_RAND     2
+#define SQLCIPHER_MUTEX_RESERVED1         3
+#define SQLCIPHER_MUTEX_RESERVED2         4
+#define SQLCIPHER_MUTEX_RESERVED3         5
+#define SQLCIPHER_MUTEX_COUNT             6
+
+sqlite3_mutex* sqlcipher_mutex(int);
+
 #endif
 #endif
 /* END SQLCIPHER */

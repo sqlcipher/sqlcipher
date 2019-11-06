@@ -56,8 +56,14 @@ static volatile int mem_security_initialized = 0;
 static volatile int mem_security_activated = 0;
 static volatile unsigned int sqlcipher_activate_count = 0;
 static volatile sqlite3_mem_methods default_mem_methods;
-static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
+
+static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
+
+sqlite3_mutex* sqlcipher_mutex(int mutex) {
+  if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
+  return sqlcipher_static_mutex[mutex];
+}
 
 static int sqlcipher_mem_init(void *pAppData) {
   return default_mem_methods.xInit(pAppData);
@@ -116,9 +122,9 @@ void sqlcipher_init_memmethods() {
 }
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_enter(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entered sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entering SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entered SQLCIPHER_MUTEX_PROVIDER"\n);
 
   if(default_provider != NULL && default_provider != p) {
     /* only free the current registerd provider if it has been initialized
@@ -127,9 +133,9 @@ int sqlcipher_register_provider(sqlcipher_provider *p) {
     sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
   }
   default_provider = p;   
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: leaving sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_leave(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: left sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: leaving SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: left SQLCIPHER_MUTEX_PROVIDER\n");
 
   return SQLITE_OK;
 }
@@ -146,11 +152,12 @@ void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   CODEC_TRACE_MUTEX("sqlcipher_activate: entered static master mutex\n");
 
-  if(sqlcipher_provider_mutex == NULL) {
-    /* allocate a new mutex to guard access to the provider */
-    CODEC_TRACE_MUTEX("sqlcipher_activate: allocating sqlcipher provider mutex\n");
-    sqlcipher_provider_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
-    CODEC_TRACE_MUTEX("sqlcipher_activate: allocated sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  /* allocate new mutexes */
+  if(sqlcipher_activate_count == 0) {
+    int i;
+    for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+      sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
+    }
   }
 
   /* check to see if there is a provider registered at this point
@@ -196,30 +203,32 @@ void sqlcipher_deactivate() {
   sqlcipher_activate_count--;
   /* if no connections are using sqlcipher, cleanup globals */
   if(sqlcipher_activate_count < 1) {
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    sqlite3_mutex_enter(sqlcipher_provider_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entered sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entering SQLCIPHER_MUTEX_PROVIDER\n");
+    sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entered SQLCIPHER_MUTEX_PROVIDER\n");
 
     if(default_provider != NULL) {
       sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
       default_provider = NULL;
     }
 
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: leaving sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    sqlite3_mutex_leave(sqlcipher_provider_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: left sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    
-    /* last connection closed, free provider mutex*/
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: freeing sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    sqlite3_mutex_free(sqlcipher_provider_mutex); 
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: freed sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: leaving SQLCIPHER_MUTEX_PROVIDER\n");
+    sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: left SQLCIPHER_MUTEX_PROVIDER\n");
 
-    sqlcipher_provider_mutex = NULL;
-
-    sqlcipher_activate_count = 0; /* reset activation count */
 #ifdef SQLCIPHER_EXT
     sqlcipher_ext_provider_destroy();
 #endif
+
+    /* last connection closed, free mutexes */
+    if(sqlcipher_activate_count == 0) {
+      int i;
+      for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+        sqlite3_mutex_free(sqlcipher_static_mutex[i]);
+      }
+    }
+    sqlcipher_activate_count = 0; /* reset activation count */
   }
 
   CODEC_TRACE_MUTEX("sqlcipher_deactivate: leaving static master mutex\n");
@@ -845,15 +854,15 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const voi
   if(ctx->provider == NULL) return SQLITE_NOMEM;
 
   /* make a copy of the provider to be used for the duration of the context */
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_enter(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entered sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entering SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entered SQLCIPHER_MUTEX_PROVIDER\n");
 
   memcpy(ctx->provider, default_provider, sizeof(sqlcipher_provider));
 
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: leaving sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_leave(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: left sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: leaving SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: left SQLCIPHER_MUTEX_PROVIDER\n");
 
   CODEC_TRACE("sqlcipher_codec_ctx_init: calling provider ctx_init\n");
   if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) return rc;

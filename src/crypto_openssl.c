@@ -46,8 +46,6 @@ typedef struct {
 
 static unsigned int openssl_external_init = 0;
 static unsigned int openssl_init_count = 0;
-static sqlite3_mutex* openssl_rand_mutex = NULL;
-static sqlite3_mutex* openssl_activate_mutex = NULL;
 
 #if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x10100000L) || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x20700000L)
 static HMAC_CTX *HMAC_CTX_new(void)
@@ -74,15 +72,15 @@ static void HMAC_CTX_free(HMAC_CTX *ctx)
 
 static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: entering openssl_rand_mutex %p\n", openssl_rand_mutex);
-  sqlite3_mutex_enter(openssl_rand_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: entered openssl_rand_mutex %p\n", openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: entering SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: entered SQLCIPHER_MUTEX_PROVIDER_RAND\n");
 #endif
   RAND_add(buffer, length, 0);
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: leaving openssl_rand_mutex %p\n", openssl_rand_mutex);
-  sqlite3_mutex_leave(openssl_rand_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: left openssl_rand_mutex %p\n", openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: leaving SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_add_random: left SQLCIPHER_MUTEX_PROVIDER_RAND\n");
 #endif
   return SQLITE_OK;
 }
@@ -101,15 +99,9 @@ static int sqlcipher_openssl_activate(void *ctx) {
      but only if it hasn't been initalized outside of SQLCipher by this program 
      e.g. on startup */
  
-  if(openssl_activate_mutex == NULL){
-     CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocating openssl_activate_mutex");
-     openssl_activate_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
-     CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocated openssl_activate_mutex %p", openssl_activate_mutex);
-  }
-
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entering openssl_activate_mutex %p\n", openssl_activate_mutex);
-  sqlite3_mutex_enter(openssl_activate_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered openssl_activate_mutex %p\n", openssl_activate_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entering SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
 
   if(openssl_init_count == 0 && EVP_get_cipherbyname(OPENSSL_CIPHER) != NULL) {
     /* if openssl has not yet been initialized by this library, but 
@@ -134,19 +126,10 @@ static int sqlcipher_openssl_activate(void *ctx) {
 #endif
   } 
 
-#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
-  if(openssl_rand_mutex == NULL) {
-    /* allocate a mutex to guard against concurrent calls to RAND_bytes() */
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocating openssl_rand_mutex");
-    openssl_rand_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: allocated openssl_rand_mutex %p", openssl_rand_mutex);
-  }
-#endif
-
   openssl_init_count++; 
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving openssl_activate_mutex %p\n", openssl_activate_mutex);
-  sqlite3_mutex_leave(openssl_activate_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left openssl_activate_mutex %p\n", openssl_activate_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
   return SQLITE_OK;
 }
 
@@ -154,9 +137,9 @@ static int sqlcipher_openssl_activate(void *ctx) {
    freeing the EVP structures on the final deactivation to ensure that 
    OpenSSL memory is cleaned up */
 static int sqlcipher_openssl_deactivate(void *ctx) {
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entering openssl_activate_mutex %p\n", openssl_activate_mutex);
-  sqlite3_mutex_enter(openssl_activate_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: entered openssl_activate_mutex %p\n", openssl_activate_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: entering SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: entered SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
   openssl_init_count--;
 
   if(openssl_init_count == 0) {
@@ -173,25 +156,11 @@ static int sqlcipher_openssl_deactivate(void *ctx) {
     } else {
       openssl_external_init = 0;
     }
-#ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freeing openssl_rand_mutex %p", openssl_rand_mutex);
-    sqlite3_mutex_free(openssl_rand_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freed openssl_rand_mutex %p", openssl_rand_mutex);
-    openssl_rand_mutex = NULL;
-#endif
-    temp_mutex = openssl_activate_mutex;
-    openssl_activate_mutex = NULL; 
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving openssl_activate_mutex %p\n", openssl_activate_mutex);
-    sqlite3_mutex_leave(temp_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left openssl_activate_mutex %p\n", openssl_activate_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freeing openssl_activate_mutex %p", openssl_activate_mutex);
-    sqlite3_mutex_free(temp_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: freed openssl_activate_mutex %p", openssl_activate_mutex);
-  } else {
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: leaving openssl_activate_mutex %p\n", openssl_activate_mutex);
-    sqlite3_mutex_leave(openssl_activate_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_openssl_activate: left openssl_activate_mutex %p\n", openssl_activate_mutex);
-  }
+  } 
+
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: leaving SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_deactivate: left SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
   return SQLITE_OK;
 }
 
@@ -213,15 +182,15 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
      but a more proper solution is that applications setup platform-appropriate
      thread saftey in openssl externally */
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: entering openssl_rand_mutex %p", openssl_rand_mutex);
-  sqlite3_mutex_enter(openssl_rand_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: entered openssl_rand_mutex %p", openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: entering SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: entered SQLCIPHER_MUTEX_PROVIDER_RAND\n");
 #endif
   rc = RAND_bytes((unsigned char *)buffer, length);
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: leaving openssl_rand_mutex %p", openssl_rand_mutex);
-  sqlite3_mutex_leave(openssl_rand_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: left openssl_rand_mutex %p", openssl_rand_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: leaving SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_openssl_random: left SQLCIPHER_MUTEX_PROVIDER_RAND\n");
 #endif
   return (rc == 1) ? SQLITE_OK : SQLITE_ERROR;
 }
