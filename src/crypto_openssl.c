@@ -113,8 +113,15 @@ static int sqlcipher_openssl_activate(void *ctx) {
 #ifdef SQLCIPHER_FIPS
   if(!FIPS_mode()){
     if(!FIPS_mode_set(1)){
+      unsigned long err = 0;
       ERR_load_crypto_strings();
+#ifdef __ANDROID__
+      while((err = ERR_get_error()) != 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "sqlcipher","error: %lx. %s.", err, ERR_error_string(err, NULL));
+      }
+#else
       ERR_print_errors_fp(stderr);
+#endif
     }
   }
 #endif
