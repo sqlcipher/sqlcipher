@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Separates memory related traces to reduce verbosity of logging
 - Fixes output of PRAGMA cipher_integrity_check on big endian platforms
 - Cryptograpic provider interface cleanup
+- Rework of mutex allocation and management
 - Resolves miscellaneous build warnings
 
 ## [4.2.0] - (May 2019 - [4.2.0 changes])
