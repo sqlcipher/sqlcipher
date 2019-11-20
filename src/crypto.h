@@ -48,6 +48,7 @@ void sqlite3pager_reset(Pager *pPager);
 
 #if !defined (SQLCIPHER_CRYPTO_CC) \
    && !defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT) \
+   && !defined (SQLCIPHER_CRYPTO_NSS) \
    && !defined (SQLCIPHER_CRYPTO_OPENSSL)
 #define SQLCIPHER_CRYPTO_OPENSSL
 #endif
@@ -58,7 +59,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_STR(s) #s
 
 #ifndef CIPHER_VERSION_NUMBER
-#define CIPHER_VERSION_NUMBER 4.2.0
+#define CIPHER_VERSION_NUMBER 4.3.0
 #endif
 
 #ifndef CIPHER_VERSION_BUILD
@@ -114,16 +115,6 @@ void sqlite3pager_reset(Pager *pPager);
 #include <android/log.h>
 #endif
 
-#ifdef CODEC_DEBUG_MUTEX
-#ifdef __ANDROID__
-#define CODEC_TRACE_MUTEX(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
-#else
-#define CODEC_TRACE_MUTEX(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
-#endif
-#else
-#define CODEC_TRACE_MUTEX(...)
-#endif
-
 #ifdef CODEC_DEBUG
 #ifdef __ANDROID__
 #define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
@@ -132,6 +123,18 @@ void sqlite3pager_reset(Pager *pPager);
 #endif
 #else
 #define CODEC_TRACE(...)
+#endif
+
+#ifdef CODEC_DEBUG_MUTEX
+#define CODEC_TRACE_MUTEX(...)  CODEC_TRACE(__VA_ARGS__)
+#else
+#define CODEC_TRACE_MUTEX(...)
+#endif
+
+#ifdef CODEC_DEBUG_MEMORY
+#define CODEC_TRACE_MEMORY(...)  CODEC_TRACE(__VA_ARGS__)
+#else
+#define CODEC_TRACE_MEMORY(...)
 #endif
 
 #ifdef CODEC_DEBUG_PAGEDATA
@@ -189,7 +192,46 @@ static int cipher_isHex(const unsigned char *hex, int sz){
 }
 
 /* extensions defined in crypto_impl.c */
-typedef struct codec_ctx codec_ctx;
+/* the default implementation of SQLCipher uses a cipher_ctx
+   to keep track of read / write state separately. The following
+   struct and associated functions are defined here */
+typedef struct {
+  int derive_key;
+  int pass_sz;
+  unsigned char *key;
+  unsigned char *hmac_key;
+  unsigned char *pass;
+  char *keyspec;
+} cipher_ctx;
+
+
+typedef struct {
+  int store_pass;
+  int kdf_iter;
+  int fast_kdf_iter;
+  int kdf_salt_sz;
+  int key_sz;
+  int iv_sz;
+  int block_sz;
+  int page_sz;
+  int keyspec_sz;
+  int reserve_sz;
+  int hmac_sz;
+  int plaintext_header_sz;
+  int hmac_algorithm;
+  int kdf_algorithm;
+  unsigned int skip_read_hmac;
+  unsigned int need_kdf_salt;
+  unsigned int flags;
+  unsigned char *kdf_salt;
+  unsigned char *hmac_kdf_salt;
+  unsigned char *buffer;
+  Btree *pBt;
+  cipher_ctx *read_ctx;
+  cipher_ctx *write_ctx;
+  sqlcipher_provider *provider;
+  void *provider_ctx;
+} codec_ctx ;
 
 /* crypto.c functions */
 int sqlcipher_codec_pragma(sqlite3*, int, Parse*, const char *, const char*);
@@ -264,10 +306,6 @@ void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey);
 void sqlcipher_codec_set_store_pass(codec_ctx *ctx, int value);
 int sqlcipher_codec_fips_status(codec_ctx *ctx);
 const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx);
-
-int sqlcipher_codec_hmac_sha1(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
-                         unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
-                         unsigned char *out);
 
 int sqlcipher_set_default_plaintext_header_size(int size);
 int sqlcipher_get_default_plaintext_header_size(void);

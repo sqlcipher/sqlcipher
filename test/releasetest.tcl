@@ -281,7 +281,7 @@ array set ::Platforms [strip_comments {
     "User-Auth"               tcltest
     "Update-Delete-Limit"     test
     "Extra-Robustness"        test
-    "Device-Two"              test
+    "Device-Two"              "threadtest test"
     "No-lookaside"            test
     "Devkit"                  test
     "Apple"                   test
@@ -411,6 +411,8 @@ proc count_tests_and_errors {logfile rcVar errmsgVar} {
     if {[regexp {runtime error: +(.*)} $line all msg]} {
       # skip over "value is outside range" errors
       if {[regexp {value .* is outside the range of representable} $line]} {
+         # noop
+      } elseif {[regexp {overflow: .* cannot be represented} $line]} {
          # noop
       } else {
         incr ::NERRCASE

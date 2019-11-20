@@ -46,7 +46,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {{4.2.0 community}}
+} {{4.3.0 community}}
 db close
 file delete -force test.db
 
@@ -58,7 +58,7 @@ do_test verify-pragma-cipher-use-hmac-default {
         PRAGMA key = 'test';
         PRAGMA cipher_use_hmac;
     }
-} {1}
+} {ok 1}
 db close
 file delete -force test.db
 
@@ -71,7 +71,7 @@ do_test verify-pragma-cipher-use-hmac-off {
         PRAGMA cipher_use_hmac = off;
         PRAGMA cipher_use_hmac;
     }
-} {0}
+} {ok 0}
 db close
 file delete -force test.db
 
@@ -135,7 +135,7 @@ do_test verify-pragma-kdf-iter-reports-default {
         PRAGMA key = 'test';
         PRAGMA kdf_iter;
     }
-} {256000}
+} {ok 256000}
 db close
 file delete -force test.db
 
@@ -148,7 +148,7 @@ do_test verify-pragma-kdf-iter-reports-value-changed {
         PRAGMA kdf_iter = 8000;
         PRAGMA kdf_iter;
     }
- } {8000}
+ } {ok 8000}
 db close
 file delete -force test.db
 
@@ -160,7 +160,7 @@ do_test verify-pragma-fast-kdf-iter-reports-default {
         PRAGMA key = 'test';
         PRAGMA fast_kdf_iter;
     }
-} {2}
+} {ok 2}
 db close
 file delete -force test.db
 
@@ -173,7 +173,7 @@ do_test verify-pragma-kdf-iter-reports-value-changed {
         PRAGMA fast_kdf_iter = 4000;
         PRAGMA fast_kdf_iter;
     }
-} {{PRAGMA fast_kdf_iter is deprecated, please remove from use} 4000}
+} {ok {PRAGMA fast_kdf_iter is deprecated, please remove from use} 4000}
 db close
 file delete -force test.db
 
@@ -185,7 +185,7 @@ do_test verify-pragma-cipher-page-size-default {
         PRAGMA key = 'test';
         PRAGMA cipher_page_size;
     }
-} {4096}
+} {ok 4096}
 db close
 file delete -force test.db
 
@@ -198,7 +198,7 @@ do_test verify-pragma-cipher-page-size-changed {
         PRAGMA cipher_page_size = 8192;
         PRAGMA cipher_page_size;
     }
-} {8192}
+} {ok 8192}
 db close
 file delete -force test.db
 
@@ -210,7 +210,7 @@ do_test verify-cipher-store-pass-before-key-does-not-segfault {
         PRAGMA cipher_store_pass = 1;
         PRAGMA key = 'test';
     }
-} {}
+} {ok}
 db close
 file delete -force test.db
 
@@ -222,7 +222,7 @@ if_built_with_openssl verify-pragma-cipher-default {
         PRAGMA key = 'test';
         PRAGMA cipher;
     }
-} {AES-256-CBC}
+} {ok AES-256-CBC}
 db close
 file delete -force test.db
 
@@ -233,7 +233,7 @@ do_test verify-pragma-hmac-salt-mask-reports-default {
         PRAGMA key = 'test';
         PRAGMA cipher_hmac_salt_mask;
     }
-} {3a}
+} {ok 3a}
 db close
 file delete -force test.db
 
@@ -247,7 +247,7 @@ do_test verify-pragma-hmac-salt-mask-reports-value-changed {
         PRAGMA cipher_hmac_salt_mask;
         PRAGMA cipher_hmac_salt_mask = "x'3a'";
     }
-} {{PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 11 {PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use}}
+} {ok {PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use} 11 {PRAGMA cipher_hmac_salt_mask is deprecated, please remove from use}}
 db close
 file delete -force test.db
 
@@ -258,7 +258,7 @@ do_test verify-pragma-hmac-pgno-reports-default {
         PRAGMA key = 'test';
         PRAGMA cipher_hmac_pgno;
     }
-} {le}
+} {ok le}
 db close
 file delete -force test.db
 
@@ -275,7 +275,7 @@ do_test verify-pragma-hmac-pgno-reports-value-changed {
         PRAGMA cipher_hmac_pgno = le;
         PRAGMA cipher_hmac_pgno;
     }
-} {{PRAGMA cipher_hmac_pgno is deprecated, please remove from use} be {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} native {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} le}
+} {ok {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} be {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} native {PRAGMA cipher_hmac_pgno is deprecated, please remove from use} le}
 db close
 file delete -force test.db
 
@@ -286,7 +286,7 @@ do_test verify-pragma-cipher-hmac-algorithm-reports-default {
         PRAGMA key = 'test';
         PRAGMA cipher_hmac_algorithm;
     }
-} {HMAC_SHA512}
+} {ok HMAC_SHA512}
 db close
 file delete -force test.db
 
@@ -297,7 +297,7 @@ do_test verify-pragma-cipher-hmac-algorithm-reports-value-changed {
         PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
         PRAGMA cipher_hmac_algorithm;
     }
-} {HMAC_SHA1}
+} {ok HMAC_SHA1}
 db close
 file delete -force test.db
 
@@ -320,7 +320,7 @@ do_test verify-pragma-cipher-kdf-algorithm-reports-default {
         PRAGMA key = 'test';
         PRAGMA cipher_kdf_algorithm;
     }
-} {PBKDF2_HMAC_SHA512}
+} {ok PBKDF2_HMAC_SHA512}
 db close
 file delete -force test.db
 
@@ -331,7 +331,7 @@ do_test verify-pragma-cipher-kdf-algorithm-reports-value-changed {
         PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
         PRAGMA cipher_kdf_algorithm;
     }
-} {PBKDF2_HMAC_SHA1}
+} {ok PBKDF2_HMAC_SHA1}
 db close
 file delete -force test.db
 
@@ -353,7 +353,7 @@ if_built_with_openssl verify-default-cipher {
         PRAGMA key='test';
         PRAGMA cipher;
     }
-} {AES-256-CBC}
+} {ok AES-256-CBC}
 db close
 file delete -force test.db
 
@@ -363,7 +363,7 @@ if_built_with_libtomcrypt verify-default-cipher {
         PRAGMA key='test';
         PRAGMA cipher;
     }
-} {aes-256-cbc}
+} {ok aes-256-cbc}
 db close
 file delete -force test.db
 
@@ -373,7 +373,17 @@ if_built_with_commoncrypto verify-default-cipher {
         PRAGMA key='test';
         PRAGMA cipher;
     }
-} {aes-256-cbc}
+} {ok aes-256-cbc}
+db close
+file delete -force test.db
+
+if_built_with_nss verify-default-cipher {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key='test';
+        PRAGMA cipher;
+    }
+} {ok aes-256-cbc}
 db close
 file delete -force test.db
 
@@ -383,7 +393,7 @@ do_test verify-cipher_settings_default {
         PRAGMA key = 'test';
         PRAGMA cipher_settings;
     }
-} {{PRAGMA kdf_iter = 256000;} {PRAGMA cipher_page_size = 4096;} {PRAGMA cipher_use_hmac = 1;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
+} {ok {PRAGMA kdf_iter = 256000;} {PRAGMA cipher_page_size = 4096;} {PRAGMA cipher_use_hmac = 1;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
 db close
 file delete -force test.db
 
@@ -394,7 +404,7 @@ do_test verify-cipher_settings_v1 {
         PRAGMA cipher_compatibility = 1;
         PRAGMA cipher_settings;
     }
-} {{PRAGMA kdf_iter = 4000;} {PRAGMA cipher_page_size = 1024;} {PRAGMA cipher_use_hmac = 0;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA1;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;}} 
+} {ok {PRAGMA kdf_iter = 4000;} {PRAGMA cipher_page_size = 1024;} {PRAGMA cipher_use_hmac = 0;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA1;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;}} 
 db close
 file delete -force test.db
 

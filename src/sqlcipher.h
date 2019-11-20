@@ -65,12 +65,12 @@ typedef struct {
   int (*get_iv_sz)(void *ctx);
   int (*get_block_sz)(void *ctx);
   int (*get_hmac_sz)(void *ctx, int algorithm);
-  int (*ctx_copy)(void *target_ctx, void *source_ctx);
-  int (*ctx_cmp)(void *c1, void *c2);
   int (*ctx_init)(void **ctx);
   int (*ctx_free)(void **ctx);
   int (*fips_status)(void *ctx);
   const char* (*get_provider_version)(void *ctx);
+  int (*id)(void *ctx);
+  void* (*status)(void *ctx);
 } sqlcipher_provider;
 
 /* utility functions */
@@ -86,6 +86,16 @@ void sqlcipher_free(void *, int);
 /* provider interfaces */
 int sqlcipher_register_provider(sqlcipher_provider *);
 sqlcipher_provider* sqlcipher_get_provider(void);
+
+#define SQLCIPHER_MUTEX_PROVIDER          0
+#define SQLCIPHER_MUTEX_PROVIDER_ACTIVATE 1
+#define SQLCIPHER_MUTEX_PROVIDER_RAND     2
+#define SQLCIPHER_MUTEX_RESERVED1         3
+#define SQLCIPHER_MUTEX_RESERVED2         4
+#define SQLCIPHER_MUTEX_RESERVED3         5
+#define SQLCIPHER_MUTEX_COUNT             6
+
+sqlite3_mutex* sqlcipher_mutex(int);
 
 #endif
 #endif

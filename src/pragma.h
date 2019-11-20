@@ -46,10 +46,9 @@
 #define PragTyp_WAL_AUTOCHECKPOINT            38
 #define PragTyp_WAL_CHECKPOINT                39
 #define PragTyp_ACTIVATE_EXTENSIONS           40
-#define PragTyp_HEXKEY                        41
-#define PragTyp_KEY                           42
-#define PragTyp_LOCK_STATUS                   43
-#define PragTyp_STATS                         44
+#define PragTyp_KEY                           41
+#define PragTyp_LOCK_STATUS                   42
+#define PragTyp_STATS                         43
 
 /* Property flags associated with various pragma. */
 #define PragFlg_NeedSchema 0x01 /* Force schema load before running */
@@ -178,11 +177,13 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
 #endif
+#if !defined(SQLITE_OMIT_CASE_SENSITIVE_LIKE_PRAGMA)
  {/* zName:     */ "case_sensitive_like",
   /* ePragTyp:  */ PragTyp_CASE_SENSITIVE_LIKE,
   /* ePragFlg:  */ PragFlg_NoColumns,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
+#endif
  {/* zName:     */ "cell_size_check",
   /* ePragTyp:  */ PragTyp_FLAG,
   /* ePragFlg:  */ PragFlg_Result0|PragFlg_NoColumns1,
@@ -310,7 +311,7 @@ static const PragmaName aPragmaName[] = {
   /* iArg:      */ SQLITE_FullFSync },
 #endif
 #if !defined(SQLITE_OMIT_SCHEMA_PRAGMAS)
-#if defined(SQLITE_INTROSPECTION_PRAGMAS)
+#if !defined(SQLITE_OMIT_INTROSPECTION_PRAGMAS)
  {/* zName:     */ "function_list",
   /* ePragTyp:  */ PragTyp_FUNCTION_LIST,
   /* ePragFlg:  */ PragFlg_Result0,
@@ -320,12 +321,12 @@ static const PragmaName aPragmaName[] = {
 #endif
 #if defined(SQLITE_HAS_CODEC)
  {/* zName:     */ "hexkey",
-  /* ePragTyp:  */ PragTyp_HEXKEY,
+  /* ePragTyp:  */ PragTyp_KEY,
   /* ePragFlg:  */ 0,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 2 },
  {/* zName:     */ "hexrekey",
-  /* ePragTyp:  */ PragTyp_HEXKEY,
+  /* ePragTyp:  */ PragTyp_KEY,
   /* ePragFlg:  */ 0,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 3 },
@@ -434,7 +435,7 @@ static const PragmaName aPragmaName[] = {
 #endif
 #if !defined(SQLITE_OMIT_SCHEMA_PRAGMAS)
 #if !defined(SQLITE_OMIT_VIRTUALTABLE)
-#if defined(SQLITE_INTROSPECTION_PRAGMAS)
+#if !defined(SQLITE_OMIT_INTROSPECTION_PRAGMAS)
  {/* zName:     */ "module_list",
   /* ePragTyp:  */ PragTyp_MODULE_LIST,
   /* ePragFlg:  */ PragFlg_Result0,
@@ -469,7 +470,7 @@ static const PragmaName aPragmaName[] = {
   /* iArg:      */ SQLITE_ParserTrace },
 #endif
 #endif
-#if defined(SQLITE_INTROSPECTION_PRAGMAS)
+#if !defined(SQLITE_OMIT_INTROSPECTION_PRAGMAS)
  {/* zName:     */ "pragma_list",
   /* ePragTyp:  */ PragTyp_PRAGMA_LIST,
   /* ePragFlg:  */ PragFlg_Result0,
@@ -667,4 +668,4 @@ static const PragmaName aPragmaName[] = {
   /* iArg:      */ SQLITE_WriteSchema|SQLITE_NoSchemaError },
 #endif
 };
-/* Number of pragmas: 62 on by default, 81 total. */
+/* Number of pragmas: 65 on by default, 81 total. */

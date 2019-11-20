@@ -1,0 +1,157 @@
+# SQLCipher
+# codec.test developed by Stephen Lombardo (Zetetic LLC)
+# sjlombardo at zetetic dot net
+# http://zetetic.net
+#
+# Copyright (c) 2018, ZETETIC LLC
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the ZETETIC LLC nor the
+#       names of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# This file implements regression tests for SQLite library.  The
+# focus of this script is testing code cipher features.
+#
+# NOTE: tester.tcl has overridden the definition of sqlite3 to
+# automatically pass in a key value. Thus tests in this file
+# should explicitly close and open db with sqlite_orig in order
+# to bypass default key assignment.
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+source $testdir/sqlcipher.tcl
+
+# backup from plaintext to plaintext
+# is allowed
+do_test sqlcipher-backup-plain-plain {
+  sqlite_orig db test.db
+  set rc {}
+  execsql {
+   CREATE TABLE t1(a,b);
+   INSERT INTO t1 VALUES(1, randstr(16384,16384));
+  }
+  
+  set md5a [execsql {SELECT md5sum(a,b) FROM t1}]
+  sqlite_orig db2 backup.db
+  sqlite3_backup B db2 main db main
+  lappend rc [B step -1]
+  lappend rc [B finish]
+  
+  db close
+  db2 close
+
+  sqlite_orig db backup.db
+
+  set md5b [execsql {SELECT md5sum(a,b) FROM t1}]
+
+  lappend rc [ execsql {
+    PRAGMA integrity_check;
+  } ]
+  
+  lappend rc [string equal $md5a $md5b]
+} {SQLITE_DONE SQLITE_OK ok 1}
+db close
+file delete -force test.db
+file delete -force backup.db
+
+# backup from encrypted to encrypted
+# is allowed
+do_test sqlcipher-backup-encrypted-encrypted {
+  sqlite_orig db test.db
+  set rc {}
+  execsql {
+   PRAGMA key = 'testkey';
+   CREATE TABLE t1(a,b);
+   INSERT INTO t1 VALUES(1, randstr(16384,16384));
+  }
+  set md5a [execsql {SELECT md5sum(a,b) FROM t1}]
+
+  sqlite_orig db2 backup.db
+  execsql { PRAGMA key = 'testkey' } db2;
+
+  sqlite3_backup B db2 main db main
+  lappend rc [B step -1]
+  lappend rc [B finish]
+
+  db close
+  db2 close
+
+  sqlite_orig db backup.db
+  execsql { PRAGMA key = 'testkey' };
+
+  set md5b [execsql {SELECT md5sum(a,b) FROM t1}]
+ 
+  lappend rc [ execsql {
+    PRAGMA integrity_check;
+    PRAGMA cipher_integrity_check;
+  } ]
+
+  lappend rc [string equal $md5a $md5b]
+
+} {SQLITE_DONE SQLITE_OK ok 1}
+db close
+file delete -force test.db
+file delete -force backup.db
+
+# backup from plaintext to encrypted
+# is blocked
+do_test sqlcipher-backup-plain-encrypted {
+  sqlite_orig db test.db
+  set rc {}
+  execsql {
+   CREATE TABLE t1(a,b);
+   INSERT INTO t1 VALUES(1, randstr(16384,16384));
+  }
+
+  sqlite_orig db2 backup.db
+  execsql { PRAGMA key = 'testkey' } db2;
+
+  lappend rc [catch {sqlite3_backup B db2 main db main}]
+  lappend rc [sqlite3_errcode db2]
+  lappend rc [sqlite3_errmsg db2]
+} {1 SQLITE_ERROR {backup is not supported with encrypted databases}}
+db close
+db2 close
+file delete -force test.db
+file delete -force backup.db
+
+# backup from encrypted to plaintext
+# is blocked
+do_test sqlcipher-backup-encrypted-plain {
+  sqlite_orig db test.db
+  set rc {}
+  execsql {
+   PRAGMA key = 'testkey';
+   CREATE TABLE t1(a,b);
+   INSERT INTO t1 VALUES(1, randstr(16384,16384));
+  }
+
+  sqlite_orig db2 backup.db
+
+  lappend rc [catch {sqlite3_backup B db2 main db main}]
+  lappend rc [sqlite3_errcode db2]
+  lappend rc [sqlite3_errmsg db2]
+} {1 SQLITE_ERROR {backup is not supported with encrypted databases}}
+db close
+db2 close
+file delete -force test.db
+file delete -force backup.db
+
+finish_test

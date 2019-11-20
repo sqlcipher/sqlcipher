@@ -56,49 +56,14 @@ static volatile int mem_security_initialized = 0;
 static volatile int mem_security_activated = 0;
 static volatile unsigned int sqlcipher_activate_count = 0;
 static volatile sqlite3_mem_methods default_mem_methods;
-static sqlite3_mutex* sqlcipher_provider_mutex = NULL;
 static sqlcipher_provider *default_provider = NULL;
 
-/* the default implementation of SQLCipher uses a cipher_ctx
-   to keep track of read / write state separately. The following
-   struct and associated functions are defined here */
-typedef struct {
-  int derive_key; 
-  int pass_sz;
-  unsigned char *key;
-  unsigned char *hmac_key;
-  unsigned char *pass;
-  char *keyspec;
-} cipher_ctx;
+static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
 
-
-struct codec_ctx {
-  int store_pass; 
-  int kdf_iter; 
-  int fast_kdf_iter; 
-  int kdf_salt_sz;
-  int key_sz; 
-  int iv_sz;
-  int block_sz;
-  int page_sz;
-  int keyspec_sz; 
-  int reserve_sz;
-  int hmac_sz;
-  int plaintext_header_sz;
-  int hmac_algorithm;
-  int kdf_algorithm;
-  unsigned int skip_read_hmac;
-  unsigned int need_kdf_salt;
-  unsigned int flags;
-  unsigned char *kdf_salt;
-  unsigned char *hmac_kdf_salt;
-  unsigned char *buffer;
-  Btree *pBt;
-  cipher_ctx *read_ctx;
-  cipher_ctx *write_ctx;
-  sqlcipher_provider *provider;
-  void *provider_ctx;
-};
+sqlite3_mutex* sqlcipher_mutex(int mutex) {
+  if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
+  return sqlcipher_static_mutex[mutex];
+}
 
 static int sqlcipher_mem_init(void *pAppData) {
   return default_mem_methods.xInit(pAppData);
@@ -109,7 +74,7 @@ static void sqlcipher_mem_shutdown(void *pAppData) {
 static void *sqlcipher_mem_malloc(int n) {
   void *ptr = default_mem_methods.xMalloc(n);
   if(mem_security_on) {
-    CODEC_TRACE("sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)\n", ptr, n);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)\n", ptr, n);
     sqlcipher_mlock(ptr, n); 
     if(!mem_security_activated) mem_security_activated = 1;
   }
@@ -122,7 +87,7 @@ static void sqlcipher_mem_free(void *p) {
   int sz;
   if(mem_security_on) {
     sz = sqlcipher_mem_size(p);
-    CODEC_TRACE("sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d) and sqlcipher_munlock(%p, %d) \n", p, sz, p, sz);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d) and sqlcipher_munlock(%p, %d) \n", p, sz, p, sz);
     sqlcipher_memset(p, 0, sz);
     sqlcipher_munlock(p, sz);
     if(!mem_security_activated) mem_security_activated = 1;
@@ -157,9 +122,9 @@ void sqlcipher_init_memmethods() {
 }
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_enter(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entered sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entering SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: entered SQLCIPHER_MUTEX_PROVIDER\n");
 
   if(default_provider != NULL && default_provider != p) {
     /* only free the current registerd provider if it has been initialized
@@ -168,9 +133,9 @@ int sqlcipher_register_provider(sqlcipher_provider *p) {
     sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
   }
   default_provider = p;   
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: leaving sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_leave(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_register_provider: left sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: leaving SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_register_provider: left SQLCIPHER_MUTEX_PROVIDER\n");
 
   return SQLITE_OK;
 }
@@ -187,11 +152,12 @@ void sqlcipher_activate() {
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   CODEC_TRACE_MUTEX("sqlcipher_activate: entered static master mutex\n");
 
-  if(sqlcipher_provider_mutex == NULL) {
-    /* allocate a new mutex to guard access to the provider */
-    CODEC_TRACE_MUTEX("sqlcipher_activate: allocating sqlcipher provider mutex\n");
-    sqlcipher_provider_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
-    CODEC_TRACE_MUTEX("sqlcipher_activate: allocated sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  /* allocate new mutexes */
+  if(sqlcipher_activate_count == 0) {
+    int i;
+    for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+      sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
+    }
   }
 
   /* check to see if there is a provider registered at this point
@@ -205,6 +171,9 @@ void sqlcipher_activate() {
 #elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
     extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
     sqlcipher_ltc_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_NSS)
+    extern int sqlcipher_nss_setup(sqlcipher_provider *p);
+    sqlcipher_nss_setup(p);
 #elif defined (SQLCIPHER_CRYPTO_OPENSSL)
     extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
     sqlcipher_openssl_setup(p);
@@ -212,6 +181,9 @@ void sqlcipher_activate() {
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
     CODEC_TRACE("sqlcipher_activate: calling sqlcipher_register_provider(%p)\n", p);
+#ifdef SQLCIPHER_EXT
+    sqlcipher_ext_provider_setup(p);
+#endif
     sqlcipher_register_provider(p);
     CODEC_TRACE("sqlcipher_activate: called sqlcipher_register_provider(%p)\n",p);
   }
@@ -231,26 +203,31 @@ void sqlcipher_deactivate() {
   sqlcipher_activate_count--;
   /* if no connections are using sqlcipher, cleanup globals */
   if(sqlcipher_activate_count < 1) {
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    sqlite3_mutex_enter(sqlcipher_provider_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entered sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entering SQLCIPHER_MUTEX_PROVIDER\n");
+    sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: entered SQLCIPHER_MUTEX_PROVIDER\n");
 
     if(default_provider != NULL) {
       sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
       default_provider = NULL;
     }
 
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: leaving sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    sqlite3_mutex_leave(sqlcipher_provider_mutex);
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: left sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    
-    /* last connection closed, free provider mutex*/
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: freeing sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-    sqlite3_mutex_free(sqlcipher_provider_mutex); 
-    CODEC_TRACE_MUTEX("sqlcipher_deactivate: freed sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: leaving SQLCIPHER_MUTEX_PROVIDER\n");
+    sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+    CODEC_TRACE_MUTEX("sqlcipher_deactivate: left SQLCIPHER_MUTEX_PROVIDER\n");
 
-    sqlcipher_provider_mutex = NULL;
+#ifdef SQLCIPHER_EXT
+    sqlcipher_ext_provider_destroy();
+#endif
 
+    /* last connection closed, free mutexes */
+    if(sqlcipher_activate_count == 0) {
+      int i;
+      for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+        sqlite3_mutex_free(sqlcipher_static_mutex[i]);
+      }
+    }
     sqlcipher_activate_count = 0; /* reset activation count */
   }
 
@@ -269,7 +246,7 @@ void* sqlcipher_memset(void *v, unsigned char value, int len) {
 
   if (v == NULL) return v;
 
-  CODEC_TRACE("sqlcipher_memset: setting %p[0-%d]=%d)\n", a, len, value);
+  CODEC_TRACE_MEMORY("sqlcipher_memset: setting %p[0-%d]=%d)\n", a, len, value);
   for(i = 0; i < len; i++) {
     a[i] = value;
   }
@@ -313,10 +290,10 @@ void sqlcipher_mlock(void *ptr, int sz) {
 
   if(ptr == NULL || sz == 0) return;
 
-  CODEC_TRACE("sqlcipher_mem_lock: calling mlock(%p,%lu); _SC_PAGESIZE=%lu\n", ptr - offset, sz + offset, pagesize);
+  CODEC_TRACE_MEMORY("sqlcipher_mem_lock: calling mlock(%p,%lu); _SC_PAGESIZE=%lu\n", ptr - offset, sz + offset, pagesize);
   rc = mlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    CODEC_TRACE("sqlcipher_mem_lock: mlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_lock: mlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
@@ -340,10 +317,10 @@ void sqlcipher_munlock(void *ptr, int sz) {
 
   if(ptr == NULL || sz == 0) return;
 
-  CODEC_TRACE("sqlcipher_mem_unlock: calling munlock(%p,%lu)\n", ptr - offset, sz + offset);
+  CODEC_TRACE_MEMORY("sqlcipher_mem_unlock: calling munlock(%p,%lu)\n", ptr - offset, sz + offset);
   rc = munlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    CODEC_TRACE("sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
+    CODEC_TRACE_MEMORY("sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d\n", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
@@ -367,7 +344,7 @@ void sqlcipher_munlock(void *ptr, int sz) {
   * memory segment so it can be paged
   */
 void sqlcipher_free(void *ptr, int sz) {
-  CODEC_TRACE("sqlcipher_free: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
+  CODEC_TRACE_MEMORY("sqlcipher_free: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
   sqlcipher_memset(ptr, 0, sz);
   sqlcipher_munlock(ptr, sz);
   sqlite3_free(ptr);
@@ -380,9 +357,9 @@ void sqlcipher_free(void *ptr, int sz) {
   */
 void* sqlcipher_malloc(int sz) {
   void *ptr;
-  CODEC_TRACE("sqlcipher_malloc: calling sqlite3Malloc(%d)\n", sz);
+  CODEC_TRACE_MEMORY("sqlcipher_malloc: calling sqlite3Malloc(%d)\n", sz);
   ptr = sqlite3Malloc(sz);
-  CODEC_TRACE("sqlcipher_malloc: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
+  CODEC_TRACE_MEMORY("sqlcipher_malloc: calling sqlcipher_memset(%p,0,%d)\n", ptr, sz);
   sqlcipher_memset(ptr, 0, sz);
   sqlcipher_mlock(ptr, sz);
   return ptr;
@@ -877,15 +854,15 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const voi
   if(ctx->provider == NULL) return SQLITE_NOMEM;
 
   /* make a copy of the provider to be used for the duration of the context */
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entering sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_enter(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entered sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entering SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: entered SQLCIPHER_MUTEX_PROVIDER\n");
 
   memcpy(ctx->provider, default_provider, sizeof(sqlcipher_provider));
 
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: leaving sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
-  sqlite3_mutex_leave(sqlcipher_provider_mutex);
-  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: left sqlcipher provider mutex %p\n", sqlcipher_provider_mutex);
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: leaving SQLCIPHER_MUTEX_PROVIDER\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  CODEC_TRACE_MUTEX("sqlcipher_codec_ctx_init: left SQLCIPHER_MUTEX_PROVIDER\n");
 
   CODEC_TRACE("sqlcipher_codec_ctx_init: calling provider ctx_init\n");
   if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) return rc;
@@ -1256,7 +1233,7 @@ cleanup:
 
 int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *column) {
   Pgno page = 1;
-  int i, rc = 0;
+  int rc = 0;
   char *result;
   unsigned char *hmac_out = NULL;
   sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
@@ -1317,7 +1294,7 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
   }
 
   if(file_sz % ctx->page_sz != 0) {
-    result = sqlite3_mprintf("page %d has an invalid size of %d bytes", page, file_sz - ((file_sz / ctx->page_sz) * ctx->page_sz));
+    result = sqlite3_mprintf("page %d has an invalid size of %lld bytes", page, file_sz - ((file_sz / ctx->page_sz) * ctx->page_sz));
     sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
   }
@@ -1581,13 +1558,6 @@ int sqlcipher_codec_fips_status(codec_ctx *ctx) {
 const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
   return ctx->provider->get_provider_version(ctx->provider_ctx);
 }
-
-int sqlcipher_codec_hmac_sha1(const codec_ctx *ctx, const unsigned char *hmac_key, int key_sz,
-                         unsigned char* in, int in_sz, unsigned char *in2, int in2_sz,
-                         unsigned char *out) {
-  return ctx->provider->hmac(ctx->provider_ctx, SQLCIPHER_HMAC_SHA1, (unsigned char *)hmac_key, key_sz, in, in_sz, in2, in2_sz, out);
-}
-
 
 #endif
 /* END SQLCIPHER */

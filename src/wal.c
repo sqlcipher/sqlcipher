@@ -2908,9 +2908,9 @@ int sqlite3WalFindFrame(
     }
     nCollide = HASHTABLE_NSLOT;
     for(iKey=walHash(pgno); sLoc.aHash[iKey]; iKey=walNextHash(iKey)){
-      u32 iFrame = sLoc.aHash[iKey] + sLoc.iZero;
-      if( iFrame<=iLast && iFrame>=pWal->minFrame
-       && sLoc.aPgno[sLoc.aHash[iKey]]==pgno ){
+      u32 iH = sLoc.aHash[iKey];
+      u32 iFrame = iH + sLoc.iZero;
+      if( iFrame<=iLast && iFrame>=pWal->minFrame && sLoc.aPgno[iH]==pgno ){
         assert( iFrame>iRead || CORRUPT_DB );
         iRead = iFrame;
       }
@@ -3478,6 +3478,7 @@ int sqlite3WalFrames(
         if( rc ) return rc;
         iOffset += szFrame;
         nExtra++;
+        assert( pLast!=0 );
       }
     }
     if( bSync ){
@@ -3510,6 +3511,7 @@ int sqlite3WalFrames(
     iFrame++;
     rc = walIndexAppend(pWal, iFrame, p->pgno);
   }
+  assert( pLast!=0 || nExtra==0 );
   while( rc==SQLITE_OK && nExtra>0 ){
     iFrame++;
     nExtra--;
