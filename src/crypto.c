@@ -767,6 +767,10 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     if(rc != SQLITE_OK) {
       /* initialization failed, do not attach potentially corrupted context */
       CODEC_TRACE("sqlite3CodecAttach: context initialization failed with rc=%d\n", rc);
+      /* force an error at the pager level, such that even the upstream caller ignores the return code
+         the pager will be in an error state and will process no further operations */
+      sqlite3pager_error(pPager, rc);
+      pDb->pBt->pBt->db->errCode = rc;
       CODEC_TRACE_MUTEX("sqlite3CodecAttach: leaving database mutex %p (early return on rc=%d)\n", db->mutex, rc);
       sqlite3_mutex_leave(db->mutex);
       CODEC_TRACE_MUTEX("sqlite3CodecAttach: left database mutex %p (early return on rc=%d)\n", db->mutex, rc);
