@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Cryptograpic provider interface cleanup
 - Rework of mutex allocation and management
 - Resolves miscellaneous build warnings
+- Force error state at database pager level if SQLCipher initialization fails
 
 ## [4.2.0] - (May 2019 - [4.2.0 changes])
 - Adds PRAGMA cipher_integrity_check to perform independent verification of page HMACs
