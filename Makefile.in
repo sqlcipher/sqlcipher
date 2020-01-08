@@ -159,7 +159,8 @@ CRYPTOSRC = \
 	$(TOP)/src/crypto_libtomcrypt.c \
 	$(TOP)/src/crypto_nss.c \
 	$(TOP)/src/crypto_openssl.c \
-	$(TOP)/src/crypto_cc.c
+	$(TOP)/src/crypto_cc.c \
+	$(TOP)/src/crypto_bearssl.c
 
 # END CRYPTO
 
@@ -835,6 +836,8 @@ crypto_libtomcrypt.lo:	$(TOP)/src/crypto_libtomcrypt.c $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/crypto_libtomcrypt.c
 crypto_cc.lo:	$(TOP)/src/crypto_cc.c $(HDR)
 	$(LTCOMPILE) -c $(TOP)/src/crypto_cc.c
+crypto_bearssl.lo:	$(TOP)/src/crypto_bearssl.c $(HDR)
+	$(LTCOMPILE) -c $(TOP)/src/crypto_bearssl.c
 # END CRYPTO
 
 # Rules to build individual *.o files from files in the src directory.
