@@ -280,14 +280,6 @@ static int sqlcipher_nss_fips_status(void *ctx) {
   return 0;
 }
 
-static int sqlcipher_nss_id(void *ctx) {
-  return 6342402;
-}
-
-static void* sqlcipher_nss_status(void *ctx) {
-  return NULL;
-}
-
 int sqlcipher_nss_setup(sqlcipher_provider *p) {
   p->activate = sqlcipher_nss_activate;
   p->deactivate = sqlcipher_nss_deactivate;
@@ -306,8 +298,6 @@ int sqlcipher_nss_setup(sqlcipher_provider *p) {
   p->add_random = sqlcipher_nss_add_random;
   p->fips_status = sqlcipher_nss_fips_status;
   p->get_provider_version = sqlcipher_nss_get_provider_version;
-  p->id = sqlcipher_nss_id;
-  p->status = sqlcipher_nss_status;
   return SQLITE_OK;
 }
 

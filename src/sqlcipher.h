@@ -69,8 +69,6 @@ typedef struct {
   int (*ctx_free)(void **ctx);
   int (*fips_status)(void *ctx);
   const char* (*get_provider_version)(void *ctx);
-  int (*id)(void *ctx);
-  void* (*status)(void *ctx);
 } sqlcipher_provider;
 
 /* utility functions */
