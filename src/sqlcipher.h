@@ -80,6 +80,7 @@ void* sqlcipher_memset(void *, unsigned char, int);
 int sqlcipher_ismemset(const void *, unsigned char, int);
 int sqlcipher_memcmp(const void *, const void *, int);
 void sqlcipher_free(void *, int);
+char* sqlcipher_version();
 
 /* provider interfaces */
 int sqlcipher_register_provider(sqlcipher_provider *);

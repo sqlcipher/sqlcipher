@@ -365,6 +365,15 @@ void* sqlcipher_malloc(int sz) {
   return ptr;
 }
 
+char* sqlcipher_version() {
+#ifdef CIPHER_VERSION_QUALIFIER
+    char *version = sqlite3_mprintf("%s %s %s", CIPHER_XSTR(CIPHER_VERSION_NUMBER), CIPHER_XSTR(CIPHER_VERSION_QUALIFIER), CIPHER_XSTR(CIPHER_VERSION_BUILD));
+#else
+    char *version = sqlite3_mprintf("%s %s", CIPHER_XSTR(CIPHER_VERSION_NUMBER), CIPHER_XSTR(CIPHER_VERSION_BUILD));
+#endif
+    return version;
+}
+
 /**
   * Initialize new cipher_ctx struct. This function will allocate memory
   * for the cipher context and for the key
