@@ -72,14 +72,13 @@ typedef struct {
 } sqlcipher_provider;
 
 /* utility functions */
-void sqlcipher_free(void *, int);
-void* sqlcipher_malloc(int);
-void sqlcipher_mlock(void *, int);
-void sqlcipher_munlock(void *, int);
-void* sqlcipher_memset(void *, unsigned char, int);
-int sqlcipher_ismemset(const void *, unsigned char, int);
+void* sqlcipher_malloc(u64);
+void sqlcipher_mlock(void *, u64);
+void sqlcipher_munlock(void *, u64);
+void* sqlcipher_memset(void *, unsigned char, u64);
+int sqlcipher_ismemset(const void *, unsigned char, u64);
 int sqlcipher_memcmp(const void *, const void *, int);
-void sqlcipher_free(void *, int);
+void sqlcipher_free(void *, u64);
 char* sqlcipher_version();
 
 /* provider interfaces */
