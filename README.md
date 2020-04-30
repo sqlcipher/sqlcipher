@@ -110,7 +110,7 @@ This can be accomplished programmatically by using sqlite3_rekey;
 
 ## Support
 
-The primary source for complete SQLCipher documentation is the SQLCipher website:
+The primary source for complete documentation (desing, API, platforms, usage) is the SQLCipher website:
 
 https://www.zetetic.net/sqlcipher/documentation
 
