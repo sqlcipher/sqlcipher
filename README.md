@@ -1,6 +1,13 @@
 ## SQLCipher
 
-SQLCipher extends the [SQLite](https://www.sqlite.org) database library to add security enhancements that make it more suitable for encrypted local data storage such as on-the-fly encryption, tamper evidence, and key derivation. Based on SQLite, SQLCipher closely tracks SQLite and periodically integrates stable SQLite release features.
+SQLCipher extends the [SQLite](https://www.sqlite.org) database library to add security enhancements that make it more suitable for encrypted local data storage like:
+
+- on-the-fly encryption
+- tamper detection
+- memory sanitization
+- strong key derivation
+
+SQLCipher is based on SQLite and stable upstream release features are periodically integrated. 
 
 SQLCipher is maintained by Zetetic, LLC, and additional information and documentation is available on the official [SQLCipher site](https://www.zetetic.net/sqlcipher/).
 
@@ -21,33 +28,38 @@ SQLCipher is also compatible with standard SQLite databases. When a key is not p
 
 ## Contributions
 
-The SQLCipher team welcomes contributions to the core library. All contributions including pull requests and patches should be based on the `prerelease` branch, and must be accompanied by a [contributor agreement](https://www.zetetic.net/contributions/). For large changes we strongly encourage [discussion](https://discuss.zetetic.net/c/sqlcipher) of the proposed change prior to development and submission.
+The SQLCipher team welcomes contributions to the core library. All contributions including pull requests and patches should be based on the `prerelease` branch, and must be accompanied by a [contributor agreement](https://www.zetetic.net/contributions/). We strongly encourage [discussion](https://discuss.zetetic.net/c/sqlcipher) of the proposed change prior to development and submission.
 
 ## Compiling
 
-Building SQLCipher is almost the same as compiling a regular version of 
-SQLite with two small exceptions: 
+Building SQLCipher is similar to compiling a regular version of SQLite from source a couple small exceptions:  
 
- 1. You *must* define `SQLITE_HAS_CODEC` and `SQLITE_TEMP_STORE=2` when building sqlcipher. 
- 2. If compiling against the default OpenSSL crypto provider, you will need to link libcrypto
+ 1. You *must* define `SQLITE_HAS_CODEC` and either `SQLITE_TEMP_STORE=2` or SQLITE_TEMP_STORE=3` 
+ 2. You will need to link against a support cryptograpic provider (OpenSSL, LibTomCrypt, CommonCrypto/Security.framework, or NSS)
  
-Example Static linking (replace /opt/local/lib with the path to libcrypto.a). Note in this 
+The following examples demonstrate linking against OpenSSL, which is a readily available provider on most Unix-like systems. 
+
+Example 1. Static linking (replace /opt/local/lib with the path to libcrypto.a). Note in this 
 example, `--enable-tempstore=yes` is setting `SQLITE_TEMP_STORE=2` for the build.
 
+```
 	$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 		LDFLAGS="/opt/local/lib/libcrypto.a"
 	$ make
+```
 
-Example Dynamic linking
+Example 2. Dynamic linking
 
+```
 	$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 		LDFLAGS="-lcrypto"
 	$ make
+```
 
 ## Encrypting a database
 
 To specify an encryption passphrase for the database via the SQL interface you 
-use a pragma. The passphrase you enter is passed through PBKDF2 key derivation to
+use a PRAGMA. The passphrase you enter is passed through PBKDF2 key derivation to
 obtain the encryption key for the database 
 
 	PRAGMA key = 'passphrase';
@@ -69,7 +81,7 @@ same rules as `PRAGMA key`.
 
 ## Changing a database key
 
-To change the encryption passphrase for an existing database you may use the rekey pragma
+To change the encryption passphrase for an existing database you may use the rekey PRAGMA
 after you've supplied the correct database password;
 
 	PRAGMA key = 'passphrase'; -- start with the existing database passphrase
@@ -84,6 +96,10 @@ This can be accomplished programmatically by using sqlite3_rekey;
 	sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey)
 
 ## Support
+
+The primary source for complete SQLCipher documentation is the SQLCipher website:
+
+https://www.zetetic.net/sqlcipher/documentation
 
 The primary avenue for support and discussions is the SQLCipher discuss site:
 
@@ -100,9 +116,9 @@ posts about SQLCipher as we do not monitor them frequently.
 If you are using SQLCipher in your own software please let us know at 
 support@zetetic.net!
 
-## License
+## Community Edition Open Source License
 
-Copyright (c) 2016, ZETETIC LLC
+Copyright (c) 2020, ZETETIC LLC
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
