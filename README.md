@@ -56,6 +56,19 @@ Example 2. Dynamic linking
 	$ make
 ```
 
+## Testing
+
+The full SQLite test suite will not complete successfully when using SQLCipher. In some cases encryption interferes with low-level tests that require access to database file data or features which are unsupported by SQLCipher. Those tests that are intended to support encryption are intended for non-SQLCipher implementations. In addition, because SQLite tests are not always isolated, if one test fails it can trigger a domino effect with other failures in later steps.
+
+As a result, the SQLCipher package includes it's own independent tests that exercise and verify the core functionality of the SQLCipher extensions. This test suite is intended to provide an abbreviated verification of SQLCipher's internal logic; it does not perform an exhaustive test of the SQLite database system as a whole or verify functionality on specific platforms. Because SQLCipher is based on stable upstream builds of SQLite, it is consider a basic assumption that the core SQLite library code is operating properly (the SQLite core is almost untouched in SQLCipher). Thus, the additional SQLCipher-specific test provide the requisite verification that the library is operating as expected with SQLCipher's security features enabled.
+
+To run SQLCipher specific tests, configure as described above and run the following to execute the tests and recieve a report of the results:
+
+```
+  $ make testfixture
+  $ ./testfixture test/sqlcipher.test
+```
+
 ## Encrypting a database
 
 To specify an encryption passphrase for the database via the SQL interface you 
