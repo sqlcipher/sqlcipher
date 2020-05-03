@@ -155,12 +155,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     }
   } else
   if( sqlite3StrICmp(zLeft, "cipher_version")==0 && !zRight ){
-#ifdef CIPHER_VERSION_QUALIFIER
-    char *version = sqlite3_mprintf("%s %s %s", CIPHER_XSTR(CIPHER_VERSION_NUMBER), CIPHER_XSTR(CIPHER_VERSION_QUALIFIER), CIPHER_XSTR(CIPHER_VERSION_BUILD));
-#else
-    char *version = sqlite3_mprintf("%s %s", CIPHER_XSTR(CIPHER_VERSION_NUMBER), CIPHER_XSTR(CIPHER_VERSION_BUILD));
-#endif
-    codec_vdbe_return_string(pParse, "cipher_version", version, P4_DYNAMIC);
+    codec_vdbe_return_string(pParse, "cipher_version", sqlcipher_version(), P4_DYNAMIC);
   }else
   if( sqlite3StrICmp(zLeft, "cipher")==0 ){
     if(ctx) {

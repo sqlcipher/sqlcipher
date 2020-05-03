@@ -1,6 +1,12 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [4.4.0] - (May 2020 - [4.4.0 changes])
+- Updates baseline to upstream SQLite 3.31.0
+- Adjusts shell to report SQLCipher version alongside SQLite version
+- Fixes various build warnings under several compilers
+- Removes unused id and status functions from provider interface
+
 ## [4.3.0] - (November 2019 - [4.3.0 changes])
 - Updates baseline to upstream SQLite 3.30.1
 - PRAGMA key now returns text result value "ok" after execution
@@ -158,7 +164,9 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.3.0...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.0...prerelease
+[4.4.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.4.0
+[4.4.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.3.0...v4.4.0
 [4.3.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.3.0
 [4.3.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.2.0
