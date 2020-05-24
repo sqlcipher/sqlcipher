@@ -112,7 +112,7 @@ static Btree *findBtree(sqlite3 *pErrorDb, sqlite3 *pDb, const char *zDb){
 */
 static int setDestPgsz(sqlite3_backup *p){
   int rc;
-  rc = sqlite3BtreeSetPageSize(p->pDest,sqlite3BtreeGetPageSize(p->pSrc),-1,0);
+  rc = sqlite3BtreeSetPageSize(p->pDest,sqlite3BtreeGetPageSize(p->pSrc),0,0);
   return rc;
 }
 
@@ -261,7 +261,7 @@ static int backupOnePage(
   ** guaranteed that the shared-mutex is held by this thread, handle
   ** p->pSrc may not actually be the owner.  */
   int nSrcReserve = sqlite3BtreeGetReserveNoMutex(p->pSrc);
-  int nDestReserve = sqlite3BtreeGetOptimalReserve(p->pDest);
+  int nDestReserve = sqlite3BtreeGetRequestedReserve(p->pDest);
 #endif
   int rc = SQLITE_OK;
   i64 iOff;
