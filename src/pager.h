@@ -128,9 +128,11 @@ int sqlite3PagerReadFileheader(Pager*, int, unsigned char*);
 /* Functions used to configure a Pager object. */
 void sqlite3PagerSetBusyHandler(Pager*, int(*)(void *), void *);
 int sqlite3PagerSetPagesize(Pager*, u32*, int);
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 void sqlite3PagerAlignReserve(Pager*,Pager*);
 #endif
+/* END SQLCIPHER */
 int sqlite3PagerMaxPageCount(Pager*, int);
 void sqlite3PagerSetCachesize(Pager*, int);
 int sqlite3PagerSetSpillsize(Pager*, int);
@@ -227,9 +229,11 @@ void sqlite3PagerTruncateImage(Pager*,Pgno);
 
 void sqlite3PagerRekey(DbPage*, Pgno, u16);
 
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_WAL)
 void *sqlite3PagerCodec(DbPage *);
 #endif
+/* END SQLCIPHER */
 
 /* Functions to support testing and debugging. */
 #if !defined(NDEBUG) || defined(SQLITE_TEST)

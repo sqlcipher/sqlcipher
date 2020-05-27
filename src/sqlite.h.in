@@ -5946,6 +5946,7 @@ int sqlite3_collation_needed16(
   void(*)(void*,sqlite3*,int eTextRep,const void*)
 );
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 /*
 ** Specify the key for an encrypted database.  This routine should be
@@ -5990,6 +5991,7 @@ void sqlite3_activate_see(
   const char *zPassPhrase        /* Activation phrase */
 );
 #endif
+/* BEGIN SQLCIPHER */
 
 #ifdef SQLITE_ENABLE_CEROD
 /*

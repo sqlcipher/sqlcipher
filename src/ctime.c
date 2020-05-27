@@ -358,9 +358,11 @@ static const char * const sqlite3azCompileOpt[] = {
 #if SQLITE_FTS5_NO_WITHOUT_ROWID
   "FTS5_NO_WITHOUT_ROWID",
 #endif
+/* BEGIN SQLCIPHER */
 #if SQLITE_HAS_CODEC
   "HAS_CODEC",
 #endif
+/* END SQLCIPHER */
 #if HAVE_ISNAN || SQLITE_HAVE_ISNAN
   "HAVE_ISNAN",
 #endif

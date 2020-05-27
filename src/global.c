@@ -140,11 +140,13 @@ const unsigned char sqlite3CtypeMap[256] = {
 ** enabled.
 */
 #ifndef SQLITE_USE_URI
+/* BEGIN SQLCIPHER */
 # ifdef SQLITE_HAS_CODEC
 #  define SQLITE_USE_URI 1
 # else
 #  define SQLITE_USE_URI 0
 # endif
+/* END SQLCIPHER */
 #endif
 
 /* EVIDENCE-OF: R-38720-18127 The default setting is determined by the

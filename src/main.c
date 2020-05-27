@@ -3050,6 +3050,7 @@ static const char *uriParameter(const char *zFilename, const char *zParam){
   return 0;
 }
 
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC)
 /*
 ** Process URI filename query parameters relevant to the SQLite Encryption
@@ -3085,6 +3086,7 @@ int sqlite3CodecQueryParameters(
   }
 }
 #endif
+/* END SQLCIPHER */
 
 
 /*
@@ -3418,9 +3420,11 @@ opendb_out:
     sqlite3GlobalConfig.xSqllog(pArg, db, zFilename, 0);
   }
 #endif
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC)
   if( rc==SQLITE_OK ) sqlite3CodecQueryParameters(db, 0, zOpen);
 #endif
+/* END SQLCIPHER */
   sqlite3_free_filename(zOpen);
   return rc & 0xff;
 }

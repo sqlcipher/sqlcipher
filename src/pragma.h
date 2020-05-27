@@ -335,6 +335,7 @@ static const PragmaName aPragmaName[] = {
   /* ePragFlg:  */ PragFlg_Result0,
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC)
  {/* zName:     */ "hexkey",
   /* ePragTyp:  */ PragTyp_KEY,
@@ -347,6 +348,7 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 3 },
 #endif
+/* END SQLCIPHER */
 #if !defined(SQLITE_OMIT_FLAG_PRAGMAS)
 #if !defined(SQLITE_OMIT_CHECK)
  {/* zName:     */ "ignore_check_constraints",
@@ -399,6 +401,7 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
 #endif
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC)
  {/* zName:     */ "key",
   /* ePragTyp:  */ PragTyp_KEY,
@@ -406,6 +409,7 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
 #endif
+/* END SQLCIPHER */
 #if !defined(SQLITE_OMIT_FLAG_PRAGMAS)
  {/* zName:     */ "legacy_alter_table",
   /* ePragTyp:  */ PragTyp_FLAG,
@@ -514,6 +518,7 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ SQLITE_RecTriggers },
 #endif
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC)
  {/* zName:     */ "rekey",
   /* ePragTyp:  */ PragTyp_KEY,
@@ -521,6 +526,7 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 1 },
 #endif
+/* END SQLCIPHER */
 #if !defined(SQLITE_OMIT_FLAG_PRAGMAS)
  {/* zName:     */ "reverse_unordered_selects",
   /* ePragTyp:  */ PragTyp_FLAG,
@@ -606,6 +612,7 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 0 },
 #endif
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC)
  {/* zName:     */ "textkey",
   /* ePragTyp:  */ PragTyp_KEY,
@@ -618,6 +625,7 @@ static const PragmaName aPragmaName[] = {
   /* ColNames:  */ 0, 0,
   /* iArg:      */ 5 },
 #endif
+/* END SQLCIPHER */
  {/* zName:     */ "threads",
   /* ePragTyp:  */ PragTyp_THREADS,
   /* ePragFlg:  */ PragFlg_Result0,

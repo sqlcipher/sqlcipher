@@ -3094,14 +3094,17 @@ deserialize_error:
   ** Change the encryption key on the currently open database.
   */
   case DB_REKEY: {
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_CODEC_FROM_TCL)
     int nKey;
     void *pKey;
 #endif
+/* END SQLCIPHER */
     if( objc!=3 ){
       Tcl_WrongNumArgs(interp, 2, objv, "KEY");
       return TCL_ERROR;
     }
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_CODEC_FROM_TCL)
     pKey = Tcl_GetByteArrayFromObj(objv[2], &nKey);
     rc = sqlite3_rekey(pDb->db, pKey, nKey);
@@ -3110,6 +3113,7 @@ deserialize_error:
       rc = TCL_ERROR;
     }
 #endif
+/* END SQLCIPHER */
     break;
   }
 
@@ -3678,9 +3682,11 @@ static int sqliteCmdUsage(
     "HANDLE ?FILENAME? ?-vfs VFSNAME? ?-readonly BOOLEAN? ?-create BOOLEAN?"
     " ?-nofollow BOOLEAN?"
     " ?-nomutex BOOLEAN? ?-fullmutex BOOLEAN? ?-uri BOOLEAN?"
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_CODEC_FROM_TCL)
     " ?-key CODECKEY?"
 #endif
+/* END SQLCIPHER */
   );
   return TCL_ERROR;
 }
@@ -3716,10 +3722,12 @@ static int SQLITE_TCLAPI DbMain(
   int flags;
   int bTranslateFileName = 1;
   Tcl_DString translatedFilename;
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_CODEC_FROM_TCL)
   void *pKey = 0;
   int nKey = 0;
 #endif
+/* BEGIN SQLCIPHER */
   int rc;
 
   /* In normal use, each TCL interpreter runs in a single thread.  So
@@ -3746,11 +3754,13 @@ static int SQLITE_TCLAPI DbMain(
       return TCL_OK;
     }
     if( strcmp(zArg,"-has-codec")==0 ){
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_CODEC_FROM_TCL)
       Tcl_AppendResult(interp,"1",(char*)0);
 #else
       Tcl_AppendResult(interp,"0",(char*)0);
 #endif
+/* END SQLCIPHER */
       return TCL_OK;
     }
     if( zArg[0]=='-' ) return sqliteCmdUsage(interp, objv);
@@ -3765,9 +3775,11 @@ static int SQLITE_TCLAPI DbMain(
     if( i==objc-1 ) return sqliteCmdUsage(interp, objv);
     i++;
     if( strcmp(zArg,"-key")==0 ){
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_CODEC_FROM_TCL)
       pKey = Tcl_GetByteArrayFromObj(objv[i], &nKey);
 #endif
+/* END SQLCIPHER */
     }else if( strcmp(zArg, "-vfs")==0 ){
       zVfs = Tcl_GetString(objv[i]);
     }else if( strcmp(zArg, "-readonly")==0 ){
@@ -3851,11 +3863,13 @@ static int SQLITE_TCLAPI DbMain(
   }else{
     zErrMsg = sqlite3_mprintf("%s", sqlite3_errstr(rc));
   }
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_CODEC_FROM_TCL)
   if( p->db ){
     sqlite3_key(p->db, pKey, nKey);
   }
 #endif
+/* END SQLCIPHER */
   if( p->db==0 ){
     Tcl_SetResult(interp, zErrMsg, TCL_VOLATILE);
     Tcl_Free((char*)p);

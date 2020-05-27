@@ -1269,6 +1269,7 @@ u8 sqlite3HexToInt(int h){
   return (u8)(h & 0xf);
 }
 
+/* BEGIN SQLCIPHER */
 #if !defined(SQLITE_OMIT_BLOB_LITERAL) || defined(SQLITE_HAS_CODEC)
 /*
 ** Convert a BLOB literal of the form "x'hhhhhh'" into its binary
@@ -1291,6 +1292,7 @@ void *sqlite3HexToBlob(sqlite3 *db, const char *z, int n){
   return zBlob;
 }
 #endif /* !SQLITE_OMIT_BLOB_LITERAL || SQLITE_HAS_CODEC */
+/* END SQLCIPHER */
 
 /*
 ** Log an error that is an API call on a connection pointer that should

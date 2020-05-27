@@ -198,6 +198,7 @@ static void attachFunc(
     rc = SQLITE_NOMEM_BKPT;
   }
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   if( rc==SQLITE_OK ){
     extern int sqlite3CodecAttach(sqlite3*, int, const void*, int);
@@ -232,6 +233,7 @@ static void attachFunc(
     }
   }
 #endif
+/* END SQLCIPHER */
   sqlite3_free_filename( zPath );
 
   /* If the file was opened successfully, read the schema for the new database.

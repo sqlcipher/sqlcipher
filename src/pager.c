@@ -409,6 +409,7 @@ int sqlite3PagerTrace=1;  /* True to enable tracing */
 /*
 ** A macro used for invoking the codec if there is one
 */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 # define CODEC1(P,D,N,X,E) \
     if( P->xCodec && P->xCodec(P->pCodec,D,N,X)==0 ){ E; }
@@ -419,6 +420,7 @@ int sqlite3PagerTrace=1;  /* True to enable tracing */
 # define CODEC1(P,D,N,X,E)   /* NO-OP */
 # define CODEC2(P,D,N,X,E,O) O=(char*)D
 #endif
+/* END SQLCIPHER */
 
 /*
 ** The maximum allowed sector size. 64KiB. If the xSectorsize() method 
@@ -705,12 +707,14 @@ struct Pager {
 #endif
   void (*xReiniter)(DbPage*); /* Call this routine when reloading pages */
   int (*xGet)(Pager*,Pgno,DbPage**,int); /* Routine to fetch a patch */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   void *(*xCodec)(void*,void*,Pgno,int); /* Routine for en/decoding data */
   void (*xCodecSizeChng)(void*,int,int); /* Notify of page size changes */
   void (*xCodecFree)(void*);             /* Destructor for the codec */
   void *pCodec;               /* First argument to xCodec... methods */
 #endif
+/* END SQLCIPHER */
   char *pTmpSpace;            /* Pager.pageSize bytes of space for tmp use */
   PCache *pPCache;            /* Pointer to page cache object */
 #ifndef SQLITE_OMIT_WAL
@@ -837,9 +841,11 @@ static const unsigned char aJournalMagic[] = {
 int sqlite3PagerDirectReadOk(Pager *pPager, Pgno pgno){
   if( pPager->fd->pMethods==0 ) return 0;
   if( sqlite3PCacheIsDirty(pPager->pPCache) ) return 0;
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   if( pPager->xCodec!=0 ) return 0;
 #endif
+/* END SQLCIPHER */
 #ifndef SQLITE_OMIT_WAL
   if( pPager->pWal ){
     u32 iRead = 0;
@@ -1074,9 +1080,11 @@ static void setGetterMethod(Pager *pPager){
     pPager->xGet = getPageError;
 #if SQLITE_MAX_MMAP_SIZE>0
   }else if( USEFETCH(pPager)
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
    && pPager->xCodec==0
 #endif
+/* END SQLCIPHER */
   ){
     pPager->xGet = getPageMMap;
 #endif /* SQLITE_MAX_MMAP_SIZE>0 */
@@ -2229,6 +2237,7 @@ static u32 pager_cksum(Pager *pPager, const u8 *aData){
 ** Report the current page size and number of reserved bytes back
 ** to the codec.
 */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 static void pagerReportSize(Pager *pPager){
   if( pPager->xCodecSizeChng ){
@@ -2239,7 +2248,9 @@ static void pagerReportSize(Pager *pPager){
 #else
 # define pagerReportSize(X)     /* No-op if we do not support a codec */
 #endif
+/* END SQLCIPHER */
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 /*
 ** Make sure the number of reserved bits is the same in the destination
@@ -2253,6 +2264,7 @@ void sqlite3PagerAlignReserve(Pager *pDest, Pager *pSrc){
   }
 }
 #endif
+/* END SQLCIPHER */
 
 /*
 ** Read a single page from either the journal file (if isMainJrnl==1) or
@@ -2305,11 +2317,13 @@ static int pager_playback_one_page(
   char *aData;                  /* Temporary storage for the page */
   sqlite3_file *jfd;            /* The file descriptor for the journal file */
   int isSynced;                 /* True if journal page is synced */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   /* The jrnlEnc flag is true if Journal pages should be passed through
   ** the codec.  It is false for pure in-memory journals. */
   const int jrnlEnc = (isMainJrnl || pPager->subjInMemory==0);
 #endif
+/* END SQLCIPHER */
 
   assert( (isMainJrnl&~1)==0 );      /* isMainJrnl is 0 or 1 */
   assert( (isSavepnt&~1)==0 );       /* isSavepnt is 0 or 1 */
@@ -2440,6 +2454,7 @@ static int pager_playback_one_page(
     ** is if the data was just read from an in-memory sub-journal. In that
     ** case it must be encrypted here before it is copied into the database
     ** file.  */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
     if( !jrnlEnc ){
       CODEC2(pPager, aData, pgno, 7, rc=SQLITE_NOMEM_BKPT, aData);
@@ -2447,12 +2462,14 @@ static int pager_playback_one_page(
       CODEC1(pPager, aData, pgno, 3, rc=SQLITE_NOMEM_BKPT);
     }else
 #endif
+/* END SQLCIPHER */
     rc = sqlite3OsWrite(pPager->fd, (u8 *)aData, pPager->pageSize, ofst);
 
     if( pgno>pPager->dbFileSize ){
       pPager->dbFileSize = pgno;
     }
     if( pPager->pBackup ){
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
       if( jrnlEnc ){
         CODEC1(pPager, aData, pgno, 3, rc=SQLITE_NOMEM_BKPT);
@@ -2460,6 +2477,7 @@ static int pager_playback_one_page(
         CODEC2(pPager, aData, pgno, 7, rc=SQLITE_NOMEM_BKPT,aData);
       }else
 #endif
+/* END SQLCIPHER */
       sqlite3BackupUpdate(pPager->pBackup, pgno, (u8*)aData);
     }
   }else if( !isMainJrnl && pPg==0 ){
@@ -2512,9 +2530,11 @@ static int pager_playback_one_page(
     }
 
     /* Decode the page just read from disk */
+/* BEGIN SQLCIPHER */
 #if SQLITE_HAS_CODEC
     if( jrnlEnc ){ CODEC1(pPager, pData, pPg->pgno, 3, rc=SQLITE_NOMEM_BKPT); }
 #endif
+/* END SQLCIPHER */
     sqlite3PcacheRelease(pPg);
   }
   return rc;
@@ -4219,9 +4239,11 @@ int sqlite3PagerClose(Pager *pPager, sqlite3 *db){
   sqlite3PageFree(pTmp);
   sqlite3PcacheClose(pPager->pPCache);
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   if( pPager->xCodecFree ) pPager->xCodecFree(pPager->pCodec);
 #endif
+/* END SQLCIPHER */
 
   assert( !pPager->aSavepoint && !pPager->pInJournal );
   assert( !isOpen(pPager->jfd) && !isOpen(pPager->sjfd) );
@@ -4564,11 +4586,13 @@ static int subjournalPage(PgHdr *pPg){
       i64 offset = (i64)pPager->nSubRec*(4+pPager->pageSize);
       char *pData2;
 
+/* BEGIN SQLCIPHER */
 #if SQLITE_HAS_CODEC   
       if( !pPager->subjInMemory ){
         CODEC2(pPager, pData, pPg->pgno, 7, return SQLITE_NOMEM_BKPT, pData2);
       }else
 #endif
+/* END SQLCIPHER */
       pData2 = pData;
       PAGERTRACE(("STMT-JOURNAL %d page %d\n", PAGERID(pPager), pPg->pgno));
       rc = write32bits(pPager->sjfd, offset, pPg->pgno);
@@ -5671,9 +5695,11 @@ static int getPageMMap(
   );
 
   assert( USEFETCH(pPager) );
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   assert( pPager->xCodec==0 );
 #endif
+/* END SQLCIPHER */
 
   /* Optimization note:  Adding the "pgno<=1" term before "pgno==0" here
   ** allows the compiler optimizer to reuse the results of the "pgno>1"
@@ -7115,6 +7141,7 @@ const char *sqlite3PagerJournalname(Pager *pPager){
   return pPager->zJournal;
 }
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 /*
 ** Set or retrieve the codec for this pager
@@ -7162,6 +7189,7 @@ int sqlite3PagerState(Pager *pPager){
   return pPager->eState;
 }
 #endif /* SQLITE_HAS_CODEC */
+/* END SQLCIPHER */
 
 #ifndef SQLITE_OMIT_AUTOVACUUM
 /*

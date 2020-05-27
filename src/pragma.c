@@ -2238,6 +2238,7 @@ void sqlite3Pragma(
   }
 #endif
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   /* Pragma        iArg
   ** ----------   ------
@@ -2279,6 +2280,7 @@ void sqlite3Pragma(
     break;
   }
 #endif
+/* END SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
   case PragTyp_ACTIVATE_EXTENSIONS: if( zRight ){
 #ifdef SQLITE_HAS_CODEC
