@@ -2281,18 +2281,11 @@ void sqlite3Pragma(
   }
 #endif
 /* END SQLCIPHER */
-#if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
+#if defined(SQLITE_ENABLE_CEROD)
   case PragTyp_ACTIVATE_EXTENSIONS: if( zRight ){
-#ifdef SQLITE_HAS_CODEC
-    if( sqlite3StrNICmp(zRight, "see-", 4)==0 ){
-      sqlite3_activate_see(&zRight[4]);
-    }
-#endif
-#ifdef SQLITE_ENABLE_CEROD
     if( sqlite3StrNICmp(zRight, "cerod-", 6)==0 ){
       sqlite3_activate_cerod(&zRight[6]);
     }
-#endif
   }
   break;
 #endif

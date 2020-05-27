@@ -134,7 +134,7 @@ typedef struct PragmaName {
   u64 iArg;                /* Extra argument */
 } PragmaName;
 static const PragmaName aPragmaName[] = {
-#if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
+#if defined(SQLITE_ENABLE_CEROD)
  {/* zName:     */ "activate_extensions",
   /* ePragTyp:  */ PragTyp_ACTIVATE_EXTENSIONS,
   /* ePragFlg:  */ 0,
