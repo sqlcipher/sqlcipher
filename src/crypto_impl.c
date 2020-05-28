@@ -1419,7 +1419,7 @@ migrate:
   pDb = &(db->aDb[db->nDb-1]);
   pSrc = pDb->pBt;
 
-  nRes = sqlite3BtreeGetOptimalReserve(pSrc); 
+  nRes = sqlite3BtreeGetRequestedReserve(pSrc);
   /* unset the BTS_PAGESIZE_FIXED flag to avoid SQLITE_READONLY */
   pDest->pBt->btsFlags &= ~BTS_PAGESIZE_FIXED; 
   rc = sqlite3BtreeSetPageSize(pDest, default_page_size, nRes, 0);

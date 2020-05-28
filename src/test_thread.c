@@ -287,6 +287,7 @@ static int SQLITE_TCLAPI sqlthread_open(
 
   zFilename = Tcl_GetString(objv[2]);
   sqlite3_open(zFilename, &db);
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   if( db && objc>=4 ){
     const char *zKey;
@@ -303,6 +304,7 @@ static int SQLITE_TCLAPI sqlthread_open(
     }
   }
 #endif
+/* END SQLCIPHER */
   Md5_Register(db, 0, 0);
   sqlite3_busy_handler(db, xBusy, 0);
   

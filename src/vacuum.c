@@ -233,9 +233,10 @@ SQLITE_NOINLINE int sqlite3RunVacuum(
     }
     db->mDbFlags |= DBFLAG_VacuumInto;
   }
-  nRes = sqlite3BtreeGetOptimalReserve(pMain);
+  nRes = sqlite3BtreeGetRequestedReserve(pMain);
 
   /* A VACUUM cannot change the pagesize of an encrypted database. */
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   if( db->nextPagesize ){
     extern void sqlite3CodecGetKey(sqlite3*, int, void**, int*);
@@ -245,6 +246,7 @@ SQLITE_NOINLINE int sqlite3RunVacuum(
     if( nKey ) db->nextPagesize = 0;
   }
 #endif
+/* END SQLCIPHER */
 
   sqlite3BtreeSetCacheSize(pTemp, db->aDb[iDb].pSchema->cache_size);
   sqlite3BtreeSetSpillSize(pTemp, sqlite3BtreeSetSpillSize(pMain,0));
@@ -388,7 +390,7 @@ end_of_vacuum:
   db->nChange = saved_nChange;
   db->nTotalChange = saved_nTotalChange;
   db->mTrace = saved_mTrace;
-  sqlite3BtreeSetPageSize(pMain, -1, -1, 1);
+  sqlite3BtreeSetPageSize(pMain, -1, 0, 1);
 
   /* Currently there is an SQL level transaction open on the vacuum
   ** database. No locks are held on any other files (since the main file

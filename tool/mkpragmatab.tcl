@@ -401,7 +401,7 @@ set pragma_def {
   IF:   defined(SQLITE_HAS_CODEC)
 
   NAME: activate_extensions
-  IF:   defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
+  IF:   defined(SQLITE_ENABLE_CEROD)
 
   NAME: soft_heap_limit
   FLAG: Result0
@@ -410,6 +410,9 @@ set pragma_def {
   FLAG: Result0
 
   NAME: threads
+  FLAG: Result0
+
+  NAME: analysis_limit
   FLAG: Result0
 
   NAME: optimize
@@ -496,7 +499,7 @@ record_one
 set allnames [lsort [array names allbyname]]
 
 # Generate #defines for all pragma type names.  Group the pragmas that are
-# omit in default builds (defined(SQLITE_DEBUG) and defined(SQLITE_HAS_CODEC))
+# omit in default builds (ex: defined(SQLITE_DEBUG))
 # at the end.
 #
 puts $fd "\n/* The various pragma types */"

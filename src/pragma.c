@@ -570,7 +570,7 @@ void sqlite3Pragma(
       ** buffer that the pager module resizes using sqlite3_realloc().
       */
       db->nextPagesize = sqlite3Atoi(zRight);
-      if( SQLITE_NOMEM==sqlite3BtreeSetPageSize(pBt, db->nextPagesize,-1,0) ){
+      if( SQLITE_NOMEM==sqlite3BtreeSetPageSize(pBt, db->nextPagesize,0,0) ){
         sqlite3OomFault(db);
       }
     }
@@ -1744,7 +1744,6 @@ void sqlite3Pragma(
         }
         sqlite3VdbeAddOp2(v, OP_Next, iDataCur, loopTop); VdbeCoverage(v);
         sqlite3VdbeJumpHere(v, loopTop-1);
-#ifndef SQLITE_OMIT_BTREECOUNT
         if( !isQuick ){
           sqlite3VdbeLoadString(v, 2, "wrong # of entries in index ");
           for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
@@ -1758,7 +1757,6 @@ void sqlite3Pragma(
             sqlite3VdbeJumpHere(v, addr);
           }
         }
-#endif /* SQLITE_OMIT_BTREECOUNT */
       } 
     }
     {
@@ -1839,21 +1837,12 @@ void sqlite3Pragma(
       ** will be overwritten when the schema is next loaded. If it does not
       ** already exists, it will be created to use the new encoding value.
       */
-      int canChangeEnc = 1;  /* True if allowed to change the encoding */
-      int i;                 /* For looping over all attached databases */
-      for(i=0; i<db->nDb; i++){
-        if( db->aDb[i].pBt!=0
-         && DbHasProperty(db,i,DB_SchemaLoaded)
-         && !DbHasProperty(db,i,DB_Empty)
-        ){
-          canChangeEnc = 0;
-        }
-      }
-      if( canChangeEnc ){
+      if( (db->mDbFlags & DBFLAG_EncodingFixed)==0 ){
         for(pEnc=&encnames[0]; pEnc->zName; pEnc++){
           if( 0==sqlite3StrICmp(zRight, pEnc->zName) ){
-            SCHEMA_ENC(db) = ENC(db) =
-                pEnc->enc ? pEnc->enc : SQLITE_UTF16NATIVE;
+            u8 enc = pEnc->enc ? pEnc->enc : SQLITE_UTF16NATIVE;
+            SCHEMA_ENC(db) = enc;
+            sqlite3SetTextEncoding(db, enc);
             break;
           }
         }
@@ -2202,6 +2191,25 @@ void sqlite3Pragma(
     break;
   }
 
+  /*
+  **   PRAGMA analysis_limit
+  **   PRAGMA analysis_limit = N
+  **
+  ** Configure the maximum number of rows that ANALYZE will examine
+  ** in each index that it looks at.  Return the new limit.
+  */
+  case PragTyp_ANALYSIS_LIMIT: {
+    sqlite3_int64 N;
+    if( zRight
+     && sqlite3DecOrHexToI64(zRight, &N)==SQLITE_OK
+     && N>=0
+    ){
+      db->nAnalysisLimit = (int)(N&0x7fffffff);
+    }
+    returnSingleInt(v, db->nAnalysisLimit);
+    break;
+  }
+
 #if defined(SQLITE_DEBUG) || defined(SQLITE_TEST)
   /*
   ** Report the current state of file logs for all databases
@@ -2230,6 +2238,7 @@ void sqlite3Pragma(
   }
 #endif
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   /* Pragma        iArg
   ** ----------   ------
@@ -2271,18 +2280,12 @@ void sqlite3Pragma(
     break;
   }
 #endif
-#if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
+/* END SQLCIPHER */
+#if defined(SQLITE_ENABLE_CEROD)
   case PragTyp_ACTIVATE_EXTENSIONS: if( zRight ){
-#ifdef SQLITE_HAS_CODEC
-    if( sqlite3StrNICmp(zRight, "see-", 4)==0 ){
-      sqlite3_activate_see(&zRight[4]);
-    }
-#endif
-#ifdef SQLITE_ENABLE_CEROD
     if( sqlite3StrNICmp(zRight, "cerod-", 6)==0 ){
       sqlite3_activate_cerod(&zRight[6]);
     }
-#endif
   }
   break;
 #endif
