@@ -1,6 +1,9 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [4.4.1] - (unreleased - [4.4.1 changes])
+- Updates baseline to upstream SQLite 3.32.1
+
 ## [4.4.0] - (May 2020 - [4.4.0 changes])
 - Updates baseline to upstream SQLite 3.31.0
 - Adjusts shell to report SQLCipher version alongside SQLite version
