@@ -37,17 +37,19 @@
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 source $testdir/sqlcipher.tcl
+source $testdir/permutations.test
 
-if {[file exist "$testdir/sqlcipher-license.test"]} {
-  slave_test_file $testdir/sqlcipher-license.test
-}
-
-slave_test_file $testdir/sqlcipher-core.test
-slave_test_file $testdir/sqlcipher-compatibility.test
-slave_test_file $testdir/sqlcipher-rekey.test
-slave_test_file $testdir/sqlcipher-plaintext-header.test
-slave_test_file $testdir/sqlcipher-pragmas.test
-slave_test_file $testdir/sqlcipher-integrity.test
-slave_test_file $testdir/sqlcipher-backup.test
-
+test_suite "sqlcipher" -prefix "" -description {
+  Runs SQLCipher tests
+} -files [
+  test_set $pretests \
+           sqlcipher-core.test \
+           sqlcipher-compatibility.test \
+           sqlcipher-rekey.test \
+           sqlcipher-plaintext-header.test \
+           sqlcipher-pragmas.test \
+           sqlcipher-integrity.test \
+           sqlcipher-backup.test
+]
+run_test_suite sqlcipher
 finish_test
