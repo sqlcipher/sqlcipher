@@ -39,6 +39,8 @@ source $testdir/tester.tcl
 source $testdir/sqlcipher.tcl
 source $testdir/permutations.test
 
+set pretests ""
+
 test_suite "sqlcipher" -prefix "" -description {
   Runs SQLCipher tests
 } -files [
