@@ -1174,6 +1174,7 @@ do_test 14.0 {
 | end clusterfuzz-testcase-minimized-sqlite3_dbfuzz2_fuzzer-4806406219825152
 }]} {}
 
+extra_schema_checks 0
 do_catchsql_test 14.1 {
   PRAGMA integrity_check;
 } {1 {database disk image is malformed}}
@@ -1181,6 +1182,7 @@ do_catchsql_test 14.1 {
 do_catchsql_test 14.2 {
   ALTER TABLE t1 RENAME TO alkjalkjdfiiiwuer987lkjwer82mx97sf98788s9789s; 
 } {1 {database disk image is malformed}}
+extra_schema_checks 1
 
 #-------------------------------------------------------------------------
 reset_db
@@ -1263,8 +1265,77 @@ do_test 15.0 {
 | end crash-3afa1ca9e9c1bd.db
 }]} {}
 
+extra_schema_checks 0
 do_execsql_test 15.1 {
+  PRAGMA cell_size_check = 0;
   UPDATE c1 SET c= NOT EXISTS(SELECT 1 FROM c1 ORDER BY (SELECT 1 FROM c1 ORDER BY a)) +10 WHERE d BETWEEN 4 AND 7;
 } {}
-finish_test
+extra_schema_checks 1
 
+#-------------------------------------------------------------------------
+reset_db
+do_execsql_test 16.0 {
+  CREATE TABLE t1(w, x, y, z, UNIQUE(w, x), UNIQUE(y, z));
+  INSERT INTO t1 VALUES(1, 1, 1, 1);
+
+  CREATE TABLE t1idx(x, y, i INTEGER, PRIMARY KEY(x)) WITHOUT ROWID;
+  INSERT INTO t1idx VALUES(10, NULL, 5);
+
+  PRAGMA writable_schema = 1;
+  UPDATE sqlite_master SET rootpage = (
+    SELECT rootpage FROM sqlite_master WHERE name='t1idx'
+  ) WHERE type = 'index';
+}
+
+extra_schema_checks 0
+db close
+sqlite3 db test.db
+extra_schema_checks 1
+
+do_catchsql_test 16.1 {
+  PRAGMA writable_schema = ON;
+  INSERT INTO t1(rowid, w, x, y, z) VALUES(5, 10, 11, 10, NULL);
+} {1 {database disk image is malformed}}
+
+#-------------------------------------------------------------------------
+# Test that corruption is reported from within a checkpoint if the 
+# expected final size of the database (according to the last commit
+# frame in the wal file) is greater than the combined initial sizes 
+# of the database and wal file.
+#
+if {[wal_is_capable]} {
+  reset_db
+  do_execsql_test 17.0 {
+    CREATE TABLE t1(o INTEGER PRIMARY KEY, t UNIQUE);
+    INSERT INTO t1(t) VALUES(randomblob(123));
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+    INSERT INTO t1(t) SELECT randomblob(123) FROM t1;
+  
+    PRAGMA journal_mode = wal;
+    INSERT INTO t1 VALUES(-1, 'b');
+  } {wal}
+  
+  do_test 17.1 {
+    set fd [open test.db r+]
+    chan truncate $fd 2048
+    file size test.db
+  } {2048}
+  
+  do_catchsql_test 17.2 {
+    PRAGMA wal_checkpoint
+  } {1 {database disk image is malformed}}
+  
+  do_test 17.3 {
+    close $fd
+  } {}
+}
+
+
+finish_test

@@ -136,9 +136,24 @@ if {[info exists ::env(QUICKTEST_INCLUDE)]} {
   set allquicktests [concat $allquicktests $::env(QUICKTEST_INCLUDE)]
 }
 if {[info exists ::env(QUICKTEST_OMIT)]} {
-  foreach x [split $::env(QUICKTEST_OMIT) ,] {
-    regsub -all \\y$x\\y $allquicktests {} allquicktests
+  # If environment variable QUICKTEST_OMIT is set, it is a comma-separated
+  # list of regular expressions to match against test file names in
+  # the "allquicktests" set. Any matches are excluded. Only the filename
+  # is matched, not any directory component of the path.
+  set all [list]
+  foreach a $allquicktests {
+    set bIn 1
+    foreach x [split $::env(QUICKTEST_OMIT) ,] {
+      if {[regexp $x [file tail $a]]} {
+        set bIn 0
+        break
+      }
+    }
+    if {$bIn} {
+      lappend all $a
+    }
   }
+  set allquicktests $all
 }
 
 # If the TEST_FAILURE environment variable is set, it means that we what to
@@ -169,6 +184,12 @@ test_suite "veryquick" -prefix "" -description {
 } -files [
   test_set $allquicktests -exclude *malloc* *ioerr* *fault* *bigfile* *_err* \
       *fts5corrupt* *fts5big* *fts5aj*
+]
+
+test_suite "shell" -prefix "" -description {
+  Run tests of the command-line shell
+} -files [
+  test_set [glob $testdir/shell*.test]
 ]
 
 test_suite "extraquick" -prefix "" -description {
@@ -968,6 +989,7 @@ test_suite "journaltest" -description {
   pager1.test syscall.test tkt3457.test *malloc* mmap* multiplex* nolock*
   pager2.test *fault* rowal* snapshot* superlock* symlink.test
   delete_db.test shmlock.test chunksize.test
+  busy2.test
 }]
 
 if {[info commands register_demovfs] != ""} {
