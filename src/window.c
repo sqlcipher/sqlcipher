@@ -783,7 +783,7 @@ static int selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr){
           }
         }
       }
-      /* Fall through.  */
+      /* no break */ deliberate_fall_through
 
     case TK_AGG_FUNCTION:
     case TK_COLUMN: {
@@ -803,6 +803,7 @@ static int selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr){
         p->pSub = sqlite3ExprListAppend(pParse, p->pSub, pDup);
       }
       if( p->pSub ){
+        int f = pExpr->flags & EP_Collate;
         assert( ExprHasProperty(pExpr, EP_Static)==0 );
         ExprSetProperty(pExpr, EP_Static);
         sqlite3ExprDelete(pParse->db, pExpr);
@@ -813,6 +814,7 @@ static int selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr){
         pExpr->iColumn = (iCol<0 ? p->pSub->nExpr-1: iCol);
         pExpr->iTable = p->pWin->iEphCsr;
         pExpr->y.pTab = p->pTab;
+        pExpr->flags = f;
       }
       if( pParse->db->mallocFailed ) return WRC_Abort;
       break;
@@ -953,7 +955,7 @@ int sqlite3WindowRewrite(Parse *pParse, Select *p){
     ExprList *pSort = 0;
 
     ExprList *pSublist = 0;       /* Expression list for sub-query */
-    Window *pMWin = p->pWin;      /* Master window object */
+    Window *pMWin = p->pWin;      /* Main window object */
     Window *pWin;                 /* Window object iterator */
     Table *pTab;
     Walker w;
@@ -1043,6 +1045,9 @@ int sqlite3WindowRewrite(Parse *pParse, Select *p){
     pSub = sqlite3SelectNew(
         pParse, pSublist, pSrc, pWhere, pGroupBy, pHaving, pSort, 0, 0
     );
+    SELECTTRACE(1,pParse,pSub,
+       ("New window-function subquery in FROM clause of (%u/%p)\n",
+       p->selId, p));
     p->pSrc = sqlite3SrcListAppend(pParse, 0, 0, 0);
     if( p->pSrc ){
       Table *pTab2;
@@ -1079,7 +1084,6 @@ int sqlite3WindowRewrite(Parse *pParse, Select *p){
       assert( pParse->db->mallocFailed );
       sqlite3ErrorToParser(pParse->db, SQLITE_NOMEM);
     }
-    sqlite3SelectReset(pParse, p);
   }
   return rc;
 }
