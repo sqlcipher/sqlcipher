@@ -1026,7 +1026,6 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   int saved_nChange = db->nChange;      /* Saved value of db->nChange */
   int saved_nTotalChange = db->nTotalChange; /* Saved value of db->nTotalChange */
   u8 saved_mTrace = db->mTrace;        /* Saved value of db->mTrace */
-  int (*saved_xTrace)(u32,void*,void*,void*) = db->xTrace; /* Saved db->xTrace */
   int rc = SQLITE_OK;     /* Return code from service routines */
   char *zSql = NULL;         /* SQL statements */
   char *pzErrMsg = NULL;
@@ -1053,7 +1052,6 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
   db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks; 
   db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum;
   db->flags &= ~(u64)(SQLITE_ForeignKeys | SQLITE_ReverseOrder | SQLITE_Defensive | SQLITE_CountRows); 
-  db->xTrace = 0;
   db->mTrace = 0;
 
   /* Query the schema of the main database. Create a mirror schema
@@ -1133,7 +1131,6 @@ end_of_export:
   db->mDbFlags = saved_mDbFlags;
   db->nChange = saved_nChange;
   db->nTotalChange = saved_nTotalChange;
-  db->xTrace = saved_xTrace;
   db->mTrace = saved_mTrace;
 
   if(zSql) sqlite3_free(zSql);
