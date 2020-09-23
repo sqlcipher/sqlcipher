@@ -40,6 +40,14 @@ source $testdir/sqlcipher.tcl
 
 set hexkeyspec "\"x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648101010101010101010101010101010101'\""
 
+# verify default plaintext header size is 0
+do_test test-default-plaintext-header-size {
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA cipher_default_plaintext_header_size;
+  }
+} {0}
+
 # verify pragma cipher_salt returns the first 16 bytes 
 # of an existing database
 do_test test-pragma-salt-get {
