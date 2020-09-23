@@ -1,4 +1,4 @@
-/* 
+/*
 ** SQLCipher
 ** http://sqlcipher.net
 ** 
@@ -318,7 +318,6 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     } else {
       char *size = sqlite3_mprintf("%d", sqlcipher_get_default_plaintext_header_size());
       codec_vdbe_return_string(pParse, "cipher_default_plaintext_header_size", size, P4_DYNAMIC);
-      sqlite3_free(size);
     }
   }else
   if( sqlite3StrICmp(zLeft,"cipher_salt")==0 ){
