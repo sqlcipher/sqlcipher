@@ -214,6 +214,17 @@ do_test verify-cipher-store-pass-before-key-does-not-segfault {
 db close
 file delete -force test.db
 
+# verify setting cipher_store_pass results in deprecation warning
+do_test verify-cipher-store-pass-deprecated {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_store_pass = 1;
+    }
+} {ok {PRAGMA cipher_store_pass is deprecated, please remove from use}}
+db close
+file delete -force test.db
+
 # verify the pragma cipher
 # reports the default value
 if_built_with_openssl verify-pragma-cipher-default {

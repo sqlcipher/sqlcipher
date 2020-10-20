@@ -119,7 +119,10 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   } else
   if( sqlite3StrICmp(zLeft, "cipher_store_pass")==0 && zRight ) {
     if(ctx) {
+      char *deprecation = "PRAGMA cipher_store_pass is deprecated, please remove from use";
       sqlcipher_codec_set_store_pass(ctx, sqlite3GetBoolean(zRight, 1));
+      codec_vdbe_return_string(pParse, "cipher_store_pass", deprecation, P4_TRANSIENT);
+      sqlite3_log(SQLITE_WARNING, deprecation);
     }
   } else
   if( sqlite3StrICmp(zLeft, "cipher_store_pass")==0 && !zRight ) {
