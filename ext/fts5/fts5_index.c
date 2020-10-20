@@ -2321,11 +2321,11 @@ static void fts5LeafSeek(
   }
 
  search_success:
-  pIter->iLeafOffset = iOff + nNew;
-  if( pIter->iLeafOffset>n || nNew<1 ){
+  if( (i64)iOff+nNew>n || nNew<1 ){
     p->rc = FTS5_CORRUPT;
     return;
   }
+  pIter->iLeafOffset = iOff + nNew;
   pIter->iTermLeafOffset = pIter->iLeafOffset;
   pIter->iTermLeafPgno = pIter->iLeafPgno;
 
@@ -5732,8 +5732,8 @@ static int fts5QueryCksum(
 ** contain valid utf-8, return non-zero.
 */
 static int fts5TestUtf8(const char *z, int n){
-  assert_nc( n>0 );
   int i = 0;
+  assert_nc( n>0 );
   while( i<n ){
     if( (z[i] & 0x80)==0x00 ){
       i++;

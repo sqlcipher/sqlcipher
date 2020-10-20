@@ -2507,7 +2507,7 @@ proc test_efkey_6 {tn zAlter isError} {
   drop_all_tables 
 
   do_test e_fkey-56.$tn.1 "
-    execsql { CREATE TABLE tbl(a, b) }
+    execsql { CREATE TABLE tbl(a, b); INSERT INTO tbl VALUES(1, 2); }
     [list catchsql $zAlter]
   " [lindex {{0 {}} {1 {Cannot add a REFERENCES column with non-NULL default value}}} $isError]
 
@@ -2528,8 +2528,8 @@ test_efkey_6 3 "ALTER TABLE tbl ADD COLUMN c DEFAULT 0 REFERENCES xx" 1
 #
 # Test that these adjustments are visible in the sqlite_master table.
 #
-# EVIDENCE-OF: R-63827-54774 The text of the child CREATE TABLE
-# statement or statements stored in the sqlite_master table are modified
+# EVIDENCE-OF: R-43040-62530 The text of the child CREATE TABLE
+# statement or statements stored in the sqlite_schema table are modified
 # to reflect the new parent table name.
 #
 do_test e_fkey-56.1 {
@@ -2771,7 +2771,7 @@ do_test e_fkey-60.6 {
 #
 do_test e_fkey-61.1.1 {
   drop_all_tables
-  execsql { CREATE TABLE t1(a, b) }
+  execsql { CREATE TABLE t1(a, b) ; INSERT INTO t1 VALUES(1, 2) }
   catchsql { ALTER TABLE t1 ADD COLUMN c DEFAULT 'xxx' REFERENCES t2 }
 } {1 {Cannot add a REFERENCES column with non-NULL default value}}
 do_test e_fkey-61.1.2 {

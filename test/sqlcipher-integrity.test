@@ -63,7 +63,7 @@ do_test hmac-tamper-resistence-first-page {
 
   # write some junk into the hmac segment, leaving
   # the page data valid but with an invalid signature
-  hexio_write test.db 1000 0000
+  hexio_write test.db 1000 000000
 
   sqlite_orig db test.db
 
@@ -102,7 +102,7 @@ do_test nohmac-not-tamper-resistent {
   db close
 
   # write some junk into the middle of the page
-  hexio_write test.db 2560 00
+  hexio_write test.db 2560 000000
 
   sqlite_orig db test.db
 
@@ -142,7 +142,7 @@ do_test hmac-tamper-resistence {
 
   # write some junk into the hmac segment, leaving
   # the page data valid but with an invalid signature
-  hexio_write test.db 16500 0000
+  hexio_write test.db 16500 000000
 
   sqlite_orig db test.db
 
@@ -198,8 +198,8 @@ file delete -force test.db
 # try cipher_integrity_check on a corrupted version 2 database
 do_test version-2-integrity-check-invalid {
   file copy -force $sampleDir/sqlcipher-2.0-le-testkey.db test.db
-  hexio_write test.db 8202 00
-  hexio_write test.db 10250 00
+  hexio_write test.db 8202 000000
+  hexio_write test.db 10250 000000
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -226,8 +226,8 @@ file delete -force test.db
 # try cipher_integrity_check on a corrupted version 3 database
 do_test version-3-integrity-check-invalid {
   file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
-  hexio_write test.db 8202 00
-  hexio_write test.db 10250 00
+  hexio_write test.db 8202 000000
+  hexio_write test.db 10250 000000
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -254,11 +254,11 @@ file delete -force test.db
 do_test version-4-integrity-check-invalid {
   file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
   # corrupt page data 
-  hexio_write test.db 5120 00 
+  hexio_write test.db 5120 000000
   # corrupt iv 
-  hexio_write test.db 12208 00 
+  hexio_write test.db 12208 000000 
   # corrupt the mac segment 
-  hexio_write test.db 16320 00 
+  hexio_write test.db 16320 000000
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -271,7 +271,7 @@ file delete -force test.db
 # try cipher_integrity_check on a corrupted version 4 database
 do_test version-4-integrity-check-invalid-last-page {
   file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
-  hexio_write test.db 978944 0000 
+  hexio_write test.db 978944 0000
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -299,8 +299,8 @@ do_test integrity-check-plaintext-header {
 
   lappend rc [string equal [hexio_read test.db 16 5] "1000010150"]
   
-  hexio_write test.db 120 00 
-  hexio_write test.db 5120 00 
+  hexio_write test.db 120 000000
+  hexio_write test.db 5120 000000
 
   lappend rc [execsql {
     PRAGMA cipher_integrity_check;

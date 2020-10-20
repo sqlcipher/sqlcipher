@@ -422,6 +422,7 @@ int sqlite3GetToken(const unsigned char *z, int *tokenType){
       }
       /* If the next character is a digit, this is a floating point
       ** number that begins with ".".  Fall thru into the next case */
+      /* no break */ deliberate_fall_through
     }
     case CC_DIGIT: {
       testcase( z[0]=='0' );  testcase( z[0]=='1' );  testcase( z[0]=='2' );
@@ -526,6 +527,7 @@ int sqlite3GetToken(const unsigned char *z, int *tokenType){
 #endif
       /* If it is not a BLOB literal, then it must be an ID, since no
       ** SQL keywords start with the letter 'x'.  Fall through */
+      /* no break */ deliberate_fall_through
     }
     case CC_ID: {
       i = 1;
@@ -568,7 +570,7 @@ int sqlite3RunParser(Parse *pParse, const char *zSql, char **pzErrMsg){
   assert( zSql!=0 );
   mxSqlLen = db->aLimit[SQLITE_LIMIT_SQL_LENGTH];
   if( db->nVdbeActive==0 ){
-    db->u1.isInterrupted = 0;
+    AtomicStore(&db->u1.isInterrupted, 0);
   }
   pParse->rc = SQLITE_OK;
   pParse->zTail = zSql;
@@ -613,7 +615,7 @@ int sqlite3RunParser(Parse *pParse, const char *zSql, char **pzErrMsg){
     if( tokenType>=TK_SPACE ){
       assert( tokenType==TK_SPACE || tokenType==TK_ILLEGAL );
 #endif /* SQLITE_OMIT_WINDOWFUNC */
-      if( db->u1.isInterrupted ){
+      if( AtomicLoad(&db->u1.isInterrupted) ){
         pParse->rc = SQLITE_INTERRUPT;
         break;
       }

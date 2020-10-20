@@ -515,7 +515,7 @@ static int osLocaltime(time_t *t, struct tm *pTm){
 #if !HAVE_LOCALTIME_R && !HAVE_LOCALTIME_S
   struct tm *pX;
 #if SQLITE_THREADSAFE>0
-  sqlite3_mutex *mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
+  sqlite3_mutex *mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN);
 #endif
   sqlite3_mutex_enter(mutex);
   pX = localtime(t);
@@ -621,12 +621,12 @@ static const struct {
   double rLimit;      /* Maximum NNN value for this transform */
   double rXform;      /* Constant used for this transform */
 } aXformType[] = {
-  { 0, 6, "second", 464269060800.0, 86400000.0/(24.0*60.0*60.0) },
-  { 0, 6, "minute", 7737817680.0,   86400000.0/(24.0*60.0)      },
-  { 0, 4, "hour",   128963628.0,    86400000.0/24.0             },
-  { 0, 3, "day",    5373485.0,      86400000.0                  },
-  { 1, 5, "month",  176546.0,       30.0*86400000.0             },
-  { 2, 4, "year",   14713.0,        365.0*86400000.0            },
+  { 0, 6, "second", 464269060800.0, 1000.0         },
+  { 0, 6, "minute", 7737817680.0,   60000.0        },
+  { 0, 4, "hour",   128963628.0,    3600000.0      },
+  { 0, 3, "day",    5373485.0,      86400000.0     },
+  { 1, 5, "month",  176546.0,       2592000000.0   },
+  { 2, 4, "year",   14713.0,        31536000000.0  },
 };
 
 /*
@@ -1112,8 +1112,8 @@ static void strftimeFunc(
         case 'm':  sqlite3_snprintf(3, &z[j],"%02d",x.M); j+=2; break;
         case 'M':  sqlite3_snprintf(3, &z[j],"%02d",x.m); j+=2; break;
         case 's': {
-          sqlite3_snprintf(30,&z[j],"%lld",
-                           (i64)(x.iJD/1000 - 21086676*(i64)10000));
+          i64 iS = (i64)(x.iJD/1000 - 21086676*(i64)10000);
+          sqlite3Int64ToText(iS, &z[j]);
           j += sqlite3Strlen30(&z[j]);
           break;
         }
@@ -1211,10 +1211,10 @@ static void currentTimeFunc(
 #if HAVE_GMTIME_R
   pTm = gmtime_r(&t, &sNow);
 #else
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN));
   pTm = gmtime(&t);
   if( pTm ) memcpy(&sNow, pTm, sizeof(sNow));
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER));
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN));
 #endif
   if( pTm ){
     strftime(zBuf, 20, zFormat, &sNow);

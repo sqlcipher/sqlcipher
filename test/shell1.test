@@ -199,10 +199,10 @@ do_test shell1-2.2.4 {
 } {0 {}}
 do_test shell1-2.2.5 {
   catchcmd "test.db" ".mode \"insert FOO"
-} {1 {Error: mode should be one of: ascii column csv html insert line list quote tabs tcl}}
+} {1 {Error: mode should be one of: ascii box column csv html insert json line list markdown quote table tabs tcl}}
 do_test shell1-2.2.6 {
   catchcmd "test.db" ".mode \'insert FOO"
-} {1 {Error: mode should be one of: ascii column csv html insert line list quote tabs tcl}}
+} {1 {Error: mode should be one of: ascii box column csv html insert json line list markdown quote table tabs tcl}}
 
 # check multiple tokens, and quoted tokens
 do_test shell1-2.3.1 {
@@ -230,7 +230,7 @@ do_test shell1-2.3.7 {
 # check quoted args are unquoted
 do_test shell1-2.4.1 {
   catchcmd "test.db" ".mode FOO"
-} {1 {Error: mode should be one of: ascii column csv html insert line list quote tabs tcl}}
+} {1 {Error: mode should be one of: ascii box column csv html insert json line list markdown quote table tabs tcl}}
 do_test shell1-2.4.2 {
   catchcmd "test.db" ".mode csv"
 } {0 {}}
@@ -297,10 +297,11 @@ do_test shell1-3.4.2 {
   list [regexp {BEGIN TRANSACTION;} $res] \
        [regexp {COMMIT;} $res]
 } {1 1}
-do_test shell1-3.4.3 {
-  # too many arguments
-  catchcmd "test.db" ".dump FOO BAD"
-} {1 {Usage: .dump ?--preserve-rowids? ?--newlines? ?LIKE-PATTERN?}}
+# The .dump command now accepts multiple arguments
+#do_test shell1-3.4.3 {
+#  # too many arguments
+#  catchcmd "test.db" ".dump FOO BAD"
+#} {1 {Usage: .dump ?--preserve-rowids? ?--newlines? ?LIKE-PATTERN?}}
 
 # .echo ON|OFF           Turn command echo on or off
 do_test shell1-3.5.1 {
@@ -388,17 +389,14 @@ do_test shell1-3.10.2 {
 # .import FILE TABLE     Import data from FILE into TABLE
 do_test shell1-3.11.1 {
   catchcmd "test.db" ".import"
-} {1 {Usage: .import FILE TABLE}}
+} {/1 .ERROR: missing FILE argument.*/}
 do_test shell1-3.11.2 {
   catchcmd "test.db" ".import FOO"
-} {1 {Usage: .import FILE TABLE}}
-#do_test shell1-3.11.2 {
-#  catchcmd "test.db" ".import FOO BAR"
-#} {1 {Error: no such table: BAR}}
+} {/1 .ERROR: missing TABLE argument.*/}
 do_test shell1-3.11.3 {
   # too many arguments
   catchcmd "test.db" ".import FOO BAR BAD"
-} {1 {Usage: .import FILE TABLE}}
+} {/1 .ERROR: extra argument: "BAD".*./}
 
 # .indexes ?TABLE?       Show names of all indexes
 #                          If TABLE specified, only show indexes for tables
@@ -432,7 +430,7 @@ do_test shell1-3.13.1 {
 } {0 {current output mode: list}}
 do_test shell1-3.13.2 {
   catchcmd "test.db" ".mode FOO"
-} {1 {Error: mode should be one of: ascii column csv html insert line list quote tabs tcl}}
+} {1 {Error: mode should be one of: ascii box column csv html insert json line list markdown quote table tabs tcl}}
 do_test shell1-3.13.3 {
   catchcmd "test.db" ".mode csv"
 } {0 {}}
@@ -465,10 +463,10 @@ do_test shell1-3.13.11 {
 # don't allow partial mode type matches
 do_test shell1-3.13.12 {
   catchcmd "test.db" ".mode l"
-} {1 {Error: mode should be one of: ascii column csv html insert line list quote tabs tcl}}
+} {1 {Error: mode should be one of: ascii box column csv html insert json line list markdown quote table tabs tcl}}
 do_test shell1-3.13.13 {
   catchcmd "test.db" ".mode li"
-} {1 {Error: mode should be one of: ascii column csv html insert line list quote tabs tcl}}
+} {1 {Error: mode should be one of: ascii box column csv html insert json line list markdown quote table tabs tcl}}
 do_test shell1-3.13.14 {
   catchcmd "test.db" ".mode lin"
 } {0 {}}
@@ -495,7 +493,14 @@ do_test shell1-3.15.2 {
 do_test shell1-3.15.3 {
   # too many arguments
   catchcmd "test.db" ".output FOO BAD"
-} {1 {Usage: .output [-e|-x|FILE]}}
+} {1 {ERROR: extra parameter: "BAD".  Usage:
+.output ?FILE?           Send output to FILE or stdout if FILE is omitted
+   If FILE begins with '|' then open it as a pipe.
+   Options:
+     --bom                 Prefix output with a UTF8 byte-order mark
+     -e                    Send output to the system text editor
+     -x                    Send output as CSV to a spreadsheet
+child process exited abnormally}}
 
 # .output stdout         Send output to the screen
 do_test shell1-3.16.1 {
@@ -504,7 +509,14 @@ do_test shell1-3.16.1 {
 do_test shell1-3.16.2 {
   # too many arguments
   catchcmd "test.db" ".output stdout BAD"
-} {1 {Usage: .output [-e|-x|FILE]}}
+} {1 {ERROR: extra parameter: "BAD".  Usage:
+.output ?FILE?           Send output to FILE or stdout if FILE is omitted
+   If FILE begins with '|' then open it as a pipe.
+   Options:
+     --bom                 Prefix output with a UTF8 byte-order mark
+     -e                    Send output to the system text editor
+     -x                    Send output as CSV to a spreadsheet
+child process exited abnormally}}
 
 # .prompt MAIN CONTINUE  Replace the standard prompts
 do_test shell1-3.17.1 {
@@ -697,11 +709,11 @@ do_test shell1-3.26.4 {
   # this should be treated the same as a '1' width for col 1 and 2
 } {0 {}}
 do_test shell1-3.26.5 {
-  catchcmd "test.db" ".mode column\n.width 10 -10\nSELECT 'abcdefg', 123456;"
+  catchcmd "test.db" ".mode column\n.header off\n.width 10 -10\nSELECT 'abcdefg', 123456;"
   # this should be treated the same as a '1' width for col 1 and 2
 } {0 {abcdefg         123456}}
 do_test shell1-3.26.6 {
-  catchcmd "test.db" ".mode column\n.width -10 10\nSELECT 'abcdefg', 123456;"
+  catchcmd "test.db" ".mode column\n.header off\n.width -10 10\nSELECT 'abcdefg', 123456;"
   # this should be treated the same as a '1' width for col 1 and 2
 } {0 {   abcdefg  123456    }}
 
@@ -1153,5 +1165,58 @@ do_test shell1-7.1.7 {
 } {0 {CREATE TABLE ___ (x TEXT PRIMARY KEY);}}
 
 }
+
+# Test case for the ieee754 and decimal extensions in the shell.
+# See the "floatingpoint.html" file in the documentation for more
+# information.
+#
+do_test shell1-8.1 {
+  catchcmd ":memory:" {
+    -- The pow2 table will hold all the necessary powers of two.
+    CREATE TABLE pow2(x INTEGER PRIMARY KEY, v TEXT);
+    WITH RECURSIVE c(x,v) AS (
+      VALUES(0,'1')
+      UNION ALL
+      SELECT x+1, decimal_mul(v,'2') FROM c WHERE x+1<=971
+    ) INSERT INTO pow2(x,v) SELECT x, v FROM c;
+    WITH RECURSIVE c(x,v) AS (
+      VALUES(-1,'0.5')
+      UNION ALL
+      SELECT x-1, decimal_mul(v,'0.5') FROM c WHERE x-1>=-1075
+    ) INSERT INTO pow2(x,v) SELECT x, v FROM c;
+    
+    -- This query finds the decimal representation of each value in the "c" table.
+    WITH c(n) AS (VALUES(47.49))
+                     ----XXXXX----------- Replace with whatever you want
+    SELECT decimal_mul(ieee754_mantissa(c.n),pow2.v)
+      FROM pow2, c WHERE pow2.x=ieee754_exponent(c.n);
+  }
+} {0 47.49000000000000198951966012828052043914794921875}
+do_test shell1-8.2 {
+  catchcmd :memory: {
+.mode box
+SELECT ieee754(47.49) AS x;
+  }
+} {0 {┌───────────────────────────────┐
+│               x               │
+├───────────────────────────────┤
+│ ieee754(6683623321994527,-47) │
+└───────────────────────────────┘}}
+do_test shell1-8.3 {
+  catchcmd ":memory: --box" {
+    select ieee754(6683623321994527,-47) as x;
+  }
+} {0 {┌───────┐
+│   x   │
+├───────┤
+│ 47.49 │
+└───────┘}}
+do_test shell1-8.4 {
+  catchcmd ":memory: --table" {SELECT ieee754_mantissa(47.49) AS M, ieee754_exponent(47.49) AS E;}
+} {0 {+------------------+-----+
+|        M         |  E  |
++------------------+-----+
+| 6683623321994527 | -47 |
++------------------+-----+}}
 
 finish_test

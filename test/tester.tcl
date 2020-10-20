@@ -129,6 +129,7 @@ if {[info command sqlite_orig]==""} {
         set ::dbhandle [lindex $args 0]
         uplevel #0 $::G(perm:dbconfig)
       }
+      [lindex $args 0] cache size 3
       set res
     } else {
       # This command is not opening a new database connection. Pass the
@@ -782,6 +783,9 @@ proc do_test {name cmd expected} {
       output2 "\nError: $result"
       fail_test $name
     } else {
+      if {[permutation]=="maindbname"} {
+        set result [string map [list [string tolower ICECUBE] main] $result]
+      }
       if {[regexp {^[~#]?/.*/$} $expected]} {
         # "expected" is of the form "/PATTERN/" then the result if correct if
         # regular expression PATTERN matches the result.  "~/PATTERN/" means
@@ -2475,6 +2479,7 @@ set sqlite_fts3_enable_parentheses 0
 # this setting by invoking "database_can_be_corrupt"
 #
 database_never_corrupt
+extra_schema_checks 1
 
 source $testdir/thread_common.tcl
 source $testdir/malloc_common.tcl

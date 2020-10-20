@@ -46,7 +46,7 @@ do_test verify-pragma-cipher-version {
     execsql {
         PRAGMA cipher_version;
     }
-} {{4.4.0 community}}
+} {{4.4.1 community}}
 db close
 file delete -force test.db
 
@@ -211,6 +211,17 @@ do_test verify-cipher-store-pass-before-key-does-not-segfault {
         PRAGMA key = 'test';
     }
 } {ok}
+db close
+file delete -force test.db
+
+# verify setting cipher_store_pass results in deprecation warning
+do_test verify-cipher-store-pass-deprecated {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = 'test';
+        PRAGMA cipher_store_pass = 1;
+    }
+} {ok {PRAGMA cipher_store_pass is deprecated, please remove from use}}
 db close
 file delete -force test.db
 

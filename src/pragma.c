@@ -570,7 +570,7 @@ void sqlite3Pragma(
       ** buffer that the pager module resizes using sqlite3_realloc().
       */
       db->nextPagesize = sqlite3Atoi(zRight);
-      if( SQLITE_NOMEM==sqlite3BtreeSetPageSize(pBt, db->nextPagesize,-1,0) ){
+      if( SQLITE_NOMEM==sqlite3BtreeSetPageSize(pBt, db->nextPagesize,0,0) ){
         sqlite3OomFault(db);
       }
     }
@@ -626,13 +626,19 @@ void sqlite3Pragma(
   */
   case PragTyp_PAGE_COUNT: {
     int iReg;
+    i64 x = 0;
     sqlite3CodeVerifySchema(pParse, iDb);
     iReg = ++pParse->nMem;
     if( sqlite3Tolower(zLeft[0])=='p' ){
       sqlite3VdbeAddOp2(v, OP_Pagecount, iDb, iReg);
     }else{
-      sqlite3VdbeAddOp3(v, OP_MaxPgcnt, iDb, iReg, 
-                        sqlite3AbsInt32(sqlite3Atoi(zRight)));
+      if( zRight && sqlite3DecOrHexToI64(zRight,&x)==0 ){
+        if( x<0 ) x = 0;
+        else if( x>0xfffffffe ) x = 0xfffffffe;
+      }else{
+        x = 0;
+      }
+      sqlite3VdbeAddOp3(v, OP_MaxPgcnt, iDb, iReg, (int)x);
     }
     sqlite3VdbeAddOp2(v, OP_ResultRow, iReg, 1);
     break;
@@ -1153,15 +1159,14 @@ void sqlite3Pragma(
   */
   case PragTyp_TABLE_INFO: if( zRight ){
     Table *pTab;
+    sqlite3CodeVerifyNamedSchema(pParse, zDb);
     pTab = sqlite3LocateTable(pParse, LOCATE_NOERR, zRight, zDb);
     if( pTab ){
-      int iTabDb = sqlite3SchemaToIndex(db, pTab->pSchema);
       int i, k;
       int nHidden = 0;
       Column *pCol;
       Index *pPk = sqlite3PrimaryKeyIndex(pTab);
       pParse->nMem = 7;
-      sqlite3CodeVerifySchema(pParse, iTabDb);
       sqlite3ViewGetColumnNames(pParse, pTab);
       for(i=0, pCol=pTab->aCol; i<pTab->nCol; i++, pCol++){
         int isHidden = 0;
@@ -1418,7 +1423,6 @@ void sqlite3Pragma(
     regRow = ++pParse->nMem;
     k = sqliteHashFirst(&db->aDb[iDb].pSchema->tblHash);
     while( k ){
-      int iTabDb;
       if( zRight ){
         pTab = sqlite3LocateTable(pParse, 0, zRight, zDb);
         k = 0;
@@ -1427,23 +1431,24 @@ void sqlite3Pragma(
         k = sqliteHashNext(k);
       }
       if( pTab==0 || pTab->pFKey==0 ) continue;
-      iTabDb = sqlite3SchemaToIndex(db, pTab->pSchema);
-      sqlite3CodeVerifySchema(pParse, iTabDb);
-      sqlite3TableLock(pParse, iTabDb, pTab->tnum, 0, pTab->zName);
+      iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
+      zDb = db->aDb[iDb].zDbSName;
+      sqlite3CodeVerifySchema(pParse, iDb);
+      sqlite3TableLock(pParse, iDb, pTab->tnum, 0, pTab->zName);
       if( pTab->nCol+regRow>pParse->nMem ) pParse->nMem = pTab->nCol + regRow;
-      sqlite3OpenTable(pParse, 0, iTabDb, pTab, OP_OpenRead);
+      sqlite3OpenTable(pParse, 0, iDb, pTab, OP_OpenRead);
       sqlite3VdbeLoadString(v, regResult, pTab->zName);
       for(i=1, pFK=pTab->pFKey; pFK; i++, pFK=pFK->pNextFrom){
         pParent = sqlite3FindTable(db, pFK->zTo, zDb);
         if( pParent==0 ) continue;
         pIdx = 0;
-        sqlite3TableLock(pParse, iTabDb, pParent->tnum, 0, pParent->zName);
+        sqlite3TableLock(pParse, iDb, pParent->tnum, 0, pParent->zName);
         x = sqlite3FkLocateIndex(pParse, pParent, pFK, &pIdx, 0);
         if( x==0 ){
           if( pIdx==0 ){
-            sqlite3OpenTable(pParse, i, iTabDb, pParent, OP_OpenRead);
+            sqlite3OpenTable(pParse, i, iDb, pParent, OP_OpenRead);
           }else{
-            sqlite3VdbeAddOp3(v, OP_OpenRead, i, pIdx->tnum, iTabDb);
+            sqlite3VdbeAddOp3(v, OP_OpenRead, i, pIdx->tnum, iDb);
             sqlite3VdbeSetP4KeyInfo(pParse, pIdx);
           }
         }else{
@@ -1536,9 +1541,22 @@ void sqlite3Pragma(
   ** integrity_check designed to detect most database corruption
   ** without the overhead of cross-checking indexes.  Quick_check
   ** is linear time wherease integrity_check is O(NlogN).
+  **
+  ** The maximum nubmer of errors is 100 by default.  A different default
+  ** can be specified using a numeric parameter N.
+  **
+  ** Or, the parameter N can be the name of a table.  In that case, only
+  ** the one table named is verified.  The freelist is only verified if
+  ** the named table is "sqlite_schema" (or one of its aliases).
+  **
+  ** All schemas are checked by default.  To check just a single
+  ** schema, use the form:
+  **
+  **      PRAGMA schema.integrity_check;
   */
   case PragTyp_INTEGRITY_CHECK: {
     int i, j, addr, mxErr;
+    Table *pObjTab = 0;     /* Check only this one table, if not NULL */
 
     int isQuick = (sqlite3Tolower(zLeft[0])=='q');
 
@@ -1561,9 +1579,13 @@ void sqlite3Pragma(
     /* Set the maximum error count */
     mxErr = SQLITE_INTEGRITY_CHECK_ERROR_MAX;
     if( zRight ){
-      sqlite3GetInt32(zRight, &mxErr);
-      if( mxErr<=0 ){
-        mxErr = SQLITE_INTEGRITY_CHECK_ERROR_MAX;
+      if( sqlite3GetInt32(zRight, &mxErr) ){
+        if( mxErr<=0 ){
+          mxErr = SQLITE_INTEGRITY_CHECK_ERROR_MAX;
+        }
+      }else{
+        pObjTab = sqlite3LocateTable(pParse, 0, zRight,
+                      iDb>=0 ? db->aDb[iDb].zDbSName : 0);
       }
     }
     sqlite3VdbeAddOp2(v, OP_Integer, mxErr-1, 1); /* reg[1] holds errors left */
@@ -1592,15 +1614,21 @@ void sqlite3Pragma(
         Table *pTab = sqliteHashData(x);  /* Current table */
         Index *pIdx;                      /* An index on pTab */
         int nIdx;                         /* Number of indexes on pTab */
+        if( pObjTab && pObjTab!=pTab ) continue;
         if( HasRowid(pTab) ) cnt++;
         for(nIdx=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, nIdx++){ cnt++; }
         if( nIdx>mxIdx ) mxIdx = nIdx;
       }
+      if( cnt==0 ) continue;
+      if( pObjTab ) cnt++;
       aRoot = sqlite3DbMallocRawNN(db, sizeof(int)*(cnt+1));
       if( aRoot==0 ) break;
-      for(cnt=0, x=sqliteHashFirst(pTbls); x; x=sqliteHashNext(x)){
+      cnt = 0;
+      if( pObjTab ) aRoot[++cnt] = 0;
+      for(x=sqliteHashFirst(pTbls); x; x=sqliteHashNext(x)){
         Table *pTab = sqliteHashData(x);
         Index *pIdx;
+        if( pObjTab && pObjTab!=pTab ) continue;
         if( HasRowid(pTab) ) aRoot[++cnt] = pTab->tnum;
         for(pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext){
           aRoot[++cnt] = pIdx->tnum;
@@ -1634,6 +1662,7 @@ void sqlite3Pragma(
         int r1 = -1;
 
         if( pTab->tnum<1 ) continue;  /* Skip VIEWs or VIRTUAL TABLEs */
+        if( pObjTab && pObjTab!=pTab ) continue;
         pPk = HasRowid(pTab) ? 0 : sqlite3PrimaryKeyIndex(pTab);
         sqlite3OpenTableAndIndices(pParse, pTab, OP_OpenRead, 0,
                                    1, 0, &iDataCur, &iIdxCur);
@@ -1744,7 +1773,6 @@ void sqlite3Pragma(
         }
         sqlite3VdbeAddOp2(v, OP_Next, iDataCur, loopTop); VdbeCoverage(v);
         sqlite3VdbeJumpHere(v, loopTop-1);
-#ifndef SQLITE_OMIT_BTREECOUNT
         if( !isQuick ){
           sqlite3VdbeLoadString(v, 2, "wrong # of entries in index ");
           for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
@@ -1758,7 +1786,6 @@ void sqlite3Pragma(
             sqlite3VdbeJumpHere(v, addr);
           }
         }
-#endif /* SQLITE_OMIT_BTREECOUNT */
       } 
     }
     {
@@ -1839,21 +1866,12 @@ void sqlite3Pragma(
       ** will be overwritten when the schema is next loaded. If it does not
       ** already exists, it will be created to use the new encoding value.
       */
-      int canChangeEnc = 1;  /* True if allowed to change the encoding */
-      int i;                 /* For looping over all attached databases */
-      for(i=0; i<db->nDb; i++){
-        if( db->aDb[i].pBt!=0
-         && DbHasProperty(db,i,DB_SchemaLoaded)
-         && !DbHasProperty(db,i,DB_Empty)
-        ){
-          canChangeEnc = 0;
-        }
-      }
-      if( canChangeEnc ){
+      if( (db->mDbFlags & DBFLAG_EncodingFixed)==0 ){
         for(pEnc=&encnames[0]; pEnc->zName; pEnc++){
           if( 0==sqlite3StrICmp(zRight, pEnc->zName) ){
-            SCHEMA_ENC(db) = ENC(db) =
-                pEnc->enc ? pEnc->enc : SQLITE_UTF16NATIVE;
+            u8 enc = pEnc->enc ? pEnc->enc : SQLITE_UTF16NATIVE;
+            SCHEMA_ENC(db) = enc;
+            sqlite3SetTextEncoding(db, enc);
             break;
           }
         }
@@ -1916,6 +1934,7 @@ void sqlite3Pragma(
       aOp[1].p1 = iDb;
       aOp[1].p2 = iCookie;
       aOp[1].p3 = sqlite3Atoi(zRight);
+      aOp[1].p5 = 1;
     }else{
       /* Read the specified cookie value */
       static const VdbeOpList readCookie[] = {
@@ -2202,6 +2221,25 @@ void sqlite3Pragma(
     break;
   }
 
+  /*
+  **   PRAGMA analysis_limit
+  **   PRAGMA analysis_limit = N
+  **
+  ** Configure the maximum number of rows that ANALYZE will examine
+  ** in each index that it looks at.  Return the new limit.
+  */
+  case PragTyp_ANALYSIS_LIMIT: {
+    sqlite3_int64 N;
+    if( zRight
+     && sqlite3DecOrHexToI64(zRight, &N)==SQLITE_OK
+     && N>=0
+    ){
+      db->nAnalysisLimit = (int)(N&0x7fffffff);
+    }
+    returnSingleInt(v, db->nAnalysisLimit);
+    break;
+  }
+
 #if defined(SQLITE_DEBUG) || defined(SQLITE_TEST)
   /*
   ** Report the current state of file logs for all databases
@@ -2230,6 +2268,7 @@ void sqlite3Pragma(
   }
 #endif
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   /* Pragma        iArg
   ** ----------   ------
@@ -2271,18 +2310,12 @@ void sqlite3Pragma(
     break;
   }
 #endif
-#if defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
+/* END SQLCIPHER */
+#if defined(SQLITE_ENABLE_CEROD)
   case PragTyp_ACTIVATE_EXTENSIONS: if( zRight ){
-#ifdef SQLITE_HAS_CODEC
-    if( sqlite3StrNICmp(zRight, "see-", 4)==0 ){
-      sqlite3_activate_see(&zRight[4]);
-    }
-#endif
-#ifdef SQLITE_ENABLE_CEROD
     if( sqlite3StrNICmp(zRight, "cerod-", 6)==0 ){
       sqlite3_activate_cerod(&zRight[6]);
     }
-#endif
   }
   break;
 #endif

@@ -46,8 +46,8 @@ typedef struct PgHdr DbPage;
 ** Page number PAGER_MJ_PGNO is never used in an SQLite database (it is
 ** reserved for working around a windows/posix incompatibility). It is
 ** used in the journal to signify that the remainder of the journal file 
-** is devoted to storing a master journal name - there are no more pages to
-** roll back. See comments for function writeMasterJournal() in pager.c 
+** is devoted to storing a super-journal name - there are no more pages to
+** roll back. See comments for function writeSuperJournal() in pager.c 
 ** for details.
 */
 #define PAGER_MJ_PGNO(x) ((Pgno)((PENDING_BYTE/((x)->pageSize))+1))
@@ -128,10 +128,12 @@ int sqlite3PagerReadFileheader(Pager*, int, unsigned char*);
 /* Functions used to configure a Pager object. */
 void sqlite3PagerSetBusyHandler(Pager*, int(*)(void *), void *);
 int sqlite3PagerSetPagesize(Pager*, u32*, int);
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 void sqlite3PagerAlignReserve(Pager*,Pager*);
 #endif
-int sqlite3PagerMaxPageCount(Pager*, int);
+/* END SQLCIPHER */
+Pgno sqlite3PagerMaxPageCount(Pager*, Pgno);
 void sqlite3PagerSetCachesize(Pager*, int);
 int sqlite3PagerSetSpillsize(Pager*, int);
 void sqlite3PagerSetMmapLimit(Pager *, sqlite3_int64);
@@ -164,9 +166,9 @@ void *sqlite3PagerGetExtra(DbPage *);
 /* Functions used to manage pager transactions and savepoints. */
 void sqlite3PagerPagecount(Pager*, int*);
 int sqlite3PagerBegin(Pager*, int exFlag, int);
-int sqlite3PagerCommitPhaseOne(Pager*,const char *zMaster, int);
+int sqlite3PagerCommitPhaseOne(Pager*,const char *zSuper, int);
 int sqlite3PagerExclusiveLock(Pager*);
-int sqlite3PagerSync(Pager *pPager, const char *zMaster);
+int sqlite3PagerSync(Pager *pPager, const char *zSuper);
 int sqlite3PagerCommitPhaseTwo(Pager*);
 int sqlite3PagerRollback(Pager*);
 int sqlite3PagerOpenSavepoint(Pager *pPager, int n);
@@ -180,12 +182,20 @@ int sqlite3PagerSharedLock(Pager *pPager);
   int sqlite3PagerOpenWal(Pager *pPager, int *pisOpen);
   int sqlite3PagerCloseWal(Pager *pPager, sqlite3*);
 # ifdef SQLITE_ENABLE_SNAPSHOT
-  int sqlite3PagerSnapshotGet(Pager *pPager, sqlite3_snapshot **ppSnapshot);
-  int sqlite3PagerSnapshotOpen(Pager *pPager, sqlite3_snapshot *pSnapshot);
+  int sqlite3PagerSnapshotGet(Pager*, sqlite3_snapshot **ppSnapshot);
+  int sqlite3PagerSnapshotOpen(Pager*, sqlite3_snapshot *pSnapshot);
   int sqlite3PagerSnapshotRecover(Pager *pPager);
   int sqlite3PagerSnapshotCheck(Pager *pPager, sqlite3_snapshot *pSnapshot);
   void sqlite3PagerSnapshotUnlock(Pager *pPager);
 # endif
+#endif
+
+#if !defined(SQLITE_OMIT_WAL) && defined(SQLITE_ENABLE_SETLK_TIMEOUT)
+  int sqlite3PagerWalWriteLock(Pager*, int);
+  void sqlite3PagerWalDb(Pager*, sqlite3*);
+#else
+# define sqlite3PagerWalWriteLock(y,z) SQLITE_OK
+# define sqlite3PagerWalDb(x,y)
 #endif
 
 #ifdef SQLITE_DIRECT_OVERFLOW_READ
@@ -213,20 +223,17 @@ int sqlite3PagerIsMemdb(Pager*);
 void sqlite3PagerCacheStat(Pager *, int, int, int *);
 void sqlite3PagerClearCache(Pager*);
 int sqlite3SectorSize(sqlite3_file *);
-#ifdef SQLITE_ENABLE_SETLK_TIMEOUT
-void sqlite3PagerResetLockTimeout(Pager *pPager);
-#else
-# define sqlite3PagerResetLockTimeout(X)
-#endif
 
 /* Functions used to truncate the database file. */
 void sqlite3PagerTruncateImage(Pager*,Pgno);
 
 void sqlite3PagerRekey(DbPage*, Pgno, u16);
 
+/* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_WAL)
 void *sqlite3PagerCodec(DbPage *);
 #endif
+/* END SQLCIPHER */
 
 /* Functions to support testing and debugging. */
 #if !defined(NDEBUG) || defined(SQLITE_TEST)

@@ -42,6 +42,10 @@ SQLITE_EXTENSION_INIT1
 # define SMALLEST_INT64 (((sqlite3_int64)-1) - LARGEST_INT64)
 #endif
 
+#ifndef deliberate_fall_through
+# define deliberate_fall_through
+#endif
+
 /*
 ** Versions of isspace(), isalnum() and isdigit() to which it is safe
 ** to pass signed char values.
@@ -254,6 +258,7 @@ static int jsonGrow(JsonString *p, u32 N){
 /* Append N bytes from zIn onto the end of the JsonString string.
 */
 static void jsonAppendRaw(JsonString *p, const char *zIn, u32 N){
+  if( N==0 ) return;
   if( (N+p->nUsed >= p->nAlloc) && jsonGrow(p,N)!=0 ) return;
   memcpy(p->zBuf+p->nUsed, zIn, N);
   p->nUsed += N;
@@ -459,7 +464,7 @@ static void jsonRenderNode(
         jsonAppendString(pOut, pNode->u.zJContent, pNode->n);
         break;
       }
-      /* Fall through into the next case */
+      /* no break */ deliberate_fall_through
     }
     case JSON_REAL:
     case JSON_INT: {
@@ -600,7 +605,7 @@ static void jsonReturn(
       sqlite3_result_int64(pCtx, i);
       int_done:
       break;
-      int_as_real: /* fall through to real */;
+      int_as_real: i=0; /* no break */ deliberate_fall_through
     }
     case JSON_REAL: {
       double r;
@@ -2303,6 +2308,7 @@ static int jsonEachColumn(
       }
       /* For json_each() path and root are the same so fall through
       ** into the root case */
+      /* no break */ deliberate_fall_through
     }
     default: {
       const char *zRoot = p->zRoot;

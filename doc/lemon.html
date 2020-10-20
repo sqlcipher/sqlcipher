@@ -104,9 +104,13 @@ Write all output files into <i>directory</i>.  Normally, output files
 are written into the directory that contains the input grammar file.
 <li><b>-D<i>name</i></b>
 Define C preprocessor macro <i>name</i>.  This macro is usable by
-"<tt><a href='#pifdef'>%ifdef</a></tt>" and
-"<tt><a href='#pifdef'>%ifndef</a></tt>" lines
+"<tt><a href='#pifdef'>%ifdef</a></tt>",
+"<tt><a href='#pifdef'>%ifndef</a></tt>", and
+"<tt><a href="#pifdef">%if</a></tt> lines
 in the grammar file.
+<li><b>-E</b>
+Run the "%if" preprocessor step only and print the revised grammar
+file.
 <li><b>-g</b>
 Do not generate a parser.  Instead write the input grammar to standard
 output with all comments, actions, and other extraneous text removed.
@@ -123,7 +127,7 @@ Suppress generation of the report file.
 <li><b>-r</b>
 Do not sort or renumber the parser states as part of optimization.
 <li><b>-s</b>
-Show parser statistics before existing.
+Show parser statistics before exiting.
 <li><b>-T<i>file</i></b>
 Use <i>file</i> as the template for the generated C-code parser implementation.
 <li><b>-x</b>
@@ -488,7 +492,7 @@ is an error.</p>
 The precedence of a grammar rule is equal to the precedence of the
 left-most terminal symbol in the rule for which a precedence is
 defined.  This is normally what you want, but in those cases where
-you want to precedence of a grammar rule to be something different,
+you want the precedence of a grammar rule to be something different,
 you can specify an alternative precedence symbol by putting the
 symbol in square braces after the period at the end of the rule and
 before any C-code.  For example:</p>
@@ -555,9 +559,11 @@ other than that, the order of directives in Lemon is arbitrary.</p>
 <li><tt><a href='#default_destructor'>%default_destructor</a></tt>
 <li><tt><a href='#default_type'>%default_type</a></tt>
 <li><tt><a href='#destructor'>%destructor</a></tt>
+<li><tt><a href='#pifdef'>%else</a></tt>
 <li><tt><a href='#pifdef'>%endif</a></tt>
 <li><tt><a href='#extraarg'>%extra_argument</a></tt>
 <li><tt><a href='#pfallback'>%fallback</a></tt>
+<li><tt><a href='#pifdef'>%if</a></tt>
 <li><tt><a href='#pifdef'>%ifdef</a></tt>
 <li><tt><a href='#pifdef'>%ifndef</a></tt>
 <li><tt><a href='#pinclude'>%include</a></tt>
@@ -689,7 +695,7 @@ on Parse().
 <a name='extractx'></a>
 <h4>The <tt>%extra_context</tt> directive</h4>
 
-The <tt>%extra_context</tt> directive instructs Lemon to add a 2th parameter
+The <tt>%extra_context</tt> directive instructs Lemon to add a 2nd parameter
 to the parameter list of the ParseAlloc() and ParseInif() functions.  Lemon
 doesn't do anything itself with these extra argument, but it does
 store the value make it available to C-code action routines, destructors,
@@ -699,9 +705,9 @@ and so forth.  For example, if the grammar file contains:</p>
     %extra_context { MyStruct *pAbc }
 </pre></p>
 
-<p>Then the ParseAlloc() and ParseInit() functions will have an 2th parameter
+<p>Then the ParseAlloc() and ParseInit() functions will have an 2nd parameter
 of type "MyStruct*" and all action routines will have access to
-a variable named "pAbc" that is the value of that 2th parameter.</p>
+a variable named "pAbc" that is the value of that 2nd parameter.</p>
 
 <p>The <tt>%extra_argument</tt> directive works the same except that it
 is passed in on the Parse() routine instead of on ParseAlloc()/ParseInit().
@@ -737,10 +743,11 @@ arguments are tokens which fall back to the token identified by the first
 argument.</p>
 
 <a name='pifdef'></a>
-<h4>The <tt>%ifdef</tt>, <tt>%ifndef</tt>, and <tt>%endif</tt> directives</h4>
+<h4>The <tt>%if</tt> directive and its friends</h4>
 
-<p>The <tt>%ifdef</tt>, <tt>%ifndef</tt>, and <tt>%endif</tt> directives
-are similar to #ifdef, #ifndef, and #endif in the C-preprocessor,
+<p>The <tt>%if</tt>, <tt>%ifdef</tt>, <tt>%ifndef</tt>, <tt>%else</tt>,
+and <tt>%endif</tt> directives
+are similar to #if, #ifdef, #ifndef, #else, and #endif in the C-preprocessor,
 just not as general.
 Each of these directives must begin at the left margin.  No whitespace
 is allowed between the "%" and the directive name.</p>
@@ -749,12 +756,22 @@ is allowed between the "%" and the directive name.</p>
 "<tt>%endif</tt>" is
 ignored unless the "-DMACRO" command-line option is used.  Grammar text
 betwen "<tt>%ifndef MACRO</tt>" and the next nested "<tt>%endif</tt>" is
-included except when the "-DMACRO" command-line option is used.</p>
+included except when the "-DMACRO" command-line option is used.<p>
 
-<p>Note that the argument to <tt>%ifdef</tt> and <tt>%ifndef</tt> must
-be a single preprocessor symbol name, not a general expression.
-There is no "<tt>%else</tt>" directive.</p>
+<p>The text in between "<tt>%if</tt> <i>CONDITIONAL</i>" and its
+corresponding <tt>%endif</tt> is included only if <i>CONDITIONAL</i>
+is true.  The CONDITION is one or more macro names, optionally connected
+using the "||" and "&amp;&amp;" binary operators, the "!" unary operator,
+and grouped using balanced parentheses.  Each term is true if the
+corresponding macro exists, and false if it does not exist.</p>
 
+<p>An optional "<tt>%else</tt>" directive can occur anywhere in between a 
+<tt>%ifdef</tt>, <tt>%ifndef</tt>, or <tt>%if</tt> directive and
+its corresponding <tt>%endif</tt>.</p>
+
+<p>Note that the argument to <tt>%ifdef</tt> and <tt>%ifndef</tt> is
+intended to be a single preprocessor symbol name, not a general expression.
+Use the "<tt>%if</tt>" directive for general expressions.</p>
 
 <a name='pinclude'></a>
 <h4>The <tt>%include</tt> directive</h4>
@@ -996,7 +1013,7 @@ on the parser's stack associated with terminal and non-terminal
 symbols.  The values of all terminal symbols must be of the same
 type.  This turns out to be the same data type as the 3rd parameter
 to the Parse() function generated by Lemon.  Typically, you will
-make the value of a terminal symbol by a pointer to some kind of
+make the value of a terminal symbol be a pointer to some kind of
 token structure.  Like this:</p>
 
 <p><pre>

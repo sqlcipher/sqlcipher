@@ -658,7 +658,7 @@ static void fkScanChildren(
   /* Clean up the WHERE clause constructed above. */
   sqlite3ExprDelete(db, pWhere);
   if( iFkIfZero ){
-    sqlite3VdbeJumpHere(v, iFkIfZero);
+    sqlite3VdbeJumpHereOrPopInst(v, iFkIfZero);
   }
 }
 
@@ -1359,6 +1359,7 @@ static Trigger *fkActionTrigger(
           pStep->op = TK_DELETE; 
           break; 
         }
+        /* no break */ deliberate_fall_through
       default:
         pStep->op = TK_UPDATE;
     }
