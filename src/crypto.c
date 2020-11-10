@@ -714,6 +714,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
+        return NULL;
       }
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
@@ -739,6 +740,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
+        return NULL;
       }
       return buffer; /* return persistent buffer data, pData remains intact */
       break;

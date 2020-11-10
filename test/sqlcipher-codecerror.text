@@ -111,7 +111,7 @@ do_test codec-error-journal-wal {
   execsql {
     PRAGMA cipher_fail_next_encrypt = 0;
     PRAGMA key = 'testkey';
---    PRAGMA integrity_check;
+    PRAGMA integrity_check;
     PRAGMA cipher_integrity_check;
   }
 
