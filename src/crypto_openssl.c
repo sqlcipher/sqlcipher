@@ -234,7 +234,7 @@ static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int
   int tmp_csz, csz, rc = SQLITE_OK;
   EVP_CIPHER_CTX* ectx = EVP_CIPHER_CTX_new();
   if(ectx == NULL) goto error;
-  if(!EVP_CipherInit_ex(ectx, OPENSSL_CIPHER, NULL, NULL, NULL, mode)) goto error; 
+  if(!EVP_CipherInit_ex(ectx, OPENSSL_CIPHER, NULL, NULL, NULL, mode)) goto error;
   if(!EVP_CIPHER_CTX_set_padding(ectx, 0)) goto error; /* no padding */
   if(!EVP_CipherInit_ex(ectx, NULL, NULL, key, iv, mode)) goto error;
   if(!EVP_CipherUpdate(ectx, out, &tmp_csz, in, in_sz)) goto error;
