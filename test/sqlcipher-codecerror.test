@@ -141,4 +141,31 @@ do_test codec-error-journal-wal-transaction {
 db close
 file delete -force test.db
 
+do_test codec-error-journal-wal-read {
+  codec-test-setup
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_master;
+    PRAGMA cipher_fail_next_decrypt = 1;
+    UPDATE t1 SET b = 'fail' WHERE a = 5000;
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA cipher_fail_next_decrypt = 0;
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+    PRAGMA integrity_check;
+    SELECT b FROM t1 where a = 5000;
+  }
+
+} {ok ok {value 5000}}
+db close
+file delete -force test.db
+
 finish_test
