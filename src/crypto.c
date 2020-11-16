@@ -969,8 +969,6 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   }
 }
 
-#ifndef OMIT_EXPORT
-
 /*
  * Implementation of an "export" function that allows a caller
  * to duplicate the main database to an attached database. This is intended
@@ -1176,8 +1174,5 @@ end_of_export:
     }
   }
 }
-
-#endif
-
 /* END SQLCIPHER */
 #endif
