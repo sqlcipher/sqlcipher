@@ -11118,7 +11118,7 @@ int SQLITE_CDECL wmain(int argc, wchar_t **wargv){
 #else
       printf("%s %s\n", sqlite3_libversion(), sqlite3_sourceid());
 #endif
-/* BEGIN SQLCIPHER */
+/* END SQLCIPHER */
       return 0;
     }else if( strcmp(z,"-interactive")==0 ){
       stdin_is_interactive = 1;

@@ -1174,5 +1174,5 @@ end_of_export:
     }
   }
 }
-/* END SQLCIPHER */
 #endif
+/* END SQLCIPHER */
