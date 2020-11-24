@@ -3727,7 +3727,7 @@ static int SQLITE_TCLAPI DbMain(
   void *pKey = 0;
   int nKey = 0;
 #endif
-/* BEGIN SQLCIPHER */
+/* END SQLCIPHER */
   int rc;
 
   /* In normal use, each TCL interpreter runs in a single thread.  So

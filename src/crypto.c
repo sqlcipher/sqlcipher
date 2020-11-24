@@ -39,6 +39,11 @@
 #include "sqlcipher_ext.h"
 #endif
 
+#ifdef SQLCIPHER_TEST
+static int cipher_fail_next_encrypt = 0;
+static int cipher_fail_next_decrypt = 0;
+#endif
+
 /* Generate code to return a string value */
 static void codec_vdbe_return_string(Parse *pParse, const char *zLabel, const char *value, int value_type){
   Vdbe *v = sqlite3GetVdbe(pParse);
@@ -110,6 +115,24 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
         codec_vdbe_return_string(pParse, "cipher_license", license_result, P4_DYNAMIC);
       }
   } else
+#endif
+#ifdef SQLCIPHER_TEST
+  if( sqlite3StrICmp(zLeft,"cipher_fail_next_encrypt")==0 ){
+    if( zRight ) {
+      cipher_fail_next_encrypt = sqlite3GetBoolean(zRight,1);
+    } else {
+      char *fail = sqlite3_mprintf("%d", cipher_fail_next_encrypt);
+      codec_vdbe_return_string(pParse, "cipher_fail_next_encrypt", fail, P4_DYNAMIC);
+    }
+  }else
+  if( sqlite3StrICmp(zLeft,"cipher_fail_next_decrypt")==0 ){
+    if( zRight ) {
+      cipher_fail_next_decrypt = sqlite3GetBoolean(zRight,1);
+    } else {
+      char *fail = sqlite3_mprintf("%d", cipher_fail_next_decrypt);
+      codec_vdbe_return_string(pParse, "cipher_fail_next_decrypt", fail, P4_DYNAMIC);
+    }
+  }else
 #endif
   if( sqlite3StrICmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
     if(ctx) {
@@ -685,6 +708,9 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         memcpy(buffer, plaintext_header_sz ? pData : (void *) SQLITE_FILE_HEADER, offset); 
 
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
+#ifdef SQLCIPHER_TEST
+      if(cipher_fail_next_decrypt) rc = SQLITE_ERROR;
+#endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
@@ -707,9 +733,13 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         memcpy(buffer, plaintext_header_sz ? pData : kdf_salt, offset); 
       }
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
+#ifdef SQLCIPHER_TEST
+      if(cipher_fail_next_encrypt) rc = SQLITE_ERROR;
+#endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
+        return NULL;
       }
       return buffer; /* return persistent buffer data, pData remains intact */
       break;
@@ -939,8 +969,6 @@ void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   }
 }
 
-#ifndef OMIT_EXPORT
-
 /*
  * Implementation of an "export" function that allows a caller
  * to duplicate the main database to an attached database. This is intended
@@ -1146,8 +1174,5 @@ end_of_export:
     }
   }
 }
-
 #endif
-
 /* END SQLCIPHER */
-#endif

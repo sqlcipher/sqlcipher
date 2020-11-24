@@ -1,0 +1,171 @@
+# SQLCipher
+# codec.test developed by Stephen Lombardo (Zetetic LLC)
+# sjlombardo at zetetic dot net
+# http://zetetic.net
+#
+# Copyright (c) 2018, ZETETIC LLC
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the ZETETIC LLC nor the
+#       names of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# This file implements regression tests for SQLite library.  The
+# focus of this script is testing code cipher features.
+#
+# NOTE: tester.tcl has overridden the definition of sqlite3 to
+# automatically pass in a key value. Thus tests in this file
+# should explicitly close and open db with sqlite_orig in order
+# to bypass default key assignment.
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+source $testdir/sqlcipher.tcl
+
+proc codec-test-setup {} {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a INTEGER PRIMARY KEY,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=10000} {incr i} {
+    execsql "INSERT INTO t1(a,b) VALUES($i,'value $i');"
+  }
+
+  execsql {
+    COMMIT;
+  }
+
+  db close
+}
+
+
+do_test codec-error-journal-delete {
+  codec-test-setup
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_fail_next_encrypt = 1;
+    UPDATE t1 SET b = 'fail' WHERE a = 5000;
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA cipher_fail_next_encrypt = 0;
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+    PRAGMA integrity_check;
+    SELECT b FROM t1 where a = 5000;
+  }
+
+} {ok ok {value 5000}}
+db close
+file delete -force test.db
+
+do_test codec-error-journal-wal {
+  codec-test-setup
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_fail_next_encrypt = 1;
+    UPDATE t1 SET b = 'fail' WHERE a = 5000;
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA cipher_fail_next_encrypt = 0;
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+    PRAGMA integrity_check;
+    SELECT b FROM t1 where a = 5000;
+  }
+
+} {ok ok {value 5000}}
+db close
+file delete -force test.db
+
+do_test codec-error-journal-wal-transaction {
+  codec-test-setup
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    BEGIN;
+    UPDATE t1 SET b = 'success' WHERE a = 1;
+    PRAGMA cipher_fail_next_encrypt = 1;
+    UPDATE t1 SET b = 'fail' WHERE a = 5000;
+    COMMIT;
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA cipher_fail_next_encrypt = 0;
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+    PRAGMA integrity_check;
+    SELECT b FROM t1 where a = 1;
+    SELECT b FROM t1 where a = 5000;
+  }
+
+} {ok ok {value 1} {value 5000}}
+db close
+file delete -force test.db
+
+do_test codec-error-journal-wal-read {
+  codec-test-setup
+
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_master;
+    PRAGMA cipher_fail_next_decrypt = 1;
+    UPDATE t1 SET b = 'fail' WHERE a = 5000;
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA cipher_fail_next_decrypt = 0;
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+    PRAGMA integrity_check;
+    SELECT b FROM t1 where a = 5000;
+  }
+
+} {ok ok {value 5000}}
+db close
+file delete -force test.db
+
+finish_test
