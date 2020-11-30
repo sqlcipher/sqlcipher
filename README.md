@@ -62,9 +62,11 @@ The full SQLite test suite will not complete successfully when using SQLCipher. 
 
 As a result, the SQLCipher package includes it's own independent tests that exercise and verify the core functionality of the SQLCipher extensions. This test suite is intended to provide an abbreviated verification of SQLCipher's internal logic; it does not perform an exhaustive test of the SQLite database system as a whole or verify functionality on specific platforms. Because SQLCipher is based on stable upstream builds of SQLite, it is consider a basic assumption that the core SQLite library code is operating properly (the SQLite core is almost untouched in SQLCipher). Thus, the additional SQLCipher-specific test provide the requisite verification that the library is operating as expected with SQLCipher's security features enabled.
 
-To run SQLCipher specific tests, configure as described above and run the following to execute the tests and recieve a report of the results:
+To run SQLCipher specific tests, configure as described here and run the following to execute the tests and recieve a report of the results:
 
 ```
+	$ ./configure --enable-tempstore=yes --enable-fts CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
+		LDFLAGS="-lcrypto"
   $ make testfixture
   $ ./testfixture test/sqlcipher.test
 ```
