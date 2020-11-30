@@ -35,7 +35,7 @@ The SQLCipher team welcomes contributions to the core library. All contributions
 Building SQLCipher is similar to compiling a regular version of SQLite from source a couple small exceptions:  
 
  1. You *must* define `SQLITE_HAS_CODEC` and either `SQLITE_TEMP_STORE=2` or SQLITE_TEMP_STORE=3` 
- 2. You will need to link against a support cryptograpic provider (OpenSSL, LibTomCrypt, CommonCrypto/Security.framework, or NSS)
+ 2. You will need to link against a support cryptographic provider (OpenSSL, LibTomCrypt, CommonCrypto/Security.framework, or NSS)
  
 The following examples demonstrate linking against OpenSSL, which is a readily available provider on most Unix-like systems. 
 
@@ -62,7 +62,7 @@ The full SQLite test suite will not complete successfully when using SQLCipher. 
 
 As a result, the SQLCipher package includes it's own independent tests that exercise and verify the core functionality of the SQLCipher extensions. This test suite is intended to provide an abbreviated verification of SQLCipher's internal logic; it does not perform an exhaustive test of the SQLite database system as a whole or verify functionality on specific platforms. Because SQLCipher is based on stable upstream builds of SQLite, it is consider a basic assumption that the core SQLite library code is operating properly (the SQLite core is almost untouched in SQLCipher). Thus, the additional SQLCipher-specific test provide the requisite verification that the library is operating as expected with SQLCipher's security features enabled.
 
-To run SQLCipher specific tests, configure as described here and run the following to execute the tests and recieve a report of the results:
+To run SQLCipher specific tests, configure as described here and run the following to execute the tests and receive a report of the results:
 
 ```
 	$ ./configure --enable-tempstore=yes --enable-fts5 CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
