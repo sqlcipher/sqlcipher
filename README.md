@@ -65,7 +65,7 @@ As a result, the SQLCipher package includes it's own independent tests that exer
 To run SQLCipher specific tests, configure as described here and run the following to execute the tests and recieve a report of the results:
 
 ```
-	$ ./configure --enable-tempstore=yes --enable-fts CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
+	$ ./configure --enable-tempstore=yes --enable-fts5 CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
 		LDFLAGS="-lcrypto"
   $ make testfixture
   $ ./testfixture test/sqlcipher.test
