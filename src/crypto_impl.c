@@ -665,6 +665,7 @@ int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size) {
     ctx->plaintext_header_sz = size;
     return SQLITE_OK;
   }
+  ctx->plaintext_header_sz = -1;
   return SQLITE_ERROR;
 } 
 

@@ -183,7 +183,7 @@ do_test test-invalid-plaintext-header-sizes {
     PRAGMA cipher_plaintext_header_size = 24; 
     CREATE TABLE t1(a,b);
   "]
-} {{1 {SQL logic error}} {1 {SQL logic error}} {1 {SQL logic error}}}
+} {{1 {out of memory}} {1 {out of memory}} {1 {out of memory}}}
 db close
 file delete -force test.db
 

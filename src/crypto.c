@@ -330,8 +330,9 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if(ctx) {
       if( zRight ) {
         int size = atoi(zRight);
-        if((rc = sqlcipher_codec_ctx_set_plaintext_header_size(ctx, size)) != SQLITE_OK)
-          sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR); 
+        /* deliberately ignore result code, if size is invalid it will be set to -1
+           and trip the error later in the codec */
+        sqlcipher_codec_ctx_set_plaintext_header_size(ctx, size);
       } else {
         char *size = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_plaintext_header_size(ctx));
         codec_vdbe_return_string(pParse, "cipher_plaintext_header_size", size, P4_DYNAMIC);
@@ -695,6 +696,14 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
    sqlcipher_codec_ctx_set_error(ctx, rc); 
    return NULL;
+  }
+
+  /* if the plaintext_header_size is negative that means an invalid size was set via 
+     PRAGMA. We can't set the error state on the pager at that point because the pager
+     may not be open yet. However, this is a fatal error state, so abort the codec */
+  if(plaintext_header_sz < 0) {
+    sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+    return NULL;
   }
 
   if(pgno == 1) /* adjust starting pointers in data page for header offset on first page*/   
