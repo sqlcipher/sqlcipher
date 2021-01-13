@@ -1075,13 +1075,29 @@ void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **ar
     goto end_of_export;
   }
 
-  targetDb = (const char*) sqlite3_value_text(argv[0]);
-  sourceDb = (argc == 2) ? (char *) sqlite3_value_text(argv[1]) : "main";
+  if(sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+    rc = SQLITE_ERROR;
+    pzErrMsg = sqlite3_mprintf("target database can't be NULL");
+    goto end_of_export;
+  }
+
+  targetDb = (const char*) sqlite3_value_text(argv[0]); 
+  sourceDb = "main";
+
+  if(argc == 2) {
+    if(sqlite3_value_type(argv[1]) == SQLITE_NULL) {
+      rc = SQLITE_ERROR;
+      pzErrMsg = sqlite3_mprintf("target database can't be NULL");
+      goto end_of_export;
+    }
+    sourceDb = (char *) sqlite3_value_text(argv[1]);
+  }
+
 
   /* if the name of the target is not main, but the index returned is zero 
      there is a mismatch and we should not proceed */
   targetDb_idx =  sqlcipher_find_db_index(db, targetDb);
-  if(targetDb_idx == 0 && sqlite3StrICmp("main", targetDb) != 0) {
+  if(targetDb_idx == 0 && targetDb != NULL && sqlite3StrICmp("main", targetDb) != 0) {
     rc = SQLITE_ERROR;
     pzErrMsg = sqlite3_mprintf("unknown database %s", targetDb);
     goto end_of_export;

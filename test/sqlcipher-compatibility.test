@@ -444,6 +444,32 @@ do_test export-error {
 db close
 file delete -force test.db
 
+# verify sqlcipher_export with NULL parameters
+do_test export-nulls {
+  sqlite_orig db test.db
+
+  catchsql {
+    SELECT sqlcipher_export(NULL);
+  }
+
+} {1 {target database can't be NULL}}
+db close
+file delete -force test.db
+
+do_test export-nulls {
+  sqlite_orig db test.db
+
+  catchsql {
+    SELECT sqlcipher_export('main', NULL);
+  }
+
+} {1 {target database can't be NULL}}
+db close
+file delete -force test.db
+
+
+# use the sqlcipher_export function
+
 # use the sqlcipher_export function
 # to copy a complicated database. 
 # tests autoincrement fields,
