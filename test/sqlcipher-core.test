@@ -49,7 +49,7 @@ do_test will-open-with-correct-raw-key {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836481'";
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
     SELECT * from t1;
   }
 } {ok t1 test1 test2}
@@ -67,7 +67,7 @@ do_test will-open-with-correct-derived-key {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
     SELECT * from t1;
   }
 } {ok t1 test1 test2}
@@ -112,7 +112,7 @@ setup test.db "'testkey'"
 do_test wont-open-without-key {
   sqlite_orig db test.db
   catchsql {
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {1 {file is not a database}}
 db close
@@ -126,7 +126,7 @@ do_test wont-open-with-invalid-derived-key {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey2';
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {1 {file is not a database}}
 db close
@@ -140,7 +140,7 @@ do_test wont-open-with-invalid-raw-key {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = "x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C4836480'";
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {1 {file is not a database}}
 db close
@@ -525,7 +525,7 @@ do_test custom-pagesize-must-match {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey';
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {1 {file is not a database}}
 db close
@@ -575,21 +575,21 @@ do_test multiple-key-calls-safe-1 {
   execsql {
     PRAGMA key = 'testkey';
     PRAGMA cache_size = 0; 
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {ok t1} 
 
 do_test multiple-key-calls-safe-2 {
   catchsql {
     PRAGMA key = 'wrong key'; 
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {1 {file is not a database}}
 
 do_test multiple-key-calls-safe-3 {
   execsql {
     PRAGMA key = 'testkey'; 
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {ok t1} 
 
@@ -640,7 +640,7 @@ do_test custom-hmac-kdf-iter-must-match {
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey';
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {1 {file is not a database}}
 db close

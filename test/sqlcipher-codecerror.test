@@ -148,7 +148,7 @@ do_test codec-error-journal-wal-read {
 
   catchsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM sqlite_schema;
     PRAGMA cipher_fail_next_decrypt = 1;
     UPDATE t1 SET b = 'fail' WHERE a = 5000;
   }

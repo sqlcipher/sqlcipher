@@ -237,7 +237,7 @@ do_test unencrypted-corrupt-to-encrypted-export {
 
     PRAGMA writable_schema = ON;
 
-    UPDATE sqlite_master SET sql = 'CREATE TABLE IF NOT EXISTS t1(a,b)' 
+    UPDATE sqlite_schema SET sql = 'CREATE TABLE IF NOT EXISTS t1(a,b)' 
     WHERE tbl_name = 't1';
 
     PRAGMA writable_schema = OFF;
@@ -254,7 +254,7 @@ do_test unencrypted-corrupt-to-encrypted-export {
   sqlite_orig db test2.db
   execsql {
     PRAGMA key = 'testkey2';
-    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM sqlite_schema;
     SELECT count(*) FROM t1;
   }
 } {ok 1 2}
@@ -841,7 +841,7 @@ do_test multipage-schema {
 
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master where type = 'table';
+    SELECT count(*) FROM sqlite_schema where type = 'table';
   } db
 
 } {ok 300}
@@ -875,7 +875,7 @@ do_test multipage-schema-autovacuum-shortread {
 
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master where type = 'table';
+    SELECT count(*) FROM sqlite_schema where type = 'table';
   } db
 
 } {ok 300}
@@ -906,7 +906,7 @@ do_test multipage-schema-autovacuum-shortread-wal {
 
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master where type = 'table';
+    SELECT count(*) FROM sqlite_schema where type = 'table';
   } db
 } {ok 300}
 db close
@@ -1028,7 +1028,7 @@ do_test 2.0-beta-to-2.0-migration {
     PRAGMA cipher_page_size = 1024;
     PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
     PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
-    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM sqlite_schema;
 
     PRAGMA cipher_hmac_salt_mask = "x'3a'";
     ATTACH DATABASE 'test.db' AS db2 KEY 'testkey'; 
@@ -1060,7 +1060,7 @@ do_test migrate-1.1.8-database-to-current-format {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM sqlite_schema;
   }
 } {ok 1}
 db close
@@ -1078,7 +1078,7 @@ do_test migrate-2-0-le-database-to-current-format {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM sqlite_schema;
   }
 } {ok 1}
 db close
@@ -1096,7 +1096,7 @@ do_test migrate-3-0-database-to-current-format {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM sqlite_schema;
     PRAGMA journal_mode;
   }
 } {ok 1 delete}
@@ -1126,7 +1126,7 @@ do_test migrate-wal-database-to-current {
   sqlite_orig db test.db
   lappend rc [execsql {
     PRAGMA key = 'testkey';
-    SELECT count(*) FROM sqlite_master;
+    SELECT count(*) FROM sqlite_schema;
     PRAGMA journal_mode;
   }]
 } {{ok wal} {ok 0 wal} {ok 1 wal}}

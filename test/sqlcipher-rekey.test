@@ -118,7 +118,7 @@ do_test rekey-as-first-operation {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkeynew';
-    SELECT name FROM sqlite_master WHERE type='table';
+    SELECT name FROM sqlite_schema WHERE type='table';
   }
 } {ok t1}
 db close
