@@ -1,6 +1,13 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [4.4.3] - (February 2021 - [4.4.3 changes])
+- Updates baseline to ustream SQLite 3.34.1
+- Fixes sqlcipher_export handling of NULL parameters
+- Removes randomization of rekey-delete tests to avoid false test failures
+- Changes internal usage of sqlite_master to sqlite_schema
+- Omits unusued profiling function under certain defines to avoid compiler warnings
+
 ## [4.4.2] - (November 2020 - [4.4.2 changes])
 - Improve error handling to resolve potential corruption if an encryption operation failed while operating in WAL mode
 - Changes to OpenSSL library cryptographic provider to reduce initialization complexity
@@ -177,9 +184,11 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.2...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.3...prerelease
+[4.4.3]: https://github.com/sqlcipher/sqlcipher/tree/v4.4.3
+[4.4.3 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.2...v4.4.3
 [4.4.2]: https://github.com/sqlcipher/sqlcipher/tree/v4.4.2
-[4.4.2 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.0...v4.4.2
+[4.4.2 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.1...v4.4.2
 [4.4.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.4.1
 [4.4.1 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.0...v4.4.1
 [4.4.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.4.0
