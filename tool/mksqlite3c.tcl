@@ -314,6 +314,7 @@ foreach file {
    crypto_libtomcrypt.c
    crypto_nss.c
    crypto_openssl.c
+   crypto_mbedtls.c
    crypto_cc.c
 
    global.c
