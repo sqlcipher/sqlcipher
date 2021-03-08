@@ -203,26 +203,26 @@ if test "$crypto_lib" = "none"; then
   AC_MSG_RESULT([none])
 else
   if test "$crypto_lib" = "commoncrypto"; then
-    CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
-    BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_CC"
+    CFLAGS="$CFLAGS -DSQLCIPHER_CRYPTO_CC"
+    BUILD_CFLAGS="$BUILD_CFLAGS -DSQLCIPHER_CRYPTO_CC"
 	  AC_MSG_RESULT([commoncrypto])
   else
     if test "$crypto_lib" = "libtomcrypt"; then
-      CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
-      BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+      CFLAGS="$CFLAGS -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
+      BUILD_CFLAGS="$BUILD_CFLAGS -DSQLCIPHER_CRYPTO_LIBTOMCRYPT"
       AC_MSG_RESULT([libtomcrypt])
       AC_CHECK_LIB([tomcrypt], [register_cipher], ,
                    AC_MSG_ERROR([Library crypto not found. Install libtomcrypt!"]))
     else
       if test "$crypto_lib" = "nss"; then
-        CFLAGS+=" -DSQLCIPHER_CRYPTO_NSS"
-        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_NSS"
+        CFLAGS="$CFLAGS -DSQLCIPHER_CRYPTO_NSS"
+        BUILD_CFLAGS="$BUILD_CFLAGS -DSQLCIPHER_CRYPTO_NSS"
         AC_MSG_RESULT([nss3])
         AC_CHECK_LIB([nss3], [PK11_Decrypt], ,
                      AC_MSG_ERROR([Library crypto not found. Install nss!"]))
       else
-        CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
-        BUILD_CFLAGS+=" -DSQLCIPHER_CRYPTO_OPENSSL"
+        CFLAGS="$CFLAGS -DSQLCIPHER_CRYPTO_OPENSSL"
+        BUILD_CFLAGS="$BUILD_CFLAGS -DSQLCIPHER_CRYPTO_OPENSSL"
 	      AC_MSG_RESULT([openssl])
         AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
                      AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
