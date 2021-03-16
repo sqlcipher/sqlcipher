@@ -35,10 +35,10 @@
 #include "crypto.h"
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) || defined(_AIX)
-#include <errno.h>
-#include <unistd.h>
-#include <sys/resource.h>
-#include <sys/mman.h>
+#include <errno.h> /* amalgamator: dontcache */
+#include <unistd.h> /* amalgamator: dontcache */
+#include <sys/resource.h> /* amalgamator: dontcache */
+#include <sys/mman.h> /* amalgamator: dontcache */
 #elif defined(_WIN32)
 #include <windows.h>
 #endif
