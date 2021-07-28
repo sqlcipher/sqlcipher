@@ -1867,12 +1867,14 @@ static void showHelp(void){
 "  --table TAB           Show only differences in table TAB\n"
 "  --transaction         Show SQL output inside a transaction\n"
 "  --vtab                Handle fts3, fts4, fts5 and rtree tables\n"
+"  --pragmakey key       PRAGMA KEY for encrypted database\n"
   );
 }
 
 int main(int argc, char **argv){
   const char *zDb1 = 0;
   const char *zDb2 = 0;
+  const char *pragmakey = 0;
   int i;
   int rc;
   char *zErrMsg = 0;
@@ -1940,7 +1942,9 @@ int main(int argc, char **argv){
       if( strcmp(z,"vtab")==0 ){
         g.bHandleVtab = 1;
       }else
-      {
+      if( strcmp(z,"pragmakey")==0 ){
+        pragmakey = argv[++i];
+      }else{
         cmdlineError("unknown option: %s", argv[i]);
       }
     }else if( zDb1==0 ){
@@ -1957,6 +1961,15 @@ int main(int argc, char **argv){
   rc = sqlite3_open(zDb1, &g.db);
   if( rc ){
     cmdlineError("cannot open database file \"%s\"", zDb1);
+  }
+  if (pragmakey) {
+    zSql = sqlite3_mprintf("PRAGMA KEY='%s';", pragmakey);
+    rc = sqlite3_exec(g.db, zSql, 0, 0, &zErrMsg);
+    sqlite3_free(zSql);
+    zSql = 0;
+    if( rc || zErrMsg ){
+      cmdlineError("\"%s\" does not appear to be a valid SQLite database", zDb2);
+    }
   }
   rc = sqlite3_exec(g.db, "SELECT * FROM sqlite_schema", 0, 0, &zErrMsg);
   if( rc || zErrMsg ){
