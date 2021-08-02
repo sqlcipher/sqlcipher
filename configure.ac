@@ -625,6 +625,24 @@ fi
 AC_SUBST(USE_AMALGAMATION)
 
 #########
+# By default, amalgamation sqlite3.c will have #line directives.
+# This is a build option not shown by ./configure --help
+# To control it, use configure option: amalgamation_line_macros=?
+# where ? is no to suppress #line directives or yes to create them.
+AMALGAMATION_LINE_MACROS=--linemacros=1
+AC_ARG_VAR(amalgamation_line_macros,)
+AC_SUBST(AMALGAMATION_LINE_MACROS)
+if test "${amalgamation_line_macros+set}" = set; then :
+  enableval=$amalgamation_line_macros;
+fi
+if test "${amalgamation_line_macros}" = "yes" ; then
+  AMALGAMATION_LINE_MACROS=--linemacros=1
+fi
+if test "${amalgamation_line_macros}" = "no" ; then
+  AMALGAMATION_LINE_MACROS=--linemacros=0
+fi
+
+#########
 # Look for zlib.  Only needed by extensions and by the sqlite3.exe shell
 AC_CHECK_HEADERS(zlib.h)
 AC_SEARCH_LIBS(deflate, z, [HAVE_ZLIB="-DSQLITE_HAVE_ZLIB=1"], [HAVE_ZLIB=""])

@@ -634,6 +634,8 @@ BUILD_CFLAGS
 USE_GCOV
 OPT_FEATURE_FLAGS
 HAVE_ZLIB
+AMALGAMATION_LINE_MACROS
+amalgamation_line_macros
 USE_AMALGAMATION
 TARGET_DEBUG
 TARGET_HAVE_EDITLINE
@@ -797,7 +799,8 @@ LIBS
 CPPFLAGS
 LT_SYS_LIBRARY_PATH
 CPP
-TCLLIBDIR'
+TCLLIBDIR
+amalgamation_line_macros'
 
 
 # Initialize some variables set by options.
@@ -1484,6 +1487,8 @@ Some influential environment variables:
               User-defined run-time library search path.
   CPP         C preprocessor
   TCLLIBDIR   Where to install tcl plugin
+  amalgamation_line_macros
+
 
 Use these variables to override the choices made by `configure' or to help
 it to find libraries and programs with nonstandard names/locations.
@@ -12872,6 +12877,24 @@ if test "${enable_amalgamation}" = "no" ; then
   USE_AMALGAMATION=0
 fi
 
+
+#########
+# By default, amalgamation sqlite3.c will have #line directives.
+# This is a build option not shown by ./configure --help
+# To control it, use configure option: amalgamation_line_macros=?
+# where ? is no to suppress #line directives or yes to create them.
+AMALGAMATION_LINE_MACROS=--linemacros=1
+
+
+if test "${amalgamation_line_macros+set}" = set; then :
+  enableval=$amalgamation_line_macros;
+fi
+if test "${amalgamation_line_macros}" = "yes" ; then
+  AMALGAMATION_LINE_MACROS=--linemacros=1
+fi
+if test "${amalgamation_line_macros}" = "no" ; then
+  AMALGAMATION_LINE_MACROS=--linemacros=0
+fi
 
 #########
 # Look for zlib.  Only needed by extensions and by the sqlite3.exe shell
