@@ -95,8 +95,20 @@ static void sqlcipher_mem_free(void *p) {
   default_mem_methods.xFree(p);
 }
 static void *sqlcipher_mem_realloc(void *p, int n) {
-  return default_mem_methods.xRealloc(p, n);
+  void *new = NULL;
+  if(mem_security_on) {
+    new = sqlcipher_mem_malloc(n);
+    if(new == NULL) {
+      return NULL;
+    }
+    memcpy(new, p, n);
+    sqlcipher_mem_free(p);
+    return new;
+  } else {
+    return default_mem_methods.xRealloc(p, n);
+  }
 }
+
 static int sqlcipher_mem_roundup(int n) {
   return default_mem_methods.xRoundup(n);
 }
