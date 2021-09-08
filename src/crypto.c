@@ -82,7 +82,7 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
 
 static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  CODEC_TRACE("codec_set_pass_key: entered db=%p nDb=%d zKey=%s nKey=%d for_ctx=%d\n", db, nDb, (char *)zKey, nKey, for_ctx);
+  CODEC_TRACE("codec_set_pass_key: entered db=%p nDb=%d zKey=%p nKey=%d for_ctx=%d\n", db, nDb, zKey, nKey, for_ctx);
   if(pDb->pBt) {
     codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
 
@@ -770,7 +770,7 @@ static void sqlite3FreeCodecArg(void *pCodecArg) {
 int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   struct Db *pDb = &db->aDb[nDb];
 
-  CODEC_TRACE("sqlite3CodecAttach: entered db=%p, nDb=%d zKey=%s, nKey=%d\n", db, nDb, (char *)zKey, nKey);
+  CODEC_TRACE("sqlite3CodecAttach: entered db=%p, nDb=%d zKey=%p, nKey=%d\n", db, nDb, zKey, nKey);
 
 
   if(nKey && zKey && pDb->pBt) {
@@ -858,12 +858,12 @@ void sqlite3_activate_see(const char* in) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
-  CODEC_TRACE("sqlite3_key entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey);
+  CODEC_TRACE("sqlite3_key entered: db=%p pKey=%p nKey=%d\n", db, pKey, nKey);
   return sqlite3_key_v2(db, "main", pKey, nKey);
 }
 
 int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  CODEC_TRACE("sqlite3_key_v2: entered db=%p zDb=%s pKey=%s nKey=%d\n", db, zDb, (char *)pKey, nKey);
+  CODEC_TRACE("sqlite3_key_v2: entered db=%p zDb=%s pKey=%p nKey=%d\n", db, zDb, pKey, nKey);
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
@@ -873,7 +873,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 }
 
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
-  CODEC_TRACE("sqlite3_rekey entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey);
+  CODEC_TRACE("sqlite3_rekey entered: db=%p pKey=%p nKey=%d\n", db, pKey, nKey);
   return sqlite3_rekey_v2(db, "main", pKey, nKey);
 }
 
@@ -888,7 +888,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  CODEC_TRACE("sqlite3_rekey_v2: entered db=%p zDb=%s pKey=%s, nKey=%d\n", db, zDb, (char *)pKey, nKey);
+  CODEC_TRACE("sqlite3_rekey_v2: entered db=%p zDb=%s pKey=%p, nKey=%d\n", db, zDb, pKey, nKey);
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = &db->aDb[db_index];

@@ -1117,7 +1117,7 @@ error:
   */
 static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   int rc;
-  CODEC_TRACE("cipher_ctx_key_derive: entered c_ctx->pass=%s, c_ctx->pass_sz=%d \
+  CODEC_TRACE("cipher_ctx_key_derive: entered c_ctx->pass=%p, c_ctx->pass_sz=%d \
                 ctx->kdf_salt=%p ctx->kdf_salt_sz=%d ctx->kdf_iter=%d \
                 ctx->hmac_kdf_salt=%p, ctx->fast_kdf_iter=%d ctx->key_sz=%d\n",
                 c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
