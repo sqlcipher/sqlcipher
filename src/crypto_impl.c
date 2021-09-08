@@ -96,14 +96,24 @@ static void sqlcipher_mem_free(void *p) {
 }
 static void *sqlcipher_mem_realloc(void *p, int n) {
   void *new = NULL;
+  int orig_sz = 0;
   if(mem_security_on) {
-    new = sqlcipher_mem_malloc(n);
-    if(new == NULL) {
+    orig_sz = sqlcipher_mem_size(p);
+    if (n==0) {
+      sqlcipher_mem_free(p);
       return NULL;
+    } else if (!p) {
+      return sqlcipher_mem_malloc(n);
+    } else if(n <= orig_sz) {
+      return p;
+    } else {
+      new = sqlcipher_mem_malloc(n);
+      if(new) {
+        memcpy(new, p, orig_sz);
+        sqlcipher_mem_free(p);
+      }
+      return new;
     }
-    memcpy(new, p, n);
-    sqlcipher_mem_free(p);
-    return new;
   } else {
     return default_mem_methods.xRealloc(p, n);
   }
