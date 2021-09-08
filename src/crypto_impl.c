@@ -51,7 +51,7 @@ static volatile int default_page_size = 4096;
 static volatile int default_plaintext_header_sz = 0;
 static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
 static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
-static volatile int mem_security_on = 1;
+static volatile int mem_security_on = 0;
 static volatile int mem_security_initialized = 0;
 static volatile int mem_security_activated = 0;
 static volatile unsigned int sqlcipher_activate_count = 0;
@@ -836,8 +836,11 @@ int sqlcipher_get_default_pagesize() {
 }
 
 void sqlcipher_set_mem_security(int on) {
-  mem_security_on = on;
-  mem_security_activated = 0;
+  /* memory security can only be enabled, not disabled */
+  if(on) {
+    mem_security_on = on;
+    mem_security_activated = 0;
+  }
 }
 
 int sqlcipher_get_mem_security() {
