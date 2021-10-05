@@ -454,7 +454,7 @@ TESTSRC = \
   $(TOP)/ext/fts3/fts3_term.c \
   $(TOP)/ext/fts3/fts3_test.c  \
   $(TOP)/ext/session/test_session.c \
-  $(TOP)/ext/rbu/test_rbu.c
+  $(TOP)/ext/rbu/test_rbu.c 
 
 # Statically linked extensions
 #
@@ -462,6 +462,7 @@ TESTSRC += \
   $(TOP)/ext/expert/sqlite3expert.c \
   $(TOP)/ext/expert/test_expert.c \
   $(TOP)/ext/misc/amatch.c \
+  $(TOP)/ext/misc/appendvfs.c \
   $(TOP)/ext/misc/carray.c \
   $(TOP)/ext/misc/cksumvfs.c \
   $(TOP)/ext/misc/closure.c \
@@ -542,7 +543,8 @@ TESTSRC2 = \
   $(TOP)/ext/fts3/fts3_write.c \
   $(TOP)/ext/async/sqlite3async.c \
   $(TOP)/ext/session/sqlite3session.c \
-  $(TOP)/ext/misc/stmt.c
+  $(TOP)/ext/misc/stmt.c \
+  fts5.c
 
 # Header files used by all library source files.
 #
@@ -636,12 +638,10 @@ SHELL_OPT += -DSQLITE_ENABLE_DBPAGE_VTAB
 SHELL_OPT += -DSQLITE_ENABLE_DBSTAT_VTAB
 SHELL_OPT += -DSQLITE_ENABLE_BYTECODE_VTAB
 SHELL_OPT += -DSQLITE_ENABLE_OFFSET_SQL_FUNC
-SHELL_OPT += -DSQLITE_ENABLE_DESERIALIZE
 FUZZERSHELL_OPT = -DSQLITE_ENABLE_JSON1
 FUZZCHECK_OPT = -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_OSS_FUZZ
 FUZZCHECK_OPT += -DSQLITE_MAX_MEMORY=50000000
 FUZZCHECK_OPT += -DSQLITE_PRINTF_PRECISION_LIMIT=1000
-FUZZCHECK_OPT += -DSQLITE_ENABLE_DESERIALIZE
 FUZZCHECK_OPT += -DSQLITE_ENABLE_FTS4
 FUZZCHECK_OPT += -DSQLITE_ENABLE_FTS3_PARENTHESIS
 #FUZZCHECK_OPT += -DSQLITE_ENABLE_FTS5
@@ -715,7 +715,6 @@ dbfuzz$(TEXE):	$(TOP)/test/dbfuzz.c sqlite3.c sqlite3.h
 DBFUZZ2_OPTS = \
   -DSQLITE_THREADSAFE=0 \
   -DSQLITE_OMIT_LOAD_EXTENSION \
-  -DSQLITE_ENABLE_DESERIALIZE \
   -DSQLITE_DEBUG \
   -DSQLITE_ENABLE_DBSTAT_VTAB \
   -DSQLITE_ENABLE_BYTECODE_VTAB \
@@ -1124,6 +1123,7 @@ SHELL_SRC = \
         $(TOP)/ext/misc/decimal.c \
 	$(TOP)/ext/misc/fileio.c \
         $(TOP)/ext/misc/ieee754.c \
+        $(TOP)/ext/misc/regexp.c \
         $(TOP)/ext/misc/series.c \
 	$(TOP)/ext/misc/shathree.c \
 	$(TOP)/ext/misc/sqlar.c \
@@ -1270,7 +1270,6 @@ TESTFIXTURE_FLAGS += -DSQLITE_DEFAULT_PAGE_SIZE=1024
 TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_STMTVTAB
 TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_DBPAGE_VTAB
 TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_BYTECODE_VTAB
-TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_DESERIALIZE
 TESTFIXTURE_FLAGS += -DSQLITE_CKSUMVFS_STATIC
 
 TESTFIXTURE_SRC0 = $(TESTSRC2) libsqlcipher.la
@@ -1304,7 +1303,7 @@ fuzztest:	fuzzcheck$(TEXE) $(FUZZDATA) sessionfuzz$(TEXE) $(TOP)/test/sessionfuz
 	./sessionfuzz$(TEXE) run $(TOP)/test/sessionfuzz-data1.db
 
 valgrindfuzz:	fuzzcheck$(TEXT) $(FUZZDATA) sessionfuzz$(TEXE) $(TOP)/test/sessionfuzz-data1.db
-	valgrind ./fuzzcheck$(TEXE) --cell-size-check --limit-mem 10M --timeout 600 $(FUZZDATA)
+	valgrind ./fuzzcheck$(TEXE) --cell-size-check --limit-mem 10M $(FUZZDATA)
 	valgrind ./sessionfuzz$(TEXE) run $(TOP)/test/sessionfuzz-data1.db
 
 # The veryquick.test TCL tests.
@@ -1415,6 +1414,9 @@ wordcount$(TEXE):	$(TOP)/test/wordcount.c sqlite3.lo
 speedtest1$(TEXE):	$(TOP)/test/speedtest1.c sqlite3.c
 	$(LTLINK) $(ST_OPT) -o $@ $(TOP)/test/speedtest1.c sqlite3.c $(TLIBS)
 
+startup$(TEXE):	$(TOP)/test/startup.c sqlite3.c
+	$(CC) -Os -g -DSQLITE_THREADSAFE=0 -o $@ $(TOP)/test/startup.c sqlite3.c $(TLIBS)
+
 KV_OPT += -DSQLITE_DIRECT_OVERFLOW_READ
 
 kvtest$(TEXE):	$(TOP)/test/kvtest.c sqlite3.c
@@ -1462,6 +1464,9 @@ threadtest3$(TEXE): sqlite3.lo $(THREADTEST3_SRC)
 
 threadtest: threadtest3$(TEXE)
 	./threadtest3$(TEXE)
+
+threadtest5: sqlite3.c $(TOP)/test/threadtest5.c
+	$(LTLINK) $(TOP)/test/threadtest5.c sqlite3.c -o $@ $(TLIBS)
 
 releasetest:
 	$(TCLSH_CMD) $(TOP)/test/releasetest.tcl
@@ -1516,6 +1521,7 @@ clean:
 	rm -f sqldiff sqldiff.exe
 	rm -f dbhash dbhash.exe
 	rm -f fts5.* fts5parse.*
+	rm -f threadtest5
 
 distclean:	clean
 	rm -f config.h config.log config.status libtool Makefile sqlcipher.pc

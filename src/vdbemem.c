@@ -75,7 +75,9 @@ int sqlite3VdbeCheckMemInvariants(Mem *p){
 
   /* The szMalloc field holds the correct memory allocation size */
   assert( p->szMalloc==0
-       || p->szMalloc==sqlite3DbMallocSize(p->db,p->zMalloc) );
+       || (p->flags==MEM_Undefined 
+           && p->szMalloc<=sqlite3DbMallocSize(p->db,p->zMalloc))
+       || p->szMalloc==sqlite3DbMallocSize(p->db,p->zMalloc));
 
   /* If p holds a string or blob, the Mem.z must point to exactly
   ** one of the following:
@@ -239,7 +241,9 @@ SQLITE_NOINLINE int sqlite3VdbeMemGrow(Mem *pMem, int n, int bPreserve){
   testcase( bPreserve && pMem->z==0 );
 
   assert( pMem->szMalloc==0
-       || pMem->szMalloc==sqlite3DbMallocSize(pMem->db, pMem->zMalloc) );
+       || (pMem->flags==MEM_Undefined 
+           && pMem->szMalloc<=sqlite3DbMallocSize(pMem->db,pMem->zMalloc))
+       || pMem->szMalloc==sqlite3DbMallocSize(pMem->db,pMem->zMalloc));
   if( pMem->szMalloc>0 && bPreserve && pMem->z==pMem->zMalloc ){
     if( pMem->db ){
       pMem->z = pMem->zMalloc = sqlite3DbReallocOrFree(pMem->db, pMem->z, n);
@@ -1068,11 +1072,11 @@ void sqlite3VdbeMemMove(Mem *pTo, Mem *pFrom){
 int sqlite3VdbeMemSetStr(
   Mem *pMem,          /* Memory cell to set to string value */
   const char *z,      /* String pointer */
-  int n,              /* Bytes in string, or negative */
+  i64 n,              /* Bytes in string, or negative */
   u8 enc,             /* Encoding of z.  0 for BLOBs */
   void (*xDel)(void*) /* Destructor function */
 ){
-  int nByte = n;      /* New value for pMem->n */
+  i64 nByte = n;      /* New value for pMem->n */
   int iLimit;         /* Maximum allowed string or blob size */
   u16 flags = 0;      /* New value for pMem->flags */
 
@@ -1094,7 +1098,7 @@ int sqlite3VdbeMemSetStr(
   if( nByte<0 ){
     assert( enc!=0 );
     if( enc==SQLITE_UTF8 ){
-      nByte = 0x7fffffff & (int)strlen(z);
+      nByte = strlen(z);
     }else{
       for(nByte=0; nByte<=iLimit && (z[nByte] | z[nByte+1]); nByte+=2){}
     }
@@ -1106,7 +1110,7 @@ int sqlite3VdbeMemSetStr(
   ** management (one of MEM_Dyn or MEM_Static).
   */
   if( xDel==SQLITE_TRANSIENT ){
-    u32 nAlloc = nByte;
+    i64 nAlloc = nByte;
     if( flags&MEM_Term ){
       nAlloc += (enc==SQLITE_UTF8?1:2);
     }
@@ -1132,7 +1136,7 @@ int sqlite3VdbeMemSetStr(
     }
   }
 
-  pMem->n = nByte;
+  pMem->n = (int)(nByte & 0x7fffffff);
   pMem->flags = flags;
   if( enc ){
     pMem->enc = enc;
@@ -1152,7 +1156,7 @@ int sqlite3VdbeMemSetStr(
 #endif
 
   if( nByte>iLimit ){
-    return SQLITE_TOOBIG;
+    return sqlite3ErrorToParser(pMem->db, SQLITE_TOOBIG);
   }
 
   return SQLITE_OK;

@@ -392,7 +392,7 @@ static int invokeValueDestructor(
   }else{
     xDel((void*)p);
   }
-  if( pCtx ) sqlite3_result_error_toobig(pCtx);
+  sqlite3_result_error_toobig(pCtx);
   return SQLITE_TOOBIG;
 }
 void sqlite3_result_blob(
@@ -617,7 +617,7 @@ static int sqlite3Step(Vdbe *p){
   int rc;
 
   assert(p);
-  if( p->magic!=VDBE_MAGIC_RUN ){
+  if( p->iVdbeMagic!=VDBE_MAGIC_RUN ){
     /* We used to require that sqlite3_reset() be called before retrying
     ** sqlite3_step() after any error or after SQLITE_DONE.  But beginning
     ** with version 3.7.0, we changed this so that sqlite3_reset() would
@@ -1333,7 +1333,7 @@ static int vdbeUnbind(Vdbe *p, int i){
     return SQLITE_MISUSE_BKPT;
   }
   sqlite3_mutex_enter(p->db->mutex);
-  if( p->magic!=VDBE_MAGIC_RUN || p->pc>=0 ){
+  if( p->iVdbeMagic!=VDBE_MAGIC_RUN || p->pc>=0 ){
     sqlite3Error(p->db, SQLITE_MISUSE);
     sqlite3_mutex_leave(p->db->mutex);
     sqlite3_log(SQLITE_MISUSE, 
@@ -1374,7 +1374,7 @@ static int bindText(
   sqlite3_stmt *pStmt,   /* The statement to bind against */
   int i,                 /* Index of the parameter to bind */
   const void *zData,     /* Pointer to the data to be bound */
-  int nData,             /* Number of bytes of data to be bound */
+  i64 nData,             /* Number of bytes of data to be bound */
   void (*xDel)(void*),   /* Destructor for the data */
   u8 encoding            /* Encoding for the data */
 ){
@@ -1426,11 +1426,7 @@ int sqlite3_bind_blob64(
   void (*xDel)(void*)
 ){
   assert( xDel!=SQLITE_DYNAMIC );
-  if( nData>0x7fffffff ){
-    return invokeValueDestructor(zData, xDel, 0);
-  }else{
-    return bindText(pStmt, i, zData, (int)nData, xDel, 0);
-  }
+  return bindText(pStmt, i, zData, nData, xDel, 0);
 }
 int sqlite3_bind_double(sqlite3_stmt *pStmt, int i, double rValue){
   int rc;
@@ -1500,12 +1496,8 @@ int sqlite3_bind_text64(
   unsigned char enc
 ){
   assert( xDel!=SQLITE_DYNAMIC );
-  if( nData>0x7fffffff ){
-    return invokeValueDestructor(zData, xDel, 0);
-  }else{
-    if( enc==SQLITE_UTF16 ) enc = SQLITE_UTF16NATIVE;
-    return bindText(pStmt, i, zData, (int)nData, xDel, enc);
-  }
+  if( enc==SQLITE_UTF16 ) enc = SQLITE_UTF16NATIVE;
+  return bindText(pStmt, i, zData, nData, xDel, enc);
 }
 #ifndef SQLITE_OMIT_UTF16
 int sqlite3_bind_text16(
@@ -1687,7 +1679,7 @@ int sqlite3_stmt_isexplain(sqlite3_stmt *pStmt){
 */
 int sqlite3_stmt_busy(sqlite3_stmt *pStmt){
   Vdbe *v = (Vdbe*)pStmt;
-  return v!=0 && v->magic==VDBE_MAGIC_RUN && v->pc>=0;
+  return v!=0 && v->iVdbeMagic==VDBE_MAGIC_RUN && v->pc>=0;
 }
 
 /*
@@ -1904,6 +1896,17 @@ int sqlite3_preupdate_depth(sqlite3 *db){
   return (p ? p->v->nFrame : 0);
 }
 #endif /* SQLITE_ENABLE_PREUPDATE_HOOK */
+
+#ifdef SQLITE_ENABLE_PREUPDATE_HOOK
+/*
+** This function is designed to be called from within a pre-update callback
+** only. 
+*/
+int sqlite3_preupdate_blobwrite(sqlite3 *db){
+  PreUpdate *p = db->pPreUpdate;
+  return (p ? p->iBlobWrite : -1);
+}
+#endif
 
 #ifdef SQLITE_ENABLE_PREUPDATE_HOOK
 /*

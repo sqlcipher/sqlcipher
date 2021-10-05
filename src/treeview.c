@@ -111,7 +111,10 @@ void sqlite3TreeViewWith(TreeView *pView, const With *pWith, u8 moreToFollow){
         }
         sqlite3_str_appendf(&x, ")");
       }
-      sqlite3_str_appendf(&x, " AS");
+      if( pCte->pUse ){
+        sqlite3_str_appendf(&x, " (pUse=0x%p, nUse=%d)", pCte->pUse,
+                 pCte->pUse->nUse);
+      }
       sqlite3StrAccumFinish(&x);
       sqlite3TreeViewItem(pView, zLine, i<pWith->nCte-1);
       sqlite3TreeViewSelect(pView, pCte->pSelect, 0);
@@ -127,28 +130,24 @@ void sqlite3TreeViewWith(TreeView *pView, const With *pWith, u8 moreToFollow){
 void sqlite3TreeViewSrcList(TreeView *pView, const SrcList *pSrc){
   int i;
   for(i=0; i<pSrc->nSrc; i++){
-    const struct SrcList_item *pItem = &pSrc->a[i];
+    const SrcItem *pItem = &pSrc->a[i];
     StrAccum x;
     char zLine[100];
     sqlite3StrAccumInit(&x, 0, zLine, sizeof(zLine), 0);
-    sqlite3_str_appendf(&x, "{%d:*}", pItem->iCursor);
-    if( pItem->zDatabase ){
-      sqlite3_str_appendf(&x, " %s.%s", pItem->zDatabase, pItem->zName);
-    }else if( pItem->zName ){
-      sqlite3_str_appendf(&x, " %s", pItem->zName);
-    }
+    x.printfFlags |= SQLITE_PRINTF_INTERNAL;
+    sqlite3_str_appendf(&x, "{%d:*} %!S", pItem->iCursor, pItem);
     if( pItem->pTab ){
       sqlite3_str_appendf(&x, " tab=%Q nCol=%d ptr=%p used=%llx",
            pItem->pTab->zName, pItem->pTab->nCol, pItem->pTab, pItem->colUsed);
-    }
-    if( pItem->zAlias ){
-      sqlite3_str_appendf(&x, " (AS %s)", pItem->zAlias);
     }
     if( pItem->fg.jointype & JT_LEFT ){
       sqlite3_str_appendf(&x, " LEFT-JOIN");
     }
     if( pItem->fg.fromDDL ){
       sqlite3_str_appendf(&x, " DDL");
+    }
+    if( pItem->fg.isCte ){
+      sqlite3_str_appendf(&x, " CteUse=0x%p", pItem->u2.pCteUse);
     }
     sqlite3StrAccumFinish(&x);
     sqlite3TreeViewItem(pView, zLine, i<pSrc->nSrc-1); 
@@ -705,6 +704,14 @@ void sqlite3TreeViewExpr(TreeView *pView, const Expr *pExpr, u8 moreToFollow){
     case TK_IF_NULL_ROW: {
       sqlite3TreeViewLine(pView, "IF-NULL-ROW %d", pExpr->iTable);
       sqlite3TreeViewExpr(pView, pExpr->pLeft, 0);
+      break;
+    }
+    case TK_ERROR: {
+      Expr tmp;
+      sqlite3TreeViewLine(pView, "ERROR");
+      tmp = *pExpr;
+      tmp.op = pExpr->op2;
+      sqlite3TreeViewExpr(pView, &tmp, 0);
       break;
     }
     default: {
