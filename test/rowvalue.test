@@ -175,19 +175,19 @@ do_execsql_test 7.0 {
 
 foreach {tn sql res eqp} {
   1 "SELECT * FROM xy WHERE (i, j) IS (2, 2)" {2 2 2} 
-    "SEARCH TABLE xy USING INTEGER PRIMARY KEY (rowid=?)"
+    "SEARCH xy USING INTEGER PRIMARY KEY (rowid=?)"
 
   2 "SELECT * FROM xy WHERE (k, j) < (2, 3)" {1 1 1 2 2 2}
-    "SCAN TABLE xy"
+    "SCAN xy"
 
   3 "SELECT * FROM xy WHERE (i, j) < (2, 3)" {1 1 1 2 2 2}
-    "SEARCH TABLE xy USING INTEGER PRIMARY KEY (rowid<?)"
+    "SEARCH xy USING INTEGER PRIMARY KEY (rowid<?)"
 
   4 "SELECT * FROM xy WHERE (i, j) > (2, 1)" {2 2 2 3 3 3 4 4 4}
-    "SEARCH TABLE xy USING INTEGER PRIMARY KEY (rowid>?)"
+    "SEARCH xy USING INTEGER PRIMARY KEY (rowid>?)"
 
   5 "SELECT * FROM xy WHERE (i, j) > ('2', 1)" {2 2 2 3 3 3 4 4 4}
-    "SEARCH TABLE xy USING INTEGER PRIMARY KEY (rowid>?)"
+    "SEARCH xy USING INTEGER PRIMARY KEY (rowid>?)"
 
 } {
   do_eqp_test 7.$tn.1 $sql $eqp
@@ -643,5 +643,55 @@ do_catchsql_test 27.10 {
   CREATE TABLE t0(c0 CHECK(((0, 0) > (0, c0))));
   INSERT INTO t0(c0) VALUES(0) ON CONFLICT(c0) DO UPDATE SET c0 = 3;
 } {1 {ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint}}
+
+# 2021-02-03
+# https://bugs.chromium.org/p/chromium/issues/detail?id=1173511
+# Faulty assert() statement.
+#
+reset_db
+do_catchsql_test 28.10 {
+  CREATE TABLE t0(c0 PRIMARY KEY, c1);
+  CREATE TRIGGER trigger0 BEFORE DELETE ON t0 BEGIN
+   SELECT (SELECT c0,c1  FROM t0)  FROM t0;
+  END ;
+  DELETE FROM t0;
+} {1 {sub-select returns 2 columns - expected 1}}
+
+# 2021-03-19
+# dbsqlfuzz find of a NEVER().
+do_catchsql_test 29.1 {
+  SELECT (SELECT 1 WHERE ((SELECT 1 WHERE (2,(2,0)) IS (2,(20))),(2,0)) IS (2,(20))) WHERE (2,(2,0)) IS (2 IN(SELECT 1 WHERE (2,(2,2,0)) IS (2,(20))),(20));
+} {1 {row value misused}}
+
+#-------------------------------------------------------------------------
+reset_db
+do_execsql_test 30.0 {
+  CREATE TABLE t1(x, y, z);
+  CREATE TABLE t2(a, b);
+
+  INSERT INTO t1 VALUES(1000, 2000, 3000);
+  INSERT INTO t2 VALUES(NULL, NULL);
+}
+
+do_execsql_test 30.1 {
+  UPDATE t2 SET (a,b)=(
+    SELECT max( t1.x ) OVER( PARTITION BY sum( (SELECT t1.y) ) ), 2
+  )
+  FROM t1;
+} {}
+
+do_execsql_test 30.2 {
+  SELECT * FROM t2
+} {1000 2}
+
+reset_db
+do_execsql_test 30.3 {
+  CREATE TABLE t1(x INT PRIMARY KEY, y, z);
+  CREATE TABLE t2(a,b,c,d,e,PRIMARY KEY(a,b))WITHOUT ROWID;
+
+  UPDATE t2 SET (d,d,a)=(SELECT EXISTS(SELECT 1 IN(SELECT max( 1 IN(SELECT x ORDER BY 1)) OVER(PARTITION BY sum((SELECT y FROM t1 UNION SELECT x ORDER BY 1)))INTERSECT SELECT EXISTS(SELECT 1 FROM t1 UNION SELECT x ORDER BY 1) ORDER BY 1) ORDERa)|9 AS blob, 2, 3) FROM t1 WHERE x<a;
+}
+
+
 
 finish_test

@@ -56,7 +56,7 @@ void usage(const char *zArgv0){
 
 void report_default_vfs(){
   sqlite3_vfs *pVfs = sqlite3_vfs_find(0);
-  fprintf(stdout, "default vfs is \"%s\"\n", pVfs->zName);
+  fprintf(stdout, "default vfs is \"%s\"\n", pVfs ? pVfs->zName : "NULL");
 }
 
 void report_rbu_vfs(sqlite3rbu *pRbu){
@@ -181,6 +181,13 @@ int main(int argc, char **argv){
     default:
       fprintf(stderr, "error=%d: %s\n", rc, zErrmsg);
       break;
+  }
+
+  if( nStatStep>0 ){
+    sqlite3_int64 nUsed;
+    sqlite3_int64 nHighwater;
+    sqlite3_status64(SQLITE_STATUS_MEMORY_USED, &nUsed, &nHighwater, 0);
+    fprintf(stdout, "memory used=%lld highwater=%lld\n", nUsed, nHighwater);
   }
 
   sqlite3_free(zErrmsg);

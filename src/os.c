@@ -129,6 +129,8 @@ int sqlite3OsFileControl(sqlite3_file *id, int op, void *pArg){
 #ifdef SQLITE_TEST
   if( op!=SQLITE_FCNTL_COMMIT_PHASETWO
    && op!=SQLITE_FCNTL_LOCK_TIMEOUT
+   && op!=SQLITE_FCNTL_CKPT_DONE
+   && op!=SQLITE_FCNTL_CKPT_START
   ){
     /* Faults are not injected into COMMIT_PHASETWO because, assuming SQLite
     ** is using a regular VFS, it is called after the corresponding
@@ -139,7 +141,12 @@ int sqlite3OsFileControl(sqlite3_file *id, int op, void *pArg){
     ** The core must call OsFileControl() though, not OsFileControlHint(),
     ** as if a custom VFS (e.g. zipvfs) returns an error here, it probably
     ** means the commit really has failed and an error should be returned
-    ** to the user.  */
+    ** to the user.
+    **
+    ** The CKPT_DONE and CKPT_START file-controls are write-only signals
+    ** to the cksumvfs.  Their return code is meaningless and is ignored
+    ** by the SQLite core, so there is no point in simulating OOMs for them.
+    */
     DO_OS_MALLOC_TEST(id);
   }
 #endif
@@ -222,7 +229,7 @@ int sqlite3OsOpen(
 int sqlite3OsDelete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
   DO_OS_MALLOC_TEST(0);
   assert( dirSync==0 || dirSync==1 );
-  return pVfs->xDelete(pVfs, zPath, dirSync);
+  return pVfs->xDelete!=0 ? pVfs->xDelete(pVfs, zPath, dirSync) : SQLITE_OK;
 }
 int sqlite3OsAccess(
   sqlite3_vfs *pVfs,
@@ -245,6 +252,8 @@ int sqlite3OsFullPathname(
 }
 #ifndef SQLITE_OMIT_LOAD_EXTENSION
 void *sqlite3OsDlOpen(sqlite3_vfs *pVfs, const char *zPath){
+  assert( zPath!=0 );
+  assert( strlen(zPath)<=SQLITE_MAX_PATHLEN );  /* tag-20210611-1 */
   return pVfs->xDlOpen(pVfs, zPath);
 }
 void sqlite3OsDlError(sqlite3_vfs *pVfs, int nByte, char *zBufOut){

@@ -694,7 +694,8 @@ static int patternCompare(
       /* Skip over multiple "*" characters in the pattern.  If there
       ** are also "?" characters, skip those as well, but consume a
       ** single character of the input string for each "?" skipped */
-      while( (c=Utf8Read(zPattern)) == matchAll || c == matchOne ){
+      while( (c=Utf8Read(zPattern)) == matchAll 
+             || (c == matchOne && matchOne!=0) ){
         if( c==matchOne && sqlite3Utf8Read(&zString)==0 ){
           return SQLITE_NOWILDCARDMATCH;
         }
@@ -1315,10 +1316,10 @@ static void trimFunc(
 ){
   const unsigned char *zIn;         /* Input string */
   const unsigned char *zCharSet;    /* Set of characters to trim */
-  int nIn;                          /* Number of bytes in input */
+  unsigned int nIn;                 /* Number of bytes in input */
   int flags;                        /* 1: trimleft  2: trimright  3: trim */
   int i;                            /* Loop counter */
-  unsigned char *aLen = 0;          /* Length of each character in zCharSet */
+  unsigned int *aLen = 0;           /* Length of each character in zCharSet */
   unsigned char **azChar = 0;       /* Individual characters in zCharSet */
   int nChar;                        /* Number of characters in zCharSet */
 
@@ -1327,13 +1328,13 @@ static void trimFunc(
   }
   zIn = sqlite3_value_text(argv[0]);
   if( zIn==0 ) return;
-  nIn = sqlite3_value_bytes(argv[0]);
+  nIn = (unsigned)sqlite3_value_bytes(argv[0]);
   assert( zIn==sqlite3_value_text(argv[0]) );
   if( argc==1 ){
-    static const unsigned char lenOne[] = { 1 };
+    static const unsigned lenOne[] = { 1 };
     static unsigned char * const azOne[] = { (u8*)" " };
     nChar = 1;
-    aLen = (u8*)lenOne;
+    aLen = (unsigned*)lenOne;
     azChar = (unsigned char **)azOne;
     zCharSet = 0;
   }else if( (zCharSet = sqlite3_value_text(argv[1]))==0 ){
@@ -1344,15 +1345,16 @@ static void trimFunc(
       SQLITE_SKIP_UTF8(z);
     }
     if( nChar>0 ){
-      azChar = contextMalloc(context, ((i64)nChar)*(sizeof(char*)+1));
+      azChar = contextMalloc(context, 
+                     ((i64)nChar)*(sizeof(char*)+sizeof(unsigned)));
       if( azChar==0 ){
         return;
       }
-      aLen = (unsigned char*)&azChar[nChar];
+      aLen = (unsigned*)&azChar[nChar];
       for(z=zCharSet, nChar=0; *z; nChar++){
         azChar[nChar] = (unsigned char *)z;
         SQLITE_SKIP_UTF8(z);
-        aLen[nChar] = (u8)(z - azChar[nChar]);
+        aLen[nChar] = (unsigned)(z - azChar[nChar]);
       }
     }
   }
@@ -1360,7 +1362,7 @@ static void trimFunc(
     flags = SQLITE_PTR_TO_INT(sqlite3_user_data(context));
     if( flags & 1 ){
       while( nIn>0 ){
-        int len = 0;
+        unsigned int len = 0;
         for(i=0; i<nChar; i++){
           len = aLen[i];
           if( len<=nIn && memcmp(zIn, azChar[i], len)==0 ) break;
@@ -1372,7 +1374,7 @@ static void trimFunc(
     }
     if( flags & 2 ){
       while( nIn>0 ){
-        int len = 0;
+        unsigned int len = 0;
         for(i=0; i<nChar; i++){
           len = aLen[i];
           if( len<=nIn && memcmp(&zIn[nIn-len],azChar[i],len)==0 ) break;
@@ -1865,7 +1867,9 @@ void sqlite3RegisterLikeFunctions(sqlite3 *db, int caseSensitive){
 int sqlite3IsLikeFunction(sqlite3 *db, Expr *pExpr, int *pIsNocase, char *aWc){
   FuncDef *pDef;
   int nExpr;
-  if( pExpr->op!=TK_FUNCTION || !pExpr->x.pList ){
+  assert( pExpr!=0 );
+  assert( pExpr->op==TK_FUNCTION );
+  if( !pExpr->x.pList ){
     return 0;
   }
   assert( !ExprHasProperty(pExpr, EP_xIsSelect) );
@@ -1902,6 +1906,201 @@ int sqlite3IsLikeFunction(sqlite3 *db, Expr *pExpr, int *pIsNocase, char *aWc){
 
   *pIsNocase = (pDef->funcFlags & SQLITE_FUNC_CASE)==0;
   return 1;
+}
+
+/* Mathematical Constants */
+#ifndef M_PI
+# define M_PI   3.141592653589793238462643383279502884
+#endif
+#ifndef M_LN10
+# define M_LN10 2.302585092994045684017991454684364208
+#endif
+#ifndef M_LN2
+# define M_LN2  0.693147180559945309417232121458176568
+#endif
+
+
+/* Extra math functions that require linking with -lm
+*/
+#ifdef SQLITE_ENABLE_MATH_FUNCTIONS
+/*
+** Implementation SQL functions:
+**
+**   ceil(X)
+**   ceiling(X)
+**   floor(X)
+**
+** The sqlite3_user_data() pointer is a pointer to the libm implementation
+** of the underlying C function.
+*/
+static void ceilingFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  assert( argc==1 );
+  switch( sqlite3_value_numeric_type(argv[0]) ){
+    case SQLITE_INTEGER: {
+       sqlite3_result_int64(context, sqlite3_value_int64(argv[0]));
+       break;
+    }
+    case SQLITE_FLOAT: {
+       double (*x)(double) = (double(*)(double))sqlite3_user_data(context);
+       sqlite3_result_double(context, x(sqlite3_value_double(argv[0])));
+       break;
+    }
+    default: {
+       break;
+    }
+  }
+}
+
+/*
+** On some systems, ceil() and floor() are intrinsic function.  You are
+** unable to take a pointer to these functions.  Hence, we here wrap them
+** in our own actual functions.
+*/
+static double xCeil(double x){ return ceil(x); }
+static double xFloor(double x){ return floor(x); }
+
+/*
+** Implementation of SQL functions:
+**
+**   ln(X)       - natural logarithm
+**   log(X)      - log X base 10
+**   log10(X)    - log X base 10
+**   log(B,X)    - log X base B
+*/
+static void logFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  double x, b, ans;
+  assert( argc==1 || argc==2 );
+  switch( sqlite3_value_numeric_type(argv[0]) ){
+    case SQLITE_INTEGER:
+    case SQLITE_FLOAT:
+      x = sqlite3_value_double(argv[0]);
+      if( x<=0.0 ) return;
+      break;
+    default:
+      return;
+  }
+  if( argc==2 ){
+    switch( sqlite3_value_numeric_type(argv[0]) ){
+      case SQLITE_INTEGER:
+      case SQLITE_FLOAT:
+        b = log(x);
+        if( b<=0.0 ) return;
+        x = sqlite3_value_double(argv[1]);
+        if( x<=0.0 ) return;
+        break;
+     default:
+        return;
+    }
+    ans = log(x)/b;
+  }else{
+    ans = log(x);
+    switch( SQLITE_PTR_TO_INT(sqlite3_user_data(context)) ){
+      case 1:
+        /* Convert from natural logarithm to log base 10 */
+        ans *= 1.0/M_LN10;
+        break;
+      case 2:
+        /* Convert from natural logarithm to log base 2 */
+        ans *= 1.0/M_LN2;
+        break;
+      default:
+        break;
+    }
+  }
+  sqlite3_result_double(context, ans);
+}
+
+/*
+** Functions to converts degrees to radians and radians to degrees.
+*/
+static double degToRad(double x){ return x*(M_PI/180.0); }
+static double radToDeg(double x){ return x*(180.0/M_PI); }
+
+/*
+** Implementation of 1-argument SQL math functions:
+**
+**   exp(X)  - Compute e to the X-th power
+*/
+static void math1Func(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  int type0;
+  double v0, ans;
+  double (*x)(double);
+  assert( argc==1 );
+  type0 = sqlite3_value_numeric_type(argv[0]);
+  if( type0!=SQLITE_INTEGER && type0!=SQLITE_FLOAT ) return;
+  v0 = sqlite3_value_double(argv[0]);
+  x = (double(*)(double))sqlite3_user_data(context);
+  ans = x(v0);
+  sqlite3_result_double(context, ans);
+}
+
+/*
+** Implementation of 2-argument SQL math functions:
+**
+**   power(X,Y)  - Compute X to the Y-th power
+*/
+static void math2Func(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  int type0, type1;
+  double v0, v1, ans;
+  double (*x)(double,double);
+  assert( argc==2 );
+  type0 = sqlite3_value_numeric_type(argv[0]);
+  if( type0!=SQLITE_INTEGER && type0!=SQLITE_FLOAT ) return;
+  type1 = sqlite3_value_numeric_type(argv[1]);
+  if( type1!=SQLITE_INTEGER && type1!=SQLITE_FLOAT ) return;
+  v0 = sqlite3_value_double(argv[0]);
+  v1 = sqlite3_value_double(argv[1]);
+  x = (double(*)(double,double))sqlite3_user_data(context);
+  ans = x(v0, v1);
+  sqlite3_result_double(context, ans);
+}
+
+/*
+** Implementation of 0-argument pi() function.
+*/
+static void piFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  assert( argc==0 );
+  sqlite3_result_double(context, M_PI);
+}
+
+#endif /* SQLITE_ENABLE_MATH_FUNCTIONS */
+
+/*
+** Implementation of sign(X) function.
+*/
+static void signFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  int type0;
+  double x;
+  UNUSED_PARAMETER(argc);
+  assert( argc==1 );
+  type0 = sqlite3_value_numeric_type(argv[0]);
+  if( type0!=SQLITE_INTEGER && type0!=SQLITE_FLOAT ) return;
+  x = sqlite3_value_double(argv[0]);
+  sqlite3_result_int(context, x<0.0 ? -1 : x>0.0 ? +1 : 0);
 }
 
 /*
@@ -2022,6 +2221,43 @@ void sqlite3RegisterBuiltinFunctions(void){
 #endif
     FUNCTION(coalesce,           1, 0, 0, 0                ),
     FUNCTION(coalesce,           0, 0, 0, 0                ),
+#ifdef SQLITE_ENABLE_MATH_FUNCTIONS
+    MFUNCTION(ceil,              1, xCeil,     ceilingFunc ),
+    MFUNCTION(ceiling,           1, xCeil,     ceilingFunc ),
+    MFUNCTION(floor,             1, xFloor,    ceilingFunc ),
+#if SQLITE_HAVE_C99_MATH_FUNCS
+    MFUNCTION(trunc,             1, trunc,     ceilingFunc ),
+#endif
+    FUNCTION(ln,                 1, 0, 0,      logFunc     ),
+    FUNCTION(log,                1, 1, 0,      logFunc     ),
+    FUNCTION(log10,              1, 1, 0,      logFunc     ),
+    FUNCTION(log2,               1, 2, 0,      logFunc     ),
+    FUNCTION(log,                2, 0, 0,      logFunc     ),
+    MFUNCTION(exp,               1, exp,       math1Func   ),
+    MFUNCTION(pow,               2, pow,       math2Func   ),
+    MFUNCTION(power,             2, pow,       math2Func   ),
+    MFUNCTION(mod,               2, fmod,      math2Func   ),
+    MFUNCTION(acos,              1, acos,      math1Func   ),
+    MFUNCTION(asin,              1, asin,      math1Func   ),
+    MFUNCTION(atan,              1, atan,      math1Func   ),
+    MFUNCTION(atan2,             2, atan2,     math2Func   ),
+    MFUNCTION(cos,               1, cos,       math1Func   ),
+    MFUNCTION(sin,               1, sin,       math1Func   ),
+    MFUNCTION(tan,               1, tan,       math1Func   ),
+    MFUNCTION(cosh,              1, cosh,      math1Func   ),
+    MFUNCTION(sinh,              1, sinh,      math1Func   ),
+    MFUNCTION(tanh,              1, tanh,      math1Func   ),
+#if SQLITE_HAVE_C99_MATH_FUNCS
+    MFUNCTION(acosh,             1, acosh,     math1Func   ),
+    MFUNCTION(asinh,             1, asinh,     math1Func   ),
+    MFUNCTION(atanh,             1, atanh,     math1Func   ),
+#endif
+    MFUNCTION(sqrt,              1, sqrt,      math1Func   ),
+    MFUNCTION(radians,           1, degToRad,  math1Func   ),
+    MFUNCTION(degrees,           1, radToDeg,  math1Func   ),
+    FUNCTION(pi,                 0, 0, 0,      piFunc      ),
+#endif /* SQLITE_ENABLE_MATH_FUNCTIONS */
+    FUNCTION(sign,               1, 0, 0,      signFunc    ),
     INLINE_FUNC(coalesce,       -1, INLINEFUNC_coalesce, 0 ),
     INLINE_FUNC(iif,             3, INLINEFUNC_iif,      0 ),
   };

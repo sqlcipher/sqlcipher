@@ -13,8 +13,6 @@
 # file format change that may be used in the future to implement
 # "ALTER TABLE ... RENAME COLUMN ... TO".
 #
-# $Id: alter4.test,v 1.1 2009/02/02 18:03:22 drh Exp $
-#
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
@@ -569,7 +567,7 @@ do_execsql_test 13.1.6 {
 
 do_catchsql_test 13.1.7 {
   ALTER TABLE x1 RENAME COLUMN t TO ttt;
-} {1 {database disk image is malformed}}
+} {1 {error in index x1i: }}
 
 do_execsql_test 13.1.8 {
   DELETE FROM sqlite_master WHERE name = 'x1i';
@@ -804,6 +802,62 @@ do_execsql_test 20.110 {
   SELECT sql FROM sqlite_master WHERE name='t1';
 } {{CREATE TABLE t1(xx UNIQUE,yy UNIQUE,zz UNIQUE,UNIQUE(xx),PRIMARY KEY(yy),UNIQUE(zz))}}
 
+#-------------------------------------------------------------------------
+reset_db
+do_execsql_test 21.0 {
+  CREATE TABLE t1(a, b, c NOT NULL);
+  CREATE TRIGGER tr1 AFTER INSERT ON t1 WHEN new.c IS NOT NULL BEGIN
+    SELECT c NOT NULL FROM t1;
+  END;
+}
+
+do_execsql_test 21.1 {
+  ALTER TABLE t1 RENAME c TO d;
+}
+
+do_execsql_test 21.2 {
+  SELECT sql FROM sqlite_schema WHERE name IS 'tr1'
+} {{CREATE TRIGGER tr1 AFTER INSERT ON t1 WHEN new.d IS NOT NULL BEGIN
+    SELECT d NOT NULL FROM t1;
+  END}
+}
+
+#-------------------------------------------------------------------------
+#
+reset_db
+do_execsql_test 22.0 {
+  CREATE TABLE t1(a, b);
+  CREATE TABLE t2(c, othername, extra AS (c + 1));
+  ALTER TABLE t1 RENAME a to othername;
+  SELECT sql FROM sqlite_schema;
+} {
+  {CREATE TABLE t1(othername, b)}
+  {CREATE TABLE t2(c, othername, extra AS (c + 1))}
+}
+
+#-------------------------------------------------------------------------
+#
+reset_db
+do_execsql_test 22.0 {
+  CREATE TABLE t1(a, b);
+  CREATE INDEX x1 on t1("c"=b);
+  INSERT INTO t1 VALUES('a', 'a');
+  INSERT INTO t1 VALUES('b', 'b');
+  INSERT INTO t1 VALUES('c', 'c');
+  ALTER TABLE t1 RENAME COLUMN a TO "c";
+  PRAGMA integrity_check;
+} {ok}
+
+reset_db
+do_execsql_test 23.0 {
+  CREATE TABLE t1('a'"b",c);
+  CREATE INDEX i1 ON t1('a');
+  INSERT INTO t1 VALUES(1,2), (3,4);
+  ALTER TABLE t1 RENAME COLUMN a TO x;
+  PRAGMA integrity_check;
+  SELECT sql FROM sqlite_schema WHERE name='t1';
+
+} {ok {CREATE TABLE t1("x" "b",c)}}
 
 
 finish_test

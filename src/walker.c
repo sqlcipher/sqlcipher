@@ -22,7 +22,7 @@
 ** Walk all expressions linked into the list of Window objects passed
 ** as the second argument.
 */
-static int walkWindowList(Walker *pWalker, Window *pList){
+static int walkWindowList(Walker *pWalker, Window *pList, int bOneOnly){
   Window *pWin;
   for(pWin=pList; pWin; pWin=pWin->pNextWin){
     int rc;
@@ -32,15 +32,11 @@ static int walkWindowList(Walker *pWalker, Window *pList){
     if( rc ) return WRC_Abort;
     rc = sqlite3WalkExpr(pWalker, pWin->pFilter);
     if( rc ) return WRC_Abort;
-
-    /* The next two are purely for calls to sqlite3RenameExprUnmap()
-    ** within sqlite3WindowOffsetExpr().  Because of constraints imposed
-    ** by sqlite3WindowOffsetExpr(), they can never fail.  The results do
-    ** not matter anyhow. */
     rc = sqlite3WalkExpr(pWalker, pWin->pStart);
-    if( NEVER(rc) ) return WRC_Abort;
+    if( rc ) return WRC_Abort;
     rc = sqlite3WalkExpr(pWalker, pWin->pEnd);
-    if( NEVER(rc) ) return WRC_Abort;
+    if( rc ) return WRC_Abort;
+    if( bOneOnly ) break;
   }
   return WRC_Continue;
 }
@@ -88,7 +84,7 @@ static SQLITE_NOINLINE int walkExpr(Walker *pWalker, Expr *pExpr){
         }
 #ifndef SQLITE_OMIT_WINDOWFUNC
         if( ExprHasProperty(pExpr, EP_WinFunc) ){
-          if( walkWindowList(pWalker, pExpr->y.pWin) ) return WRC_Abort;
+          if( walkWindowList(pWalker, pExpr->y.pWin, 1) ) return WRC_Abort;
         }
 #endif
       }
@@ -117,6 +113,16 @@ int sqlite3WalkExprList(Walker *pWalker, ExprList *p){
 }
 
 /*
+** This is a no-op callback for Walker->xSelectCallback2.  If this
+** callback is set, then the Select->pWinDefn list is traversed.
+*/
+void sqlite3WalkWinDefnDummyCallback(Walker *pWalker, Select *p){
+  UNUSED_PARAMETER(pWalker);
+  UNUSED_PARAMETER(p);
+  /* No-op */
+}
+
+/*
 ** Walk all expressions associated with SELECT statement p.  Do
 ** not invoke the SELECT callback on p, but do (of course) invoke
 ** any expr callbacks and SELECT callbacks that come from subqueries.
@@ -129,13 +135,18 @@ int sqlite3WalkSelectExpr(Walker *pWalker, Select *p){
   if( sqlite3WalkExpr(pWalker, p->pHaving) ) return WRC_Abort;
   if( sqlite3WalkExprList(pWalker, p->pOrderBy) ) return WRC_Abort;
   if( sqlite3WalkExpr(pWalker, p->pLimit) ) return WRC_Abort;
-#if !defined(SQLITE_OMIT_WINDOWFUNC) && !defined(SQLITE_OMIT_ALTERTABLE)
-  {
-    Parse *pParse = pWalker->pParse;
-    if( pParse && IN_RENAME_OBJECT ){
+#if !defined(SQLITE_OMIT_WINDOWFUNC)
+  if( p->pWinDefn ){
+    Parse *pParse;
+    if( pWalker->xSelectCallback2==sqlite3WalkWinDefnDummyCallback
+     || ((pParse = pWalker->pParse)!=0 && IN_RENAME_OBJECT)
+#ifndef SQLITE_OMIT_CTE
+     || pWalker->xSelectCallback2==sqlite3SelectPopWith
+#endif
+    ){
       /* The following may return WRC_Abort if there are unresolvable
       ** symbols (e.g. a table that does not exist) in a window definition. */
-      int rc = walkWindowList(pWalker, p->pWinDefn);
+      int rc = walkWindowList(pWalker, p->pWinDefn, 0);
       return rc;
     }
   }
@@ -153,10 +164,10 @@ int sqlite3WalkSelectExpr(Walker *pWalker, Select *p){
 int sqlite3WalkSelectFrom(Walker *pWalker, Select *p){
   SrcList *pSrc;
   int i;
-  struct SrcList_item *pItem;
+  SrcItem *pItem;
 
   pSrc = p->pSrc;
-  if( pSrc ){
+  if( ALWAYS(pSrc) ){
     for(i=pSrc->nSrc, pItem=pSrc->a; i>0; i--, pItem++){
       if( pItem->pSelect && sqlite3WalkSelect(pWalker, pItem->pSelect) ){
         return WRC_Abort;
@@ -169,7 +180,7 @@ int sqlite3WalkSelectFrom(Walker *pWalker, Select *p){
     }
   }
   return WRC_Continue;
-} 
+}
 
 /*
 ** Call sqlite3WalkExpr() for every expression in Select statement p.

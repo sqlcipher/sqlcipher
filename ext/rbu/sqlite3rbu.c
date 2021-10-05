@@ -1620,7 +1620,9 @@ char *rbuVacuumIndexStart(
       zSep = "";
       for(iCol=0; iCol<pIter->nCol; iCol++){
         const char *zQuoted = (const char*)sqlite3_column_text(pSel, iCol);
-        if( zQuoted[0]=='N' ){
+        if( zQuoted==0 ){
+          p->rc = SQLITE_NOMEM;
+        }else if( zQuoted[0]=='N' ){
           bFailed = 1;
           break;
         }
@@ -4828,22 +4830,24 @@ static int rbuVfsShmLock(sqlite3_file *pFile, int ofst, int n, int flags){
 #endif
 
   assert( p->openFlags & (SQLITE_OPEN_MAIN_DB|SQLITE_OPEN_TEMP_DB) );
-  if( pRbu && (pRbu->eStage==RBU_STAGE_OAL || pRbu->eStage==RBU_STAGE_MOVE) ){
-    /* Magic number 1 is the WAL_CKPT_LOCK lock. Preventing SQLite from
-    ** taking this lock also prevents any checkpoints from occurring. 
-    ** todo: really, it's not clear why this might occur, as 
-    ** wal_autocheckpoint ought to be turned off.  */
+  if( pRbu && (
+       pRbu->eStage==RBU_STAGE_OAL 
+    || pRbu->eStage==RBU_STAGE_MOVE 
+    || pRbu->eStage==RBU_STAGE_DONE
+  )){
+    /* Prevent SQLite from taking a shm-lock on the target file when it 
+    ** is supplying heap memory to the upper layer in place of *-shm 
+    ** segments. */
     if( ofst==WAL_LOCK_CKPT && n==1 ) rc = SQLITE_BUSY;
   }else{
     int bCapture = 0;
     if( pRbu && pRbu->eStage==RBU_STAGE_CAPTURE ){
       bCapture = 1;
     }
-
     if( bCapture==0 || 0==(flags & SQLITE_SHM_UNLOCK) ){
       rc = p->pReal->pMethods->xShmLock(p->pReal, ofst, n, flags);
       if( bCapture && rc==SQLITE_OK ){
-        pRbu->mLock |= (1 << ofst);
+        pRbu->mLock |= ((1<<n) - 1) << ofst;
       }
     }
   }
@@ -4990,28 +4994,14 @@ static int rbuVfsOpen(
       rbu_file *pDb = rbuFindMaindb(pRbuVfs, zName, 0);
       if( pDb ){
         if( pDb->pRbu && pDb->pRbu->eStage==RBU_STAGE_OAL ){
-          /* This call is to open a *-wal file. Intead, open the *-oal. This
-          ** code ensures that the string passed to xOpen() is terminated by a
-          ** pair of '\0' bytes in case the VFS attempts to extract a URI 
-          ** parameter from it.  */
-          const char *zBase = zName;
-          size_t nCopy;
-          char *zCopy;
+          /* This call is to open a *-wal file. Intead, open the *-oal. */
+          size_t nOpen;
           if( rbuIsVacuum(pDb->pRbu) ){
-            zBase = sqlite3_db_filename(pDb->pRbu->dbRbu, "main");
-            zBase = sqlite3_filename_wal(zBase);
+            zOpen = sqlite3_db_filename(pDb->pRbu->dbRbu, "main");
+            zOpen = sqlite3_filename_wal(zOpen);
           }
-          nCopy = strlen(zBase);
-          zCopy = sqlite3_malloc64(nCopy+2);
-          if( zCopy ){
-            memcpy(zCopy, zBase, nCopy);
-            zCopy[nCopy-3] = 'o';
-            zCopy[nCopy] = '\0';
-            zCopy[nCopy+1] = '\0';
-            zOpen = (const char*)(pFd->zDel = zCopy);
-          }else{
-            rc = SQLITE_NOMEM;
-          }
+          nOpen = strlen(zOpen);
+          ((char*)zOpen)[nOpen-3] = 'o';
           pFd->pRbu = pDb->pRbu;
         }
         pDb->pWalFd = pFd;
