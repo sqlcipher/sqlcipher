@@ -44,6 +44,12 @@
 #endif
 #endif
 
+#ifdef SQLCIPHER_TEST
+static volatile int cipher_test_flags = 0;
+#endif
+
+/* Generate code to return a string value */
+
 static volatile unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static volatile unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static volatile int default_kdf_iter = PBKDF2_ITER;
@@ -395,6 +401,16 @@ char* sqlcipher_version() {
 #endif
     return version;
 }
+
+#ifdef SQLCIPHER_TEST
+int sqlcipher_get_test_flags() {
+  return cipher_test_flags;
+}
+
+void sqlcipher_set_test_flags(int flags) {
+  cipher_test_flags = flags;
+}
+#endif
 
 /**
   * Initialize new cipher_ctx struct. This function will allocate memory

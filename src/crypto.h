@@ -195,6 +195,8 @@ static int cipher_isHex(const unsigned char *hex, int sz){
 #ifdef SQLCIPHER_TEST
 #define TEST_FAIL_NEXT_ENCRYPT (1ul << 0) /* 1 */ 
 #define TEST_FAIL_NEXT_DECRYPT (1ul << 1) /* 2 */ 
+int sqlcipher_get_test_flags(void);
+void sqlcipher_set_test_flags(int);
 #endif
 
 /* extensions defined in crypto_impl.c */

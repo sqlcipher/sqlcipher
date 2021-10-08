@@ -39,11 +39,6 @@
 #include "sqlcipher_ext.h"
 #endif
 
-#ifdef SQLCIPHER_TEST
-static int cipher_test_flags = 0;
-#endif
-
-/* Generate code to return a string value */
 static void codec_vdbe_return_string(Parse *pParse, const char *zLabel, const char *value, int value_type){
   Vdbe *v = sqlite3GetVdbe(pParse);
   sqlite3VdbeSetNumCols(v, 1);
@@ -119,13 +114,13 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   if( sqlite3StrICmp(zLeft,"cipher_test")==0 ){
     if( zRight ) {
       if(sqlite3StrICmp(zRight, "fail_next_encrypt")) {
-        cipher_test_flags ^= TEST_FAIL_NEXT_ENCRYPT;
+        sqlcipher_set_test_flags(sqlcipher_get_test_flags() ^ TEST_FAIL_NEXT_ENCRYPT);
       } else
       if(sqlite3StrICmp(zRight, "fail_next_decrypt")) {
-        cipher_test_flags ^= TEST_FAIL_NEXT_DECRYPT;
+        sqlcipher_set_test_flags(sqlcipher_get_test_flags() ^ TEST_FAIL_NEXT_DECRYPT);
       } 
     } else {
-      char *flags = sqlite3_mprintf("%d", cipher_test_flags);
+      char *flags = sqlite3_mprintf("%d", sqlcipher_get_test_flags());
       codec_vdbe_return_string(pParse, "cipher_test", flags, P4_DYNAMIC);
     }
   }else
@@ -714,7 +709,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if((cipher_test_flags & TEST_FAIL_NEXT_ENCRYPT) > 0) rc = SQLITE_ERROR;
+      if((sqlcipher_get_test_flags() & TEST_FAIL_NEXT_ENCRYPT) > 0) rc = SQLITE_ERROR;
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
@@ -739,7 +734,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       }
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if((cipher_test_flags & TEST_FAIL_NEXT_DECRYPT) > 0) rc = SQLITE_ERROR;
+      if((sqlcipher_get_test_flags() & TEST_FAIL_NEXT_DECRYPT) > 0) rc = SQLITE_ERROR;
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
