@@ -360,7 +360,8 @@ file delete -force test.db
 
 # open a 1.1.8 database without hmac, then copy the data
 do_test attach-and-copy-1.1.8 {
-  sqlite_orig db $sampleDir/sqlcipher-1.1.8-testkey.db
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db test.db
+  sqlite_orig db test.db
   
   execsql {
     PRAGMA key = 'testkey';
@@ -368,14 +369,14 @@ do_test attach-and-copy-1.1.8 {
     PRAGMA kdf_iter = 4000;
     PRAGMA cipher_page_size = 1024;
     PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;
-    ATTACH DATABASE 'test.db' AS db2 KEY 'testkey-hmac'; 
+    ATTACH DATABASE 'test-new.db' AS db2 KEY 'testkey-hmac'; 
     CREATE TABLE db2.t1(a,b);
     INSERT INTO db2.t1 SELECT * FROM main.t1;
     DETACH DATABASE db2;
   }
   db close
 
-  sqlite_orig db test.db
+  sqlite_orig db test-new.db
   execsql {
     PRAGMA key = 'testkey-hmac';
     SELECT count(*) FROM t1;
@@ -384,7 +385,7 @@ do_test attach-and-copy-1.1.8 {
 } {ok 75709 1 1 one one 1 2 one two 1 2}
 db close
 file delete -force test.db
-
+file delete -force test-new.db
 
 # open a standard database, then attach a new 
 # database with completely different options. 
@@ -681,7 +682,7 @@ file delete -force test-vacuum.db
 # setting as the original 
 do_test default-hmac-kdf-attach {
   file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db test.db
-  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db;
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db
   sqlite_orig db test.db
   execsql {
     PRAGMA cipher_default_use_hmac = OFF;
@@ -707,7 +708,7 @@ file delete -force sqlcipher-1.1.8-testkey.db
 # fail because the hmac setting for the 
 # attached database is not compatible
 do_test attach-1.1.8-database-from-2.0-fails {
-  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db;
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db
   sqlite_orig db test.db
   catchsql {
     PRAGMA key = 'testkey';
@@ -725,7 +726,7 @@ file delete -force sqlcipher-1.1.8-testkey.db
 # succeed now that hmac is off by default
 # before the attach
 do_test change-default-hmac-kdf-attach {
-  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db;
+  file copy -force $sampleDir/sqlcipher-1.1.8-testkey.db sqlcipher-1.1.8-testkey.db
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
@@ -1087,19 +1088,22 @@ file delete -force test.db test.db-migrated test.db-journal
 do_test migrate-3-0-database-to-current-format {
   file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
   sqlite_orig db test.db
-  execsql {
+  set rc {}
+
+  lappend rc [execsql {
     PRAGMA key = 'testkey';
     PRAGMA cipher_migrate;
-  }
+    SELECT count(*) FROM sqlite_schema;
+  }]
   db close
     
   sqlite_orig db test.db
-  execsql {
+  lappend rc [execsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM sqlite_schema;
     PRAGMA journal_mode;
-  }
-} {ok 1 delete}
+  }]
+} {{ok 0 1} {ok 1 delete}}
 db close
 file delete -force test.db
 
@@ -1133,6 +1137,58 @@ do_test migrate-wal-database-to-current {
 db close
 file delete -force test.db
 
+# test original database is left untouched after
+# a failed migration e.g. due to low disk space 
+do_test migrate-failure {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+  sqlite_orig db test.db
+
+  set rc {}
+
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_test_on = fail_migrate;
+    PRAGMA cipher_migrate;
+  }]
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_test_off = fail_migrate;
+    PRAGMA cipher_compatibility = 3;
+    SELECT count(*) FROM sqlite_schema;
+  }]
+} {{ok 1} {ok 1}}
+db close
+file delete -force test.db test.db-migrated
+
+# leave database is a readable state after a 
+# a failed migration 
+do_test migrate-failure-readable {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+  sqlite_orig db test.db
+
+  set rc {}
+  lappend rc [execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_test_on = fail_migrate;
+    PRAGMA cipher_migrate;
+  }]
+
+  lappend rc [catchsql {
+    SELECT count(*) FROM sqlite_schema;
+  }]
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [execsql {
+    PRAGMA cipher_test_off = fail_migrate;
+    PRAGMA cipher_test;
+  }]
+} {{ok 1} {1 {SQL logic error}} 0}
+db close
+file delete -force test.db test.db-migrated
 
 do_test key-database-by-name {
     sqlite_orig db test.db
@@ -1259,6 +1315,7 @@ do_test can-migrate-with-raw-hex-key {
         PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
         PRAGMA cipher_migrate;
     }
+    db close
 
     sqlite_orig db test.db
     execsql {

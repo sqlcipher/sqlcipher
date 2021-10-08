@@ -111,18 +111,39 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   } else
 #endif
 #ifdef SQLCIPHER_TEST
-  if( sqlite3StrICmp(zLeft,"cipher_test")==0 ){
+  if( sqlite3StrICmp(zLeft,"cipher_test_on")==0 ){
     if( zRight ) {
-      if(sqlite3StrICmp(zRight, "fail_next_encrypt")) {
-        sqlcipher_set_test_flags(sqlcipher_get_test_flags() ^ TEST_FAIL_NEXT_ENCRYPT);
+      unsigned int flags = sqlcipher_get_test_flags();
+      if(sqlite3StrICmp(zRight, "fail_encrypt")==0) {
+        flags |= TEST_FAIL_ENCRYPT;
       } else
-      if(sqlite3StrICmp(zRight, "fail_next_decrypt")) {
-        sqlcipher_set_test_flags(sqlcipher_get_test_flags() ^ TEST_FAIL_NEXT_DECRYPT);
-      } 
-    } else {
-      char *flags = sqlite3_mprintf("%d", sqlcipher_get_test_flags());
-      codec_vdbe_return_string(pParse, "cipher_test", flags, P4_DYNAMIC);
+      if(sqlite3StrICmp(zRight, "fail_decrypt")==0) {
+        flags |= TEST_FAIL_DECRYPT;
+      } else
+      if(sqlite3StrICmp(zRight, "fail_migrate")==0) {
+        flags |= TEST_FAIL_MIGRATE;
+      }
+      sqlcipher_set_test_flags(flags);
     }
+  } else
+  if( sqlite3StrICmp(zLeft,"cipher_test_off")==0 ){
+    if( zRight ) {
+      unsigned int flags = sqlcipher_get_test_flags();
+      if(sqlite3StrICmp(zRight, "fail_encrypt")==0) {
+        flags &= ~TEST_FAIL_ENCRYPT;
+      } else
+      if(sqlite3StrICmp(zRight, "fail_decrypt")==0) {
+        flags &= ~TEST_FAIL_DECRYPT;
+      } else
+      if(sqlite3StrICmp(zRight, "fail_migrate")==0) {
+        flags &= ~TEST_FAIL_MIGRATE;
+      }
+      sqlcipher_set_test_flags(flags);
+    }
+  } else
+  if( sqlite3StrICmp(zLeft,"cipher_test")==0 ){
+    char *flags = sqlite3_mprintf("%i", sqlcipher_get_test_flags());
+    codec_vdbe_return_string(pParse, "cipher_test", flags, P4_DYNAMIC);
   }else
 #endif
   if( sqlite3StrICmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
@@ -157,8 +178,12 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   } else
   if( sqlite3StrICmp(zLeft, "cipher_migrate")==0 && !zRight ){
     if(ctx){
-      char *migrate_status = sqlite3_mprintf("%d", sqlcipher_codec_ctx_migrate(ctx));
+      int status = sqlcipher_codec_ctx_migrate(ctx); 
+      char *migrate_status = sqlite3_mprintf("%d", status);
       codec_vdbe_return_string(pParse, "cipher_migrate", migrate_status, P4_DYNAMIC);
+      if(status != SQLITE_OK) {
+        sqlcipher_codec_ctx_set_error(ctx, status);
+      }
     }
   } else
   if( sqlite3StrICmp(zLeft, "cipher_provider")==0 && !zRight ){
@@ -709,7 +734,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if((sqlcipher_get_test_flags() & TEST_FAIL_NEXT_ENCRYPT) > 0) rc = SQLITE_ERROR;
+      if((sqlcipher_get_test_flags() & TEST_FAIL_ENCRYPT) > 0) rc = SQLITE_ERROR;
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
@@ -734,7 +759,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       }
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if((sqlcipher_get_test_flags() & TEST_FAIL_NEXT_DECRYPT) > 0) rc = SQLITE_ERROR;
+      if((sqlcipher_get_test_flags() & TEST_FAIL_DECRYPT) > 0) rc = SQLITE_ERROR;
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);

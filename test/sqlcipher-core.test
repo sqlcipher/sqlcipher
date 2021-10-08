@@ -801,4 +801,54 @@ db close
 dba close
 file delete -force test.db
 
+do_test test_flags_fail_encrypt {
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_on = fail_encrypt;
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_off = fail_encrypt;
+    PRAGMA cipher_test;
+  }
+} {0 1 0}
+db close
+
+do_test test_flags_fail_decrypt {
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_on = fail_decrypt;
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_off = fail_decrypt;
+    PRAGMA cipher_test;
+  }
+} {0 2 0}
+db close
+
+do_test test_flags_fail_migrate {
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_on = fail_migrate;
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_off = fail_migrate;
+    PRAGMA cipher_test;
+  }
+} {0 4 0}
+db close
+
+do_test test_flags_combo {
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_on = fail_encrypt;
+    PRAGMA cipher_test_on = fail_migrate;
+    PRAGMA cipher_test;
+    PRAGMA cipher_test_off = fail_encrypt;
+    PRAGMA cipher_test_off = fail_migrate;
+    PRAGMA cipher_test;
+  }
+} {0 5 0}
+db close
+
 finish_test

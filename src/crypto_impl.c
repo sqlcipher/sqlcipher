@@ -45,7 +45,13 @@
 #endif
 
 #ifdef SQLCIPHER_TEST
-static volatile int cipher_test_flags = 0;
+static volatile unsigned int cipher_test_flags = 0;
+unsigned int sqlcipher_get_test_flags() {
+  return cipher_test_flags;
+}
+void sqlcipher_set_test_flags(unsigned int flags) {
+  cipher_test_flags = flags;
+}
 #endif
 
 /* Generate code to return a string value */
@@ -401,16 +407,6 @@ char* sqlcipher_version() {
 #endif
     return version;
 }
-
-#ifdef SQLCIPHER_TEST
-int sqlcipher_get_test_flags() {
-  return cipher_test_flags;
-}
-
-void sqlcipher_set_test_flags(int flags) {
-  cipher_test_flags = flags;
-}
-#endif
 
 /**
   * Initialize new cipher_ctx struct. This function will allocate memory
@@ -1380,7 +1376,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   pass = sqlcipher_malloc(pass_sz+1);
   memset(pass, 0, pass_sz+1);
   memcpy(pass, ctx->read_ctx->pass, pass_sz);
-                                            
+
   /* Version 4 - current, no upgrade required, so exit immediately */
   rc = sqlcipher_check_connection(db_filename, pass, pass_sz, "", &user_version, &journal_mode);
   if(rc == SQLITE_OK){
@@ -1398,6 +1394,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     if(pragma_compat) sqlcipher_free(pragma_compat, sqlite3Strlen30(pragma_compat)); 
     pragma_compat = NULL;
   }
+  
   /* if we exit the loop normally we failed to determine the version, this is an error */
   CODEC_TRACE("Upgrade format not determined\n");
   goto handle_error;
@@ -1444,6 +1441,14 @@ migrate:
     CODEC_TRACE("sqlcipher_export failed, error code %d\n", rc);
     goto handle_error;
   }
+
+#ifdef SQLCIPHER_TEST
+  if((sqlcipher_get_test_flags() & TEST_FAIL_MIGRATE) > 0) {
+    rc = SQLITE_ERROR;
+    CODEC_TRACE("simulated migrate failure, error code %d\n", rc);
+    goto handle_error;
+  }
+#endif
 
   rc = sqlite3_exec(db, set_user_version, NULL, NULL, NULL);
   if(rc != SQLITE_OK){
@@ -1537,7 +1542,6 @@ migrate:
 
 handle_error:
   CODEC_TRACE("An error occurred attempting to migrate the database - last error %d\n", rc);
-  rc = SQLITE_ERROR;
 
 cleanup:
   if(pass) sqlcipher_free(pass, pass_sz);
