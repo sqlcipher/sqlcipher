@@ -1065,7 +1065,7 @@ do_test migrate-1.1.8-database-to-current-format {
   }
 } {ok 1}
 db close
-file delete -force test.db test.db-migrated test.db-journal
+file delete -force test.db 
 
 do_test migrate-2-0-le-database-to-current-format {
   file copy -force $sampleDir/sqlcipher-2.0-le-testkey.db test.db
@@ -1083,7 +1083,7 @@ do_test migrate-2-0-le-database-to-current-format {
   }
 } {ok 1}
 db close
-file delete -force test.db test.db-migrated test.db-journal
+file delete -force test.db 
 
 do_test migrate-3-0-database-to-current-format {
   file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
@@ -1151,6 +1151,8 @@ do_test migrate-failure {
     PRAGMA cipher_migrate;
   }]
   db close
+  
+  lappend rc [file exists test.db-migrated]
 
   sqlite_orig db test.db
   lappend rc [execsql {
@@ -1159,9 +1161,9 @@ do_test migrate-failure {
     PRAGMA cipher_compatibility = 3;
     SELECT count(*) FROM sqlite_schema;
   }]
-} {{ok 1} {ok 1}}
+} {{ok 1} 0 {ok 1}}
 db close
-file delete -force test.db test.db-migrated
+file delete -force test.db 
 
 # leave database is a readable state after a 
 # a failed migration 
@@ -1188,7 +1190,7 @@ do_test migrate-failure-readable {
   }]
 } {{ok 1} {1 {SQL logic error}} 0}
 db close
-file delete -force test.db test.db-migrated
+file delete -force test.db 
 
 do_test key-database-by-name {
     sqlite_orig db test.db

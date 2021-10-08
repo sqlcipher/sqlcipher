@@ -1526,10 +1526,6 @@ migrate:
   CODEC_TRACE("DETACH DATABASE called %d\n", rc);
   if(rc != SQLITE_OK) goto cleanup; 
 
-  rc = sqlite3OsDelete(db->pVfs, migrated_db_filename, 0);
-  CODEC_TRACE("deleted migration database: %d\n", rc);
-  if( rc!=SQLITE_OK ) goto handle_error;
-
   sqlite3ResetAllSchemasOfConnection(db);
   CODEC_TRACE("reset all schemas\n");
 
@@ -1544,6 +1540,11 @@ handle_error:
   CODEC_TRACE("An error occurred attempting to migrate the database - last error %d\n", rc);
 
 cleanup:
+  if(migrated_db_filename) {
+    int del_rc = sqlite3OsDelete(db->pVfs, migrated_db_filename, 0);
+    CODEC_TRACE("deleted migration database: %d\n", del_rc);
+  }
+
   if(pass) sqlcipher_free(pass, pass_sz);
   if(attach_command) sqlcipher_free(attach_command, sqlite3Strlen30(attach_command)); 
   if(migrated_db_filename) sqlcipher_free(migrated_db_filename, sqlite3Strlen30(migrated_db_filename)); 
