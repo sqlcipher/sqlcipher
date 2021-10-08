@@ -191,6 +191,12 @@ static int cipher_isHex(const unsigned char *hex, int sz){
   return 1;
 }
 
+/* possible flags for simulating specific test conditions */
+#ifdef SQLCIPHER_TEST
+#define TEST_FAIL_NEXT_ENCRYPT (1ul << 0) /* 1 */ 
+#define TEST_FAIL_NEXT_DECRYPT (1ul << 1) /* 2 */ 
+#endif
+
 /* extensions defined in crypto_impl.c */
 /* the default implementation of SQLCipher uses a cipher_ctx
    to keep track of read / write state separately. The following

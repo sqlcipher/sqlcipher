@@ -66,7 +66,7 @@ do_test codec-error-journal-delete {
 
   catchsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_fail_next_encrypt = 1;
+    PRAGMA cipher_test = fail_next_encrypt;
     UPDATE t1 SET b = 'fail' WHERE a = 5000;
   }
 
@@ -74,7 +74,7 @@ do_test codec-error-journal-delete {
   sqlite_orig db test.db
 
   execsql {
-    PRAGMA cipher_fail_next_encrypt = 0;
+    PRAGMA cipher_test = fail_next_encrypt;
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
@@ -92,7 +92,7 @@ do_test codec-error-journal-wal {
 
   catchsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_fail_next_encrypt = 1;
+    PRAGMA cipher_test = fail_next_encrypt;
     UPDATE t1 SET b = 'fail' WHERE a = 5000;
   }
 
@@ -100,7 +100,7 @@ do_test codec-error-journal-wal {
   sqlite_orig db test.db
 
   execsql {
-    PRAGMA cipher_fail_next_encrypt = 0;
+    PRAGMA cipher_test = fail_next_encrypt;
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
@@ -120,7 +120,7 @@ do_test codec-error-journal-wal-transaction {
     PRAGMA key = 'testkey';
     BEGIN;
     UPDATE t1 SET b = 'success' WHERE a = 1;
-    PRAGMA cipher_fail_next_encrypt = 1;
+    PRAGMA cipher_test = fail_next_encrypt;
     UPDATE t1 SET b = 'fail' WHERE a = 5000;
     COMMIT;
   }
@@ -129,7 +129,7 @@ do_test codec-error-journal-wal-transaction {
   sqlite_orig db test.db
 
   execsql {
-    PRAGMA cipher_fail_next_encrypt = 0;
+    PRAGMA cipher_test = fail_next_encrypt;
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
@@ -149,7 +149,7 @@ do_test codec-error-journal-wal-read {
   catchsql {
     PRAGMA key = 'testkey';
     SELECT count(*) FROM sqlite_schema;
-    PRAGMA cipher_fail_next_decrypt = 1;
+    PRAGMA cipher_test = fail_next_decrypt;
     UPDATE t1 SET b = 'fail' WHERE a = 5000;
   }
 
@@ -157,7 +157,7 @@ do_test codec-error-journal-wal-read {
   sqlite_orig db test.db
 
   execsql {
-    PRAGMA cipher_fail_next_decrypt = 0;
+    PRAGMA cipher_test = fail_next_decrypt;
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;

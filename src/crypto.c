@@ -40,8 +40,7 @@
 #endif
 
 #ifdef SQLCIPHER_TEST
-static int cipher_fail_next_encrypt = 0;
-static int cipher_fail_next_decrypt = 0;
+static int cipher_test_flags = 0;
 #endif
 
 /* Generate code to return a string value */
@@ -117,20 +116,17 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   } else
 #endif
 #ifdef SQLCIPHER_TEST
-  if( sqlite3StrICmp(zLeft,"cipher_fail_next_encrypt")==0 ){
+  if( sqlite3StrICmp(zLeft,"cipher_test")==0 ){
     if( zRight ) {
-      cipher_fail_next_encrypt = sqlite3GetBoolean(zRight,1);
+      if(sqlite3StrICmp(zRight, "fail_next_encrypt")) {
+        cipher_test_flags ^= TEST_FAIL_NEXT_ENCRYPT;
+      } else
+      if(sqlite3StrICmp(zRight, "fail_next_decrypt")) {
+        cipher_test_flags ^= TEST_FAIL_NEXT_DECRYPT;
+      } 
     } else {
-      char *fail = sqlite3_mprintf("%d", cipher_fail_next_encrypt);
-      codec_vdbe_return_string(pParse, "cipher_fail_next_encrypt", fail, P4_DYNAMIC);
-    }
-  }else
-  if( sqlite3StrICmp(zLeft,"cipher_fail_next_decrypt")==0 ){
-    if( zRight ) {
-      cipher_fail_next_decrypt = sqlite3GetBoolean(zRight,1);
-    } else {
-      char *fail = sqlite3_mprintf("%d", cipher_fail_next_decrypt);
-      codec_vdbe_return_string(pParse, "cipher_fail_next_decrypt", fail, P4_DYNAMIC);
+      char *flags = sqlite3_mprintf("%d", cipher_test_flags);
+      codec_vdbe_return_string(pParse, "cipher_test", flags, P4_DYNAMIC);
     }
   }else
 #endif
@@ -718,7 +714,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if(cipher_fail_next_decrypt) rc = SQLITE_ERROR;
+      if((cipher_test_flags & TEST_FAIL_NEXT_ENCRYPT) > 0) rc = SQLITE_ERROR;
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
@@ -743,7 +739,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       }
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if(cipher_fail_next_encrypt) rc = SQLITE_ERROR;
+      if((cipher_test_flags & TEST_FAIL_NEXT_DECRYPT) > 0) rc = SQLITE_ERROR;
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
