@@ -851,4 +851,52 @@ do_test test_flags_combo {
 } {0 5 0}
 db close
 
+# configure URI filename support
+# create a new encrypted database with the key via parameter
+# close database
+# open normally providing key via pragma verify
+# correct key works
+sqlite3_shutdown
+sqlite3_config_uri 1
+do_test uri-key {
+  sqlite_orig db file:test.db?a=a&key=testkey&c=c
+
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1 VALUES(1,2);
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM t1;
+  }
+
+} {ok 1}
+db close
+
+# verify wrong key fails
+do_test uri-key-2 {
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = 'test';
+    SELECT count(*) FROM t1;
+  }
+} {1 {file is not a database}}
+db close
+file delete -force test.db
+sqlite3_shutdown
+sqlite3_config_uri 0
+
 finish_test
+
