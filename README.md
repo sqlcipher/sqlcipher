@@ -32,9 +32,9 @@ The SQLCipher team welcomes contributions to the core library. All contributions
 
 ## Compiling
 
-Building SQLCipher is similar to compiling a regular version of SQLite from source a couple small exceptions:  
+Building SQLCipher is similar to compiling a regular version of SQLite from source, with a couple of small exceptions:
 
- 1. You *must* define `SQLITE_HAS_CODEC` and either `SQLITE_TEMP_STORE=2` or SQLITE_TEMP_STORE=3` 
+ 1. You *must* define `SQLITE_HAS_CODEC` and either `SQLITE_TEMP_STORE=2` or `SQLITE_TEMP_STORE=3`
  2. You will need to link against a support cryptographic provider (OpenSSL, LibTomCrypt, CommonCrypto/Security.framework, or NSS)
  
 The following examples demonstrate linking against OpenSSL, which is a readily available provider on most Unix-like systems. 
@@ -43,17 +43,17 @@ Example 1. Static linking (replace /opt/local/lib with the path to libcrypto.a).
 example, `--enable-tempstore=yes` is setting `SQLITE_TEMP_STORE=2` for the build.
 
 ```
-	$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
-		LDFLAGS="/opt/local/lib/libcrypto.a"
-	$ make
+$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
+	LDFLAGS="/opt/local/lib/libcrypto.a"
+$ make
 ```
 
 Example 2. Dynamic linking
 
 ```
-	$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
-		LDFLAGS="-lcrypto"
-	$ make
+$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
+	LDFLAGS="-lcrypto"
+$ make
 ```
 
 ## Testing
@@ -65,10 +65,10 @@ As a result, the SQLCipher package includes it's own independent tests that exer
 To run SQLCipher specific tests, configure as described here and run the following to execute the tests and receive a report of the results:
 
 ```
-	$ ./configure --enable-tempstore=yes --enable-fts5 CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
-		LDFLAGS="-lcrypto"
-  $ make testfixture
-  $ ./testfixture test/sqlcipher.test
+$ ./configure --enable-tempstore=yes --enable-fts5 CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
+	LDFLAGS="-lcrypto"
+$ make testfixture
+$ ./testfixture test/sqlcipher.test
 ```
 
 ## Encrypting a database
