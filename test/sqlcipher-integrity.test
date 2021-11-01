@@ -38,6 +38,8 @@ set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 source $testdir/sqlcipher.tcl
 
+set old_pending_byte [sqlite3_test_control_pending_byte 0x40000000]
+
 # 1. create a database and insert a bunch of data, close the database
 # 2. seek to the middle of the first database page and write some junk
 # 3. Open the database and verify that the database is no longer readable
@@ -340,5 +342,100 @@ do_test integrity-check-plaintext-header {
   }]
 } {{} 1 {{HMAC verification failed for page 1} {HMAC verification failed for page 2}}}
 file delete -force test.db
+
+# verify that the default page size for the
+# tests is 1024 (via makefile for testfixure. If
+# the default pagesize is different it will breat
+# the following tests
+do_test default-page-size {
+  sqlite_orig db test.db
+  execsql {
+    CREATE TABLE t1(a,b);
+    PRAGMA page_size;
+  }
+} {1024}
+
+# zero out the 65th page, verify the behavior of
+# pragma integrity check on a plaintext database
+do_test integrity-check-one-page-plaintext {
+  sqlite_orig db $sampleDir/sqlcipher-4.0-testkey.db
+  set rc {}
+
+  execsql {
+    PRAGMA key = 'testkey';
+    ATTACH DATABASE 'plain-corrupt.db' AS plain KEY '';
+    SELECT sqlcipher_export('plain');
+    DETACH DATABASE plain;
+  }
+
+  db close
+
+  set txt ""
+  for {set i 0} {$i < 2048} {incr i} {
+    append txt "0"
+  }
+
+  hexio_write plain-corrupt.db 65536 $txt
+
+  sqlite_orig db plain-corrupt.db
+
+  set DB [sqlite3_connection_pointer db]
+  set VM [sqlite3_prepare $DB {PRAGMA integrity_check;} -1 TAIL]
+  while {[sqlite3_step $VM] == "SQLITE_ROW"} {
+    lappend rc [sqlite3_column_text $VM 0]
+  }
+  sqlite3_finalize $VM
+
+  lappend rc [catchsql {
+    PRAGMA integrity_check;
+  }]
+} {{*** in database main ***
+Page 65: btreeInitPage() returns error code 11} {1 {database disk image is malformed}}}
+db close
+file delete -force plain-corrupt.db
+
+# introduce a corruption in the 17th page then verify that
+# both integrity checks only reports one corrupt page
+# (not that all subsequent pages corrupt). Behavior of
+# PRAGMA integrity check should be consistent with the plaintext database
+# save that the page number will be different because page size for
+# sqlcipher is 4096 under the testfixture instead of 1024
+do_test version-4-integrity-check-one-page {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+
+  set txt ""
+  for {set i 0} {$i < 8192} {incr i} {
+    append txt "0"
+  }
+
+  hexio_write test.db 65536 $txt
+
+  sqlite_orig db test.db
+  set rc {}
+  lappend rc [
+    execsql {
+      PRAGMA key = 'testkey';
+      PRAGMA cipher_integrity_check;
+    }
+  ]
+
+  set DB [sqlite3_connection_pointer db]
+  set VM [sqlite3_prepare $DB {PRAGMA integrity_check;} -1 TAIL]
+  while {[sqlite3_step $VM] == "SQLITE_ROW"} {
+    lappend rc [sqlite3_column_text $VM 0]
+  }
+  sqlite3_finalize $VM
+
+  lappend rc [
+    catchsql {
+      PRAGMA integrity_check;
+    }
+  ]
+} {{ok {HMAC verification failed for page 17}} {*** in database main ***
+Page 17: btreeInitPage() returns error code 11} {1 {database disk image is malformed}}}
+db close
+file delete -force test.db
+
+sqlite3_test_control_pending_byte $old_pending_byte
 
 finish_test

@@ -736,9 +736,9 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #ifdef SQLCIPHER_TEST
       if((sqlcipher_get_test_flags() & TEST_FAIL_ENCRYPT) > 0) rc = SQLITE_ERROR;
 #endif
-      if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
+      if(rc != SQLITE_OK) { /* clear results of failed cipher operation */
+        /* this will be considered a temporary error condition. the pager is still usable */
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
-        sqlcipher_codec_ctx_set_error(ctx, rc);
       }
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
@@ -762,6 +762,8 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       if((sqlcipher_get_test_flags() & TEST_FAIL_DECRYPT) > 0) rc = SQLITE_ERROR;
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
+        /* failure to encrypt a page is considered a permanent error and will render the pager unusable
+           in order to prevent corrupted pages from being written to the main databased when using WAL */
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
         return NULL;
