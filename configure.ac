@@ -223,11 +223,19 @@ else
         AC_CHECK_LIB([nss3], [PK11_Decrypt], ,
                      AC_MSG_ERROR([Library crypto not found. Install nss!"]))
       else
-        CFLAGS="$CFLAGS -DSQLCIPHER_CRYPTO_OPENSSL"
-        BUILD_CFLAGS="$BUILD_CFLAGS -DSQLCIPHER_CRYPTO_OPENSSL"
-	      AC_MSG_RESULT([openssl])
-        AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
-                     AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+        if test "$crypto_lib" = "wolfssl"; then
+          CFLAGS="$CFLAGS -DSQLCIPHER_CRYPTO_WOLFSSL"
+          BUILD_CFLAGS="$BUILD_CFLAGS -DSQLCIPHER_CRYPTO_WOLFSSL"
+          AC_MSG_RESULT([wolfssl])
+          AC_CHECK_LIB([wolfssl], [wolfCrypt_Init], ,
+                      AC_MSG_ERROR([Library crypto not found. Install wolfSSL!"]))
+        else
+          CFLAGS="$CFLAGS -DSQLCIPHER_CRYPTO_OPENSSL"
+          BUILD_CFLAGS="$BUILD_CFLAGS -DSQLCIPHER_CRYPTO_OPENSSL"
+          AC_MSG_RESULT([openssl])
+          AC_CHECK_LIB([crypto], [HMAC_Init_ex], ,
+                      AC_MSG_ERROR([Library crypto not found. Install openssl!"]))
+        fi
       fi
     fi
   fi
