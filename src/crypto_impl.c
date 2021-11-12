@@ -980,7 +980,7 @@ void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   CODEC_TRACE("codec_ctx_free: entered iCtx=%p\n", iCtx);
   sqlcipher_free(ctx->kdf_salt, ctx->kdf_salt_sz);
   sqlcipher_free(ctx->hmac_kdf_salt, ctx->kdf_salt_sz);
-  sqlcipher_free(ctx->buffer, 0);
+  sqlcipher_free(ctx->buffer, ctx->page_sz);
 
   ctx->provider->ctx_free(&ctx->provider_ctx);
   sqlcipher_free(ctx->provider, sizeof(sqlcipher_provider)); 
