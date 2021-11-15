@@ -52,6 +52,23 @@ unsigned int sqlcipher_get_test_flags() {
 void sqlcipher_set_test_flags(unsigned int flags) {
   cipher_test_flags = flags;
 }
+
+static volatile int cipher_test_rand = 0;
+int sqlcipher_get_test_rand() {
+  return cipher_test_rand;
+}
+void sqlcipher_set_test_rand(int rand) {
+  cipher_test_rand = rand;
+}
+int sqlcipher_get_test_fail() {
+  int x;
+
+  /* if cipher_test_rand is not set to a non-zero value always fail (return true) */
+  if (cipher_test_rand == 0) return 1;
+
+  sqlite3_randomness(sizeof(x), &x);
+  return ((x % cipher_test_rand) == 0);
+}
 #endif
 
 /* Generate code to return a string value */

@@ -198,6 +198,9 @@ static int cipher_isHex(const unsigned char *hex, int sz){
 #define TEST_FAIL_MIGRATE 0x04
 unsigned int sqlcipher_get_test_flags(void);
 void sqlcipher_set_test_flags(unsigned int);
+int sqlcipher_get_test_rand(void);
+void sqlcipher_set_test_rand(int);
+int sqlcipher_get_test_fail(void);
 #endif
 
 /* extensions defined in crypto_impl.c */
