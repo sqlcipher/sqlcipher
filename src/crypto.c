@@ -743,9 +743,8 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_DECRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if((sqlcipher_get_test_flags() & TEST_FAIL_ENCRYPT) > 0 && sqlcipher_get_test_fail()) {
+      if((sqlcipher_get_test_flags() & TEST_FAIL_DECRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
-        fprintf(stderr, "simulating encryption failure\n");
       }
 #endif
       if(rc != SQLITE_OK) { /* clear results of failed cipher operation */
@@ -771,8 +770,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       }
       rc = sqlcipher_page_cipher(ctx, cctx, pgno, CIPHER_ENCRYPT, page_sz - offset, pData + offset, (unsigned char*)buffer + offset);
 #ifdef SQLCIPHER_TEST
-      if((sqlcipher_get_test_flags() & TEST_FAIL_DECRYPT) > 0 && sqlcipher_get_test_fail()) {
-        fprintf(stderr, "simulating decryption failure\n");
+      if((sqlcipher_get_test_flags() & TEST_FAIL_ENCRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
       }
 #endif
