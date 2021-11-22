@@ -747,7 +747,9 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         rc = SQLITE_ERROR;
       }
 #endif
-      if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
+      if(rc != SQLITE_OK) {
+        /* failure to decrypt a page is considered a permanent error and will render the pager unusable
+           in order to prevent inconsistent data being loaded into page cache */
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
       }
@@ -774,7 +776,9 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         rc = SQLITE_ERROR;
       }
 #endif
-      if(rc != SQLITE_OK) { /* clear results of failed cipher operation and set error */
+      if(rc != SQLITE_OK) {
+        /* failure to encrypt a page is considered a permanent error and will render the pager unusable
+           in order to prevent corrupted pages from being written to the main databased when using WAL */
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
         return NULL;
