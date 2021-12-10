@@ -1329,7 +1329,7 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
   hmac_out = sqlcipher_malloc(ctx->hmac_sz);
 
   for(page = 1; page <= file_sz / ctx->page_sz; page++) {
-    int offset = (page - 1) * ctx->page_sz;
+    i64 offset = (page - 1) * ctx->page_sz;
     int payload_sz = ctx->page_sz - ctx->reserve_sz + ctx->iv_sz;
     int read_sz = ctx->page_sz;
 
