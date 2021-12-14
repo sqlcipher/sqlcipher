@@ -1598,16 +1598,17 @@ int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int random_sz
   return SQLITE_ERROR;
 }
 
-#if !defined(SQLITE_OMIT_TRACE) && !defined(SQLITE_OMIT_DEPRECATED)
-static void sqlcipher_profile_callback(void *file, const char *sql, sqlite3_uint64 run_time){
-  FILE *f = (FILE*)file;
-  double elapsed = run_time/1000000.0;
-  if(f) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sql);
+#if !defined(SQLITE_OMIT_TRACE)
+static int sqlcipher_profile_callback(unsigned int trace, void *file, void *stmt, void *run_time){
+  FILE *f = (FILE*) file;
+  double elapsed = (*((sqlite3_uint64*)run_time))/1000000.0;
+  if(f) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
+  return SQLITE_OK;
 }
 #endif
 
 int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
-#if defined(SQLITE_OMIT_TRACE) || defined(SQLITE_OMIT_DEPRECATED)
+#if defined(SQLITE_OMIT_TRACE)
   return SQLITE_ERROR;
 #else
   FILE *f;
@@ -1624,7 +1625,7 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
     if((f = fopen(destination, "a")) == 0) return SQLITE_ERROR;
 #endif    
   }
-  sqlite3_profile(db, sqlcipher_profile_callback, f);
+  sqlite3_trace_v2(db, SQLITE_TRACE_PROFILE, sqlcipher_profile_callback, f);
   return SQLITE_OK;
 #endif
 }
