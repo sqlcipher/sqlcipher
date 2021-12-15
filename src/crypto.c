@@ -191,6 +191,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       char *migrate_status = sqlite3_mprintf("%d", status);
       codec_vdbe_return_string(pParse, "cipher_migrate", migrate_status, P4_DYNAMIC);
       if(status != SQLITE_OK) {
+        CODEC_TRACE("sqlcipher_codec_pragma: error occurred during cipher_migrate: %d\n", status);
         sqlcipher_codec_ctx_set_error(ctx, status);
       }
     }
@@ -723,6 +724,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
+   CODEC_TRACE("sqlite3Codec: error occurred during key derivation: %d\n", rc);
    sqlcipher_codec_ctx_set_error(ctx, rc); 
    return NULL;
   }
@@ -731,6 +733,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
      PRAGMA. We can't set the error state on the pager at that point because the pager
      may not be open yet. However, this is a fatal error state, so abort the codec */
   if(plaintext_header_sz < 0) {
+    CODEC_TRACE("sqlite3Codec: error invalid plaintext_header_sz: %d\n", plaintext_header_sz);
     sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
     return NULL;
   }
@@ -755,6 +758,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       if(rc != SQLITE_OK) {
         /* failure to decrypt a page is considered a permanent error and will render the pager unusable
            in order to prevent inconsistent data being loaded into page cache */
+        CODEC_TRACE("sqlite3Codec: error decrypting page data: %d\n", rc);
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
       }
@@ -770,6 +774,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         void *kdf_salt = NULL; 
         /* retrieve the kdf salt */
         if((rc = sqlcipher_codec_ctx_get_kdf_salt(ctx, &kdf_salt)) != SQLITE_OK) {
+          CODEC_TRACE("sqlite3Codec: error retrieving salt: %d\n", rc);
           sqlcipher_codec_ctx_set_error(ctx, rc); 
           return NULL;
         }
@@ -785,6 +790,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       if(rc != SQLITE_OK) {
         /* failure to encrypt a page is considered a permanent error and will render the pager unusable
            in order to prevent corrupted pages from being written to the main databased when using WAL */
+        CODEC_TRACE("sqlite3Codec: error encrypting page data: %d\n", rc);
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
         return NULL;
@@ -793,6 +799,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       break;
 
     default:
+      CODEC_TRACE("sqlite3Codec: error unsupported codec mode %d\n", mode);
       sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR); /* unsupported mode, set error */
       return pData;
       break;
