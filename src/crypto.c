@@ -680,6 +680,10 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if(ctx) {
       sqlcipher_codec_ctx_integrity_check(ctx, pParse, "cipher_integrity_check");
     }
+  } else
+  if( sqlite3StrICmp(zLeft, "cipher_trace")== 0 && zRight ){
+      char *profile_status = sqlite3_mprintf("%d", sqlcipher_set_trace(zRight));
+      codec_vdbe_return_string(pParse, "cipher_trace", profile_status, P4_DYNAMIC);
   }else {
     return 0;
   }

@@ -39,12 +39,17 @@
 #include "btreeInt.h"
 #include "pager.h"
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 /* extensions defined in pager.c */ 
 void *sqlite3PagerGetCodec(Pager*);
 void sqlite3PagerSetCodec(Pager*, void *(*)(void*,void*,Pgno,int),  void (*)(void*,int,int),  void (*)(void*), void *);
 int sqlite3pager_is_mj_pgno(Pager*, Pgno);
 void sqlite3pager_error(Pager*, int);
 void sqlite3pager_reset(Pager *pPager);
+/* end extensions defined in pager.c */
 
 #if !defined (SQLCIPHER_CRYPTO_CC) \
    && !defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT) \
@@ -111,49 +116,6 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_MAX_KEY_SZ 64
 #endif
 
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
-
-#ifdef CODEC_DEBUG
-#ifdef __ANDROID__
-#define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
-#else
-#define CODEC_TRACE(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
-#endif
-#else
-#define CODEC_TRACE(...)
-#endif
-
-#ifdef CODEC_DEBUG_MUTEX
-#define CODEC_TRACE_MUTEX(...)  CODEC_TRACE(__VA_ARGS__)
-#else
-#define CODEC_TRACE_MUTEX(...)
-#endif
-
-#ifdef CODEC_DEBUG_MEMORY
-#define CODEC_TRACE_MEMORY(...)  CODEC_TRACE(__VA_ARGS__)
-#else
-#define CODEC_TRACE_MEMORY(...)
-#endif
-
-#ifdef CODEC_DEBUG_PAGEDATA
-#define CODEC_HEXDUMP(DESC,BUFFER,LEN)  \
-  { \
-    int __pctr; \
-    printf(DESC); \
-    for(__pctr=0; __pctr < LEN; __pctr++) { \
-      if(__pctr % 16 == 0) printf("\n%05x: ",__pctr); \
-      printf("%02x ",((unsigned char*) BUFFER)[__pctr]); \
-    } \
-    printf("\n"); \
-    fflush(stdout); \
-  }
-#else
-#define CODEC_HEXDUMP(DESC,BUFFER,LEN)
-#endif
-
-/* end extensions defined in pager.c */
  
 /*
 **  Simple shared routines for converting hex char strings to binary data
@@ -340,6 +302,51 @@ int sqlcipher_get_mem_security(void);
 int sqlcipher_find_db_index(sqlite3 *db, const char *zDb);
 
 int sqlcipher_codec_ctx_integrity_check(codec_ctx *, Parse *, char *);
+
+int sqlcipher_set_trace(const char *destination);
+void sqlcipher_trace(const char *message, ...);
+
+#ifdef CODEC_DEBUG
+#ifdef __ANDROID__
+#define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
+#else
+#define CODEC_TRACE(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
+#endif
+#else
+#ifdef SQLCIPHER_OMIT_TRACE
+#define CODEC_TRACE(...)
+#else
+#define CODEC_TRACE(...) {sqlcipher_trace(__VA_ARGS__);};
+#endif
+#endif
+
+#ifdef CODEC_DEBUG_MUTEX
+#define CODEC_TRACE_MUTEX(...)  CODEC_TRACE(__VA_ARGS__)
+#else
+#define CODEC_TRACE_MUTEX(...)
+#endif
+
+#ifdef CODEC_DEBUG_MEMORY
+#define CODEC_TRACE_MEMORY(...)  CODEC_TRACE(__VA_ARGS__)
+#else
+#define CODEC_TRACE_MEMORY(...)
+#endif
+
+#ifdef CODEC_DEBUG_PAGEDATA
+#define CODEC_HEXDUMP(DESC,BUFFER,LEN)  \
+  { \
+    int __pctr; \
+    printf(DESC); \
+    for(__pctr=0; __pctr < LEN; __pctr++) { \
+      if(__pctr % 16 == 0) printf("\n%05x: ",__pctr); \
+      printf("%02x ",((unsigned char*) BUFFER)[__pctr]); \
+    } \
+    printf("\n"); \
+    fflush(stdout); \
+  }
+#else
+#define CODEC_HEXDUMP(DESC,BUFFER,LEN)
+#endif
 
 #endif
 #endif

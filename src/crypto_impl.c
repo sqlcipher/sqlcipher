@@ -88,6 +88,8 @@ static volatile sqlite3_mem_methods default_mem_methods;
 static sqlcipher_provider *default_provider = NULL;
 
 static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
+static volatile FILE* sqlcipher_trace_file = NULL;
+static volatile int sqlcipher_trace_logcat = 0;
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
   if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
@@ -1636,6 +1638,52 @@ int sqlcipher_codec_fips_status(codec_ctx *ctx) {
 
 const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
   return ctx->provider->get_provider_version(ctx->provider_ctx);
+}
+
+#ifndef SQLCIPHER_OMIT_TRACE
+void sqlcipher_trace(const char *message, ...) {
+  va_list params;
+  va_start(params, message);
+  if(sqlcipher_trace_file != NULL){
+    vfprintf((FILE*)sqlcipher_trace_file, message, params);
+  }
+#ifdef __ANDROID__
+  if(sqlcipher_trace_logcat) {
+    __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
+  }
+#endif
+  va_end(params);
+}
+#endif
+
+int sqlcipher_set_trace(const char *destination){
+#ifdef SQLCIPHER_OMIT_TRACE
+  return SQLITE_ERROR;
+#else
+  /* close open trace file if it is not stdout or stderr, then
+     reset trace settings */
+  if(sqlcipher_trace_file != NULL && sqlcipher_trace_file != stdout && sqlcipher_trace_file != stderr) {
+    fclose((FILE*)sqlcipher_trace_file);
+  }
+  sqlcipher_trace_file = NULL;
+  sqlcipher_trace_logcat = 0;
+
+  if(sqlite3StrICmp(destination, "logcat") == 0){
+    sqlcipher_trace_logcat = 1;
+  } else if(sqlite3StrICmp(destination, "stdout") == 0){
+    sqlcipher_trace_file = stdout;
+  }else if(sqlite3StrICmp(destination, "stderr") == 0){
+    sqlcipher_trace_file = stderr;
+  }else if(sqlite3StrICmp(destination, "off") != 0){
+#if !defined(SQLCIPHER_PROFILE_USE_FOPEN) && (defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT))
+    if(fopen_s(&sqlcipher_trace_file, destination, "a") != 0) return SQLITE_ERROR;
+#else
+    if((sqlcipher_trace_file = fopen(destination, "a")) == 0) return SQLITE_ERROR;
+#endif
+  }
+  sqlcipher_trace("sqlcipher_set_trace: set trace to %s\n", destination);
+  return SQLITE_OK;
+#endif
 }
 
 #endif
