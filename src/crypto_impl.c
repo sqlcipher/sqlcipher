@@ -1608,8 +1608,14 @@ int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int random_sz
 #if !defined(SQLITE_OMIT_TRACE)
 static int sqlcipher_profile_callback(unsigned int trace, void *file, void *stmt, void *run_time){
   FILE *f = (FILE*) file;
+  char *fmt = "Elapsed time:%.3f ms - %s\n";
   double elapsed = (*((sqlite3_uint64*)run_time))/1000000.0;
-  if(f) fprintf(f, "Elapsed time:%.3f ms - %s\n", elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
+#ifdef __ANDROID__
+  if(f == NULL) {
+    __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", fmt, elapsed, sqlite3_sql((sqlite3_stmt*)stmt);
+  }
+#endif
+  if(f) fprintf(f, fmt, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
   return SQLITE_OK;
 }
 #endif
@@ -1618,21 +1624,25 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
 #if defined(SQLITE_OMIT_TRACE)
   return SQLITE_ERROR;
 #else
-  FILE *f;
-  if(sqlite3_stricmp(destination, "stdout") == 0){
-    f = stdout;
-  }else if(sqlite3_stricmp(destination, "stderr") == 0){
-    f = stderr;
-  }else if(sqlite3_stricmp(destination, "off") == 0){
-    f = 0;
-  }else{
+  FILE *f = NULL;
+  if(sqlite3_stricmp(destination, "off") == 0){
+    sqlite3_trace_v2(db, 0, NULL, NULL); /* disable tracing */
+  } else {
+    if(sqlite3_stricmp(destination, "stdout") == 0){
+      f = stdout;
+    }else if(sqlite3_stricmp(destination, "stderr") == 0){
+      f = stderr;
+    }else if(sqlite3_stricmp(destination, "logcat") == 0){
+      f = NULL; /* file pointer will be NULL indicating logcat on android */
+    }else{
 #if !defined(SQLCIPHER_PROFILE_USE_FOPEN) && (defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT))
-    if(fopen_s(&f, destination, "a") != 0) return SQLITE_ERROR;
+      if(fopen_s(&f, destination, "a") != 0) return SQLITE_ERROR;
 #else
-    if((f = fopen(destination, "a")) == 0) return SQLITE_ERROR;
+      if((f = fopen(destination, "a")) == 0) return SQLITE_ERROR;
 #endif    
+    }
+    sqlite3_trace_v2(db, SQLITE_TRACE_PROFILE, sqlcipher_profile_callback, f);
   }
-  sqlite3_trace_v2(db, SQLITE_TRACE_PROFILE, sqlcipher_profile_callback, f);
   return SQLITE_OK;
 #endif
 }
