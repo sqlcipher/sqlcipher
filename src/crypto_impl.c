@@ -33,14 +33,20 @@
 
 #include "sqlcipher.h"
 #include "crypto.h"
+#include <time.h>
+
+#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
+#include <windows.h> /*  amalgamator: dontcache */
+#else
+#include <sys/time.h> /* amalgamator: dontcache */
+#endif
+
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) || defined(_AIX)
 #include <errno.h> /* amalgamator: dontcache */
 #include <unistd.h> /* amalgamator: dontcache */
 #include <sys/resource.h> /* amalgamator: dontcache */
 #include <sys/mman.h> /* amalgamator: dontcache */
-#elif defined(_WIN32)
-#include <windows.h>
 #endif
 #endif
 
@@ -1650,6 +1656,15 @@ void sqlcipher_trace(unsigned int tag, const char *message, ...) {
   }
   va_start(params, message);
   if(sqlcipher_trace_file != NULL){
+    char buffer[20];
+    struct tm tt;
+    struct timeval tv;
+    int ms;
+    gettimeofday(&tv, NULL);
+    ms = tv.tv_usec/1000.0;
+    localtime_r(&tv.tv_sec, &tt);
+    strftime(buffer, 20, "%Y-%m-%d %H:%M:%S", &tt);
+    fprintf((FILE*)sqlcipher_trace_file, "%s.%03d: ", buffer, ms);
     vfprintf((FILE*)sqlcipher_trace_file, message, params);
   }
 #ifdef __ANDROID__

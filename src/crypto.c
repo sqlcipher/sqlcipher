@@ -684,7 +684,6 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   } else
   if( sqlite3_stricmp(zLeft, "cipher_trace_filter")==0 && zRight){
       unsigned int filter = 0;
-      printf("%s\n",zRight);
       if(sqlite3_strlike("%CORE%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_CORE;
       if(sqlite3_strlike("%MEMORY%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_MEMORY;
       if(sqlite3_strlike("%MUTEX%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_MUTEX;
