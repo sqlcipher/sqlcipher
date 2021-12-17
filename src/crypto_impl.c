@@ -1615,11 +1615,11 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
   return SQLITE_ERROR;
 #else
   FILE *f;
-  if(sqlite3StrICmp(destination, "stdout") == 0){
+  if(sqlite3_stricmp(destination, "stdout") == 0){
     f = stdout;
-  }else if(sqlite3StrICmp(destination, "stderr") == 0){
+  }else if(sqlite3_stricmp(destination, "stderr") == 0){
     f = stderr;
-  }else if(sqlite3StrICmp(destination, "off") == 0){
+  }else if(sqlite3_stricmp(destination, "off") == 0){
     f = 0;
   }else{
 #if !defined(SQLCIPHER_PROFILE_USE_FOPEN) && (defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT))
@@ -1677,13 +1677,13 @@ int sqlcipher_set_trace(const char *destination){
   sqlcipher_trace_file = NULL;
   sqlcipher_trace_logcat = 0;
 
-  if(sqlite3StrICmp(destination, "logcat") == 0){
+  if(sqlite3_stricmp(destination, "logcat") == 0){
     sqlcipher_trace_logcat = 1;
-  } else if(sqlite3StrICmp(destination, "stdout") == 0){
+  } else if(sqlite3_stricmp(destination, "stdout") == 0){
     sqlcipher_trace_file = stdout;
-  }else if(sqlite3StrICmp(destination, "stderr") == 0){
+  }else if(sqlite3_stricmp(destination, "stderr") == 0){
     sqlcipher_trace_file = stderr;
-  }else if(sqlite3StrICmp(destination, "off") != 0){
+  }else if(sqlite3_stricmp(destination, "off") != 0){
 #if !defined(SQLCIPHER_PROFILE_USE_FOPEN) && (defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT))
     if(fopen_s(&sqlcipher_trace_file, destination, "a") != 0) return SQLITE_ERROR;
 #else
