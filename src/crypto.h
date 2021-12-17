@@ -317,7 +317,7 @@ void sqlcipher_trace(unsigned int tag, const char *message, ...);
 #ifdef __ANDROID__
 #define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
 #else
-#define CODEC_TRACE(...)  {fprintf(stderr, __VA_ARGS__);fflush(stderr);}
+#define CODEC_TRACE(...)  {fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); fflush(stderr);}
 #endif
 #else
 #ifdef SQLCIPHER_OMIT_TRACE
