@@ -90,6 +90,7 @@ static sqlcipher_provider *default_provider = NULL;
 static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
 static volatile FILE* sqlcipher_trace_file = NULL;
 static volatile int sqlcipher_trace_logcat = 0;
+static volatile int sqlcipher_trace_filter = 0;
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
   if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
@@ -1641,8 +1642,12 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
 }
 
 #ifndef SQLCIPHER_OMIT_TRACE
-void sqlcipher_trace(const char *message, ...) {
+void sqlcipher_trace(unsigned int tag, const char *message, ...) {
   va_list params;
+  if((sqlcipher_trace_filter & tag) == 0 || (sqlcipher_trace_logcat == 0 && sqlcipher_trace_file == NULL)) {
+    /* no log target or tag not in included filters */
+    return;
+  }
   va_start(params, message);
   if(sqlcipher_trace_file != NULL){
     vfprintf((FILE*)sqlcipher_trace_file, message, params);
@@ -1655,6 +1660,10 @@ void sqlcipher_trace(const char *message, ...) {
   va_end(params);
 }
 #endif
+
+int sqlcipher_set_trace_filter(unsigned int filter) {
+  sqlcipher_trace_filter = filter;
+}
 
 int sqlcipher_set_trace(const char *destination){
 #ifdef SQLCIPHER_OMIT_TRACE
@@ -1681,7 +1690,7 @@ int sqlcipher_set_trace(const char *destination){
     if((sqlcipher_trace_file = fopen(destination, "a")) == 0) return SQLITE_ERROR;
 #endif
   }
-  sqlcipher_trace("sqlcipher_set_trace: set trace to %s\n", destination);
+  sqlcipher_trace(SQLCIPHER_TRACE_CORE, "sqlcipher_set_trace: set trace to %s\n", destination);
   return SQLITE_OK;
 #endif
 }

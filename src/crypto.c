@@ -142,7 +142,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     }
   } else
   if( sqlite3StrICmp(zLeft,"cipher_test")==0 ){
-    char *flags = sqlite3_mprintf("%i", sqlcipher_get_test_flags());
+    char *flags = sqlite3_mprintf("%u", sqlcipher_get_test_flags());
     codec_vdbe_return_string(pParse, "cipher_test", flags, P4_DYNAMIC);
   }else
   if( sqlite3StrICmp(zLeft,"cipher_test_rand")==0 ){
@@ -681,6 +681,17 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if(ctx) {
       sqlcipher_codec_ctx_integrity_check(ctx, pParse, "cipher_integrity_check");
     }
+  } else
+  if( sqlite3StrICmp(zLeft, "cipher_trace_filter")==0 && zRight){
+      unsigned int filter = 0;
+      printf("%s\n",zRight);
+      if(sqlite3_strlike("%CORE%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_CORE;
+      if(sqlite3_strlike("%MEMORY%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_MEMORY;
+      if(sqlite3_strlike("%MUTEX%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_MUTEX;
+      if(sqlite3_strlike("%PROVIDER%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_PROVIDER;
+      if(sqlite3_strlike("%ALL%", zRight, '\'')==0) filter |= SQLCIPHER_TRACE_ALL;
+      sqlcipher_set_trace_filter(filter);
+      codec_vdbe_return_string(pParse, "cipher_trace_filter", sqlite3_mprintf("%u", filter), P4_DYNAMIC);
   } else
   if( sqlite3StrICmp(zLeft, "cipher_trace")== 0 && zRight ){
       char *profile_status = sqlite3_mprintf("%d", sqlcipher_set_trace(zRight));
