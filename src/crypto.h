@@ -303,49 +303,16 @@ int sqlcipher_find_db_index(sqlite3 *db, const char *zDb);
 
 int sqlcipher_codec_ctx_integrity_check(codec_ctx *, Parse *, char *);
 
-int sqlcipher_set_trace(const char *destination);
-int sqlcipher_set_trace_filter(unsigned int filter);
-void sqlcipher_trace(unsigned int tag, const char *message, ...);
+int sqlcipher_set_log(const char *destination);
+int sqlcipher_set_log_level(unsigned int level);
+void sqlcipher_log(unsigned int tag, const char *message, ...);
 
-#define SQLCIPHER_TRACE_CORE          0x01
-#define SQLCIPHER_TRACE_PROVIDER      0x02
-#define SQLCIPHER_TRACE_MEMORY        0x04
-#define SQLCIPHER_TRACE_MUTEX         0x08
-#define SQLCIPHER_TRACE_ALL           0xffffffff
-
-#ifdef CODEC_DEBUG
-#ifdef __ANDROID__
-#define CODEC_TRACE(...) {__android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", __VA_ARGS__);}
-#else
-#define CODEC_TRACE(...)  {fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); fflush(stderr);}
-#endif
-#else
-#ifdef SQLCIPHER_OMIT_TRACE
-#define CODEC_TRACE(...)
-#else
-#define CODEC_TRACE(...) {sqlcipher_trace(SQLCIPHER_TRACE_CORE, __VA_ARGS__);};
-#endif
-#endif
-
-#ifdef CODEC_DEBUG_MUTEX
-#define CODEC_TRACE_MUTEX(...)  CODEC_TRACE(__VA_ARGS__)
-#else
-#ifdef SQLCIPHER_OMIT_TRACE
-#define CODEC_TRACE_MUTEX(...)
-#else
-#define CODEC_TRACE_MUTEX(...) {sqlcipher_trace(SQLCIPHER_TRACE_MUTEX, __VA_ARGS__);};
-#endif
-#endif
-
-#ifdef CODEC_DEBUG_MEMORY
-#define CODEC_TRACE_MEMORY(...)  CODEC_TRACE(__VA_ARGS__)
-#else
-#ifdef SQLCIPHER_OMIT_TRACE
-#define CODEC_TRACE_MEMORY(...)
-#else
-#define CODEC_TRACE_MEMORY(...) {sqlcipher_trace(SQLCIPHER_TRACE_MEMORY, __VA_ARGS__);};
-#endif
-#endif
+#define SQLCIPHER_LOG_NONE          0x00
+#define SQLCIPHER_LOG_ERROR         0x01
+#define SQLCIPHER_LOG_WARN          0x02
+#define SQLCIPHER_LOG_INFO          0x04
+#define SQLCIPHER_LOG_DEBUG         0x08
+#define SQLCIPHER_LOG_TRACE         0xffffffff
 
 #ifdef CODEC_DEBUG_PAGEDATA
 #define CODEC_HEXDUMP(DESC,BUFFER,LEN)  \
