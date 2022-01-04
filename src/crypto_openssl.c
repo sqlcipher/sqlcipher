@@ -169,8 +169,9 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
 }
 
 static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
-  unsigned int outlen;
   int rc = SQLITE_OK;
+#if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x30000000L)
+  unsigned int outlen;
   HMAC_CTX* hctx = NULL;
 
   if(in == NULL) goto error;
@@ -197,12 +198,50 @@ static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_
     if(!HMAC_Update(hctx, in2, in2_sz)) goto error;
   }
   if(!HMAC_Final(hctx, out, &outlen)) goto error;
-  
+#else
+  size_t outlen;
+  EVP_MAC *mac = NULL;
+  EVP_MAC_CTX *hctx = NULL;
+  OSSL_PARAM sha1[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha1", 4, 0 }, OSSL_PARAM_END };
+  OSSL_PARAM sha256[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha256", 6, 0 }, OSSL_PARAM_END };
+  OSSL_PARAM sha512[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha512", 6, 0 }, OSSL_PARAM_END };
+
+  if(in == NULL) goto error;
+
+  mac = EVP_MAC_fetch(NULL, "HMAC", NULL);
+  hctx = EVP_MAC_CTX_new(mac);
+  if(hctx == NULL) goto error;
+
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      if(!EVP_MAC_init(hctx, hmac_key, key_sz, sha1)) goto error;
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      if(!EVP_MAC_init(hctx, hmac_key, key_sz, sha256)) goto error;
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      if(!EVP_MAC_init(hctx, hmac_key, key_sz, sha512)) goto error;
+      break;
+    default:
+      goto error;
+  }
+
+  if(!EVP_MAC_update(hctx, in, in_sz)) goto error;
+  if(in2 != NULL) {
+    if(!EVP_MAC_update(hctx, in2, in2_sz)) goto error;
+  }
+  if(!EVP_MAC_final(hctx, NULL, &outlen, 0)) goto error;
+  if(!EVP_MAC_final(hctx, out, &outlen, outlen)) goto error;
+#endif
   goto cleanup;
 error:
   rc = SQLITE_ERROR;
 cleanup:
+#if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x30000000L)
   if(hctx) HMAC_CTX_free(hctx);
+#else
+  if(hctx) EVP_MAC_CTX_free(hctx);
+#endif
   return rc;
 }
 
