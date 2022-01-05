@@ -80,8 +80,14 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
   if(pDb->pBt) {
     codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
 
-    if(ctx) return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
+    if(ctx) {
+      return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
+    } else {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "codec_set_pass_key: error ocurred fetching codec from pager on db %d", nDb);
+      return SQLITE_ERROR;
+    }
   }
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "codec_set_pass_key: no btree present on db %d", nDb);
   return SQLITE_ERROR;
 } 
 
@@ -924,6 +930,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     return sqlite3CodecAttach(db, db_index, pKey, nKey); 
   }
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_key_v2: no key provided");
   return SQLITE_ERROR;
 }
 
@@ -1009,6 +1016,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     }
     return SQLITE_OK;
   }
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no key provided");
   return SQLITE_ERROR;
 }
 
