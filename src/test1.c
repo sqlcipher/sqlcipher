@@ -4850,6 +4850,7 @@ static int SQLITE_TCLAPI test_open_v2(
       { "SQLITE_OPEN_PRIVATECACHE", SQLITE_OPEN_PRIVATECACHE },
       { "SQLITE_OPEN_WAL", SQLITE_OPEN_WAL },
       { "SQLITE_OPEN_URI", SQLITE_OPEN_URI },
+      { "SQLITE_OPEN_EXRESCODE", SQLITE_OPEN_EXRESCODE },
       { 0, 0 }
     };
     rc = Tcl_GetIndexFromObjStruct(interp, apFlag[i], aFlag, sizeof(aFlag[0]), 
@@ -5348,37 +5349,6 @@ static int SQLITE_TCLAPI test_stmt_int(
   return TCL_OK;
 }
 
-/*
-** Usage:  sqlite_set_magic  DB  MAGIC-NUMBER
-**
-** Set the db->magic value.  This is used to test error recovery logic.
-*/
-static int SQLITE_TCLAPI sqlite_set_magic(
-  void * clientData,
-  Tcl_Interp *interp,
-  int argc,
-  char **argv
-){
-  sqlite3 *db;
-  if( argc!=3 ){
-    Tcl_AppendResult(interp, "wrong # args: should be \"", argv[0],
-         " DB MAGIC", 0);
-    return TCL_ERROR;
-  }
-  if( getDbPointer(interp, argv[1], &db) ) return TCL_ERROR;
-  if( strcmp(argv[2], "SQLITE_MAGIC_OPEN")==0 ){
-    db->magic = SQLITE_MAGIC_OPEN;
-  }else if( strcmp(argv[2], "SQLITE_MAGIC_CLOSED")==0 ){
-    db->magic = SQLITE_MAGIC_CLOSED;
-  }else if( strcmp(argv[2], "SQLITE_MAGIC_BUSY")==0 ){
-    db->magic = SQLITE_MAGIC_BUSY;
-  }else if( strcmp(argv[2], "SQLITE_MAGIC_ERROR")==0 ){
-    db->magic = SQLITE_MAGIC_ERROR;
-  }else if( Tcl_GetInt(interp, argv[2], (int*)&db->magic) ){
-    return TCL_ERROR;
-  }
-  return TCL_OK;
-}
 
 /*
 ** Usage:  sqlite3_interrupt  DB 
@@ -8264,6 +8234,96 @@ static int SQLITE_TCLAPI test_decode_hexdb(
   return TCL_OK;
 }
 
+/*
+** Client data for the autovacuum_pages callback.
+*/
+struct AutovacPageData {
+  Tcl_Interp *interp;
+  char *zScript;
+};
+typedef struct AutovacPageData AutovacPageData;
+
+/*
+** Callback functions for sqlite3_autovacuum_pages
+*/
+static unsigned int test_autovacuum_pages_callback(
+  void *pClientData,
+  const char *zSchema,
+  unsigned int nFilePages,
+  unsigned int nFreePages,
+  unsigned int nBytePerPage
+){
+  AutovacPageData *pData = (AutovacPageData*)pClientData;
+  Tcl_DString str;
+  unsigned int x;
+  char zBuf[100];
+  Tcl_DStringInit(&str);
+  Tcl_DStringAppend(&str, pData->zScript, -1);
+  Tcl_DStringAppendElement(&str, zSchema);
+  sqlite3_snprintf(sizeof(zBuf), zBuf, "%u", nFilePages);
+  Tcl_DStringAppendElement(&str, zBuf);
+  sqlite3_snprintf(sizeof(zBuf), zBuf, "%u", nFreePages);
+  Tcl_DStringAppendElement(&str, zBuf);
+  sqlite3_snprintf(sizeof(zBuf), zBuf, "%u", nBytePerPage);
+  Tcl_DStringAppendElement(&str, zBuf);
+  Tcl_ResetResult(pData->interp);
+  Tcl_Eval(pData->interp, Tcl_DStringValue(&str));
+  Tcl_DStringFree(&str);
+  x = nFreePages;
+  (void)Tcl_GetIntFromObj(0, Tcl_GetObjResult(pData->interp), (int*)&x);
+  return x;
+}
+
+/*
+** Usage:  sqlite3_autovacuum_pages DB SCRIPT
+**
+** Add an autovacuum-pages callback to database connection DB.  The callback
+** will invoke SCRIPT, after appending parameters.
+**
+** If SCRIPT is an empty string or is omitted, then the callback is
+** cancelled.
+*/
+static int SQLITE_TCLAPI test_autovacuum_pages(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  AutovacPageData *pData;
+  sqlite3 *db;
+  int rc;
+  const char *zScript;
+  if( objc!=2 && objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "DB ?SCRIPT?");
+    return TCL_ERROR;
+  }
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
+  zScript = objc==3 ? Tcl_GetString(objv[2]) : 0;
+  if( zScript ){
+    size_t nScript = strlen(zScript);
+    pData = sqlite3_malloc64( sizeof(*pData) + nScript + 1 );
+    if( pData==0 ){
+      Tcl_AppendResult(interp, "out of memory", (void*)0);
+      return TCL_ERROR;
+    }
+    pData->interp = interp;
+    pData->zScript = (char*)&pData[1];
+    memcpy(pData->zScript, zScript, nScript+1);
+    rc = sqlite3_autovacuum_pages(db,test_autovacuum_pages_callback,
+                                  pData, sqlite3_free);
+  }else{
+    rc = sqlite3_autovacuum_pages(db, 0, 0, 0);
+  }
+  if( rc ){
+    char zBuf[1000];
+    sqlite3_snprintf(sizeof(zBuf), zBuf,
+       "sqlite3_autovacuum_pages() returns %d", rc);
+    Tcl_AppendResult(interp, zBuf, (void*)0);
+    return TCL_ERROR;
+  }
+  return TCL_OK;
+}
+
 
 /*
 ** Register commands with the TCL interpreter.
@@ -8319,7 +8379,6 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "breakpoint",                    (Tcl_CmdProc*)test_breakpoint       },
      { "sqlite3_key",                   (Tcl_CmdProc*)test_key              },
      { "sqlite3_rekey",                 (Tcl_CmdProc*)test_rekey            },
-     { "sqlite_set_magic",              (Tcl_CmdProc*)sqlite_set_magic      },
      { "sqlite3_interrupt",             (Tcl_CmdProc*)test_interrupt        },
      { "sqlite_delete_function",        (Tcl_CmdProc*)delete_function       },
      { "sqlite_delete_collation",       (Tcl_CmdProc*)delete_collation      },
@@ -8556,6 +8615,7 @@ int Sqlitetest1_Init(Tcl_Interp *interp){
      { "atomic_batch_write",      test_atomic_batch_write, 0 },
      { "sqlite3_mmap_warm",       test_mmap_warm,          0 },
      { "sqlite3_config_sorterref", test_config_sorterref,   0 },
+     { "sqlite3_autovacuum_pages", test_autovacuum_pages,   0 },
      { "decode_hexdb",             test_decode_hexdb,       0 },
      { "test_write_db",            test_write_db,           0 },
      { "sqlite3_register_cksumvfs", test_register_cksumvfs,  0 },

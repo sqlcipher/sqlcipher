@@ -22,16 +22,6 @@
 #endif
 
 /*
-** Routine needed to support the testcase() macro.
-*/
-#ifdef SQLITE_COVERAGE_TEST
-void sqlite3Coverage(int x){
-  static unsigned dummy = 0;
-  dummy += (unsigned)x;
-}
-#endif
-
-/*
 ** Calls to sqlite3FaultSim() are used to simulate a failure during testing,
 ** or to bypass normal error detection during testing in order to let 
 ** execute proceed futher downstream.
@@ -60,11 +50,21 @@ int sqlite3FaultSim(int iTest){
 #ifndef SQLITE_OMIT_FLOATING_POINT
 /*
 ** Return true if the floating point value is Not a Number (NaN).
+**
+** Use the math library isnan() function if compiled with SQLITE_HAVE_ISNAN.
+** Otherwise, we have our own implementation that works on most systems.
 */
 int sqlite3IsNaN(double x){
+  int rc;   /* The value return */
+#if !SQLITE_HAVE_ISNAN && !HAVE_ISNAN
   u64 y;
   memcpy(&y,&x,sizeof(y));
-  return IsNaN(y);
+  rc = IsNaN(y);
+#else
+  rc = isnan(x);
+#endif /* HAVE_ISNAN */
+  testcase( rc );
+  return rc;
 }
 #endif /* SQLITE_OMIT_FLOATING_POINT */
 
@@ -89,8 +89,14 @@ int sqlite3Strlen30(const char *z){
 ** the column name if and only if the COLFLAG_HASTYPE flag is set.
 */
 char *sqlite3ColumnType(Column *pCol, char *zDflt){
-  if( (pCol->colFlags & COLFLAG_HASTYPE)==0 ) return zDflt;
-  return pCol->zName + strlen(pCol->zName) + 1;
+  if( pCol->colFlags & COLFLAG_HASTYPE ){
+    return pCol->zCnName + strlen(pCol->zCnName) + 1;
+  }else if( pCol->eCType ){
+    assert( pCol->eCType<=SQLITE_N_STDTYPE );
+    return (char*)sqlite3StdType[pCol->eCType-1];
+  }else{
+    return zDflt;
+  }
 }
 
 /*
@@ -261,9 +267,32 @@ void sqlite3Dequote(char *z){
   z[j] = 0;
 }
 void sqlite3DequoteExpr(Expr *p){
+  assert( !ExprHasProperty(p, EP_IntValue) );
   assert( sqlite3Isquote(p->u.zToken[0]) );
   p->flags |= p->u.zToken[0]=='"' ? EP_Quoted|EP_DblQuoted : EP_Quoted;
   sqlite3Dequote(p->u.zToken);
+}
+
+/*
+** If the input token p is quoted, try to adjust the token to remove
+** the quotes.  This is not always possible:
+**
+**     "abc"     ->   abc
+**     "ab""cd"  ->   (not possible because of the interior "")
+**
+** Remove the quotes if possible.  This is a optimization.  The overall
+** system should still return the correct answer even if this routine
+** is always a no-op.
+*/
+void sqlite3DequoteToken(Token *p){
+  unsigned int i;
+  if( p->n<2 ) return;
+  if( !sqlite3Isquote(p->z[0]) ) return;
+  for(i=1; i<p->n-1; i++){
+    if( sqlite3Isquote(p->z[i]) ) return;
+  }
+  p->n -= 2;
+  p->z++;
 }
 
 /*
@@ -1371,13 +1400,13 @@ static void logBadConnection(const char *zType){
 ** used as an argument to sqlite3_errmsg() or sqlite3_close().
 */
 int sqlite3SafetyCheckOk(sqlite3 *db){
-  u32 magic;
+  u8 eOpenState;
   if( db==0 ){
     logBadConnection("NULL");
     return 0;
   }
-  magic = db->magic;
-  if( magic!=SQLITE_MAGIC_OPEN ){
+  eOpenState = db->eOpenState;
+  if( eOpenState!=SQLITE_STATE_OPEN ){
     if( sqlite3SafetyCheckSickOrOk(db) ){
       testcase( sqlite3GlobalConfig.xLog!=0 );
       logBadConnection("unopened");
@@ -1388,11 +1417,11 @@ int sqlite3SafetyCheckOk(sqlite3 *db){
   }
 }
 int sqlite3SafetyCheckSickOrOk(sqlite3 *db){
-  u32 magic;
-  magic = db->magic;
-  if( magic!=SQLITE_MAGIC_SICK &&
-      magic!=SQLITE_MAGIC_OPEN &&
-      magic!=SQLITE_MAGIC_BUSY ){
+  u8 eOpenState;
+  eOpenState = db->eOpenState;
+  if( eOpenState!=SQLITE_STATE_SICK &&
+      eOpenState!=SQLITE_STATE_OPEN &&
+      eOpenState!=SQLITE_STATE_BUSY ){
     testcase( sqlite3GlobalConfig.xLog!=0 );
     logBadConnection("invalid");
     return 0;
