@@ -241,8 +241,10 @@ int sqlite3VdbeAddOp3(Vdbe *p, int op, int p1, int p2, int p3){
   if( p->nOpAlloc<=i ){
     return growOp3(p, op, p1, p2, p3);
   }
+  assert( p->aOp!=0 );
   p->nOp++;
   pOp = &p->aOp[i];
+  assert( pOp!=0 );
   pOp->opcode = (u8)op;
   pOp->p5 = 0;
   pOp->p1 = p1;
@@ -1485,7 +1487,7 @@ char *sqlite3VdbeDisplayComment(
   if( zOpName[nOpName+1] ){
     int seenCom = 0;
     char c;
-    zSynopsis = zOpName += nOpName + 1;
+    zSynopsis = zOpName + nOpName + 1;
     if( strncmp(zSynopsis,"IF ",3)==0 ){
       sqlite3_snprintf(sizeof(zAlt), zAlt, "if %s goto P2", zSynopsis+3);
       zSynopsis = zAlt;
@@ -1558,6 +1560,7 @@ static void displayP4Expr(StrAccum *p, Expr *pExpr){
   const char *zOp = 0;
   switch( pExpr->op ){
     case TK_STRING:
+      assert( !ExprHasProperty(pExpr, EP_IntValue) );
       sqlite3_str_appendf(p, "%Q", pExpr->u.zToken);
       break;
     case TK_INTEGER:
@@ -1660,7 +1663,7 @@ char *sqlite3VdbeDisplayP4(sqlite3 *db, Op *pOp){
     case P4_COLLSEQ: {
       static const char *const encnames[] = {"?", "8", "16LE", "16BE"};
       CollSeq *pColl = pOp->p4.pColl;
-      assert( pColl->enc>=0 && pColl->enc<4 );
+      assert( pColl->enc<4 );
       sqlite3_str_appendf(&x, "%.18s-%s", pColl->zName,
                           encnames[pColl->enc]);
       break;
@@ -1904,8 +1907,8 @@ static void releaseMemArray(Mem *p, int N){
       */
       testcase( p->flags & MEM_Agg );
       testcase( p->flags & MEM_Dyn );
-      testcase( p->xDel==sqlite3VdbeFrameMemDel );
       if( p->flags&(MEM_Agg|MEM_Dyn) ){
+        testcase( (p->flags & MEM_Dyn)!=0 && p->xDel==sqlite3VdbeFrameMemDel );
         sqlite3VdbeMemRelease(p);
       }else if( p->szMalloc ){
         sqlite3DbFreeNN(db, p->zMalloc);
@@ -3005,9 +3008,9 @@ int sqlite3VdbeCheckFk(Vdbe *p, int deferred){
 ** has made changes and is in autocommit mode, then commit those
 ** changes.  If a rollback is needed, then do the rollback.
 **
-** This routine is the only way to move the state of a VM from
-** SQLITE_MAGIC_RUN to SQLITE_MAGIC_HALT.  It is harmless to
-** call this on a VM that is in the SQLITE_MAGIC_HALT state.
+** This routine is the only way to move the sqlite3eOpenState of a VM from
+** SQLITE_STATE_RUN to SQLITE_STATE_HALT.  It is harmless to
+** call this on a VM that is in the SQLITE_STATE_HALT state.
 **
 ** Return an error code.  If the commit could not complete because of
 ** lock contention, return SQLITE_BUSY.  If SQLITE_BUSY is returned, it
@@ -3053,9 +3056,15 @@ int sqlite3VdbeHalt(Vdbe *p){
     sqlite3VdbeEnter(p);
 
     /* Check for one of the special errors */
-    mrc = p->rc & 0xff;
-    isSpecialError = mrc==SQLITE_NOMEM || mrc==SQLITE_IOERR
-                     || mrc==SQLITE_INTERRUPT || mrc==SQLITE_FULL;
+    if( p->rc ){
+      mrc = p->rc & 0xff;
+      isSpecialError = mrc==SQLITE_NOMEM
+                    || mrc==SQLITE_IOERR
+                    || mrc==SQLITE_INTERRUPT
+                    || mrc==SQLITE_FULL;
+    }else{
+      mrc = isSpecialError = 0;
+    }
     if( isSpecialError ){
       /* If the query was read-only and the error code is SQLITE_INTERRUPT, 
       ** no rollback is necessary. Otherwise, at least a savepoint 
@@ -3107,6 +3116,9 @@ int sqlite3VdbeHalt(Vdbe *p){
             return SQLITE_ERROR;
           }
           rc = SQLITE_CONSTRAINT_FOREIGNKEY;
+        }else if( db->flags & SQLITE_CorruptRdOnly ){
+          rc = SQLITE_CORRUPT;
+          db->flags &= ~SQLITE_CorruptRdOnly;
         }else{ 
           /* The auto-commit flag is true, the vdbe program was successful 
           ** or hit an 'OR FAIL' constraint and there are no deferred foreign
@@ -3501,7 +3513,7 @@ int SQLITE_NOINLINE sqlite3VdbeFinishMoveto(VdbeCursor *p){
   assert( p->deferredMoveto );
   assert( p->isTable );
   assert( p->eCurType==CURTYPE_BTREE );
-  rc = sqlite3BtreeMovetoUnpacked(p->uc.pCursor, 0, p->movetoTarget, 0, &res);
+  rc = sqlite3BtreeTableMoveto(p->uc.pCursor, p->movetoTarget, 0, &res);
   if( rc ) return rc;
   if( res!=0 ) return SQLITE_CORRUPT_BKPT;
 #ifdef SQLITE_TEST
@@ -4285,7 +4297,7 @@ SQLITE_NOINLINE int sqlite3BlobCompare(const Mem *pB1, const Mem *pB2){
 ** number.  Return negative, zero, or positive if the first (i64) is less than,
 ** equal to, or greater than the second (double).
 */
-static int sqlite3IntFloatCompare(i64 i, double r){
+int sqlite3IntFloatCompare(i64 i, double r){
   if( sizeof(LONGDOUBLE_TYPE)>8 ){
     LONGDOUBLE_TYPE x = (LONGDOUBLE_TYPE)i;
     testcase( x<r );
@@ -4922,7 +4934,7 @@ int sqlite3VdbeIdxRowid(sqlite3 *db, BtCursor *pCur, i64 *rowid){
   /* The index entry must begin with a header size */
   getVarint32NR((u8*)m.z, szHdr);
   testcase( szHdr==3 );
-  testcase( szHdr==m.n );
+  testcase( szHdr==(u32)m.n );
   testcase( szHdr>0x7fffffff );
   assert( m.n>=0 );
   if( unlikely(szHdr<3 || szHdr>(unsigned)m.n) ){
@@ -5009,7 +5021,7 @@ int sqlite3VdbeIdxKeyCompare(
 ** This routine sets the value to be returned by subsequent calls to
 ** sqlite3_changes() on the database handle 'db'. 
 */
-void sqlite3VdbeSetChanges(sqlite3 *db, int nChange){
+void sqlite3VdbeSetChanges(sqlite3 *db, i64 nChange){
   assert( sqlite3_mutex_held(db->mutex) );
   db->nChange = nChange;
   db->nTotalChange += nChange;
@@ -5211,6 +5223,8 @@ void sqlite3VdbePreUpdateHook(
     }
   }
 
+  assert( pCsr!=0 );
+  assert( pCsr->eCurType==CURTYPE_BTREE );
   assert( pCsr->nField==pTab->nCol 
        || (pCsr->nField==pTab->nCol+1 && op==SQLITE_DELETE && iReg==-1)
   );

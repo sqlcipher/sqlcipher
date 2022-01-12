@@ -196,16 +196,19 @@ ifnotexists(A) ::= IF NOT EXISTS. {A = 1;}
 temp(A) ::= TEMP.  {A = pParse->db->init.busy==0;}
 %endif  SQLITE_OMIT_TEMPDB
 temp(A) ::= .      {A = 0;}
-create_table_args ::= LP columnlist conslist_opt(X) RP(E) table_options(F). {
+create_table_args ::= LP columnlist conslist_opt(X) RP(E) table_option_set(F). {
   sqlite3EndTable(pParse,&X,&E,F,0);
 }
 create_table_args ::= AS select(S). {
   sqlite3EndTable(pParse,0,0,0,S);
   sqlite3SelectDelete(pParse->db, S);
 }
-%type table_options {int}
-table_options(A) ::= .    {A = 0;}
-table_options(A) ::= WITHOUT nm(X). {
+%type table_option_set {u32}
+%type table_option {u32}
+table_option_set(A) ::= .    {A = 0;}
+table_option_set(A) ::= table_option(A).
+table_option_set(A) ::= table_option_set(X) COMMA table_option(Y). {A = X|Y;}
+table_option(A) ::= WITHOUT nm(X). {
   if( X.n==5 && sqlite3_strnicmp(X.z,"rowid",5)==0 ){
     A = TF_WithoutRowid | TF_NoVisibleRowid;
   }else{
@@ -213,9 +216,17 @@ table_options(A) ::= WITHOUT nm(X). {
     sqlite3ErrorMsg(pParse, "unknown table option: %.*s", X.n, X.z);
   }
 }
+table_option(A) ::= nm(X). {
+  if( X.n==6 && sqlite3_strnicmp(X.z,"strict",6)==0 ){
+    A = TF_Strict;
+  }else{
+    A = 0;
+    sqlite3ErrorMsg(pParse, "unknown table option: %.*s", X.n, X.z);
+  }
+}
 columnlist ::= columnlist COMMA columnname carglist.
 columnlist ::= columnname carglist.
-columnname(A) ::= nm(A) typetoken(Y). {sqlite3AddColumn(pParse,&A,&Y);}
+columnname(A) ::= nm(A) typetoken(Y). {sqlite3AddColumn(pParse,A,Y);}
 
 // Declare some tokens early in order to influence their values, to 
 // improve performance and reduce the executable size.  The goal here is
@@ -1028,9 +1039,9 @@ idlist(A) ::= nm(Y).
       ExprClearVVAProperties(p);
       p->iAgg = -1;
       p->pLeft = p->pRight = 0;
-      p->x.pList = 0;
       p->pAggInfo = 0;
-      p->y.pTab = 0;
+      memset(&p->x, 0, sizeof(p->x));
+      memset(&p->y, 0, sizeof(p->y));
       p->op2 = 0;
       p->iTable = 0;
       p->iColumn = 0;
@@ -1254,20 +1265,28 @@ expr(A) ::= expr(A) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
       */
       sqlite3ExprUnmapAndDelete(pParse, A);
       A = sqlite3Expr(pParse->db, TK_INTEGER, N ? "1" : "0");
-    }else if( Y->nExpr==1 && sqlite3ExprIsConstant(Y->a[0].pExpr) ){
-      Expr *pRHS = Y->a[0].pExpr;
-      Y->a[0].pExpr = 0;
-      sqlite3ExprListDelete(pParse->db, Y);
-      pRHS = sqlite3PExpr(pParse, TK_UPLUS, pRHS, 0);
-      A = sqlite3PExpr(pParse, TK_EQ, A, pRHS);
-      if( N ) A = sqlite3PExpr(pParse, TK_NOT, A, 0);
     }else{
-      A = sqlite3PExpr(pParse, TK_IN, A, 0);
-      if( A ){
-        A->x.pList = Y;
-        sqlite3ExprSetHeightAndFlags(pParse, A);
-      }else{
+      Expr *pRHS = Y->a[0].pExpr;
+      if( Y->nExpr==1 && sqlite3ExprIsConstant(pRHS) && A->op!=TK_VECTOR ){
+        Y->a[0].pExpr = 0;
         sqlite3ExprListDelete(pParse->db, Y);
+        pRHS = sqlite3PExpr(pParse, TK_UPLUS, pRHS, 0);
+        A = sqlite3PExpr(pParse, TK_EQ, A, pRHS);
+      }else{
+        A = sqlite3PExpr(pParse, TK_IN, A, 0);
+        if( A==0 ){
+          sqlite3ExprListDelete(pParse->db, Y);
+        }else if( A->pLeft->op==TK_VECTOR ){
+          int nExpr = A->pLeft->x.pList->nExpr;
+          Select *pSelectRHS = sqlite3ExprListToValues(pParse, nExpr, Y);
+          if( pSelectRHS ){
+            parserDoubleLinkSelect(pParse, pSelectRHS);
+            sqlite3PExprAddSelect(pParse, A, pSelectRHS);
+          }
+        }else{
+          A->x.pList = Y;
+          sqlite3ExprSetHeightAndFlags(pParse, A);
+        }
       }
       if( N ) A = sqlite3PExpr(pParse, TK_NOT, A, 0);
     }
@@ -1619,7 +1638,8 @@ cmd ::= ANALYZE nm(X) dbnm(Y).  {sqlite3Analyze(pParse, &X, &Y);}
 %endif
 
 //////////////////////// ALTER TABLE table ... ////////////////////////////////
-%ifndef SQLITE_OMIT_ALTERTABLE
+%ifndef SQLITE_OMIT_ALTERTABLE 
+%ifndef SQLITE_OMIT_VIRTUALTABLE
 cmd ::= ALTER TABLE fullname(X) RENAME TO nm(Z). {
   sqlite3AlterRenameTable(pParse,X,&Z);
 }
@@ -1643,7 +1663,8 @@ cmd ::= ALTER TABLE fullname(X) RENAME kwcolumn_opt nm(Y) TO nm(Z). {
 kwcolumn_opt ::= .
 kwcolumn_opt ::= COLUMNKW.
 
-%endif  SQLITE_OMIT_ALTERTABLE
+%endif SQLITE_OMIT_VIRTUALTABLE
+%endif SQLITE_OMIT_ALTERTABLE
 
 //////////////////////// CREATE VIRTUAL TABLE ... /////////////////////////////
 %ifndef SQLITE_OMIT_VIRTUALTABLE
