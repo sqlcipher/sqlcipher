@@ -464,7 +464,7 @@ static int sqlcipher_cipher_ctx_init(codec_ctx *ctx, cipher_ctx **iCtx) {
   */
 static void sqlcipher_cipher_ctx_free(codec_ctx* ctx, cipher_ctx **iCtx) {
   cipher_ctx *c_ctx = *iCtx;
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "cipher_ctx_free: entered iCtx=%p", iCtx);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "cipher_ctx_free: iCtx=%p", iCtx);
   sqlcipher_free(c_ctx->key, ctx->key_sz);
   sqlcipher_free(c_ctx->hmac_key, ctx->key_sz);
   sqlcipher_free(c_ctx->pass, c_ctx->pass_sz);
@@ -509,18 +509,17 @@ static int sqlcipher_cipher_ctx_cmp(cipher_ctx *c1, cipher_ctx *c2) {
                            c1->pass_sz)
     ));
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_cmp: entered \
-                  c1=%p c2=%p \
-                  sqlcipher_memcmp(c1->pass, c2_pass)=%d \
-                  are_equal=%d",
-                  c1, c2,
-                  (c1->pass == NULL || c2->pass == NULL) 
-                    ? -1 : sqlcipher_memcmp(
-                      (const unsigned char*)c1->pass,
-                      (const unsigned char*)c2->pass,
-                      c1->pass_sz),
-                  are_equal
-                  );
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_cmp: c1=%p c2=%p sqlcipher_memcmp(c1->pass, c2_pass)=%d are_equal=%d",
+    c1, c2,
+    (c1->pass == NULL || c2->pass == NULL) ?
+      -1 :
+      sqlcipher_memcmp(
+        (const unsigned char*)c1->pass,
+        (const unsigned char*)c2->pass,
+        c1->pass_sz
+      ),
+    are_equal
+  );
 
   return !are_equal; /* return 0 if they are the same, 1 otherwise */
 }
@@ -537,7 +536,7 @@ static int sqlcipher_cipher_ctx_copy(codec_ctx *ctx, cipher_ctx *target, cipher_
   void *key = target->key; 
   void *hmac_key = target->hmac_key; 
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_copy: entered target=%p, source=%p", target, source);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_copy: target=%p, source=%p", target, source);
   sqlcipher_free(target->pass, target->pass_sz); 
   sqlcipher_free(target->keyspec, ctx->keyspec_sz); 
   memcpy(target, source, sizeof(cipher_ctx));
@@ -1000,7 +999,7 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const voi
   */
 void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   codec_ctx *ctx = *iCtx;
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_ctx_free: entered iCtx=%p", iCtx);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_ctx_free: iCtx=%p", iCtx);
   sqlcipher_free(ctx->kdf_salt, ctx->kdf_salt_sz);
   sqlcipher_free(ctx->hmac_kdf_salt, ctx->kdf_salt_sz);
   sqlcipher_free(ctx->buffer, ctx->page_sz);
@@ -1073,7 +1072,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
   hmac_out = out + size + ctx->iv_sz;
   out_start = out; /* note the original position of the output buffer pointer, as out will be rewritten during encryption */
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_page_cipher: entered pgno=%d, mode=%d, size=%d", pgno, mode, size);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_page_cipher: pgno=%d, mode=%d, size=%d", pgno, mode, size);
   CODEC_HEXDUMP("sqlcipher_page_cipher: input page data", in, page_sz);
 
   /* the key size should never be zero. If it is, error out. */
@@ -1152,12 +1151,8 @@ error:
   */
 static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   int rc;
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "cipher_ctx_key_derive: entered c_ctx->pass=%p, c_ctx->pass_sz=%d \
-                ctx->kdf_salt=%p ctx->kdf_salt_sz=%d ctx->kdf_iter=%d \
-                ctx->hmac_kdf_salt=%p, ctx->fast_kdf_iter=%d ctx->key_sz=%d",
-                c_ctx->pass, c_ctx->pass_sz, ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
-                ctx->hmac_kdf_salt, ctx->fast_kdf_iter, ctx->key_sz);
-                
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_key_derive: ctx->kdf_salt_sz=%d ctx->kdf_iter=%d ctx->fast_kdf_iter=%d ctx->key_sz=%d",
+    ctx->kdf_salt_sz, ctx->kdf_iter, ctx->fast_kdf_iter, ctx->key_sz);
   
   if(c_ctx->pass && c_ctx->pass_sz) {  /* if key material is present on the context for derivation */ 
    

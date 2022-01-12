@@ -76,7 +76,7 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
 
 static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_set_pass_key: entered db=%p nDb=%d zKey=%p nKey=%d for_ctx=%d", db, nDb, zKey, nKey, for_ctx);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_set_pass_key: db=%p nDb=%d for_ctx=%d", db, nDb, for_ctx);
   if(pDb->pBt) {
     codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
 
@@ -100,8 +100,10 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
   }
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_pragma: entered db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p", db, iDb, pParse, zLeft, zRight, ctx);
-  
+  if(sqlite3_stricmp(zLeft, "key") !=0 && sqlite3_stricmp(zLeft, "rekey")) {
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_pragma: db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p", db, iDb, pParse, zLeft, zRight, ctx);
+  }
+
 #ifdef SQLCIPHER_EXT
   if( sqlite3_stricmp(zLeft, "cipher_license")==0 && zRight ){
     char *license_result = sqlite3_mprintf("%d", sqlcipher_license_key(zRight));
@@ -732,7 +734,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   int plaintext_header_sz = sqlcipher_codec_ctx_get_plaintext_header_size(ctx);
   int cctx = CIPHER_READ_CTX;
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3Codec: entered pgno=%d, mode=%d, page_sz=%d", pgno, mode, page_sz);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3Codec: pgno=%d, mode=%d, page_sz=%d", pgno, mode, page_sz);
 
 #ifdef SQLCIPHER_EXT
   if(sqlcipher_license_check(ctx) != SQLITE_OK) return NULL;
@@ -832,7 +834,7 @@ static void sqlite3FreeCodecArg(void *pCodecArg) {
 int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   struct Db *pDb = &db->aDb[nDb];
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: entered db=%p, nDb=%d zKey=%p, nKey=%d", db, nDb, zKey, nKey);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: db=%p, nDb=%d", db, nDb);
 
   if(nKey && zKey && pDb->pBt) {
     int rc;
@@ -919,12 +921,12 @@ void sqlite3_activate_see(const char* in) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_key entered: db=%p pKey=%p nKey=%d", db, pKey, nKey);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_key: db=%p", db);
   return sqlite3_key_v2(db, "main", pKey, nKey);
 }
 
 int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_key_v2: entered db=%p zDb=%s pKey=%p nKey=%d", db, zDb, pKey, nKey);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_key_v2: db=%p zDb=%s", db, zDb);
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
@@ -935,7 +937,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 }
 
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey entered: db=%p pKey=%p nKey=%d", db, pKey, nKey);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey: db=%p", db);
   return sqlite3_rekey_v2(db, "main", pKey, nKey);
 }
 
@@ -950,7 +952,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: entered db=%p zDb=%s pKey=%p, nKey=%d", db, zDb, pKey, nKey);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: db=%p zDb=%s", db);
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = &db->aDb[db_index];
@@ -1022,7 +1024,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 
 void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecGetKey: entered db=%p, nDb=%d", db, nDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecGetKey:db=%p, nDb=%d", db, nDb);
   if( pDb->pBt ) {
     codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
     
