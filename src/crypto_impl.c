@@ -1130,12 +1130,12 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
 
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_page_cipher: comparing hmac on in=%p out=%p hmac_sz=%d", hmac_in, hmac_out, ctx->hmac_sz);
     if(sqlcipher_memcmp(hmac_in, hmac_out, ctx->hmac_sz) != 0) { /* the hmac check failed */ 
-      if(sqlcipher_ismemset(in, 0, page_sz) == 0) {
+      if(sqlite3BtreeGetAutoVacuum(ctx->pBt) != BTREE_AUTOVACUUM_NONE && sqlcipher_ismemset(in, 0, page_sz) == 0) {
         /* first check if the entire contents of the page is zeros. If so, this page 
            resulted from a short read (i.e. sqlite attempted to pull a page after the end of the file. these 
            short read failures must be ignored for autovaccum mode to work so wipe the output buffer 
            and return SQLITE_OK to skip the decryption step. */
-        sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_page_cipher: zeroed page (short read) for pgno %d, encryption but returning SQLITE_OK", pgno);
+        sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlcipher_page_cipher: zeroed page (short read) for pgno %d, encryption but returning SQLITE_OK", pgno);
         sqlcipher_memset(out, 0, page_sz); 
         return SQLITE_OK;
       } else {
