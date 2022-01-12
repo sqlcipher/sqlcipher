@@ -625,12 +625,19 @@ int sqlcipher_codec_ctx_set_pass(codec_ctx *ctx, const void *zKey, int nKey, int
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   int rc;
 
-  if((rc = sqlcipher_cipher_ctx_set_pass(c_ctx, zKey, nKey)) != SQLITE_OK) return rc; 
+  if((rc = sqlcipher_cipher_ctx_set_pass(c_ctx, zKey, nKey)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_set_pass: error %d from sqlcipher_cipher_ctx_set_pass", rc);
+    return rc;
+  }
+
   c_ctx->derive_key = 1;
 
-  if(for_ctx == 2)
-    if((rc = sqlcipher_cipher_ctx_copy(ctx, for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK) 
-      return rc; 
+  if(for_ctx == 2) {
+    if((rc = sqlcipher_cipher_ctx_copy(ctx, for_ctx ? ctx->read_ctx : ctx->write_ctx, c_ctx)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_set_pass: error %d from sqlcipher_cipher_ctx_copy", rc);
+      return rc;
+    }
+  }
 
   return SQLITE_OK;
 } 
@@ -828,9 +835,12 @@ int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int si
 int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
   int rc = SQLITE_OK;
   if(ctx->need_kdf_salt) {
-    rc = sqlcipher_codec_ctx_init_kdf_salt(ctx);
+    if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_get_kdf_salt: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
+    }
   }
   *salt = ctx->kdf_salt;
+
   return rc;
 }
 
@@ -933,8 +943,10 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const voi
   sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
   sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_codec_ctx_init: left SQLCIPHER_MUTEX_PROVIDER");
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: calling provider ctx_init");
-  if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) return rc;
+  if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d returned from ctx_init", rc);
+    return rc;
+  }
 
   ctx->key_sz = ctx->provider->get_key_sz(ctx->provider_ctx);
   ctx->iv_sz = ctx->provider->get_iv_sz(ctx->provider_ctx);
@@ -950,45 +962,67 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const voi
      in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
      cases where bytes 16 & 17 of the page header are a power of 2 as reported by John Lehman
   */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: calling sqlcipher_codec_ctx_set_pagesize with %d", default_page_size);
-  if((rc = sqlcipher_codec_ctx_set_pagesize(ctx, default_page_size)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_pagesize(ctx, default_page_size)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d returned from sqlcipher_codec_ctx_set_pagesize with %d", rc, default_page_size);
+    return rc;
+  }
 
   /* establish settings for the KDF iterations and fast (HMAC) KDF iterations */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: setting default_kdf_iter");
-  if((rc = sqlcipher_codec_ctx_set_kdf_iter(ctx, default_kdf_iter)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_kdf_iter(ctx, default_kdf_iter)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting default_kdf_iter %d", rc, default_kdf_iter);
+    return rc;
+  }
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: setting fast_kdf_iter");
-  if((rc = sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, FAST_PBKDF2_ITER)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_fast_kdf_iter(ctx, FAST_PBKDF2_ITER)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting fast_kdf_iter to %d", rc, FAST_PBKDF2_ITER);
+    return rc;
+  }
 
   /* set the default HMAC and KDF algorithms which will determine the reserve size */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: calling sqlcipher_codec_ctx_set_hmac_algorithm with %d", default_hmac_algorithm);
-  if((rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, default_hmac_algorithm)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, default_hmac_algorithm)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting sqlcipher_codec_ctx_set_hmac_algorithm with %d", rc, default_hmac_algorithm);
+    return rc;
+  }
 
   /* Note that use_hmac is a special case that requires recalculation of page size
      so we call set_use_hmac to perform setup */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: setting use_hmac");
-  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_flags & CIPHER_FLAG_HMAC)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_flags & CIPHER_FLAG_HMAC)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting use_hmac %d", rc, default_flags & CIPHER_FLAG_HMAC);
+    return rc;
+  }
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: calling sqlcipher_codec_ctx_set_kdf_algorithm with %d", default_kdf_algorithm);
-  if((rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, default_kdf_algorithm)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, default_kdf_algorithm)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting sqlcipher_codec_ctx_set_kdf_algorithm with %d", rc, default_kdf_algorithm);
+    return rc;
+  }
 
   /* setup the default plaintext header size */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: calling sqlcipher_codec_ctx_set_plaintext_header_size with %d", default_plaintext_header_sz);
-  if((rc = sqlcipher_codec_ctx_set_plaintext_header_size(ctx, default_plaintext_header_sz)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_plaintext_header_size(ctx, default_plaintext_header_sz)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting sqlcipher_codec_ctx_set_plaintext_header_size with %d", rc, default_plaintext_header_sz);
+    return rc;
+  }
 
   /* initialize the read and write sub-contexts. this must happen after key_sz is established  */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: initializing read_ctx");
-  if((rc = sqlcipher_cipher_ctx_init(ctx, &ctx->read_ctx)) != SQLITE_OK) return rc; 
+  if((rc = sqlcipher_cipher_ctx_init(ctx, &ctx->read_ctx)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d initializing read_ctx", rc);
+    return rc;
+  } 
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: initializing write_ctx");
-  if((rc = sqlcipher_cipher_ctx_init(ctx, &ctx->write_ctx)) != SQLITE_OK) return rc; 
+  if((rc = sqlcipher_cipher_ctx_init(ctx, &ctx->write_ctx)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d initializing write_ctx", rc);
+    return rc; 
+  }
 
   /* set the key material on one of the sub cipher contexts and sync them up */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: setting pass key");
-  if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, 0)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting pass key", rc);
+    return rc;
+  }
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: copying write_ctx to read_ctx");
-  if((rc = sqlcipher_cipher_ctx_copy(ctx, ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) return rc;
+  if((rc = sqlcipher_cipher_ctx_copy(ctx, ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d copying write_ctx to read_ctx", rc);
+    return rc;
+  }
 
   return SQLITE_OK;
 }
@@ -1158,7 +1192,10 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
    
     /* if necessary, initialize the salt from the header or random source */
     if(ctx->need_kdf_salt) {
-      if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) return rc;
+      if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_cipher_ctx_key_derive: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
+        return rc;
+      }
     }
  
     if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) { 
@@ -1182,7 +1219,10 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     }
 
     /* set the context "keyspec" containing the hex-formatted key and salt to be used when attaching databases */
-    if((rc = sqlcipher_cipher_ctx_set_keyspec(ctx, c_ctx, c_ctx->key)) != SQLITE_OK) return rc;
+    if((rc = sqlcipher_cipher_ctx_set_keyspec(ctx, c_ctx, c_ctx->key)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_cipher_ctx_key_derive: error %d from sqlcipher_cipher_ctx_set_keyspec", rc);
+      return rc;
+    }
 
     /* if this context is setup to use hmac checks, generate a seperate and different 
        key for HMAC. In this case, we use the output of the previous KDF as the input to 
