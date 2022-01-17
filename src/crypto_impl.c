@@ -96,7 +96,7 @@ static sqlcipher_provider *default_provider = NULL;
 static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
 static volatile FILE* sqlcipher_log_file = NULL;
 static volatile int sqlcipher_log_logcat = 0;
-static volatile int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
+static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
   if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
@@ -1706,6 +1706,9 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
 }
 
 #ifndef SQLCIPHER_OMIT_LOG
+/* constants from https://github.com/Alexpux/mingw-w64/blob/master/mingw-w64-crt/misc/gettimeofday.c */
+#define FILETIME_1970 116444736000000000ull /* seconds between 1/1/1601 and 1/1/1970 */
+#define HECTONANOSEC_PER_SEC 10000000ull
 void sqlcipher_log(unsigned int level, const char *message, ...) {
   va_list params;
   va_start(params, message);
@@ -1724,14 +1727,27 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
     goto end;
   }
   if(sqlcipher_log_file != NULL){
-    char buffer[20];
+    char buffer[256];
     struct tm tt;
-    struct timeval tv;
     int ms;
+    time_t sec;
+#ifdef _WIN32
+    SYSTEMTIME st;
+    FILETIME ft;
+    GetSystemTime(&st);
+    SystemTimeToFileTime(&st, &ft);
+    sec = (time_t) ((*((sqlite_int64*)&ft) - FILETIME_1970) / HECTONANOSEC_PER_SEC);
+    ms = st.wMilliseconds;
+    localtime_s(&tt, &sec);
+#else
+    struct timeval tv;
     gettimeofday(&tv, NULL);
+    sec = tv.tv_sec;
     ms = tv.tv_usec/1000.0;
-    localtime_r(&tv.tv_sec, &tt);
-    strftime(buffer, 20, "%Y-%m-%d %H:%M:%S", &tt);
+    localtime_r(&sec, &tt);
+#endif
+    sqlcipher_memset(buffer, 0, 256);
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tt);
     fprintf((FILE*)sqlcipher_log_file, "%s.%03d: ", buffer, ms);
     vfprintf((FILE*)sqlcipher_log_file, message, params);
     fprintf((FILE*)sqlcipher_log_file, "\n");
@@ -1746,7 +1762,7 @@ end:
 }
 #endif
 
-int sqlcipher_set_log_level(unsigned int level) {
+void sqlcipher_set_log_level(unsigned int level) {
   sqlcipher_log_level = level;
 }
 

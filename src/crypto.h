@@ -304,7 +304,7 @@ int sqlcipher_find_db_index(sqlite3 *db, const char *zDb);
 int sqlcipher_codec_ctx_integrity_check(codec_ctx *, Parse *, char *);
 
 int sqlcipher_set_log(const char *destination);
-int sqlcipher_set_log_level(unsigned int level);
+void sqlcipher_set_log_level(unsigned int level);
 void sqlcipher_log(unsigned int tag, const char *message, ...);
 
 #define SQLCIPHER_LOG_NONE          0x00
