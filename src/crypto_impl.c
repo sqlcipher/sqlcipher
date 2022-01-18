@@ -1662,7 +1662,7 @@ static int sqlcipher_profile_callback(unsigned int trace, void *file, void *stmt
   double elapsed = (*((sqlite3_uint64*)run_time))/1000000.0;
 #ifdef __ANDROID__
   if(f == NULL) {
-    __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", fmt, elapsed, sqlite3_sql((sqlite3_stmt*)stmt);
+    __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", fmt, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
   }
 #endif
   if(f) fprintf(f, fmt, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
