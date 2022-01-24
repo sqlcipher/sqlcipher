@@ -1,6 +1,15 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [4.5.1] - (February 2022 - [4.5.1 changes])
+- Updates source code baseline to upstream SQLite 3.37.2
+- Adds PRAGMA cipher_log and cipher_log_level features to allow logging of TRACE, DEBUG, INFO, WARN, and ERROR messages to stdout, stderr, file, or logcat
+- Modifies PRAGMA cipher_profile to use sqlite3_trace_v2 and adds logcat target for Android
+- Updates OpenSSL provider to use EVP_MAC API with version 3+
+- Adds new PRAGMA cipher_test_on, cipher_test_off, and cipher_test_rand (available when compiled with -DSQLCIPHER_TEST) to facilitate simulation of error conditions
+- Fixes PRAGMA cipher_integrity_check to work properly with databases larger that 2GB
+- Fixes missing munlock before free for context internal buffer (thanks to Fedor Indutny)
+
 ## [4.5.0] - (October 2021 - [4.5.0 changes])
 - Updates baseline to upstream SQLite 3.36.0
 - Changes the enhanced memory security feature to be DISABLED by default; once enabled by PRAGMA cipher_memory_security = ON, it can't be turned off for the lifetime of the process
@@ -192,7 +201,9 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.0...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.1...prerelease
+[4.5.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.1
+[4.5.1 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.0...v4.5.1
 [4.5.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.0
 [4.5.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.4.3...v4.5.0
 [4.4.3]: https://github.com/sqlcipher/sqlcipher/tree/v4.4.3
