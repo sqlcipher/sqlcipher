@@ -1,13 +1,13 @@
 ## SQLCipher
 
-SQLCipher extends the [SQLite](https://www.sqlite.org) database library to add security enhancements that make it more suitable for encrypted local data storage like:
+SQLCipher is a standalone fork of the [SQLite](https://www.sqlite.org/) database library that adds 256 bit AES encryption of database files and other security features like:
 
 - on-the-fly encryption
 - tamper detection
 - memory sanitization
 - strong key derivation
 
-SQLCipher is based on SQLite and stable upstream release features are periodically integrated. 
+SQLCipher is based on SQLite and stable upstream release features are periodically integrated. While SQLCipher is maintained as a separate version of the source tree, the project minimizes alterations to core SQLite code whenever possible.
 
 SQLCipher is maintained by Zetetic, LLC, and additional information and documentation is available on the official [SQLCipher site](https://www.zetetic.net/sqlcipher/).
 
