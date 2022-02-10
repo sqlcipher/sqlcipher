@@ -314,6 +314,8 @@ void sqlcipher_log(unsigned int tag, const char *message, ...);
 #define SQLCIPHER_LOG_DEBUG         0x08
 #define SQLCIPHER_LOG_TRACE         0xffffffff
 
+void sqlcipher_vdbe_return_string(Parse*, const char*, const char*, int);
+
 #ifdef CODEC_DEBUG_PAGEDATA
 #define CODEC_HEXDUMP(DESC,BUFFER,LEN)  \
   { \
