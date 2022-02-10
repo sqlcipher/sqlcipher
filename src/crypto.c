@@ -105,17 +105,8 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   }
 
 #ifdef SQLCIPHER_EXT
-  if( sqlite3_stricmp(zLeft, "cipher_license")==0 && zRight ){
-    char *license_result = sqlite3_mprintf("%d", sqlcipher_license_key(zRight));
-    sqlcipher_vdbe_return_string(pParse, "cipher_license", license_result, P4_DYNAMIC);
-  } else
-    if( sqlite3_stricmp(zLeft, "cipher_license")==0 && !zRight ){
-      if(ctx) {
-        char *license_result = sqlite3_mprintf("%d", ctx
-                                               ? sqlcipher_license_key_status(ctx->provider)
-                                               : SQLITE_ERROR);
-        sqlcipher_vdbe_return_string(pParse, "cipher_license", license_result, P4_DYNAMIC);
-      }
+  if(sqlcipher_ext_pragma(db, iDb, pParse, zLeft, zRight)) {
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_pragma: PRAGMA handled by sqlcipher_ext_pragma");
   } else
 #endif
 #ifdef SQLCIPHER_TEST
