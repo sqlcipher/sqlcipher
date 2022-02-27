@@ -312,7 +312,8 @@ void sqlcipher_log(unsigned int tag, const char *message, ...);
 #define SQLCIPHER_LOG_WARN          0x02
 #define SQLCIPHER_LOG_INFO          0x04
 #define SQLCIPHER_LOG_DEBUG         0x08
-#define SQLCIPHER_LOG_TRACE         0xffffffff
+#define SQLCIPHER_LOG_TRACE         0x10
+#define SQLCIPHER_LOG_ALL           0xffffffff
 
 void sqlcipher_vdbe_return_string(Parse*, const char*, const char*, int);
 

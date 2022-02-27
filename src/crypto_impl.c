@@ -1727,7 +1727,7 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
     goto end;
   }
   if(sqlcipher_log_file != NULL){
-    char buffer[256];
+    char buffer[24];
     struct tm tt;
     int ms;
     time_t sec;
@@ -1746,11 +1746,11 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
     ms = tv.tv_usec/1000.0;
     localtime_r(&sec, &tt);
 #endif
-    sqlcipher_memset(buffer, 0, 256);
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tt);
-    fprintf((FILE*)sqlcipher_log_file, "%s.%03d: ", buffer, ms);
-    vfprintf((FILE*)sqlcipher_log_file, message, params);
-    fprintf((FILE*)sqlcipher_log_file, "\n");
+    if(strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tt)) {
+      fprintf((FILE*)sqlcipher_log_file, "%s.%03d: ", buffer, ms);
+      vfprintf((FILE*)sqlcipher_log_file, message, params);
+      fprintf((FILE*)sqlcipher_log_file, "\n");
+    }
   }
 #ifdef __ANDROID__
   if(sqlcipher_log_logcat) {
