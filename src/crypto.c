@@ -100,7 +100,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
   }
 
-  if(sqlite3_stricmp(zLeft, "key") !=0 && sqlite3_stricmp(zLeft, "rekey")) {
+  if(sqlite3_stricmp(zLeft, "key") !=0 && sqlite3_stricmp(zLeft, "rekey") != 0) {
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_pragma: db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p", db, iDb, pParse, zLeft, zRight, ctx);
   }
 
