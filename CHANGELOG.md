@@ -1,7 +1,7 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
-## [4.5.1] - (February 2022 - [4.5.1 changes])
+## [4.5.1] - (March 2022 - [4.5.1 changes])
 - Updates source code baseline to upstream SQLite 3.37.2
 - Adds PRAGMA cipher_log and cipher_log_level features to allow logging of TRACE, DEBUG, INFO, WARN, and ERROR messages to stdout, stderr, file, or logcat
 - Modifies PRAGMA cipher_profile to use sqlite3_trace_v2 and adds logcat target for Android
