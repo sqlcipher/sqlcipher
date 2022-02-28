@@ -943,11 +943,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: db=%p zDb=%s", db);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: db=%p zDb=%s", db, zDb);
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = &db->aDb[db_index];
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: database pDb=%p db_index:%d", pDb, db_index);
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: database zDb=%p db_index:%d", zDb, db_index);
     if(pDb->pBt) {
       codec_ctx *ctx;
       int rc, page_count;
