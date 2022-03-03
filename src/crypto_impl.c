@@ -33,22 +33,6 @@
 
 #include "sqlcipher.h"
 #include "crypto.h"
-#include <time.h>
-
-#if defined(_WIN32) || defined(SQLITE_OS_WINRT)
-#include <windows.h> /*  amalgamator: dontcache */
-#else
-#include <sys/time.h> /* amalgamator: dontcache */
-#endif
-
-#ifndef OMIT_MEMLOCK
-#if defined(__unix__) || defined(__APPLE__) || defined(_AIX)
-#include <errno.h> /* amalgamator: dontcache */
-#include <unistd.h> /* amalgamator: dontcache */
-#include <sys/resource.h> /* amalgamator: dontcache */
-#include <sys/mman.h> /* amalgamator: dontcache */
-#endif
-#endif
 
 #ifdef SQLCIPHER_TEST
 static volatile unsigned int cipher_test_flags = 0;
