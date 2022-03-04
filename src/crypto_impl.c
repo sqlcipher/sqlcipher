@@ -34,6 +34,10 @@
 #include "sqlcipher.h"
 #include "crypto.h"
 
+#ifndef PAGER_MJ_PGNO
+#define PAGER_MJ_PGNO(x) PAGER_SJ_PGNO(x)
+#endif
+
 #ifdef SQLCIPHER_TEST
 static volatile unsigned int cipher_test_flags = 0;
 unsigned int sqlcipher_get_test_flags() {
