@@ -34,6 +34,7 @@
 #include "sqliteInt.h"
 #include "crypto.h"
 #include "sqlcipher.h"
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
