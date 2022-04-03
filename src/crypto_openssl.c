@@ -326,6 +326,7 @@ cleanup:
   if(hctx) HMAC_CTX_free(hctx);
 #else
   if(hctx) EVP_MAC_CTX_free(hctx);
+  if(mac) EVP_MAC_free(mac);
 #endif
   return rc;
 }
