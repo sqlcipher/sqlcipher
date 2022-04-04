@@ -180,6 +180,7 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
 
 static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   int rc = 0;
+
 #if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x30000000L)
   unsigned int outlen;
   HMAC_CTX* hctx = NULL;
@@ -239,6 +240,15 @@ static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_
     sqlcipher_openssl_log_errors();
     goto error;
   }
+
+  rc = SQLITE_OK;
+  goto cleanup;
+
+error:
+  rc = SQLITE_ERROR;
+
+cleanup:
+  if(hctx) HMAC_CTX_free(hctx);
 
 #else
   size_t outlen;
@@ -317,17 +327,18 @@ static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_
     goto error;
   }
 
-#endif
   rc = SQLITE_OK;
   goto cleanup;
+
 error:
   rc = SQLITE_ERROR;
+
 cleanup:
-#if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x30000000L)
-  if(hctx) HMAC_CTX_free(hctx);
-#else
   if(hctx) EVP_MAC_CTX_free(hctx);
+  if(mac) EVP_MAC_free(mac);
+
 #endif
+
   return rc;
 }
 
