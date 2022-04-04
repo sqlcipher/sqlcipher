@@ -332,13 +332,6 @@ foreach file {
    os_common.h
    ctime.c
 
-   crypto.c
-   crypto_impl.c
-   crypto_libtomcrypt.c
-   crypto_nss.c
-   crypto_openssl.c
-   crypto_cc.c
-
    global.c
    status.c
    date.c
@@ -388,6 +381,13 @@ foreach file {
    vdbesort.c
    vdbevtab.c
    memjournal.c
+
+   crypto.c
+   crypto_impl.c
+   crypto_libtomcrypt.c
+   crypto_nss.c
+   crypto_openssl.c
+   crypto_cc.c
 
    walker.c
    resolve.c
