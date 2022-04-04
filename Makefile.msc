@@ -1292,6 +1292,14 @@ LIBRESOBJS =
 # Core source code files, part 1.
 #
 SRC00 = \
+	$(TOP)\src\crypto.c \
+	$(TOP)\src\crypto_cc.c \
+	$(TOP)\src\crypto_impl.c \
+	$(TOP)\src\crypto_libtomcrypt.c \
+	$(TOP)\src\crypto_nss.c \
+	$(TOP)\src\crypto_openssl.c \
+	$(TOP)\src\crypto.h \
+	$(TOP)\src\sqlcipher.h \
   $(TOP)\src\alter.c \
   $(TOP)\src\analyze.c \
   $(TOP)\src\attach.c \
@@ -1374,15 +1382,7 @@ SRC01 = \
   $(TOP)\src\where.c \
   $(TOP)\src\wherecode.c \
   $(TOP)\src\whereexpr.c \
-  $(TOP)\src\window.c \
-  $(TOP)\src\crypto.c \
-  $(TOP)\src\crypto_cc.c \
-  $(TOP)\src\crypto_impl.c \
-  $(TOP)\src\crypto_libtomcrypt.c \
-  $(TOP)\src\crypto_nss.c \
-  $(TOP)\src\crypto_openssl.c \
-  $(TOP)\src\crypto.h \
-  $(TOP)\src\sqlcipher.h 
+  $(TOP)\src\window.c
 
 # Core miscellaneous files.
 #
