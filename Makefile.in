@@ -228,7 +228,6 @@ LIBOBJ = $(LIBOBJS$(USE_AMALGAMATION))
 # All of the source code files.
 #
 SRC = \
-  $(CRYPTOSRC) \
   $(TOP)/src/alter.c \
   $(TOP)/src/analyze.c \
   $(TOP)/src/attach.c \
@@ -331,7 +330,8 @@ SRC = \
   $(TOP)/src/wherecode.c \
   $(TOP)/src/whereexpr.c \
   $(TOP)/src/whereInt.h \
-  $(TOP)/src/window.c
+  $(TOP)/src/window.c \
+  $(CRYPTOSRC)
 
 # Source code for extensions
 #

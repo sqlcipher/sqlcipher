@@ -128,8 +128,6 @@ close $in
 # text of the file in-line.  The file only needs to be included once.
 #
 foreach hdr {
-   crypto.h
-   sqlcipher.h
    btree.h
    btreeInt.h
    fts3.h
@@ -164,6 +162,8 @@ foreach hdr {
    vxworks.h
    wal.h
    whereInt.h
+   crypto.h
+   sqlcipher.h
 } {
   set available_hdr($hdr) 1
 }
@@ -332,13 +332,6 @@ foreach file {
    os_common.h
    ctime.c
 
-   crypto.c
-   crypto_impl.c
-   crypto_libtomcrypt.c
-   crypto_nss.c
-   crypto_openssl.c
-   crypto_cc.c
-
    global.c
    status.c
    date.c
@@ -450,6 +443,13 @@ foreach file {
    sqlite3session.c
    fts5.c
    stmt.c
+
+   crypto.c
+   crypto_impl.c
+   crypto_libtomcrypt.c
+   crypto_nss.c
+   crypto_openssl.c
+   crypto_cc.c
 } {
   copy_file $srcdir/$file
 }
