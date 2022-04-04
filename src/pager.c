@@ -7162,7 +7162,7 @@ const char *sqlite3PagerJournalname(Pager *pPager){
 /*
 ** Set or retrieve the codec for this pager
 */
-void sqlite3PagerSetCodec(
+void sqlcipherPagerSetCodec(
   Pager *pPager,
   void *(*xCodec)(void*,void*,Pgno,int),
   void (*xCodecSizeChng)(void*,int,int),
@@ -7181,7 +7181,7 @@ void sqlite3PagerSetCodec(
   setGetterMethod(pPager);
   pagerReportSize(pPager);
 }
-void *sqlite3PagerGetCodec(Pager *pPager){
+void *sqlcipherPagerGetCodec(Pager *pPager){
   return pPager->pCodec;
 }
 
@@ -7192,17 +7192,10 @@ void *sqlite3PagerGetCodec(Pager *pPager){
 ** This function returns a pointer to a buffer containing the encrypted
 ** page content. If a malloc fails, this function may return NULL.
 */
-void *sqlite3PagerCodec(PgHdr *pPg){
+void *sqlcipherPagerCodec(PgHdr *pPg){
   void *aData = 0;
   CODEC2(pPg->pPager, pPg->pData, pPg->pgno, 6, return 0, aData);
   return aData;
-}
-
-/*
-** Return the current pager state
-*/
-int sqlite3PagerState(Pager *pPager){
-  return pPager->eState;
 }
 #endif /* SQLITE_HAS_CODEC */
 /* END SQLCIPHER */

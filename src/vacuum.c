@@ -239,10 +239,10 @@ SQLITE_NOINLINE int sqlite3RunVacuum(
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   if( db->nextPagesize ){
-    extern void sqlite3CodecGetKey(sqlite3*, int, void**, int*);
+    extern void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
     int nKey;
     char *zKey;
-    sqlite3CodecGetKey(db, iDb, (void**)&zKey, &nKey);
+    sqlcipherCodecGetKey(db, iDb, (void**)&zKey, &nKey);
     if( nKey ) db->nextPagesize = 0;
   }
 #endif

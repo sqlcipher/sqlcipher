@@ -287,8 +287,8 @@ void sqlcipher_deactivate() {
    optimized out by the compiler. 
    Note: As suggested by Joachim Schipper (joachim.schipper@fox-it.com)
 */
-void* sqlcipher_memset(void *v, unsigned char value, u64 len) {
-  u64 i = 0;
+void* sqlcipher_memset(void *v, unsigned char value, sqlite_uint64 len) {
+  sqlite_uint64 i = 0;
   volatile unsigned char *a = v;
 
   if (v == NULL) return v;
@@ -304,9 +304,9 @@ void* sqlcipher_memset(void *v, unsigned char value, u64 len) {
 /* constant time memory check tests every position of a memory segement
    matches a single value (i.e. the memory is all zeros)
    returns 0 if match, 1 of no match */
-int sqlcipher_ismemset(const void *v, unsigned char value, u64 len) {
+int sqlcipher_ismemset(const void *v, unsigned char value, sqlite_uint64 len) {
   const unsigned char *a = v;
-  u64 i = 0, result = 0;
+  sqlite_uint64 i = 0, result = 0;
 
   for(i = 0; i < len; i++) {
     result |= a[i] ^ value;
@@ -328,7 +328,7 @@ int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
   return (result != 0);
 }
 
-void sqlcipher_mlock(void *ptr, u64 sz) {
+void sqlcipher_mlock(void *ptr, sqlite_uint64 sz) {
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
   int rc;
@@ -355,7 +355,7 @@ void sqlcipher_mlock(void *ptr, u64 sz) {
 #endif
 }
 
-void sqlcipher_munlock(void *ptr, u64 sz) {
+void sqlcipher_munlock(void *ptr, sqlite_uint64 sz) {
 #ifndef OMIT_MEMLOCK
 #if defined(__unix__) || defined(__APPLE__) 
   int rc;
@@ -390,7 +390,7 @@ void sqlcipher_munlock(void *ptr, u64 sz) {
   * If sz is > 0, and not compiled with OMIT_MEMLOCK, system will attempt to unlock the
   * memory segment so it can be paged
   */
-void sqlcipher_free(void *ptr, u64 sz) {
+void sqlcipher_free(void *ptr, sqlite_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_free: calling sqlcipher_memset(%p,0,%llu)", ptr, sz);
   sqlcipher_memset(ptr, 0, sz);
   sqlcipher_munlock(ptr, sz);
@@ -402,7 +402,7 @@ void sqlcipher_free(void *ptr, u64 sz) {
   * reference counted and leak detection works. Unless compiled with OMIT_MEMLOCK
   * attempts to lock the memory pages so sensitive information won't be swapped
   */
-void* sqlcipher_malloc(u64 sz) {
+void* sqlcipher_malloc(sqlite_uint64 sz) {
   void *ptr;
   sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_malloc: calling sqlite3Malloc(%llu)", sz);
   ptr = sqlite3Malloc(sz);
@@ -1538,8 +1538,8 @@ migrate:
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, "set btree page size to %d res %d rc %d", default_page_size, nRes, rc);
   if( rc!=SQLITE_OK ) goto handle_error;
 
-  sqlite3CodecGetKey(db, db->nDb - 1, (void**)&keyspec, &keyspec_sz);
-  sqlite3CodecAttach(db, 0, keyspec, keyspec_sz);
+  sqlcipherCodecGetKey(db, db->nDb - 1, (void**)&keyspec, &keyspec_sz);
+  sqlcipherCodecAttach(db, 0, keyspec, keyspec_sz);
   
   srcfile = sqlite3PagerFile(pSrc->pBt->pPager);
   destfile = sqlite3PagerFile(pDest->pBt->pPager);

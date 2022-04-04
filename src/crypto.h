@@ -61,9 +61,11 @@
 #endif
 #endif
 
+#include "sqlcipher.h"
+
 /* extensions defined in pager.c */ 
-void *sqlite3PagerGetCodec(Pager*);
-void sqlite3PagerSetCodec(Pager*, void *(*)(void*,void*,Pgno,int),  void (*)(void*,int,int),  void (*)(void*), void *);
+void *sqlcipherPagerGetCodec(Pager*);
+void sqlcipherPagerSetCodec(Pager*, void *(*)(void*,void*,Pgno,int),  void (*)(void*,int,int),  void (*)(void*), void *);
 int sqlite3pager_is_mj_pgno(Pager*, Pgno);
 void sqlite3pager_error(Pager*, int);
 void sqlite3pager_reset(Pager *pPager);
@@ -227,8 +229,8 @@ typedef struct {
 
 /* crypto.c functions */
 int sqlcipher_codec_pragma(sqlite3*, int, Parse*, const char *, const char*);
-int sqlite3CodecAttach(sqlite3*, int, const void *, int);
-void sqlite3CodecGetKey(sqlite3*, int, void**, int*);
+int sqlcipherCodecAttach(sqlite3*, int, const void *, int);
+void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
 void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 
 /* crypto_impl.c functions */

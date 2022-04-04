@@ -231,7 +231,7 @@ void sqlite3PagerRekey(DbPage*, Pgno, u16);
 
 /* BEGIN SQLCIPHER */
 #if defined(SQLITE_HAS_CODEC) && !defined(SQLITE_OMIT_WAL)
-void *sqlite3PagerCodec(DbPage *);
+void *sqlcipherPagerCodec(DbPage *);
 #endif
 /* END SQLCIPHER */
 

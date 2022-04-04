@@ -78,7 +78,7 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
   struct Db *pDb = &db->aDb[nDb];
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_set_pass_key: db=%p nDb=%d for_ctx=%d", db, nDb, for_ctx);
   if(pDb->pBt) {
-    codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
+    codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
 
     if(ctx) {
       return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
@@ -97,7 +97,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   int rc;
 
   if(pDb->pBt) {
-    ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
+    ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
   }
 
   if(sqlite3_stricmp(zLeft, "key") !=0 && sqlite3_stricmp(zLeft, "rekey") != 0) {
@@ -822,10 +822,10 @@ static void sqlite3FreeCodecArg(void *pCodecArg) {
   sqlcipher_deactivate(); /* cleanup related structures, OpenSSL etc, when codec is detatched */
 }
 
-int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
+int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   struct Db *pDb = &db->aDb[nDb];
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: db=%p, nDb=%d", db, nDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: db=%p, nDb=%d", db, nDb);
 
   if(nKey && zKey && pDb->pBt) {
     int rc;
@@ -836,12 +836,12 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     /* check if the sqlite3_file is open, and if not force handle to NULL */ 
     if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL; 
 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: calling sqlcipher_activate()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlcipher_activate()");
     sqlcipher_activate(); /* perform internal initialization for sqlcipher */
 
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3CodecAttach: entering database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: entering database mutex %p", db->mutex);
     sqlite3_mutex_enter(db->mutex);
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3CodecAttach: entered database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: entered database mutex %p", db->mutex);
 
 #ifdef SQLCIPHER_EXT
     if((rc = sqlite3_set_authorizer(db, sqlcipher_license_authorizer, db)) != SQLITE_OK) {
@@ -851,44 +851,44 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 #endif
 
     /* point the internal codec argument against the contet to be prepared */
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: calling sqlcipher_codec_ctx_init()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlcipher_codec_ctx_init()");
     rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, zKey, nKey);
 
     if(rc != SQLITE_OK) {
       /* initialization failed, do not attach potentially corrupted context */
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3CodecAttach: context initialization failed forcing error state with rc=%d", rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipherCodecAttach: context initialization failed forcing error state with rc=%d", rc);
       /* force an error at the pager level, such that even the upstream caller ignores the return code
          the pager will be in an error state and will process no further operations */
       sqlite3pager_error(pPager, rc);
       pDb->pBt->pBt->db->errCode = rc;
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3CodecAttach: leaving database mutex %p (early return on rc=%d)", db->mutex, rc);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: leaving database mutex %p (early return on rc=%d)", db->mutex, rc);
       sqlite3_mutex_leave(db->mutex);
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3CodecAttach: left database mutex %p (early return on rc=%d)", db->mutex, rc);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: left database mutex %p (early return on rc=%d)", db->mutex, rc);
       return rc;
     }
 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: calling sqlite3PagerSetCodec()");
-    sqlite3PagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlcipherPagerSetCodec()");
+    sqlcipherPagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: calling codec_set_btree_to_codec_pagesize()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling codec_set_btree_to_codec_pagesize()");
     codec_set_btree_to_codec_pagesize(db, pDb, ctx);
 
     /* force secure delete. This has the benefit of wiping internal data when deleted
        and also ensures that all pages are written to disk (i.e. not skipped by
        sqlite3PagerDontWrite optimizations) */ 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: calling sqlite3BtreeSecureDelete()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlite3BtreeSecureDelete()");
     sqlite3BtreeSecureDelete(pDb->pBt, 1); 
 
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
        if not null, then set to the default */
     if(fd != NULL) { 
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecAttach: calling sqlite3BtreeSetAutoVacuum()");
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlite3BtreeSetAutoVacuum()");
       sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
     }
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3CodecAttach: leaving database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: leaving database mutex %p", db->mutex);
     sqlite3_mutex_leave(db->mutex);
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3CodecAttach: left database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: left database mutex %p", db->mutex);
   }
   return SQLITE_OK;
 }
@@ -921,7 +921,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
-    return sqlite3CodecAttach(db, db_index, pKey, nKey); 
+    return sqlcipherCodecAttach(db, db_index, pKey, nKey); 
   }
   sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_key_v2: no key provided");
   return SQLITE_ERROR;
@@ -955,7 +955,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       PgHdr *page;
       Pager *pPager = pDb->pBt->pBt->pPager;
 
-      ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
+      ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
      
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
@@ -1013,11 +1013,11 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   return SQLITE_ERROR;
 }
 
-void sqlite3CodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
+void sqlcipherCodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3CodecGetKey:db=%p, nDb=%d", db, nDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecGetKey:db=%p, nDb=%d", db, nDb);
   if( pDb->pBt ) {
-    codec_ctx *ctx = (codec_ctx*) sqlite3PagerGetCodec(pDb->pBt->pBt->pPager);
+    codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
     
     if(ctx) {
       /* pass back the keyspec from the codec, unless PRAGMA cipher_store_pass

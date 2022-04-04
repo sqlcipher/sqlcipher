@@ -157,12 +157,12 @@ sqlite3_backup *sqlite3_backup_init(
 #ifdef SQLITE_HAS_CODEC
   {
     extern int sqlcipher_find_db_index(sqlite3*, const char*);
-    extern void sqlite3CodecGetKey(sqlite3*, int, void**, int*);
+    extern void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
     int srcNKey, destNKey;
     void *zKey;
 
-    sqlite3CodecGetKey(pSrcDb, sqlcipher_find_db_index(pSrcDb, zSrcDb), &zKey, &srcNKey);
-    sqlite3CodecGetKey(pDestDb, sqlcipher_find_db_index(pDestDb, zDestDb), &zKey, &destNKey);
+    sqlcipherCodecGetKey(pSrcDb, sqlcipher_find_db_index(pSrcDb, zSrcDb), &zKey, &srcNKey);
+    sqlcipherCodecGetKey(pDestDb, sqlcipher_find_db_index(pDestDb, zDestDb), &zKey, &destNKey);
     zKey = NULL;
 
     /* either both databases must be plaintext, or both must be encrypted */
@@ -258,6 +258,7 @@ static int backupOnePage(
   const i64 iEnd = (i64)iSrcPg*(i64)nSrcPgsz;
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
+  extern void *sqlcipherPagerGetCodec(Pager*);
   /* Use BtreeGetReserveNoMutex() for the source b-tree, as although it is
   ** guaranteed that the shared-mutex is held by this thread, handle
   ** p->pSrc may not actually be the owner.  */
@@ -286,7 +287,7 @@ static int backupOnePage(
   /* Backup is not possible if the page size of the destination is changing
   ** and a codec is in use.
   */
-  if( nSrcPgsz!=nDestPgsz && sqlite3PagerGetCodec(pDestPager)!=0 ){
+  if( nSrcPgsz!=nDestPgsz && sqlcipherPagerGetCodec(pDestPager)!=0 ){
     rc = SQLITE_READONLY;
   }
 

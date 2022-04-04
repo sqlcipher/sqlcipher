@@ -35,6 +35,8 @@
 #ifndef SQLCIPHER_H
 #define SQLCIPHER_H
 
+#include "sqlite3.h"
+
 #define SQLCIPHER_HMAC_SHA1 0
 #define SQLCIPHER_HMAC_SHA1_LABEL "HMAC_SHA1"
 #define SQLCIPHER_HMAC_SHA256 1
@@ -72,13 +74,13 @@ typedef struct {
 } sqlcipher_provider;
 
 /* utility functions */
-void* sqlcipher_malloc(u64);
-void sqlcipher_mlock(void *, u64);
-void sqlcipher_munlock(void *, u64);
-void* sqlcipher_memset(void *, unsigned char, u64);
-int sqlcipher_ismemset(const void *, unsigned char, u64);
+void* sqlcipher_malloc(sqlite_uint64);
+void sqlcipher_mlock(void *, sqlite_uint64);
+void sqlcipher_munlock(void *, sqlite_uint64);
+void* sqlcipher_memset(void *, unsigned char, sqlite_uint64);
+int sqlcipher_ismemset(const void *, unsigned char, sqlite_uint64);
 int sqlcipher_memcmp(const void *, const void *, int);
-void sqlcipher_free(void *, u64);
+void sqlcipher_free(void *, sqlite_uint64);
 char* sqlcipher_version();
 
 /* provider interfaces */
