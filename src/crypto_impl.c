@@ -74,9 +74,9 @@ static volatile int default_page_size = 4096;
 static volatile int default_plaintext_header_sz = 0;
 static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
 static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
-static volatile int mem_security_on = 0;
-static volatile int mem_security_initialized = 0;
-static volatile int mem_security_activated = 0;
+static volatile int sqlcipher_mem_security_on = 0;
+static volatile int sqlcipher_mem_executed = 0;
+static volatile int sqlcipher_mem_initialized = 0;
 static volatile unsigned int sqlcipher_activate_count = 0;
 static volatile sqlite3_mem_methods default_mem_methods;
 static sqlcipher_provider *default_provider = NULL;
@@ -99,10 +99,10 @@ static void sqlcipher_mem_shutdown(void *pAppData) {
 }
 static void *sqlcipher_mem_malloc(int n) {
   void *ptr = default_mem_methods.xMalloc(n);
-  if(mem_security_on) {
+  if(!sqlcipher_mem_executed) sqlcipher_mem_executed = 1;
+  if(sqlcipher_mem_security_on) {
     sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_malloc: calling sqlcipher_mlock(%p,%d)", ptr, n);
     sqlcipher_mlock(ptr, n); 
-    if(!mem_security_activated) mem_security_activated = 1;
   }
   return ptr;
 }
@@ -111,19 +111,19 @@ static int sqlcipher_mem_size(void *p) {
 }
 static void sqlcipher_mem_free(void *p) {
   int sz;
-  if(mem_security_on) {
+  if(!sqlcipher_mem_executed) sqlcipher_mem_executed = 1;
+  if(sqlcipher_mem_security_on) {
     sz = sqlcipher_mem_size(p);
     sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d) and sqlcipher_munlock(%p, %d)", p, sz, p, sz);
     sqlcipher_memset(p, 0, sz);
     sqlcipher_munlock(p, sz);
-    if(!mem_security_activated) mem_security_activated = 1;
   }
   default_mem_methods.xFree(p);
 }
 static void *sqlcipher_mem_realloc(void *p, int n) {
   void *new = NULL;
   int orig_sz = 0;
-  if(mem_security_on) {
+  if(sqlcipher_mem_security_on) {
     orig_sz = sqlcipher_mem_size(p);
     if (n==0) {
       sqlcipher_mem_free(p);
@@ -161,12 +161,13 @@ static sqlite3_mem_methods sqlcipher_mem_methods = {
 };
 
 void sqlcipher_init_memmethods() {
-  if(mem_security_initialized) return;
+  if(sqlcipher_mem_initialized) return;
   if(sqlite3_config(SQLITE_CONFIG_GETMALLOC, &default_mem_methods) != SQLITE_OK ||
      sqlite3_config(SQLITE_CONFIG_MALLOC, &sqlcipher_mem_methods)  != SQLITE_OK) {
-    mem_security_on = mem_security_activated = 0;
+     sqlcipher_mem_security_on = sqlcipher_mem_executed = sqlcipher_mem_initialized = 0;
+  } else {
+    sqlcipher_mem_initialized = 1;
   }
-  mem_security_initialized = 1;
 }
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
@@ -870,13 +871,16 @@ int sqlcipher_get_default_pagesize() {
 void sqlcipher_set_mem_security(int on) {
   /* memory security can only be enabled, not disabled */
   if(on) {
-    mem_security_on = on;
-    mem_security_activated = 0;
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_set_mem_security: on");
+    sqlcipher_mem_security_on = on;
   }
 }
 
 int sqlcipher_get_mem_security() {
-  return mem_security_on && mem_security_activated;
+  /* only report that memory security is enabled if pragma cipher_memory_security is ON and 
+     SQLCipher's allocator/deallocator was run at least one timecurrently used */ 
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_get_mem_security: sqlcipher_mem_security_on = %d, sqlcipher_mem_executed = %d", sqlcipher_mem_security_on, sqlcipher_mem_executed);
+  return sqlcipher_mem_security_on && sqlcipher_mem_executed;
 }
 
 
