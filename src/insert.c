@@ -181,7 +181,7 @@ void sqlite3TableAffinity(Vdbe *v, Table *pTab, int iReg){
     }
 
     for(i=j=0; i<pTab->nCol; i++){
-      assert( pTab->aCol[i].affinity!=0 );
+      assert( pTab->aCol[i].affinity!=0 || sqlite3VdbeParser(v)->nErr>0 );
       if( (pTab->aCol[i].colFlags & COLFLAG_VIRTUAL)==0 ){
         zColAff[j++] = pTab->aCol[i].affinity;
       }
@@ -715,9 +715,11 @@ void sqlite3Insert(
 #endif
 
   db = pParse->db;
-  if( pParse->nErr || db->mallocFailed ){
+  assert( db->pParse==pParse );
+  if( pParse->nErr ){
     goto insert_cleanup;
   }
+  assert( db->mallocFailed==0 );
   dest.iSDParm = 0;  /* Suppress a harmless compiler warning */
 
   /* If the Select object is really just a simple VALUES() list with a
@@ -793,7 +795,11 @@ void sqlite3Insert(
   **
   ** This is the 2nd template.
   */
-  if( pColumn==0 && xferOptimization(pParse, pTab, pSelect, onError, iDb) ){
+  if( pColumn==0 
+   && pSelect!=0
+   && pTrigger==0
+   && xferOptimization(pParse, pTab, pSelect, onError, iDb)
+  ){
     assert( !pTrigger );
     assert( pList==0 );
     goto insert_end;
@@ -893,7 +899,9 @@ void sqlite3Insert(
     dest.nSdst = pTab->nCol;
     rc = sqlite3Select(pParse, pSelect, &dest);
     regFromSelect = dest.iSdst;
-    if( rc || db->mallocFailed || pParse->nErr ) goto insert_cleanup;
+    assert( db->pParse==pParse );
+    if( rc || pParse->nErr ) goto insert_cleanup;
+    assert( db->mallocFailed==0 );
     sqlite3VdbeEndCoroutine(v, regYield);
     sqlite3VdbeJumpHere(v, addrTop - 1);                       /* label B: */
     assert( pSelect->pEList );
@@ -1382,9 +1390,7 @@ insert_end:
   ** invoke the callback function.
   */
   if( regRowCount ){
-    sqlite3VdbeAddOp2(v, OP_ChngCntRow, regRowCount, 1);
-    sqlite3VdbeSetNumCols(v, 1);
-    sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "rows inserted", SQLITE_STATIC);
+    sqlite3CodeChangeCount(v, regRowCount, "rows inserted");
   }
 
 insert_cleanup:
@@ -2764,17 +2770,12 @@ static int xferOptimization(
   int destHasUniqueIdx = 0;        /* True if pDest has a UNIQUE index */
   int regData, regRowid;           /* Registers holding data and rowid */
 
-  if( pSelect==0 ){
-    return 0;   /* Must be of the form  INSERT INTO ... SELECT ... */
-  }
+  assert( pSelect!=0 );
   if( pParse->pWith || pSelect->pWith ){
     /* Do not attempt to process this query if there are an WITH clauses
     ** attached to it. Proceeding may generate a false "no such table: xxx"
     ** error if pSelect reads from a CTE named "xxx".  */
     return 0;
-  }
-  if( sqlite3TriggerList(pParse, pDest) ){
-    return 0;   /* tab1 must not have triggers */
   }
 #ifndef SQLITE_OMIT_VIRTUALTABLE
   if( IsVirtual(pDest) ){

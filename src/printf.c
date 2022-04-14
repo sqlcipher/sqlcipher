@@ -849,12 +849,22 @@ void sqlite3_str_vappendf(
         goto adjust_width_for_utf8;
       }
       case etTOKEN: {
-        Token *pToken;
         if( (pAccum->printfFlags & SQLITE_PRINTF_INTERNAL)==0 ) return;
-        pToken = va_arg(ap, Token*);
-        assert( bArgList==0 );
-        if( pToken && pToken->n ){
-          sqlite3_str_append(pAccum, (const char*)pToken->z, pToken->n);
+        if( flag_alternateform ){
+          /* %#T means an Expr pointer that uses Expr.u.zToken */
+          Expr *pExpr = va_arg(ap,Expr*);
+          if( ALWAYS(pExpr) && ALWAYS(!ExprHasProperty(pExpr,EP_IntValue)) ){
+            sqlite3_str_appendall(pAccum, (const char*)pExpr->u.zToken);
+            sqlite3RecordErrorOffsetOfExpr(pAccum->db, pExpr);
+          }
+        }else{
+          /* %T means a Token pointer */
+          Token *pToken = va_arg(ap, Token*);
+          assert( bArgList==0 );
+          if( pToken && pToken->n ){
+            sqlite3_str_append(pAccum, (const char*)pToken->z, pToken->n);
+            sqlite3RecordErrorByteOffset(pAccum->db, pToken->z);
+          }
         }
         length = width = 0;
         break;
@@ -909,6 +919,42 @@ void sqlite3_str_vappendf(
   }/* End for loop over the format string */
 } /* End of function */
 
+
+/*
+** The z string points to the first character of a token that is
+** associated with an error.  If db does not already have an error
+** byte offset recorded, try to compute the error byte offset for
+** z and set the error byte offset in db.
+*/
+void sqlite3RecordErrorByteOffset(sqlite3 *db, const char *z){
+  const Parse *pParse;
+  const char *zText;
+  const char *zEnd;
+  assert( z!=0 );
+  if( NEVER(db==0) ) return;
+  if( db->errByteOffset!=(-2) ) return;
+  pParse = db->pParse;
+  if( NEVER(pParse==0) ) return;
+  zText =pParse->zTail;
+  if( NEVER(zText==0) ) return;
+  zEnd = &zText[strlen(zText)];
+  if( SQLITE_WITHIN(z,zText,zEnd) ){
+    db->errByteOffset = (int)(z-zText);
+  }
+}
+
+/*
+** If pExpr has a byte offset for the start of a token, record that as
+** as the error offset.
+*/
+void sqlite3RecordErrorOffsetOfExpr(sqlite3 *db, const Expr *pExpr){
+  while( pExpr && (ExprHasProperty(pExpr,EP_FromJoin) || pExpr->w.iOfst<=0) ){
+    pExpr = pExpr->pLeft;
+  }
+  if( pExpr==0 ) return;
+  db->errByteOffset = pExpr->w.iOfst;
+}
+
 /*
 ** Enlarge the memory allocation on a StrAccum object so that it is
 ** able to accept at least N more bytes of text.
@@ -916,7 +962,7 @@ void sqlite3_str_vappendf(
 ** Return the number of bytes of text that StrAccum is able to accept
 ** after the attempted enlargement.  The value returned might be zero.
 */
-static int sqlite3StrAccumEnlarge(StrAccum *p, int N){
+int sqlite3StrAccumEnlarge(StrAccum *p, int N){
   char *zNew;
   assert( p->nChar+(i64)N >= p->nAlloc ); /* Only called if really needed */
   if( p->accError ){
