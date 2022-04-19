@@ -1,0 +1,5 @@
+module sqlcipher {
+    header "include/sqlcipher-Bridging-Header.h"
+    link "sqlcipher"
+    export *
+}
