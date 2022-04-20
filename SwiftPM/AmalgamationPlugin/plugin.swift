@@ -13,7 +13,6 @@ import PackagePlugin
               arguments: [context.pluginWorkDirectory.string, outputDir.string],
               outputFiles: [
                 outputDir.appending("sqlite3.c"),
-                outputDir.appending("include/sqlite3.h")
               ]
         )]
     }
