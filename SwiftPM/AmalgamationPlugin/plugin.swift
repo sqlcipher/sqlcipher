@@ -6,7 +6,7 @@ import PackagePlugin
     func createBuildCommands(context: PluginContext, target: Target) throws -> [Command] {
         let outputDir = context.pluginWorkDirectory.appending("gen")
         let toolPath = try context.tool(named: "Amalgamation").path
-        Diagnostics.remark("outputFilesDirectory: \(outputDir) pluginWorkDir: \(context.pluginWorkDirectory) toolPath: \(toolPath)")
+        print("outputFilesDirectory: \(outputDir) pluginWorkDir: \(context.pluginWorkDirectory) toolPath: \(toolPath)")
         return [.buildCommand(
               displayName: "Running Amalgamation",
               executable: toolPath,
