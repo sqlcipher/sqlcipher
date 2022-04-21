@@ -40,7 +40,7 @@ var build = [
     "make sqlite3.c",
     "mkdir -p gen/include",
     "cp sqlite3.c \(outputDir)",
-    "cp sqlite3.h \(outputDir)/include"
+    "cp sqlite3.h \(outputDir)"
 ]
 
 try build.forEach { cmd in
