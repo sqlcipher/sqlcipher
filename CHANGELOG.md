@@ -1,6 +1,13 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [unreleased] - (? 2022 - [unreleased changes])
+- Updates source code baseline to upstream SQLite 3.38.3
+- Simplifies OpenSSL version conditional code
+- Fixes issue where PRAGMA cipher_memory_security could report OFF when it was actually ON
+- Fixes fix unfreed OpenSSL allocation when compiled against version 3
+- Fixes support for building against recent versions of BoringSSL
+
 ## [4.5.1] - (March 2022 - [4.5.1 changes])
 - Updates source code baseline to upstream SQLite 3.37.2
 - Adds PRAGMA cipher_log and cipher_log_level features to allow logging of TRACE, DEBUG, INFO, WARN, and ERROR messages to stdout, stderr, file, or logcat
