@@ -52,9 +52,7 @@ Trigger *sqlite3TriggerList(Parse *pParse, Table *pTab){
   Trigger *pList;           /* List of triggers to return */
   HashElem *p;              /* Loop variable for TEMP triggers */
 
-  if( pParse->disableTriggers ){
-    return 0;
-  }
+  assert( pParse->disableTriggers==0 );
   pTmpSchema = pParse->db->aDb[1].pSchema;
   p = sqliteHashFirst(&pTmpSchema->trigHash);
   pList = pTab->pTrigger;
@@ -67,11 +65,10 @@ Trigger *sqlite3TriggerList(Parse *pParse, Table *pTab){
     ){
       pTrig->pNext = pList;
       pList = pTrig;
-    }else if( pTrig->op==TK_RETURNING
+    }else if( pTrig->op==TK_RETURNING ){
 #ifndef SQLITE_OMIT_VIRTUALTABLE
-              && pParse->db->pVtabCtx==0
+      assert( pParse->db->pVtabCtx==0 );
 #endif
-    ){
       assert( pParse->bReturning );
       assert( &(pParse->u1.pReturning->retTrig) == pTrig );
       pTrig->table = pTab->zName;
@@ -517,7 +514,7 @@ TriggerStep *sqlite3TriggerInsertStep(
 TriggerStep *sqlite3TriggerUpdateStep(
   Parse *pParse,          /* Parser */
   Token *pTableName,   /* Name of the table to be updated */
-  SrcList *pFrom,
+  SrcList *pFrom,      /* FROM clause for an UPDATE-FROM, or NULL */
   ExprList *pEList,    /* The SET clause: list of column and new values */
   Expr *pWhere,        /* The WHERE clause */
   u8 orconf,           /* The conflict algorithm. (OE_Abort, OE_Ignore, etc) */
@@ -731,12 +728,21 @@ static int checkColumnOverlap(IdList *pIdList, ExprList *pEList){
 }
 
 /*
+** Return true if any TEMP triggers exist
+*/
+static int tempTriggersExist(sqlite3 *db){
+  if( NEVER(db->aDb[1].pSchema==0) ) return 0;
+  if( sqliteHashFirst(&db->aDb[1].pSchema->trigHash)==0 ) return 0;
+  return 1;
+}
+
+/*
 ** Return a list of all triggers on table pTab if there exists at least
 ** one trigger that must be fired when an operation of type 'op' is 
 ** performed on the table, and, if that operation is an UPDATE, if at
 ** least one of the columns in pChanges is being modified.
 */
-Trigger *sqlite3TriggersExist(
+static SQLITE_NOINLINE Trigger *triggersReallyExist(
   Parse *pParse,          /* Parse context */
   Table *pTab,            /* The table the contains the triggers */
   int op,                 /* one of TK_DELETE, TK_INSERT, TK_UPDATE */
@@ -799,6 +805,22 @@ exit_triggers_exist:
   }
   return (mask ? pList : 0);
 }
+Trigger *sqlite3TriggersExist(
+  Parse *pParse,          /* Parse context */
+  Table *pTab,            /* The table the contains the triggers */
+  int op,                 /* one of TK_DELETE, TK_INSERT, TK_UPDATE */
+  ExprList *pChanges,     /* Columns that change in an UPDATE statement */
+  int *pMask              /* OUT: Mask of TRIGGER_BEFORE|TRIGGER_AFTER */
+){
+  assert( pTab!=0 );
+  if( (pTab->pTrigger==0 && !tempTriggersExist(pParse->db))
+   || pParse->disableTriggers
+  ){
+    if( pMask ) *pMask = 0;
+    return 0;
+  }
+  return triggersReallyExist(pParse,pTab,op,pChanges,pMask);
+}
 
 /*
 ** Convert the pStep->zTarget string into a SrcList and return a pointer
@@ -828,6 +850,14 @@ SrcList *sqlite3TriggerStepSrc(
     }
     if( pStep->pFrom ){
       SrcList *pDup = sqlite3SrcListDup(db, pStep->pFrom, 0);
+      if( pDup && pDup->nSrc>1 && !IN_RENAME_OBJECT ){
+        Select *pSubquery;
+        Token as;
+        pSubquery = sqlite3SelectNew(pParse,0,pDup,0,0,0,0,SF_NestedFrom,0);
+        as.n = 0;
+        as.z = 0;
+        pDup = sqlite3SrcListAppendFromTerm(pParse,0,0,0,&as,pSubquery,0);
+      }
       pSrc = sqlite3SrcListAppendList(pParse, pSrc, pDup);
     }
   }else{
@@ -883,7 +913,7 @@ static ExprList *sqlite3ExpandReturning(
         if( !db->mallocFailed ){
           struct ExprList_item *pItem = &pNew->a[pNew->nExpr-1];
           pItem->zEName = sqlite3DbStrDup(db, pTab->aCol[jj].zCnName);
-          pItem->eEName = ENAME_NAME;
+          pItem->fg.eEName = ENAME_NAME;
         }
       }
     }else{
@@ -892,7 +922,7 @@ static ExprList *sqlite3ExpandReturning(
       if( !db->mallocFailed && ALWAYS(pList->a[i].zEName!=0) ){
         struct ExprList_item *pItem = &pNew->a[pNew->nExpr-1];
         pItem->zEName = sqlite3DbStrDup(db, pList->a[i].zEName);
-        pItem->eEName = pList->a[i].eEName;
+        pItem->fg.eEName = pList->a[i].fg.eEName;
       }
     }
   }
