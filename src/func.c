@@ -2098,11 +2098,11 @@ static void logFunc(
     switch( SQLITE_PTR_TO_INT(sqlite3_user_data(context)) ){
       case 1:
         /* Convert from natural logarithm to log base 10 */
-        ans *= 1.0/M_LN10;
+        ans /= M_LN10;
         break;
       case 2:
         /* Convert from natural logarithm to log base 2 */
-        ans *= 1.0/M_LN2;
+        ans /= M_LN2;
         break;
       default:
         break;
@@ -2241,8 +2241,7 @@ void sqlite3RegisterBuiltinFunctions(void){
     INLINE_FUNC(likelihood,      2, INLINEFUNC_unlikely, SQLITE_FUNC_UNLIKELY),
     INLINE_FUNC(likely,          1, INLINEFUNC_unlikely, SQLITE_FUNC_UNLIKELY),
 #ifdef SQLITE_ENABLE_OFFSET_SQL_FUNC
-    {1, SQLITE_FUNC_BUILTIN|SQLITE_UTF8|SQLITE_FUNC_OFFSET|SQLITE_FUNC_TYPEOF,
-     0, 0, noopFunc, 0, 0, 0, "sqlite_offset", {0} },
+    INLINE_FUNC(sqlite_offset,   1, INLINEFUNC_sqlite_offset, 0 ),
 #endif
     FUNCTION(ltrim,              1, 1, 0, trimFunc         ),
     FUNCTION(ltrim,              2, 1, 0, trimFunc         ),

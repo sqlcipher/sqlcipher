@@ -570,7 +570,7 @@ selectnowith(A) ::= selectnowith(A) multiselect_op(Y) oneselect(Z).  {
     Token x;
     x.n = 0;
     parserDoubleLinkSelect(pParse, pRhs);
-    pFrom = sqlite3SrcListAppendFromTerm(pParse,0,0,0,&x,pRhs,0,0);
+    pFrom = sqlite3SrcListAppendFromTerm(pParse,0,0,0,&x,pRhs,0);
     pRhs = sqlite3SelectNew(pParse,0,pFrom,0,0,0,0,0,0);
   }
   if( pRhs ){
@@ -685,7 +685,7 @@ as(X) ::= .            {X.n = 0; X.z = 0;}
 from(A) ::= .                {A = 0;}
 from(A) ::= FROM seltablist(X). {
   A = X;
-  sqlite3SrcListShiftJoinType(A);
+  sqlite3SrcListShiftJoinType(pParse,A);
 }
 
 // "seltablist" is a "Select Table List" - the content of the FROM clause
@@ -695,33 +695,35 @@ stl_prefix(A) ::= seltablist(A) joinop(Y).    {
    if( ALWAYS(A && A->nSrc>0) ) A->a[A->nSrc-1].fg.jointype = (u8)Y;
 }
 stl_prefix(A) ::= .                           {A = 0;}
-seltablist(A) ::= stl_prefix(A) nm(Y) dbnm(D) as(Z) indexed_opt(I)
-                  on_opt(N) using_opt(U). {
-  A = sqlite3SrcListAppendFromTerm(pParse,A,&Y,&D,&Z,0,N,U);
+seltablist(A) ::= stl_prefix(A) nm(Y) dbnm(D) as(Z) on_using(N). {
+  A = sqlite3SrcListAppendFromTerm(pParse,A,&Y,&D,&Z,0,&N);
+}
+seltablist(A) ::= stl_prefix(A) nm(Y) dbnm(D) as(Z) indexed_by(I) on_using(N). {
+  A = sqlite3SrcListAppendFromTerm(pParse,A,&Y,&D,&Z,0,&N);
   sqlite3SrcListIndexedBy(pParse, A, &I);
 }
-seltablist(A) ::= stl_prefix(A) nm(Y) dbnm(D) LP exprlist(E) RP as(Z)
-                  on_opt(N) using_opt(U). {
-  A = sqlite3SrcListAppendFromTerm(pParse,A,&Y,&D,&Z,0,N,U);
+seltablist(A) ::= stl_prefix(A) nm(Y) dbnm(D) LP exprlist(E) RP as(Z) on_using(N). {
+  A = sqlite3SrcListAppendFromTerm(pParse,A,&Y,&D,&Z,0,&N);
   sqlite3SrcListFuncArgs(pParse, A, E);
 }
 %ifndef SQLITE_OMIT_SUBQUERY
-  seltablist(A) ::= stl_prefix(A) LP select(S) RP
-                    as(Z) on_opt(N) using_opt(U). {
-    A = sqlite3SrcListAppendFromTerm(pParse,A,0,0,&Z,S,N,U);
+  seltablist(A) ::= stl_prefix(A) LP select(S) RP as(Z) on_using(N). {
+    A = sqlite3SrcListAppendFromTerm(pParse,A,0,0,&Z,S,&N);
   }
-  seltablist(A) ::= stl_prefix(A) LP seltablist(F) RP
-                    as(Z) on_opt(N) using_opt(U). {
-    if( A==0 && Z.n==0 && N==0 && U==0 ){
+  seltablist(A) ::= stl_prefix(A) LP seltablist(F) RP as(Z) on_using(N). {
+    if( A==0 && Z.n==0 && N.pOn==0 && N.pUsing==0 ){
       A = F;
     }else if( F->nSrc==1 ){
-      A = sqlite3SrcListAppendFromTerm(pParse,A,0,0,&Z,0,N,U);
+      A = sqlite3SrcListAppendFromTerm(pParse,A,0,0,&Z,0,&N);
       if( A ){
         SrcItem *pNew = &A->a[A->nSrc-1];
         SrcItem *pOld = F->a;
         pNew->zName = pOld->zName;
         pNew->zDatabase = pOld->zDatabase;
         pNew->pSelect = pOld->pSelect;
+        if( pNew->pSelect && (pNew->pSelect->selFlags & SF_NestedFrom)!=0 ){
+          pNew->fg.isNestedFrom = 1;
+        }
         if( pOld->fg.isTabFunc ){
           pNew->u1.pFuncArg = pOld->u1.pFuncArg;
           pOld->u1.pFuncArg = 0;
@@ -734,9 +736,9 @@ seltablist(A) ::= stl_prefix(A) nm(Y) dbnm(D) LP exprlist(E) RP as(Z)
       sqlite3SrcListDelete(pParse->db, F);
     }else{
       Select *pSubquery;
-      sqlite3SrcListShiftJoinType(F);
+      sqlite3SrcListShiftJoinType(pParse,F);
       pSubquery = sqlite3SelectNew(pParse,0,F,0,0,0,0,SF_NestedFrom,0);
-      A = sqlite3SrcListAppendFromTerm(pParse,A,0,0,&Z,pSubquery,N,U);
+      A = sqlite3SrcListAppendFromTerm(pParse,A,0,0,&Z,pSubquery,&N);
     }
   }
 %endif  SQLITE_OMIT_SUBQUERY
@@ -794,13 +796,14 @@ joinop(X) ::= JOIN_KW(A) nm(B) nm(C) JOIN.
 //
 //      INSERT INTO tab SELECT * FROM aaa JOIN bbb WHERE true ON CONFLICT ...
 //
-// The [AND] and [OR] precedence marks in the rules for on_opt cause the
+// The [AND] and [OR] precedence marks in the rules for on_using cause the
 // ON in this context to always be interpreted as belonging to the JOIN.
 //
-%type on_opt {Expr*}
-%destructor on_opt {sqlite3ExprDelete(pParse->db, $$);}
-on_opt(N) ::= ON expr(E).  {N = E;}
-on_opt(N) ::= .     [OR]   {N = 0;}
+%type on_using {OnOrUsing}
+//%destructor on_using {sqlite3ClearOnOrUsing(pParse->db, &$$);}
+on_using(N) ::= ON expr(E).            {N.pOn = E; N.pUsing = 0;}
+on_using(N) ::= USING LP idlist(L) RP. {N.pOn = 0; N.pUsing = L;}
+on_using(N) ::= .                 [OR] {N.pOn = 0; N.pUsing = 0;}
 
 // Note that this block abuses the Token type just a little. If there is
 // no "INDEXED BY" clause, the returned token is empty (z==0 && n==0). If
@@ -813,15 +816,11 @@ on_opt(N) ::= .     [OR]   {N = 0;}
 // recognizes and interprets this as a special case.
 //
 %type indexed_opt {Token}
+%type indexed_by  {Token}
 indexed_opt(A) ::= .                 {A.z=0; A.n=0;}
-indexed_opt(A) ::= INDEXED BY nm(X). {A = X;}
-indexed_opt(A) ::= NOT INDEXED.      {A.z=0; A.n=1;}
-
-%type using_opt {IdList*}
-%destructor using_opt {sqlite3IdListDelete(pParse->db, $$);}
-using_opt(U) ::= USING LP idlist(L) RP.  {U = L;}
-using_opt(U) ::= .                        {U = 0;}
-
+indexed_opt(A) ::= indexed_by(A).
+indexed_by(A)  ::= INDEXED BY nm(X). {A = X;}
+indexed_by(A)  ::= NOT INDEXED.      {A.z=0; A.n=1;}
 
 %type orderby_opt {ExprList*}
 %destructor orderby_opt {sqlite3ExprListDelete(pParse->db, $$);}
@@ -925,7 +924,18 @@ where_opt_ret(A) ::= WHERE expr(X) RETURNING selcollist(Y).
 cmd ::= with UPDATE orconf(R) xfullname(X) indexed_opt(I) SET setlist(Y) from(F)
         where_opt_ret(W) orderby_opt(O) limit_opt(L).  {
   sqlite3SrcListIndexedBy(pParse, X, &I);
-  X = sqlite3SrcListAppendList(pParse, X, F);
+  if( F ){
+    SrcList *pFromClause = F;
+    if( pFromClause->nSrc>1 ){
+      Select *pSubquery;
+      Token as;
+      pSubquery = sqlite3SelectNew(pParse,0,pFromClause,0,0,0,0,SF_NestedFrom,0);
+      as.n = 0;
+      as.z = 0;
+      pFromClause = sqlite3SrcListAppendFromTerm(pParse,0,0,0,&as,pSubquery,0);
+    }
+    X = sqlite3SrcListAppendList(pParse, X, pFromClause);
+  }
   sqlite3ExprListCheckLength(pParse,Y,"set list"); 
 #ifndef SQLITE_ENABLE_UPDATE_DELETE_LIMIT
   if( O || L ){
@@ -941,7 +951,18 @@ cmd ::= with UPDATE orconf(R) xfullname(X) indexed_opt(I) SET setlist(Y) from(F)
         where_opt_ret(W). {
   sqlite3SrcListIndexedBy(pParse, X, &I);
   sqlite3ExprListCheckLength(pParse,Y,"set list"); 
-  X = sqlite3SrcListAppendList(pParse, X, F);
+  if( F ){
+    SrcList *pFromClause = F;
+    if( pFromClause->nSrc>1 ){
+      Select *pSubquery;
+      Token as;
+      pSubquery = sqlite3SelectNew(pParse,0,pFromClause,0,0,0,0,SF_NestedFrom,0);
+      as.n = 0;
+      as.z = 0;
+      pFromClause = sqlite3SrcListAppendFromTerm(pParse,0,0,0,&as,pSubquery,0);
+    }
+    X = sqlite3SrcListAppendList(pParse, X, pFromClause);
+  }
   sqlite3Update(pParse,X,Y,W,R,0,0,0);
 }
 %endif
@@ -1034,7 +1055,7 @@ idlist(A) ::= nm(Y).
       p->affExpr = 0;
       p->flags = EP_Leaf;
       ExprClearVVAProperties(p);
-      p->iAgg = -1;
+      /* p->iAgg = -1; // Not required */
       p->pLeft = p->pRight = 0;
       p->pAggInfo = 0;
       memset(&p->x, 0, sizeof(p->x));
@@ -1219,6 +1240,14 @@ expr(A) ::= expr(A) IS NOT expr(Y). {
   A = sqlite3PExpr(pParse,TK_ISNOT,A,Y);
   binaryToUnaryIfNull(pParse, Y, A, TK_NOTNULL);
 }
+expr(A) ::= expr(A) IS NOT DISTINCT FROM expr(Y).     {
+  A = sqlite3PExpr(pParse,TK_IS,A,Y);
+  binaryToUnaryIfNull(pParse, Y, A, TK_ISNULL);
+}
+expr(A) ::= expr(A) IS DISTINCT FROM expr(Y). {
+  A = sqlite3PExpr(pParse,TK_ISNOT,A,Y);
+  binaryToUnaryIfNull(pParse, Y, A, TK_NOTNULL);
+}
 
 expr(A) ::= NOT(B) expr(X).  
               {A = sqlite3PExpr(pParse, @B, X, 0);/*A-overwrites-B*/}
@@ -1264,7 +1293,8 @@ expr(A) ::= expr(A) between_op(N) expr(X) AND expr(Y). [BETWEEN] {
       ** regardless of the value of expr1.
       */
       sqlite3ExprUnmapAndDelete(pParse, A);
-      A = sqlite3Expr(pParse->db, TK_INTEGER, N ? "1" : "0");
+      A = sqlite3Expr(pParse->db, TK_STRING, N ? "true" : "false");
+      if( A ) sqlite3ExprIdToTrueFalse(A);
     }else{
       Expr *pRHS = Y->a[0].pExpr;
       if( Y->nExpr==1 && sqlite3ExprIsConstant(pRHS) && A->op!=TK_VECTOR ){

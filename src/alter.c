@@ -858,11 +858,10 @@ static void unmapColumnIdlistNames(
   Parse *pParse,
   const IdList *pIdList
 ){
-  if( pIdList ){
-    int ii;
-    for(ii=0; ii<pIdList->nId; ii++){
-      sqlite3RenameTokenRemap(pParse, 0, (const void*)pIdList->a[ii].zName);
-    }
+  int ii;
+  assert( pIdList!=0 );
+  for(ii=0; ii<pIdList->nId; ii++){
+    sqlite3RenameTokenRemap(pParse, 0, (const void*)pIdList->a[ii].zName);
   }
 }
 
@@ -881,7 +880,7 @@ static int renameUnmapSelectCb(Walker *pWalker, Select *p){
   if( ALWAYS(p->pEList) ){
     ExprList *pList = p->pEList;
     for(i=0; i<pList->nExpr; i++){
-      if( pList->a[i].zEName && pList->a[i].eEName==ENAME_NAME ){
+      if( pList->a[i].zEName && pList->a[i].fg.eEName==ENAME_NAME ){
         sqlite3RenameTokenRemap(pParse, 0, (void*)pList->a[i].zEName);
       }
     }
@@ -890,8 +889,11 @@ static int renameUnmapSelectCb(Walker *pWalker, Select *p){
     SrcList *pSrc = p->pSrc;
     for(i=0; i<pSrc->nSrc; i++){
       sqlite3RenameTokenRemap(pParse, 0, (void*)pSrc->a[i].zName);
-      sqlite3WalkExpr(pWalker, pSrc->a[i].pOn);
-      unmapColumnIdlistNames(pParse, pSrc->a[i].pUsing);
+      if( pSrc->a[i].fg.isUsing==0 ){
+        sqlite3WalkExpr(pWalker, pSrc->a[i].u3.pOn);
+      }else{
+        unmapColumnIdlistNames(pParse, pSrc->a[i].u3.pUsing);
+      }
     }
   }
 
@@ -927,7 +929,7 @@ void sqlite3RenameExprlistUnmap(Parse *pParse, ExprList *pEList){
     sWalker.xExprCallback = renameUnmapExprCb;
     sqlite3WalkExprList(&sWalker, pEList);
     for(i=0; i<pEList->nExpr; i++){
-      if( ALWAYS(pEList->a[i].eEName==ENAME_NAME) ){
+      if( ALWAYS(pEList->a[i].fg.eEName==ENAME_NAME) ){
         sqlite3RenameTokenRemap(pParse, 0, (void*)pEList->a[i].zEName);
       }
     }
@@ -1085,7 +1087,7 @@ static void renameColumnElistNames(
     int i;
     for(i=0; i<pEList->nExpr; i++){
       const char *zName = pEList->a[i].zEName;
-      if( ALWAYS(pEList->a[i].eEName==ENAME_NAME)
+      if( ALWAYS(pEList->a[i].fg.eEName==ENAME_NAME)
        && ALWAYS(zName!=0)
        && 0==sqlite3_stricmp(zName, zOld)
       ){
@@ -1315,27 +1317,33 @@ static int renameResolveTrigger(Parse *pParse){
     if( rc==SQLITE_OK && pStep->zTarget ){
       SrcList *pSrc = sqlite3TriggerStepSrc(pParse, pStep);
       if( pSrc ){
-        int i;
-        for(i=0; i<pSrc->nSrc && rc==SQLITE_OK; i++){
-          SrcItem *p = &pSrc->a[i];
-          p->iCursor = pParse->nTab++;
-          if( p->pSelect ){
-            sqlite3SelectPrep(pParse, p->pSelect, 0);
-            sqlite3ExpandSubquery(pParse, p);
-            assert( i>0 );
-            assert( pStep->pFrom->a[i-1].pSelect );
-            sqlite3SelectPrep(pParse, pStep->pFrom->a[i-1].pSelect, 0);
-          }else{
-            p->pTab = sqlite3LocateTableItem(pParse, 0, p);
-            if( p->pTab==0 ){
-              rc = SQLITE_ERROR;
-            }else{
-              p->pTab->nTabRef++;
-              rc = sqlite3ViewGetColumnNames(pParse, p->pTab);
+        Select *pSel = sqlite3SelectNew(
+            pParse, pStep->pExprList, pSrc, 0, 0, 0, 0, 0, 0
+        );
+        if( pSel==0 ){
+          pStep->pExprList = 0;
+          pSrc = 0;
+          rc = SQLITE_NOMEM;
+        }else{
+          sqlite3SelectPrep(pParse, pSel, 0);
+          rc = pParse->nErr ? SQLITE_ERROR : SQLITE_OK;
+          assert( pStep->pExprList==0 || pStep->pExprList==pSel->pEList );
+          assert( pSrc==pSel->pSrc );
+          if( pStep->pExprList ) pSel->pEList = 0;
+          pSel->pSrc = 0;
+          sqlite3SelectDelete(db, pSel);
+        }
+        if( pStep->pFrom ){
+          int i;
+          for(i=0; i<pStep->pFrom->nSrc && rc==SQLITE_OK; i++){
+            SrcItem *p = &pStep->pFrom->a[i];
+            if( p->pSelect ){
+              sqlite3SelectPrep(pParse, p->pSelect, 0);
             }
           }
         }
-        if( rc==SQLITE_OK && db->mallocFailed ){
+
+        if(  db->mallocFailed ){
           rc = SQLITE_NOMEM;
         }
         sNC.pSrcList = pSrc;
@@ -1786,6 +1794,15 @@ static void renameTableFunc(
             for(pStep=pTrigger->step_list; pStep; pStep=pStep->pNext){
               if( pStep->zTarget && 0==sqlite3_stricmp(pStep->zTarget, zOld) ){
                 renameTokenFind(&sParse, &sCtx, pStep->zTarget);
+              }
+              if( pStep->pFrom ){
+                int i;
+                for(i=0; i<pStep->pFrom->nSrc; i++){
+                  SrcItem *pItem = &pStep->pFrom->a[i];
+                  if( 0==sqlite3_stricmp(pItem->zName, zOld) ){
+                    renameTokenFind(&sParse, &sCtx, pItem->zName);
+                  }
+                }
               }
             }
           }

@@ -2175,6 +2175,10 @@ static int zipfileRegister(sqlite3 *db){
     zipfileRollback,           /* xRollback */
     zipfileFindFunction,       /* xFindMethod */
     0,                         /* xRename */
+    0,                         /* xSavepoint */
+    0,                         /* xRelease */
+    0,                         /* xRollback */
+    0                          /* xShadowName */
   };
 
   int rc = sqlite3_create_module(db, "zipfile"  , &zipfileModule, 0);
