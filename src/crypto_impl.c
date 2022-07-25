@@ -34,10 +34,6 @@
 #include "sqlcipher.h"
 #include "crypto.h"
 
-#ifndef PAGER_MJ_PGNO
-#define PAGER_MJ_PGNO(x) PAGER_SJ_PGNO(x)
-#endif
-
 #ifdef SQLCIPHER_TEST
 static volatile unsigned int cipher_test_flags = 0;
 unsigned int sqlcipher_get_test_flags() {
@@ -1382,8 +1378,8 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
     int payload_sz = ctx->page_sz - ctx->reserve_sz + ctx->iv_sz;
     int read_sz = ctx->page_sz;
 
-    /* skip integrity check on PAGER_MJ_PGNO since it will have no valid content */
-    if(sqlite3pager_is_mj_pgno(ctx->pBt->pBt->pPager, page)) continue;
+    /* skip integrity check on PAGER_SJ_PGNO since it will have no valid content */
+    if(sqlite3pager_is_sj_pgno(ctx->pBt->pBt->pPager, page)) continue;
 
     if(page==1) {
       int page1_offset = ctx->plaintext_header_sz ? ctx->plaintext_header_sz : FILE_HEADER_SZ;

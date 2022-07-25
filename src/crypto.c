@@ -978,7 +978,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       rc = sqlite3BtreeBeginTrans(pDb->pBt, 1, 0); /* begin write transaction */
       sqlite3PagerPagecount(pPager, &page_count);
       for(pgno = 1; rc == SQLITE_OK && pgno <= (unsigned int)page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
-        if(!sqlite3pager_is_mj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
+        if(!sqlite3pager_is_sj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
           rc = sqlite3PagerGet(pPager, pgno, &page, 0);
           if(rc == SQLITE_OK) { /* write page see pager_incr_changecounter for example */
             rc = sqlite3PagerWrite(page);

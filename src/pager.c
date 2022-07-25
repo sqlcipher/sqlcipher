@@ -7906,12 +7906,8 @@ int sqlite3PagerWalFramesize(Pager *pPager){
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 
-#ifndef PAGER_MJ_PGNO
-#define PAGER_MJ_PGNO(x) PAGER_SJ_PGNO(x)
-#endif
-
-int sqlite3pager_is_mj_pgno(Pager *pPager, Pgno pgno) {
-  return (PAGER_MJ_PGNO(pPager) == pgno) ? 1 : 0;
+int sqlite3pager_is_sj_pgno(Pager *pPager, Pgno pgno) {
+  return (PAGER_SJ_PGNO(pPager) == pgno) ? 1 : 0;
 }
 
 void sqlite3pager_error(Pager *pPager, int error) {

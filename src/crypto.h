@@ -66,7 +66,7 @@
 /* extensions defined in pager.c */ 
 void *sqlcipherPagerGetCodec(Pager*);
 void sqlcipherPagerSetCodec(Pager*, void *(*)(void*,void*,Pgno,int),  void (*)(void*,int,int),  void (*)(void*), void *);
-int sqlite3pager_is_mj_pgno(Pager*, Pgno);
+int sqlite3pager_is_sj_pgno(Pager*, Pgno);
 void sqlite3pager_error(Pager*, int);
 void sqlite3pager_reset(Pager *pPager);
 /* end extensions defined in pager.c */
