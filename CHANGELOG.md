@@ -2,7 +2,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [unreleased] - (? 2022 - [unreleased changes])
-- Updates source code baseline to upstream SQLite 3.38.3
+- Updates source code baseline to upstream SQLite 3.39.2
 - Simplifies OpenSSL version conditional code
 - Fixes issue where PRAGMA cipher_memory_security could report OFF when it was actually ON
 - Fixes fix unfreed OpenSSL allocation when compiled against version 3
