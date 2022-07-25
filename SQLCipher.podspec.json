@@ -18,7 +18,7 @@
     "tag": "v4.5.1"
   },
   "summary": "Full Database Encryption for SQLite.",
-  "version": "4.5.1",
+  "version": "4.5.2",
   "subspecs": [
     {
       "compiler_flags": [
