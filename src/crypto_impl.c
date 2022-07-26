@@ -78,7 +78,7 @@ static volatile sqlite3_mem_methods default_mem_methods;
 static sqlcipher_provider *default_provider = NULL;
 
 static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
-static volatile FILE* sqlcipher_log_file = NULL;
+static FILE* sqlcipher_log_file = NULL;
 static volatile int sqlcipher_log_logcat = 0;
 static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
 
