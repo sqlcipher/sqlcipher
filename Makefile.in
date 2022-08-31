@@ -1531,7 +1531,8 @@ clean:
 	rm -f threadtest5
 
 distclean:	clean
-	rm -f config.h config.log config.status libtool Makefile sqlcipher.pc
+	rm -f config.h config.log config.status libtool Makefile sqlite3.pc \
+		$(TESTPROGS)
 
 #
 # Windows section
