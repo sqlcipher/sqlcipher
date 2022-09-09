@@ -288,11 +288,11 @@ a lot of generated code and Tcl is used to do much of that code generation.
 The SQLCipher port in vcpkg is kept up to date by Microsoft team members and community contributors. The url of vcpkg is: https://github.com/Microsoft/vcpkg . You can download and install SQLCipher using the vcpkg dependency manager:
 
 ```shell
-git clone https://github.com/Microsoft/vcpkg.git
-cd vcpkg
-./bootstrap-vcpkg.sh  # ./bootstrap-vcpkg.bat for Windows
-./vcpkg integrate install
-./vcpkg install sqlcipher
+        git clone https://github.com/Microsoft/vcpkg.git
+        cd vcpkg
+        ./bootstrap-vcpkg.sh  # ./bootstrap-vcpkg.bat for Windows
+        ./vcpkg integrate install
+        ./vcpkg install sqlcipher
 ```
 
 If the version is out of date, please [create an issue or pull request](https://github.com/Microsoft/vcpkg) on the vcpkg repository.
