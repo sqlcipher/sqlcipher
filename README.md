@@ -39,18 +39,28 @@ Building SQLCipher is similar to compiling a regular version of SQLite from sour
  
 The following examples demonstrate linking against OpenSSL, which is a readily available provider on most Unix-like systems. 
 
-Example 1. Static linking (replace /opt/local/lib with the path to libcrypto.a). Note in this 
+### Example 1. Static linking 
+
+(replace /opt/local/lib with the path to libcrypto.a). Note in this 
 example, `--enable-tempstore=yes` is setting `SQLITE_TEMP_STORE=2` for the build.
 
-```
+```sh
 $ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 	LDFLAGS="/opt/local/lib/libcrypto.a"
 $ make
 ```
 
-Example 2. Dynamic linking
+Homebrew on macOS
 
+```sh
+$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC -I$(brew --prefix openssl)/include" \ 
+        LDFLAGS="-L$(brew --prefix openssl)/lib"
+$ make
 ```
+
+### Example 2. Dynamic linking
+
+```sh
 $ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 	LDFLAGS="-lcrypto"
 $ make
