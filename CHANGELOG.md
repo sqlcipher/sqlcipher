@@ -1,7 +1,10 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
-## [unreleased] - (? 2022 - [unreleased changes])
+## [unreleased] - (? 2023 - [unreleased changes])
+
+## [4.5.3] - (December 2022 - [4.5.3 changes])
+- Updates baseline to upstream SQLite 3.39.4
 
 ## [4.5.2] - (August 2022 - [4.5.2 changes])
 - Updates source code baseline to upstream SQLite 3.39.2
@@ -210,7 +213,9 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.2...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.3...prerelease
+[4.5.3]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.3
+[4.5.3 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.2...v4.5.3
 [4.5.2]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.2
 [4.5.2 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.1...v4.5.2
 [4.5.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.1
