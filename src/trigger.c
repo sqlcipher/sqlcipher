@@ -61,7 +61,7 @@ Trigger *sqlite3TriggerList(Parse *pParse, Table *pTab){
     if( pTrig->pTabSchema==pTab->pSchema
      && pTrig->table
      && 0==sqlite3StrICmp(pTrig->table, pTab->zName)
-     && pTrig->pTabSchema!=pTmpSchema
+     && (pTrig->pTabSchema!=pTmpSchema || pTrig->bReturning)
     ){
       pTrig->pNext = pList;
       pList = pTrig;
@@ -1191,7 +1191,7 @@ static TriggerPrg *codeRowTrigger(
   sSubParse.zAuthContext = pTrigger->zName;
   sSubParse.eTriggerOp = pTrigger->op;
   sSubParse.nQueryLoop = pParse->nQueryLoop;
-  sSubParse.disableVtab = pParse->disableVtab;
+  sSubParse.prepFlags = pParse->prepFlags;
 
   v = sqlite3GetVdbe(&sSubParse);
   if( v ){

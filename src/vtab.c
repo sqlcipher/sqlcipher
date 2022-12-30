@@ -340,7 +340,8 @@ void sqlite3VtabUnlockList(sqlite3 *db){
 */
 void sqlite3VtabClear(sqlite3 *db, Table *p){
   assert( IsVirtual(p) );
-  if( !db || db->pnBytesFreed==0 ) vtabDisconnectAll(0, p);
+  assert( db!=0 );
+  if( db->pnBytesFreed==0 ) vtabDisconnectAll(0, p);
   if( p->u.vtab.azArg ){
     int i;
     for(i=0; i<p->u.vtab.nArg; i++){
@@ -1140,7 +1141,7 @@ FuncDef *sqlite3VtabOverloadFunction(
   if( pExpr->op!=TK_COLUMN ) return pDef;
   assert( ExprUseYTab(pExpr) );
   pTab = pExpr->y.pTab;
-  if( pTab==0 ) return pDef;
+  if( NEVER(pTab==0) ) return pDef;
   if( !IsVirtual(pTab) ) return pDef;
   pVtab = sqlite3GetVTable(db, pTab)->pVtab;
   assert( pVtab!=0 );

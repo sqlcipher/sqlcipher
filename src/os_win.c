@@ -4725,9 +4725,10 @@ static int winMakeEndInDirSep(int nBuf, char *zBuf){
 }
 
 /*
-** If sqlite3_temp_directory is not, take the mutex and return true.
+** If sqlite3_temp_directory is defined, take the mutex and return true.
 **
-** If sqlite3_temp_directory is NULL, omit the mutex and return false.
+** If sqlite3_temp_directory is NULL (undefined), omit the mutex and
+** return false.
 */
 static int winTempDirDefined(void){
   sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR));
@@ -5763,7 +5764,8 @@ static int winFullPathname(
   char *zFull                   /* Output buffer */
 ){
   int rc;
-  sqlite3_mutex *pMutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR);
+  MUTEX_LOGIC( sqlite3_mutex *pMutex; )
+  MUTEX_LOGIC( pMutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_TEMPDIR); )
   sqlite3_mutex_enter(pMutex);
   rc = winFullPathnameNoMutex(pVfs, zRelative, nFull, zFull);
   sqlite3_mutex_leave(pMutex);
