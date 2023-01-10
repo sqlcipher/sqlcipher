@@ -147,7 +147,7 @@ static const char* sqlcipher_openssl_get_provider_name(void *ctx) {
 }
 
 static const char* sqlcipher_openssl_get_provider_version(void *ctx) {
-  return OPENSSL_VERSION_TEXT;
+  return OpenSSL_version(OPENSSL_VERSION);
 }
 
 /* generate a defined number of random bytes */
