@@ -467,8 +467,10 @@ static int sqlcipher_codec_ctx_reserve_setup(codec_ctx *ctx) {
     reserve += ctx->hmac_sz; /* if reserve will include hmac, update that size */
 
   /* calculate the amount of reserve needed in even increments of the cipher block size */
-  reserve = ((reserve % ctx->block_sz) == 0) ? reserve :
+  if(ctx->block_sz > 0) {
+    reserve = ((reserve % ctx->block_sz) == 0) ? reserve :
                ((reserve / ctx->block_sz) + 1) * ctx->block_sz;  
+  }
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_reserve_setup: base_reserve=%d block_sz=%d md_size=%d reserve=%d", 
                 base_reserve, ctx->block_sz, ctx->hmac_sz, reserve); 
@@ -704,7 +706,7 @@ int sqlcipher_set_default_plaintext_header_size(int size) {
 }
 
 int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size) {
-  if(size >= 0 && (size % ctx->block_sz) == 0 && size < (ctx->page_sz - ctx->reserve_sz)) {
+  if(size >= 0 && ctx->block_sz > 0 && (size % ctx->block_sz) == 0 && size < (ctx->page_sz - ctx->reserve_sz)) {
     ctx->plaintext_header_sz = size;
     return SQLITE_OK;
   }
