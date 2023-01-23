@@ -242,10 +242,18 @@ db2 close
 file delete -force test.db
 file delete -force test2.db
 
-# attach an empty encrypted database as the first op
-# on a keyed database and verify different 
-# salts but same keys (because derivation of the key spec
-# has not occured yet)
+# attach an empty encrypted database as the first operation on a keyed database. Verify
+# that the new database has the same salt as the original.
+#
+# HISTORICAL NOTE: The original behavior of SQLCipher under these conditions
+# was that the databases would have different salts but the same keys. This was because
+# derivation of the key spec would not have occurred yet. However, upstream check-in
+# https://sqlite.org/src/info/a02da71f3a80dd8e changed this behavior by
+# forcing a read of the main database schema during the attach operation.
+# This causes the main database to be opened and the key derivation logic to fire which
+# reads the salt. Thus the current behavior of this test should now be identical
+# to the previous attach-empty-database-with-default-key.
+
 setup test.db "'testkey'"
 do_test attach-empty-database-with-default-key-first-op {
   sqlite_orig db test.db
@@ -267,7 +275,7 @@ do_test attach-empty-database-with-default-key-first-op {
   } db2]
 
   lappend rc [string equal [hexio_read test.db 0 16] [hexio_read test2.db 0 16]]
-} {{ok 1} 0}
+} {{ok 1} 1}
 db close
 db2 close
 file delete -force test.db
