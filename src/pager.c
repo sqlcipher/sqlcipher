@@ -2935,7 +2935,7 @@ end_playback:
     ** see if it is possible to delete the super-journal.
     */
     assert( zSuper==&pPager->pTmpSpace[4] );
-    memset(&zSuper[-4], 0, 4);
+    memset(pPager->pTmpSpace, 0, 4);
     rc = pager_delsuper(pPager, zSuper);
     testcase( rc!=SQLITE_OK );
   }
@@ -3556,7 +3556,6 @@ void sqlite3PagerShrink(Pager *pPager){
 ** Numeric values associated with these states are OFF==1, NORMAL=2,
 ** and FULL=3.
 */
-#ifndef SQLITE_OMIT_PAGER_PRAGMAS
 void sqlite3PagerSetFlags(
   Pager *pPager,        /* The pager to set safety level for */
   unsigned pgFlags      /* Various flags */
@@ -3591,7 +3590,6 @@ void sqlite3PagerSetFlags(
     pPager->doNotSpill |= SPILLFLAG_OFF;
   }
 }
-#endif
 
 /*
 ** The following global variable is incremented whenever the library
@@ -4693,7 +4691,6 @@ int sqlite3PagerOpen(
   u32 szPageDflt = SQLITE_DEFAULT_PAGE_SIZE;  /* Default page size */
   const char *zUri = 0;    /* URI args to copy */
   int nUriByte = 1;        /* Number of bytes of URI args at *zUri */
-  int nUri = 0;            /* Number of URI parameters */
 
   /* Figure out how much space is required for each journal file-handle
   ** (there are two of them, the main journal and the sub-journal).  */
@@ -4741,7 +4738,6 @@ int sqlite3PagerOpen(
     while( *z ){
       z += strlen(z)+1;
       z += strlen(z)+1;
-      nUri++;
     }
     nUriByte = (int)(&z[1] - zUri);
     assert( nUriByte>=1 );
@@ -4997,18 +4993,7 @@ act_like_temp_file:
   pPager->memDb = (u8)memDb;
   pPager->readOnly = (u8)readOnly;
   assert( useJournal || pPager->tempFile );
-  pPager->noSync = pPager->tempFile;
-  if( pPager->noSync ){
-    assert( pPager->fullSync==0 );
-    assert( pPager->extraSync==0 );
-    assert( pPager->syncFlags==0 );
-    assert( pPager->walSyncFlags==0 );
-  }else{
-    pPager->fullSync = 1;
-    pPager->extraSync = 0;
-    pPager->syncFlags = SQLITE_SYNC_NORMAL;
-    pPager->walSyncFlags = SQLITE_SYNC_NORMAL | (SQLITE_SYNC_NORMAL<<2);
-  }
+  sqlite3PagerSetFlags(pPager, (SQLITE_DEFAULT_SYNCHRONOUS+1)|PAGER_CACHESPILL);
   /* pPager->pFirst = 0; */
   /* pPager->pFirstSynced = 0; */
   /* pPager->pLast = 0; */
@@ -6269,7 +6254,7 @@ static int pager_incr_changecounter(Pager *pPager, int isDirectMode){
 # define DIRECT_MODE isDirectMode
 #endif
 
-  if( !pPager->changeCountDone && ALWAYS(pPager->dbSize>0) ){
+  if( !pPager->changeCountDone && pPager->dbSize>0 ){
     PgHdr *pPgHdr;                /* Reference to page 1 */
 
     assert( !pPager->tempFile && isOpen(pPager->fd) );
@@ -7009,7 +6994,11 @@ int sqlite3PagerSavepoint(Pager *pPager, int op, int iSavepoint){
 */
 const char *sqlite3PagerFilename(const Pager *pPager, int nullIfMemDb){
   static const char zFake[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-  return (nullIfMemDb && pPager->memDb) ? &zFake[4] : pPager->zFilename;
+  if( nullIfMemDb && (pPager->memDb || sqlite3IsMemdb(pPager->pVfs)) ){
+    return &zFake[4];
+  }else{
+    return pPager->zFilename;
+  }
 }
 
 /*

@@ -22,12 +22,10 @@ if('undefined' !== typeof Module){ // presumably an Emscripten build
   */
   const SABC = Object.assign(
     Object.create(null), {
-      Module: Module /* ==> Currently needs to be exposed here for
-                        test code. NOT part of the public API. */,
       exports: Module['asm'],
       memory: Module.wasmMemory /* gets set if built with -sIMPORT_MEMORY */
     },
-    self.sqlite3ApiConfig || Object.create(null)
+    self.sqlite3ApiConfig || {}
   );
 
   /**
@@ -53,13 +51,6 @@ if('undefined' !== typeof Module){ // presumably an Emscripten build
     delete self.sqlite3ApiConfig;
   }
 
-  if(self.location && +self.location.port > 1024){
-    console.warn("Installing sqlite3 bits as global S for local dev/test purposes.");
-    self.S = sqlite3;
-  }
-
-  /* Clean up temporary references to our APIs... */
-  delete sqlite3.util /* arguable, but these are (currently) internal-use APIs */;
   Module.sqlite3 = sqlite3 /* Needed for customized sqlite3InitModule() to be able to
                               pass the sqlite3 object off to the client. */;
 }else{
