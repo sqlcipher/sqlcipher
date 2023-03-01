@@ -102,9 +102,8 @@ int sql_exec_changeset(
 #ifdef SQLITE_DEBUG
 static int sqlite3_test_changeset(int, void *, char **);
 static void assert_changeset_is_ok(int n, void *p){
-  int rc = 0;
   char *z = 0;
-  rc = sqlite3_test_changeset(n, p, &z);
+  (void)sqlite3_test_changeset(n, p, &z);
   assert( z==0 );
 }
 #else
@@ -1301,7 +1300,15 @@ static int SQLITE_TCLAPI test_sqlite3rebaser_create(
 }
 
 /*
+** Run some sanity checks on the changeset in nChangeset byte buffer
+** pChangeset. If any fail, return a non-zero value and, optionally,
+** set output variable (*pzErr) to point to a buffer containing an
+** English language error message describing the problem. In this
+** case it is the responsibility of the caller to free the buffer
+** using sqlite3_free().
 **
+** Or, if the changeset appears to be well-formed, this function
+** returns SQLITE_OK and sets (*pzErr) to NULL.
 */
 static int sqlite3_test_changeset(
   int nChangeset,

@@ -218,6 +218,13 @@ void sqlite3TreeViewSrcList(TreeView *pView, const SrcList *pSrc){
     if( pItem->fg.isOn || (pItem->fg.isUsing==0 && pItem->u3.pOn!=0) ){
       sqlite3_str_appendf(&x, " ON");
     }
+    if( pItem->fg.isTabFunc )      sqlite3_str_appendf(&x, " isTabFunc");
+    if( pItem->fg.isCorrelated )   sqlite3_str_appendf(&x, " isCorrelated");
+    if( pItem->fg.isMaterialized ) sqlite3_str_appendf(&x, " isMaterialized");
+    if( pItem->fg.viaCoroutine )   sqlite3_str_appendf(&x, " viaCoroutine");
+    if( pItem->fg.notCte )         sqlite3_str_appendf(&x, " notCte");
+    if( pItem->fg.isNestedFrom )   sqlite3_str_appendf(&x, " isNestedFrom");
+
     sqlite3StrAccumFinish(&x);
     sqlite3TreeViewItem(pView, zLine, i<pSrc->nSrc-1);
     n = 0;
@@ -487,7 +494,7 @@ void sqlite3TreeViewExpr(TreeView *pView, const Expr *pExpr, u8 moreToFollow){
     sqlite3TreeViewPop(&pView);
     return;
   }
-  if( pExpr->flags || pExpr->affExpr || pExpr->vvaFlags ){
+  if( pExpr->flags || pExpr->affExpr || pExpr->vvaFlags || pExpr->pAggInfo ){
     StrAccum x;
     sqlite3StrAccumInit(&x, 0, zFlgs, sizeof(zFlgs), 0);
     sqlite3_str_appendf(&x, " fg.af=%x.%c",
@@ -503,6 +510,9 @@ void sqlite3TreeViewExpr(TreeView *pView, const Expr *pExpr, u8 moreToFollow){
     }
     if( ExprHasVVAProperty(pExpr, EP_Immutable) ){
       sqlite3_str_appendf(&x, " IMMUTABLE");
+    }
+    if( pExpr->pAggInfo!=0 ){
+      sqlite3_str_appendf(&x, " agg-column[%d]", pExpr->iAgg);
     }
     sqlite3StrAccumFinish(&x);
   }else{

@@ -247,6 +247,25 @@ self.WhWasmUtilInstaller = function(target){
   cache.utf8Encoder = new TextEncoder('utf-8');
 
   /**
+     For the given IR-like string in the set ('i8', 'i16', 'i32',
+     'f32', 'float', 'i64', 'f64', 'double', '*'), or any string value
+     ending in '*', returns the sizeof for that value
+     (target.ptrSizeof in the latter case). For any other value, it
+     returns the undefined value.
+  */
+  target.sizeofIR = (n)=>{
+    switch(n){
+        case 'i8': return 1;
+        case 'i16': return 2;
+        case 'i32': case 'f32': case 'float': return 4;
+        case 'i64': case 'f64': case 'double': return 8;
+        case '*': return ptrSizeof;
+        default:
+          return (''+n).endsWith('*') ? ptrSizeof : undefined;
+    }
+  };
+
+  /**
      If (cache.heapSize !== cache.memory.buffer.byteLength), i.e. if
      the heap has grown since the last call, updates cache.HEAPxyz.
      Returns the cache object.
@@ -316,13 +335,11 @@ self.WhWasmUtilInstaller = function(target){
 
      Throws if passed an invalid n.
 
-     Pedantic side note: the name "heap" is a bit of a misnomer. In an
-     Emscripten environment, the memory managed via the stack
-     allocation API is in the same Memory object as the heap (which
-     makes sense because otherwise arbitrary pointer X would be
-     ambiguous: is it in the heap or the stack?).
+     Pedantic side note: the name "heap" is a bit of a misnomer. In a
+     WASM environment, the stack and heap memory are all accessed via
+     the same view(s) of the memory.
   */
-  target.heapForSize = function(n,unsigned = false){
+  target.heapForSize = function(n,unsigned = true){
     let ctor;
     const c = (cache.memory && cache.heapSize === cache.memory.buffer.byteLength)
           ? cache : heapWrappers();
@@ -361,7 +378,8 @@ self.WhWasmUtilInstaller = function(target){
 
   /**
      Given a function pointer, returns the WASM function table entry
-     if found, else returns a falsy value.
+     if found, else returns a falsy value: undefined if fptr is out of
+     range or null if it's in range but the table entry is empty.
   */
   target.functionEntry = function(fptr){
     const ft = target.functionTable();
@@ -448,7 +466,7 @@ self.WhWasmUtilInstaller = function(target){
             type(s) of the given function signature, or throws if the
             signature is invalid. */
         /******** // only valid for use with the WebAssembly.Function ctor, which
-                  // is not yet documented on MDN. 
+                  // is not yet documented on MDN.
         sigToWasm: function(sig){
           const rc = {parameters:[], results: []};
           if('v'!==sig[0]) rc.results.push(f.sigTypes(sig[0]));
@@ -496,7 +514,70 @@ self.WhWasmUtilInstaller = function(target){
         e: { f: func }
       })).exports['f'];
   }/*jsFuncToWasm()*/;
-  
+
+  /**
+     Documented as target.installFunction() except for the 3rd
+     argument: if truthy, the newly-created function pointer
+     is stashed in the current scoped-alloc scope and will be
+     cleaned up at the matching scopedAllocPop(), else it
+     is not stashed there.
+   */
+  const __installFunction = function f(func, sig, scoped){
+    if(scoped && !cache.scopedAlloc.length){
+      toss("No scopedAllocPush() scope is active.");
+    }
+    if('string'===typeof func){
+      const x = sig;
+      sig = func;
+      func = x;
+    }
+    if('string'!==typeof sig || !(func instanceof Function)){
+      toss("Invalid arguments: expecting (function,signature) "+
+           "or (signature,function).");
+    }
+    const ft = target.functionTable();
+    const oldLen = ft.length;
+    let ptr;
+    while(cache.freeFuncIndexes.length){
+      ptr = cache.freeFuncIndexes.pop();
+      if(ft.get(ptr)){ /* Table was modified via a different API */
+        ptr = null;
+        continue;
+      }else{
+        break;
+      }
+    }
+    if(!ptr){
+      ptr = oldLen;
+      ft.grow(1);
+    }
+    try{
+      /*this will only work if func is a WASM-exported function*/
+      ft.set(ptr, func);
+      if(scoped){
+        cache.scopedAlloc[cache.scopedAlloc.length-1].push(ptr);
+      }
+      return ptr;
+    }catch(e){
+      if(!(e instanceof TypeError)){
+        if(ptr===oldLen) cache.freeFuncIndexes.push(oldLen);
+        throw e;
+      }
+    }
+    // It's not a WASM-exported function, so compile one...
+    try {
+      const fptr = target.jsFuncToWasm(func, sig);
+      ft.set(ptr, fptr);
+      if(scoped){
+        cache.scopedAlloc[cache.scopedAlloc.length-1].push(ptr);
+      }
+    }catch(e){
+      if(ptr===oldLen) cache.freeFuncIndexes.push(oldLen);
+      throw e;
+    }
+    return ptr;
+  };
+
   /**
      Expects a JS function and signature, exactly as for
      this.jsFuncToWasm(). It uses that function to create a
@@ -528,50 +609,19 @@ self.WhWasmUtilInstaller = function(target){
 
      https://github.com/emscripten-core/emscripten/issues/17323
   */
-  target.installFunction = function f(func, sig){
-    if(2!==arguments.length){
-      toss("installFunction() requires exactly 2 arguments");
-    }
-    if('string'===typeof func){
-      const x = sig;
-      sig = func;
-      func = x;
-    }
-    const ft = target.functionTable();
-    const oldLen = ft.length;
-    let ptr;
-    while(cache.freeFuncIndexes.length){
-      ptr = cache.freeFuncIndexes.pop();
-      if(ft.get(ptr)){ /* Table was modified via a different API */
-        ptr = null;
-        continue;
-      }else{
-        break;
-      }
-    }
-    if(!ptr){
-      ptr = oldLen;
-      ft.grow(1);
-    }
-    try{
-      /*this will only work if func is a WASM-exported function*/
-      ft.set(ptr, func);
-      return ptr;
-    }catch(e){
-      if(!(e instanceof TypeError)){
-        if(ptr===oldLen) cache.freeFuncIndexes.push(oldLen);
-        throw e;
-      }
-    }
-    // It's not a WASM-exported function, so compile one...
-    try {
-      ft.set(ptr, target.jsFuncToWasm(func, sig));
-    }catch(e){
-      if(ptr===oldLen) cache.freeFuncIndexes.push(oldLen);
-      throw e;
-    }
-    return ptr;      
-  };
+  target.installFunction = (func, sig)=>__installFunction(func, sig, false);
+
+  /**
+     EXPERIMENTAL! DO NOT USE IN CLIENT CODE!
+
+     Works exactly like installFunction() but requires that a
+     scopedAllocPush() is active and uninstalls the given function
+     when that alloc scope is popped via scopedAllocPop().
+     This is used for implementing JS/WASM function bindings which
+     should only persist for the life of a call into a single
+     C-side function.
+  */
+  target.scopedInstallFunction = (func, sig)=>__installFunction(func, sig, true);
 
   /**
      Requires a pointer value previously returned from
@@ -581,8 +631,13 @@ self.WhWasmUtilInstaller = function(target){
      installFunction() has been called and results are undefined if
      ptr was not returned by that function. The returned function
      may be passed back to installFunction() to reinstall it.
+
+     To simplify certain use cases, if passed a falsy non-0 value
+     (noting that 0 is a valid function table index), this function
+     has no side effects and returns undefined.
   */
   target.uninstallFunction = function(ptr){
+    if(!ptr && 0!==ptr) return undefined;
     const fi = cache.freeFuncIndexes;
     const ft = target.functionTable();
     fi.push(ptr);
@@ -599,19 +654,24 @@ self.WhWasmUtilInstaller = function(target){
      type triggers an exception if this.bigIntEnabled is
      falsy). Throws if given an invalid type.
 
+     If the first argument is an array, it is treated as an array of
+     addresses and the result is an array of the values from each of
+     those address, using the same 2nd argument for determining the
+     value type to fetch.
+
      As a special case, if type ends with a `*`, it is considered to
      be a pointer type and is treated as the WASM numeric type
      appropriate for the pointer size (`i32`).
 
-     While likely not obvious, this routine and its setMemValue()
+     While likely not obvious, this routine and its poke()
      counterpart are how pointer-to-value _output_ parameters
      in WASM-compiled C code can be interacted with:
 
      ```
      const ptr = alloc(4);
-     setMemValue(ptr, 0, 'i32'); // clear the ptr's value
+     poke(ptr, 0, 'i32'); // clear the ptr's value
      aCFuncWithOutputPtrToInt32Arg( ptr ); // e.g. void foo(int *x);
-     const result = getMemValue(ptr, 'i32'); // fetch ptr's value
+     const result = peek(ptr, 'i32'); // fetch ptr's value
      dealloc(ptr);
      ```
 
@@ -623,15 +683,15 @@ self.WhWasmUtilInstaller = function(target){
      const scope = scopedAllocPush();
      try{
        const ptr = scopedAlloc(4);
-       setMemValue(ptr, 0, 'i32');
+       poke(ptr, 0, 'i32');
        aCFuncWithOutputPtrArg( ptr );
-       result = getMemValue(ptr, 'i32');
+       result = peek(ptr, 'i32');
      }finally{
        scopedAllocPop(scope);
      }
      ```
 
-     As a rule setMemValue() must be called to set (typically zero
+     As a rule poke() must be called to set (typically zero
      out) the pointer's value, else it will contain an essentially
      random value.
 
@@ -639,70 +699,142 @@ self.WhWasmUtilInstaller = function(target){
      painful impact on performance. Rather than doing so, use
      heapForSize() to fetch the heap object and read directly from it.
 
-     See: setMemValue()
+     See: poke()
   */
-  target.getMemValue = function(ptr, type='i8'){
+  target.peek = function f(ptr, type='i8'){
     if(type.endsWith('*')) type = ptrIR;
     const c = (cache.memory && cache.heapSize === cache.memory.buffer.byteLength)
           ? cache : heapWrappers();
-    switch(type){
-        case 'i1':
-        case 'i8': return c.HEAP8[ptr>>0];
-        case 'i16': return c.HEAP16[ptr>>1];
-        case 'i32': return c.HEAP32[ptr>>2];
-        case 'i64':
-          if(target.bigIntEnabled) return BigInt(c.HEAP64[ptr>>3]);
-          break;
-        case 'float': case 'f32': return c.HEAP32F[ptr>>2];
-        case 'double': case 'f64': return Number(c.HEAP64F[ptr>>3]);
-        default: break;
-    }
-    toss('Invalid type for getMemValue():',type);
+    const list = Array.isArray(ptr) ? [] : undefined;
+    let rc;
+    do{
+      if(list) ptr = arguments[0].shift();
+      switch(type){
+          case 'i1':
+          case 'i8': rc = c.HEAP8[ptr>>0]; break;
+          case 'i16': rc = c.HEAP16[ptr>>1]; break;
+          case 'i32': rc = c.HEAP32[ptr>>2]; break;
+          case 'float': case 'f32': rc = c.HEAP32F[ptr>>2]; break;
+          case 'double': case 'f64': rc = Number(c.HEAP64F[ptr>>3]); break;
+          case 'i64':
+            if(target.bigIntEnabled){
+              rc = BigInt(c.HEAP64[ptr>>3]);
+              break;
+            }
+            /* fallthru */
+          default:
+            toss('Invalid type for peek():',type);
+      }
+      if(list) list.push(rc);
+    }while(list && arguments[0].length);
+    return list || rc;
   };
 
   /**
-     The counterpart of getMemValue(), this sets a numeric value at
+     The counterpart of peek(), this sets a numeric value at
      the given WASM heap address, using the type to define how many
      bytes are written. Throws if given an invalid type. See
-     getMemValue() for details about the type argument. If the 3rd
+     peek() for details about the type argument. If the 3rd
      argument ends with `*` then it is treated as a pointer type and
      this function behaves as if the 3rd argument were `i32`.
 
-     This function returns itself.
+     If the first argument is an array, it is treated like a list
+     of pointers and the given value is written to each one.
+
+     Returns `this`. (Prior to 2022-12-09 it returns this function.)
 
      ACHTUNG: calling this often, e.g. in a loop, can have a noticably
      painful impact on performance. Rather than doing so, use
-     heapForSize() to fetch the heap object and assign directly to it.
+     heapForSize() to fetch the heap object and assign directly to it
+     or use the heap's set() method.
   */
-  target.setMemValue = function f(ptr, value, type='i8'){
+  target.poke = function(ptr, value, type='i8'){
     if (type.endsWith('*')) type = ptrIR;
     const c = (cache.memory && cache.heapSize === cache.memory.buffer.byteLength)
           ? cache : heapWrappers();
-    switch (type) {
-        case 'i1': 
-        case 'i8': c.HEAP8[ptr>>0] = value; return f;
-        case 'i16': c.HEAP16[ptr>>1] = value; return f;
-        case 'i32': c.HEAP32[ptr>>2] = value; return f;
-        case 'i64':
-          if(c.HEAP64){
-            c.HEAP64[ptr>>3] = BigInt(value);
-            return f;
-          }
-          break;
-        case 'float': case 'f32': c.HEAP32F[ptr>>2] = value; return f;
-        case 'double': case 'f64': c.HEAP64F[ptr>>3] = value; return f;
+    for(const p of (Array.isArray(ptr) ? ptr : [ptr])){
+      switch (type) {
+          case 'i1':
+          case 'i8': c.HEAP8[p>>0] = value; continue;
+          case 'i16': c.HEAP16[p>>1] = value; continue;
+          case 'i32': c.HEAP32[p>>2] = value; continue;
+          case 'float': case 'f32': c.HEAP32F[p>>2] = value; continue;
+          case 'double': case 'f64': c.HEAP64F[p>>3] = value; continue;
+          case 'i64':
+            if(c.HEAP64){
+              c.HEAP64[p>>3] = BigInt(value);
+              continue;
+            }
+            /* fallthru */
+          default:
+            toss('Invalid type for poke(): ' + type);
+      }
     }
-    toss('Invalid type for setMemValue(): ' + type);
+    return this;
   };
 
+  /**
+     Convenience form of peek() intended for fetching
+     pointer-to-pointer values. If passed a single non-array argument
+     it returns the value of that one pointer address. If passed
+     multiple arguments, or a single array of arguments, it returns an
+     array of their values.
+  */
+  target.peekPtr = (...ptr)=>target.peek( (1===ptr.length ? ptr[0] : ptr), ptrIR );
 
-  /** Convenience form of getMemValue() intended for fetching
-      pointer-to-pointer values. */
-  target.getPtrValue = (ptr)=>target.getMemValue(ptr, ptrIR);
+  /**
+     A variant of poke() intended for setting pointer-to-pointer
+     values. Its differences from poke() are that (1) it defaults to a
+     value of 0 and (2) it always writes to the pointer-sized heap
+     view.
+  */
+  target.pokePtr = (ptr, value=0)=>target.poke(ptr, value, ptrIR);
 
-  /** Convenience form of setMemValue() intended for setting
-      pointer-to-pointer values. */
-  target.setPtrValue = (ptr, value)=>target.setMemValue(ptr, value, ptrIR);
+  /**
+     Convenience form of peek() intended for fetching i8 values. If
+     passed a single non-array argument it returns the value of that
+     one pointer address. If passed multiple arguments, or a single
+     array of arguments, it returns an array of their values.
+  */
+  target.peek8 = (...ptr)=>target.peek( (1===ptr.length ? ptr[0] : ptr), 'i8' );
+  /**
+     Convience form of poke() intended for setting individual bytes.
+     Its difference from poke() is that it always writes to the
+     i8-sized heap view.
+  */
+  target.poke8 = (ptr, value)=>target.poke(ptr, value, 'i8');
+  /** i16 variant of peek8(). */
+  target.peek16 = (...ptr)=>target.peek( (1===ptr.length ? ptr[0] : ptr), 'i16' );
+  /** i16 variant of poke8(). */
+  target.poke16 = (ptr, value)=>target.poke(ptr, value, 'i16');
+  /** i32 variant of peek8(). */
+  target.peek32 = (...ptr)=>target.peek( (1===ptr.length ? ptr[0] : ptr), 'i32' );
+  /** i32 variant of poke8(). */
+  target.poke32 = (ptr, value)=>target.poke(ptr, value, 'i32');
+  /** i64 variant of peek8(). Will throw if this build is not
+      configured for BigInt support. */
+  target.peek64 = (...ptr)=>target.peek( (1===ptr.length ? ptr[0] : ptr), 'i64' );
+  /** i64 variant of poke8(). Will throw if this build is not
+      configured for BigInt support. Note that this returns
+      a BigInt-type value, not a Number-type value. */
+  target.poke64 = (ptr, value)=>target.poke(ptr, value, 'i64');
+  /** f32 variant of peek8(). */
+  target.peek32f = (...ptr)=>target.peek( (1===ptr.length ? ptr[0] : ptr), 'f32' );
+  /** f32 variant of poke8(). */
+  target.poke32f = (ptr, value)=>target.poke(ptr, value, 'f32');
+  /** f64 variant of peek8(). */
+  target.peek64f = (...ptr)=>target.peek( (1===ptr.length ? ptr[0] : ptr), 'f64' );
+  /** f64 variant of poke8(). */
+  target.poke64f = (ptr, value)=>target.poke(ptr, value, 'f64');
+
+  /** Deprecated alias for getMemValue() */
+  target.getMemValue = target.peek;
+  /** Deprecated alias for peekPtr() */
+  target.getPtrValue = target.peekPtr;
+  /** Deprecated alias for poke() */
+  target.setMemValue = target.poke;
+  /** Deprecated alias for pokePtr() */
+  target.setPtrValue = target.pokePtr;
 
   /**
      Returns true if the given value appears to be legal for use as
@@ -725,11 +857,12 @@ self.WhWasmUtilInstaller = function(target){
      Expects ptr to be a pointer into the WASM heap memory which
      refers to a NUL-terminated C-style string encoded as UTF-8.
      Returns the length, in bytes, of the string, as for `strlen(3)`.
-     As a special case, if !ptr then it it returns `null`. Throws if
-     ptr is out of range for target.heap8u().
+     As a special case, if !ptr or if it's not a pointer then it
+     returns `null`. Throws if ptr is out of range for
+     target.heap8u().
   */
   target.cstrlen = function(ptr){
-    if(!ptr) return null;
+    if(!ptr || !target.isPtr(ptr)) return null;
     const h = heapWrappers().HEAP8U;
     let pos = ptr;
     for( ; h[pos] !== 0; ++pos ){}
@@ -753,9 +886,9 @@ self.WhWasmUtilInstaller = function(target){
      refers to a NUL-terminated C-style string encoded as UTF-8. This
      function counts its byte length using cstrlen() then returns a
      JS-format string representing its contents. As a special case, if
-     ptr is falsy, `null` is returned.
+     ptr is falsy or not a pointer, `null` is returned.
   */
-  target.cstringToJs = function(ptr){
+  target.cstrToJs = function(ptr){
     const n = target.cstrlen(ptr);
     return n ? __utf8Decode(heapWrappers().HEAP8U, ptr, ptr+n) : (null===n ? n : "");
   };
@@ -942,10 +1075,19 @@ self.WhWasmUtilInstaller = function(target){
   const __allocCStr = function(jstr, returnWithLength, allocator, funcName){
     __affirmAlloc(target, funcName);
     if('string'!==typeof jstr) return null;
-    const n = target.jstrlen(jstr),
-          ptr = allocator(n+1);
-    target.jstrcpy(jstr, target.heap8u(), ptr, n+1, true);
-    return returnWithLength ? [ptr, n] : ptr;
+    if(0){/* older impl, possibly more widely compatible? */
+      const n = target.jstrlen(jstr),
+            ptr = allocator(n+1);
+      target.jstrcpy(jstr, target.heap8u(), ptr, n+1, true);
+      return returnWithLength ? [ptr, n] : ptr;
+    }else{/* newer, (probably) faster and (certainly) simpler impl */
+      const u = cache.utf8Encoder.encode(jstr),
+            ptr = allocator(u.length+1),
+            heap = heapWrappers().HEAP8U;
+      heap.set(u, ptr);
+      heap[ptr + u.length] = 0;
+      return returnWithLength ? [ptr, u.length] : ptr;
+    }
   };
 
   /**
@@ -1035,7 +1177,13 @@ self.WhWasmUtilInstaller = function(target){
     if(n<0) toss("Invalid state object for scopedAllocPop().");
     if(0===arguments.length) state = cache.scopedAlloc[n];
     cache.scopedAlloc.splice(n,1);
-    for(let p; (p = state.pop()); ) target.dealloc(p);
+    for(let p; (p = state.pop()); ){
+      if(target.functionEntry(p)){
+        //console.warn("scopedAllocPop() uninstalling transient function",p);
+        target.uninstallFunction(p);
+      }
+      else target.dealloc(p);
+    }
   };
 
   /**
@@ -1081,39 +1229,66 @@ self.WhWasmUtilInstaller = function(target){
 
   // impl for allocMainArgv() and scopedAllocMainArgv().
   const __allocMainArgv = function(isScoped, list){
-    if(!list.length) toss("Cannot allocate empty array.");
     const pList = target[
       isScoped ? 'scopedAlloc' : 'alloc'
-    ](list.length * target.ptrSizeof);
+    ]((list.length + 1) * target.ptrSizeof);
     let i = 0;
     list.forEach((e)=>{
-      target.setPtrValue(pList + (target.ptrSizeof * i++),
+      target.pokePtr(pList + (target.ptrSizeof * i++),
                          target[
                            isScoped ? 'scopedAllocCString' : 'allocCString'
                          ](""+e));
     });
+    target.pokePtr(pList + (target.ptrSizeof * i), 0);
     return pList;
   };
 
   /**
      Creates an array, using scopedAlloc(), suitable for passing to a
      C-level main() routine. The input is a collection with a length
-     property and a forEach() method. A block of memory list.length
-     entries long is allocated and each pointer-sized block of that
-     memory is populated with a scopedAllocCString() conversion of the
-     (""+value) of each element. Returns a pointer to the start of the
-     list, suitable for passing as the 2nd argument to a C-style
-     main() function.
+     property and a forEach() method. A block of memory
+     (list.length+1) entries long is allocated and each pointer-sized
+     block of that memory is populated with a scopedAllocCString()
+     conversion of the (""+value) of each element, with the exception
+     that the final entry is a NULL pointer. Returns a pointer to the
+     start of the list, suitable for passing as the 2nd argument to a
+     C-style main() function.
 
-     Throws if list.length is falsy or scopedAllocPush() is not active.
+     Throws if scopedAllocPush() is not active.
+
+     Design note: the returned array is allocated with an extra NULL
+     pointer entry to accommodate certain APIs, but client code which
+     does not need that functionality should treat the returned array
+     as list.length entries long.
   */
   target.scopedAllocMainArgv = (list)=>__allocMainArgv(true, list);
 
   /**
      Identical to scopedAllocMainArgv() but uses alloc() instead of
-     scopedAllocMainArgv
+     scopedAlloc().
   */
   target.allocMainArgv = (list)=>__allocMainArgv(false, list);
+
+  /**
+     Expects to be given a C-style string array and its length. It
+     returns a JS array of strings and/or nulls: any entry in the
+     pArgv array which is NULL results in a null entry in the result
+     array. If argc is 0 then an empty array is returned.
+
+     Results are undefined if any entry in the first argc entries of
+     pArgv are neither 0 (NULL) nor legal UTF-format C strings.
+
+     To be clear, the expected C-style arguments to be passed to this
+     function are `(int, char **)` (optionally const-qualified).
+  */
+  target.cArgvToJs = (argc, pArgv)=>{
+    const list = [];
+    for(let i = 0; i < argc; ++i){
+      const arg = target.peekPtr(pArgv + (target.ptrSizeof * i));
+      list.push( arg ? target.cstrToJs(arg) : null );
+    }
+    return list;
+  };
 
   /**
      Wraps function call func() in a scopedAllocPush() and
@@ -1133,7 +1308,7 @@ self.WhWasmUtilInstaller = function(target){
     __affirmAlloc(target, method);
     const pIr = safePtrSize ? 'i64' : ptrIR;
     let m = target[method](howMany * (safePtrSize ? 8 : ptrSizeof));
-    target.setMemValue(m, 0, pIr)
+    target.poke(m, 0, pIr)
     if(1===howMany){
       return m;
     }
@@ -1141,7 +1316,7 @@ self.WhWasmUtilInstaller = function(target){
     for(let i = 1; i < howMany; ++i){
       m += (safePtrSize ? 8 : ptrSizeof);
       a[i] = m;
-      target.setMemValue(m, 0, pIr);
+      target.poke(m, 0, pIr);
     }
     return a;
   };
@@ -1172,7 +1347,7 @@ self.WhWasmUtilInstaller = function(target){
 
      When one of the returned pointers will refer to a 64-bit value,
      e.g. a double or int64, an that value must be written or fetched,
-     e.g. using setMemValue() or getMemValue(), it is important that
+     e.g. using poke() or peek(), it is important that
      the pointer in question be aligned to an 8-byte boundary or else
      it will not be fetched or written properly and will corrupt or
      read neighboring memory. It is only safe to pass false when the
@@ -1199,7 +1374,7 @@ self.WhWasmUtilInstaller = function(target){
 
   const __argcMismatch =
         (f,n)=>toss(f+"() requires",n,"argument(s).");
-  
+
   /**
      Looks up a WASM-exported function named fname from
      target.exports. If found, it is called, passed all remaining
@@ -1228,32 +1403,47 @@ self.WhWasmUtilInstaller = function(target){
      State for use with xWrap()
   */
   cache.xWrap = Object.create(null);
-  const xcv = cache.xWrap.convert = Object.create(null);
+  cache.xWrap.convert = Object.create(null);
   /** Map of type names to argument conversion functions. */
-  cache.xWrap.convert.arg = Object.create(null);
+  cache.xWrap.convert.arg = new Map;
   /** Map of type names to return result conversion functions. */
-  cache.xWrap.convert.result = Object.create(null);
+  cache.xWrap.convert.result = new Map;
+  const xArg = cache.xWrap.convert.arg, xResult = cache.xWrap.convert.result;
 
   if(target.bigIntEnabled){
-    xcv.arg.i64 = (i)=>BigInt(i);
+    xArg.set('i64', (i)=>BigInt(i));
   }
-  xcv.arg.i32 = (i)=>(i | 0);
-  xcv.arg.i16 = (i)=>((i | 0) & 0xFFFF);
-  xcv.arg.i8  = (i)=>((i | 0) & 0xFF);
-  xcv.arg.f32 = xcv.arg.float = (i)=>Number(i).valueOf();
-  xcv.arg.f64 = xcv.arg.double = xcv.arg.f32;
-  xcv.arg.int = xcv.arg.i32;
-  xcv.result['*'] = xcv.result['pointer'] = xcv.arg['**'] = xcv.arg[ptrIR];
-  xcv.result['number'] = (v)=>Number(v);
+  const __xArgPtr = 'i32' === ptrIR
+        ? ((i)=>(i | 0)) : ((i)=>(BigInt(i) | BigInt(0)));
+  xArg.set('i32', __xArgPtr )
+    .set('i16', (i)=>((i | 0) & 0xFFFF))
+    .set('i8', (i)=>((i | 0) & 0xFF))
+    .set('f32', (i)=>Number(i).valueOf())
+    .set('float', xArg.get('f32'))
+    .set('f64', xArg.get('f32'))
+    .set('double', xArg.get('f64'))
+    .set('int', xArg.get('i32'))
+    .set('null', (i)=>i)
+    .set(null, xArg.get('null'))
+    .set('**', __xArgPtr)
+    .set('*', __xArgPtr);
+  xResult.set('*', __xArgPtr)
+    .set('pointer', __xArgPtr)
+    .set('number', (v)=>Number(v))
+    .set('void', (v)=>undefined)
+    .set('null', (v)=>v)
+    .set(null, xResult.get('null'));
 
-  { /* Copy certain xcv.arg[...] handlers to xcv.result[...] and
+  { /* Copy certain xArg[...] handlers to xResult[...] and
        add pointer-style variants of them. */
     const copyToResult = ['i8', 'i16', 'i32', 'int',
                           'f32', 'float', 'f64', 'double'];
     if(target.bigIntEnabled) copyToResult.push('i64');
+    const adaptPtr = xArg.get(ptrIR);
     for(const t of copyToResult){
-      xcv.arg[t+'*'] = xcv.result[t+'*'] = xcv.arg[ptrIR];
-      xcv.result[t] = xcv.arg[t] || toss("Missing arg converter:",t);
+      xArg.set(t+'*', adaptPtr);
+      xResult.set(t+'*', adaptPtr);
+      xResult.set(t, (xArg.get(t) || toss("Missing arg converter:",t)));
     }
   }
 
@@ -1267,83 +1457,352 @@ self.WhWasmUtilInstaller = function(target){
      - If v is a string, scopeAlloc() a new C-string from it and return
        that temp string's pointer.
 
-     - Else return the value from the arg adaptor defined for ptrIR.
+     - Else return the value from the arg adapter defined for ptrIR.
 
      TODO? Permit an Int8Array/Uint8Array and convert it to a string?
      Would that be too much magic concentrated in one place, ready to
-     backfire?
+     backfire? We handle that at the client level in sqlite3 with a
+     custom argument converter.
   */
-  xcv.arg.string = xcv.arg.utf8 = xcv.arg['pointer'] = xcv.arg['*']
-    = function(v){
-      if('string'===typeof v) return target.scopedAllocCString(v);
-      return v ? xcv.arg[ptrIR](v) : null;
-    };
-  xcv.result.string = xcv.result.utf8 = (i)=>target.cstringToJs(i);
-  xcv.result['string:free'] = xcv.result['utf8:free'] = (i)=>{
-    try { return i ? target.cstringToJs(i) : null }
-    finally{ target.dealloc(i) }
+  const __xArgString = function(v){
+    if('string'===typeof v) return target.scopedAllocCString(v);
+    return v ? __xArgPtr(v) : null;
   };
-  xcv.result.json = (i)=>JSON.parse(target.cstringToJs(i));
-  xcv.result['json:free'] = (i)=>{
-    try{ return i ? JSON.parse(target.cstringToJs(i)) : null }
-    finally{ target.dealloc(i) }
-  }
-  xcv.result['void'] = (v)=>undefined;
-  xcv.result['null'] = (v)=>v;
+  xArg.set('string', __xArgString)
+    .set('utf8', __xArgString)
+    .set('pointer', __xArgString);
+  //xArg.set('*', __xArgString);
 
-  if(0){
-    /***
-        This idea can't currently work because we don't know the
-        signature for the func and don't have a way for the user to
-        convey it. To do this we likely need to be able to match
-        arg/result handlers by a regex, but that would incur an O(N)
-        cost as we check the regex one at a time. Another use case for
-        such a thing would be pseudotypes like "int:-1" to say that
-        the value will always be treated like -1 (which has a useful
-        case in the sqlite3 bindings).
-    */
-    xcv.arg['func-ptr'] = function(v){
-      if(!(v instanceof Function)) return xcv.arg[ptrIR];
-      const f = target.jsFuncToWasm(v, WHAT_SIGNATURE);
-    };
-  }
-
-  const __xArgAdapterCheck =
-        (t)=>xcv.arg[t] || toss("Argument adapter not found:",t);
-
-  const __xResultAdapterCheck =
-        (t)=>xcv.result[t] || toss("Result adapter not found:",t);
-  
-  cache.xWrap.convertArg = (t,v)=>__xArgAdapterCheck(t)(v);
-  cache.xWrap.convertResult =
-    (t,v)=>(null===t ? v : (t ? __xResultAdapterCheck(t)(v) : undefined));
+  xResult.set('string', (i)=>target.cstrToJs(i))
+    .set('utf8', xResult.get('string'))
+    .set('string:dealloc', (i)=>{
+      try { return i ? target.cstrToJs(i) : null }
+      finally{ target.dealloc(i) }
+    })
+    .set('utf8:dealloc', xResult.get('string:dealloc'))
+    .set('json', (i)=>JSON.parse(target.cstrToJs(i)))
+    .set('json:dealloc', (i)=>{
+      try{ return i ? JSON.parse(target.cstrToJs(i)) : null }
+      finally{ target.dealloc(i) }
+    });
 
   /**
-     Creates a wrapper for the WASM-exported function fname. Uses
-     xGet() to fetch the exported function (which throws on
-     error) and returns either that function or a wrapper for that
+     Internal-use-only base class for FuncPtrAdapter and potentially
+     additional stateful argument adapter classes.
+
+     Note that its main interface (convertArg()) is strictly
+     internal, not to be exposed to client code, as it may still
+     need re-shaping. Only the constructors of concrete subclasses
+     should be exposed to clients, and those in such a way that
+     does not hinder internal redesign of the convertArg()
+     interface.
+  */
+  const AbstractArgAdapter = class {
+    constructor(opt){
+      this.name = opt.name || 'unnamed adapter';
+    }
+    /**
+       Gets called via xWrap() to "convert" v to whatever type
+       this specific class supports.
+
+       argIndex is the argv index of _this_ argument in the
+       being-xWrap()'d call. argv is the current argument list
+       undergoing xWrap() argument conversion. argv entries to the
+       left of argIndex will have already undergone transformation and
+       those to the right will not have (they will have the values the
+       client-level code passed in, awaiting conversion). The RHS
+       indexes must never be relied upon for anything because their
+       types are indeterminate, whereas the LHS values will be
+       WASM-compatible values by the time this is called.
+    */
+    convertArg(v,argv,argIndex){
+      toss("AbstractArgAdapter must be subclassed.");
+    }
+  };
+
+  /**
+     An attempt at adding function pointer conversion support to
+     xWrap(). This type is recognized by xWrap() as a proxy for
+     converting a JS function to a C-side function, either
+     permanently, for the duration of a single call into the C layer,
+     or semi-contextual, where it may keep track of a single binding
+     for a given context and uninstall the binding if it's replaced.
+
+     The constructor requires an options object with these properties:
+
+     - name (optional): string describing the function binding. This
+       is solely for debugging and error-reporting purposes. If not
+       provided, an empty string is assumed.
+
+     - signature: a function signature string compatible with
+       jsFuncToWasm().
+
+     - bindScope (string): one of ('transient', 'context',
+       'singleton'). Bind scopes are:
+
+       - 'transient': it will convert JS functions to WASM only for
+         the duration of the xWrap()'d function call, using
+         scopedInstallFunction(). Before that call returns, the
+         WASM-side binding will be uninstalled.
+
+       - 'singleton': holds one function-pointer binding for this
+         instance. If it's called with a different function pointer,
+         it uninstalls the previous one after converting the new
+         value. This is only useful for use with "global" functions
+         which do not rely on any state other than this function
+         pointer. If the being-converted function pointer is intended
+         to be mapped to some sort of state object (e.g. an
+         `sqlite3*`) then "context" (see below) is the proper mode.
+
+       - 'context': similar to singleton mode but for a given
+         "context", where the context is a key provided by the user
+         and possibly dependent on a small amount of call-time
+         context. This mode is the default if bindScope is _not_ set
+         but a property named contextKey (described below) is.
+
+       - 'permanent': the function is installed and left there
+         forever. There is no way to recover its pointer address
+         later on.
+
+     - callProxy (function): if set, this must be a function which
+       will act as a proxy for any "converted" JS function. It is
+       passed the being-converted function value and must return
+       either that function or a function which acts on its
+       behalf. The returned function will be the one which gets
+       installed into the WASM function table. The proxy must perform
+       any required argument conversion (noting that it will be called
+       from C code, so will receive C-format arguments) before passing
+       them on to the being-converted function. Whether or not the
+       proxy itself must return a value depends on the context. If it
+       does, it must be a WASM-friendly value, as it will be returning
+       from a call made from native code.
+
+     - contextKey (function): is only used if bindScope is 'context'
+       or if bindScope is not set and this function is, in which case
+       'context' is assumed. This function gets bound to this object,
+       so its "this" is this object. It gets passed (argv,argIndex),
+       where argIndex is the index of _this_ function pointer in its
+       _wrapping_ function's arguments and argv is the _current_
+       still-being-xWrap()-processed args array. All arguments to the
+       left of argIndex will have been processed by xWrap() by the
+       time this is called. argv[argIndex] will be the value the user
+       passed in to the xWrap()'d function for the argument this
+       FuncPtrAdapter is mapped to. Arguments to the right of
+       argv[argIndex] will not yet have been converted before this is
+       called. The function must return a key which uniquely
+       identifies this function mapping context for _this_
+       FuncPtrAdapter instance (other instances are not considered),
+       taking into account that C functions often take some sort of
+       state object as one or more of their arguments. As an example,
+       if the xWrap()'d function takes `(int,T*,functionPtr,X*)` and
+       this FuncPtrAdapter is the argv[2]nd arg, contextKey(argv,2)
+       might return 'T@'+argv[1], or even just argv[1].  Note,
+       however, that the (X*) argument will not yet have been
+       processed by the time this is called and should not be used as
+       part of that key because its pre-conversion data type might be
+       unpredictable. Similarly, care must be taken with C-string-type
+       arguments: those to the left in argv will, when this is called,
+       be WASM pointers, whereas those to the right might (and likely
+       do) have another data type. When using C-strings in keys, never
+       use their pointers in the key because most C-strings in this
+       constellation are transient.
+
+     Yes, that ^^^ is quite awkward, but it's what we have.
+
+     The constructor only saves the above state for later, and does
+     not actually bind any functions. Its convertArg() method is
+     called via xWrap() to perform any bindings.
+
+     Shortcomings:
+
+     - These "reverse" bindings, i.e. calling into a JS-defined
+       function from a WASM-defined function (the generated proxy
+       wrapper), lack all type conversion support. That means, for
+       example, that...
+
+     - Function pointers which include C-string arguments may still
+       need a level of hand-written wrappers around them, depending on
+       how they're used, in order to provide the client with JS
+       strings. Alternately, clients will need to perform such conversions
+       on their own, e.g. using cstrtojs(). Or maybe we can find a way
+       to perform such conversions here, via addition of an xWrap()-style
+       function signature to the options argument.
+  */
+  xArg.FuncPtrAdapter = class FuncPtrAdapter extends AbstractArgAdapter {
+    constructor(opt) {
+      super(opt);
+      if(xArg.FuncPtrAdapter.warnOnUse){
+        console.warn('xArg.FuncPtrAdapter is an internal-only API',
+                     'and is not intended to be invoked from',
+                     'client-level code. Invoked with:',opt);
+      }
+      this.signature = opt.signature;
+      if(opt.contextKey instanceof Function){
+        this.contextKey = opt.contextKey;
+        if(!opt.bindScope) opt.bindScope = 'context';
+      }
+      this.bindScope = opt.bindScope
+        || toss("FuncPtrAdapter options requires a bindScope (explicit or implied).");
+      if(FuncPtrAdapter.bindScopes.indexOf(opt.bindScope)<0){
+        toss("Invalid options.bindScope ("+opt.bindMod+") for FuncPtrAdapter. "+
+             "Expecting one of: ("+FuncPtrAdapter.bindScopes.join(', ')+')');
+      }
+      this.isTransient = 'transient'===this.bindScope;
+      this.isContext = 'context'===this.bindScope;
+      this.isPermanent = 'permanent'===this.bindScope;
+      this.singleton = ('singleton'===this.bindScope) ? [] : undefined;
+      //console.warn("FuncPtrAdapter()",opt,this);
+      this.callProxy = (opt.callProxy instanceof Function)
+        ? opt.callProxy : undefined;
+    }
+
+    /** If true, the constructor emits a warning. The intent is that
+        this be set to true after bootstrapping of the higher-level
+        client library is complete, to warn downstream clients that
+        they shouldn't be relying on this implemenation detail which
+        does not have a stable interface. */
+    static warnOnUse = false;
+
+    /** If true, convertArg() will FuncPtrAdapter.debugOut() when it
+        (un)installs a function binding to/from WASM. Note that
+        deinstallation of bindScope=transient bindings happens
+        via scopedAllocPop() so will not be output. */
+    static debugFuncInstall = false;
+
+    /** Function used for debug output. */
+    static debugOut = console.debug.bind(console);
+
+    static bindScopes = [
+      'transient', 'context', 'singleton', 'permanent'
+    ];
+
+    /* Dummy impl. Overwritten per-instance as needed. */
+    contextKey(argv,argIndex){
+      return this;
+    }
+
+    /* Returns this objects mapping for the given context key, in the
+       form of an an array, creating the mapping if needed. The key
+       may be anything suitable for use in a Map. */
+    contextMap(key){
+      const cm = (this.__cmap || (this.__cmap = new Map));
+      let rc = cm.get(key);
+      if(undefined===rc) cm.set(key, (rc = []));
+      return rc;
+    }
+
+    /**
+       Gets called via xWrap() to "convert" v to a WASM-bound function
+       pointer. If v is one of (a pointer, null, undefined) then
+       (v||0) is returned and any earlier function installed by this
+       mapping _might_, depending on how it's bound, be uninstalled.
+       If v is not one of those types, it must be a Function, for
+       which it creates (if needed) a WASM function binding and
+       returns the WASM pointer to that binding. If this instance is
+       not in 'transient' mode, it will remember the binding for at
+       least the next call, to avoid recreating the function binding
+       unnecessarily.
+
+       If it's passed a pointer(ish) value for v, it does _not_
+       perform any function binding, so this object's bindMode is
+       irrelevant for such cases.
+
+       See the parent class's convertArg() docs for details on what
+       exactly the 2nd and 3rd arguments are.
+    */
+    convertArg(v,argv,argIndex){
+      //FuncPtrAdapter.debugOut("FuncPtrAdapter.convertArg()",this.signature,this.transient,v);
+      let pair = this.singleton;
+      if(!pair && this.isContext){
+        pair = this.contextMap(this.contextKey(argv,argIndex));
+      }
+      if(pair && pair[0]===v) return pair[1];
+      if(v instanceof Function){
+        /* Install a WASM binding and return its pointer. */
+        if(this.callProxy) v = this.callProxy(v);
+        const fp = __installFunction(v, this.signature, this.isTransient);
+        if(FuncPtrAdapter.debugFuncInstall){
+          FuncPtrAdapter.debugOut("FuncPtrAdapter installed", this,
+                                  this.contextKey(argv,argIndex), '@'+fp, v);
+        }
+        if(pair){
+          /* Replace existing stashed mapping */
+          if(pair[1]){
+            if(FuncPtrAdapter.debugFuncInstall){
+              FuncPtrAdapter.debugOut("FuncPtrAdapter uninstalling", this,
+                                      this.contextKey(argv,argIndex), '@'+pair[1], v);
+            }
+            try{target.uninstallFunction(pair[1])}
+            catch(e){/*ignored*/}
+          }
+          pair[0] = v;
+          pair[1] = fp;
+        }
+        return fp;
+      }else if(target.isPtr(v) || null===v || undefined===v){
+        if(pair && pair[1] && pair[1]!==v){
+          /* uninstall stashed mapping and replace stashed mapping with v. */
+          if(FuncPtrAdapter.debugFuncInstall){
+            FuncPtrAdapter.debugOut("FuncPtrAdapter uninstalling", this,
+                                    this.contextKey(argv,argIndex), '@'+pair[1], v);
+          }
+          try{target.uninstallFunction(pair[1])}
+          catch(e){/*ignored*/}
+          pair[0] = pair[1] = (v | 0);
+        }
+        return v || 0;
+      }else{
+        throw new TypeError("Invalid FuncPtrAdapter argument type. "+
+                            "Expecting a function pointer or a "+
+                            (this.name ? this.name+' ' : '')+
+                            "function matching signature "+
+                            this.signature+".");
+      }
+    }/*convertArg()*/
+  }/*FuncPtrAdapter*/;
+
+  const __xArgAdapterCheck =
+        (t)=>xArg.get(t) || toss("Argument adapter not found:",t);
+
+  const __xResultAdapterCheck =
+        (t)=>xResult.get(t) || toss("Result adapter not found:",t);
+
+  cache.xWrap.convertArg = (t,...args)=>__xArgAdapterCheck(t)(...args);
+  cache.xWrap.convertArgNoCheck = (t,...args)=>xArg.get(t)(...args);
+
+  cache.xWrap.convertResult =
+    (t,v)=>(null===t ? v : (t ? __xResultAdapterCheck(t)(v) : undefined));
+  cache.xWrap.convertResultNoCheck =
+    (t,v)=>(null===t ? v : (t ? xResult.get(t)(v) : undefined));
+
+  /**
+     Creates a wrapper for another function which converts the arguments
+     of the wrapper to argument types accepted by the wrapped function,
+     then converts the wrapped function's result to another form
+     for the wrapper.
+
+     The first argument must be one of:
+
+     - A JavaScript function.
+     - The name of a WASM-exported function. In the latter case xGet()
+       is used to fetch the exported function, which throws if it's not
+       found.
+     - A pointer into the indirect function table. e.g. a pointer
+       returned from target.installFunction().
+
+     It returns either the passed-in function or a wrapper for that
      function which converts the JS-side argument types into WASM-side
-     types and converts the result type. If the function takes no
-     arguments and resultType is `null` then the function is returned
-     as-is, else a wrapper is created for it to adapt its arguments
-     and result value, as described below.
+     types and converts the result type.
 
-     (If you're familiar with Emscripten's ccall() and cwrap(), this
-     function is essentially cwrap() on steroids.)
-
-     This function's arguments are:
-
-     - fname: the exported function's name. xGet() is used to fetch
-       this, so will throw if no exported function is found with that
-       name.
-
-     - resultType: the name of the result type. A literal `null` means
-       to return the original function's value as-is (mnemonic: there
-       is "null" conversion going on). Literal `undefined` or the
-       string `"void"` mean to ignore the function's result and return
-       `undefined`. Aside from those two special cases, it may be one
-       of the values described below or any mapping installed by the
-       client using xWrap.resultAdapter().
+     The second argument, `resultType`, describes the conversion for
+     the wrapped functions result. A literal `null` or the string
+     `'null'` both mean to return the original function's value as-is
+     (mnemonic: there is "null" conversion going on). Literal
+     `undefined` or the string `"void"` both mean to ignore the
+     function's result and return `undefined`. Aside from those two
+     special cases, the `resultType` value may be one of the values
+     described below or any mapping installed by the client using
+     xWrap.resultAdapter().
 
      If passed 3 arguments and the final one is an array, that array
      must contain a list of type names (see below) for adapting the
@@ -1357,6 +1816,12 @@ self.WhWasmUtilInstaller = function(target){
      xWrap('funcname', 'i32', ['string', 'f64']);
      ```
 
+     This function enforces that the given list of arguments has the
+     same arity as the being-wrapped function (as defined by its
+     `length` property) and it will throw if that is not the case.
+     Similarly, the created wrapper will throw if passed a differing
+     argument count.
+
      Type names are symbolic names which map the arguments to an
      adapter function to convert, if needed, the value before passing
      it on to WASM or to convert a return result from WASM. The list
@@ -1369,10 +1834,13 @@ self.WhWasmUtilInstaller = function(target){
      - `N*` (args): a type name in the form `N*`, where N is a numeric
        type name, is treated the same as WASM pointer.
 
-     - `*` and `pointer` (args): have multple semantics. They
-       behave exactly as described below for `string` args.
+     - `*` and `pointer` (args): are assumed to be WASM pointer values
+       and are returned coerced to an appropriately-sized pointer
+       value (i32 or i64). Non-numeric values will coerce to 0 and
+       out-of-range values will have undefined results (just as with
+       any pointer misuse).
 
-     - `*` and `pointer` (results): are aliases for the current
+     - `*` and `pointer` (results): aliases for the current
        WASM pointer numeric type.
 
      - `**` (args): is simply a descriptive alias for the WASM pointer
@@ -1383,7 +1851,7 @@ self.WhWasmUtilInstaller = function(target){
        true.
 
      - `f32` (`float`), `f64` (`double`) (args and results): pass
-       their argument to Number(). i.e. the adaptor does not currently
+       their argument to Number(). i.e. the adapter does not currently
        distinguish between the two types of floating-point numbers.
 
      - `number` (results): converts the result to a JS Number using
@@ -1392,6 +1860,10 @@ self.WhWasmUtilInstaller = function(target){
        which type of number to convert arguments to.
 
      Non-numeric conversions include:
+
+     - `null` literal or `"null"` string (args and results): perform
+       no translation and pass the arg on as-is. This is primarily
+       useful for results but may have a use or two for arguments.
 
      - `string` or `utf8` (args): has two different semantics in order
        to accommodate various uses of certain C APIs
@@ -1407,11 +1879,11 @@ self.WhWasmUtilInstaller = function(target){
          client has already allocated and it's passed on as
          a WASM pointer.
 
-       - `string` or `utf8` (results): treats the result value as a
-         const C-string, encoded as UTF-8, copies it to a JS string,
-         and returns that JS string.
+     - `string` or `utf8` (results): treats the result value as a
+       const C-string, encoded as UTF-8, copies it to a JS string,
+       and returns that JS string.
 
-     - `string:free` or `utf8:free) (results): treats the result value
+     - `string:dealloc` or `utf8:dealloc) (results): treats the result value
        as a non-const UTF-8 C-string, ownership of which has just been
        transfered to the caller. It copies the C-string to a JS
        string, frees the C-string, and returns the JS string. If such
@@ -1422,8 +1894,8 @@ self.WhWasmUtilInstaller = function(target){
        required. For example:
 
 ```js
-   target.xWrap.resultAdaptor('string:my_free',(i)=>{
-      try { return i ? target.cstringToJs(i) : null }
+   target.xWrap.resultAdapter('string:my_free',(i)=>{
+      try { return i ? target.cstrToJs(i) : null }
       finally{ target.exports.my_free(i) }
    };
 ```
@@ -1432,9 +1904,9 @@ self.WhWasmUtilInstaller = function(target){
        returns the result of passing the converted-to-JS string to
        JSON.parse(). Returns `null` if the C-string is a NULL pointer.
 
-     - `json:free` (results): works exactly like `string:free` but
+     - `json:dealloc` (results): works exactly like `string:dealloc` but
        returns the same thing as the `json` adapter. Note the
-       warning in `string:free` regarding maching allocators and
+       warning in `string:dealloc` regarding maching allocators and
        deallocators.
 
      The type names for results and arguments are validated when
@@ -1442,17 +1914,22 @@ self.WhWasmUtilInstaller = function(target){
      exception.
 
      Clients may map their own result and argument adapters using
-     xWrap.resultAdapter() and xWrap.argAdaptor(), noting that not all
+     xWrap.resultAdapter() and xWrap.argAdapter(), noting that not all
      type conversions are valid for both arguments _and_ result types
      as they often have different memory ownership requirements.
+
+     Design note: the ability to pass in a JS function as the first
+     argument is of relatively limited use, primarily for testing
+     argument and result converters. JS functions, by and large, will
+     not want to deal with C-type arguments.
 
      TODOs:
 
      - Figure out how/whether we can (semi-)transparently handle
        pointer-type _output_ arguments. Those currently require
        explicit handling by allocating pointers, assigning them before
-       the call using setMemValue(), and fetching them with
-       getMemValue() after the call. We may be able to automate some
+       the call using poke(), and fetching them with
+       peek() after the call. We may be able to automate some
        or all of that.
 
      - Figure out whether it makes sense to extend the arg adapter
@@ -1466,49 +1943,78 @@ self.WhWasmUtilInstaller = function(target){
        abstracting it into this API (and taking on the associated
        costs) may well not make good sense.
   */
-  target.xWrap = function(fname, resultType, ...argTypes){
+  target.xWrap = function(fArg, resultType, ...argTypes){
     if(3===arguments.length && Array.isArray(arguments[2])){
       argTypes = arguments[2];
     }
-    const xf = target.xGet(fname);
-    if(argTypes.length!==xf.length) __argcMismatch(fname, xf.length);
+    if(target.isPtr(fArg)){
+      fArg = target.functionEntry(fArg)
+        || toss("Function pointer not found in WASM function table.");
+    }
+    const fIsFunc = (fArg instanceof Function);
+    const xf = fIsFunc ? fArg : target.xGet(fArg);
+    if(fIsFunc) fArg = xf.name || 'unnamed function';
+    if(argTypes.length!==xf.length) __argcMismatch(fArg, xf.length);
     if((null===resultType) && 0===xf.length){
-      /* Func taking no args with an as-is return. We don't need a wrapper. */
+      /* Func taking no args with an as-is return. We don't need a wrapper.
+         We forego the argc check here, though. */
       return xf;
     }
     /*Verify the arg type conversions are valid...*/;
     if(undefined!==resultType && null!==resultType) __xResultAdapterCheck(resultType);
-    argTypes.forEach(__xArgAdapterCheck);
+    for(const t of argTypes){
+      if(t instanceof AbstractArgAdapter) xArg.set(t, (...args)=>t.convertArg(...args));
+      else __xArgAdapterCheck(t);
+    }
+    const cxw = cache.xWrap;
     if(0===xf.length){
       // No args to convert, so we can create a simpler wrapper...
       return (...args)=>(args.length
-                         ? __argcMismatch(fname, xf.length)
-                         : cache.xWrap.convertResult(resultType, xf.call(null)));
+                         ? __argcMismatch(fArg, xf.length)
+                         : cxw.convertResult(resultType, xf.call(null)));
     }
     return function(...args){
-      if(args.length!==xf.length) __argcMismatch(fname, xf.length);
+      if(args.length!==xf.length) __argcMismatch(fArg, xf.length);
       const scope = target.scopedAllocPush();
       try{
-        const rc = xf.apply(null,args.map((v,i)=>cache.xWrap.convertArg(argTypes[i], v)));
-        return cache.xWrap.convertResult(resultType, rc);
+        /*
+          Maintenance reminder re. arguments passed to convertArg():
+          The public interface of argument adapters is that they take
+          ONE argument and return a (possibly) converted result for
+          it. The passing-on of arguments after the first is an
+          internal implementation detail for the sake of
+          AbstractArgAdapter, and not to be relied on or documented
+          for other cases. The fact that this is how
+          AbstractArgAdapter.convertArgs() gets its 2nd+ arguments,
+          and how FuncPtrAdapter.contextKey() gets its args, is also
+          an implementation detail and subject to change. i.e. the
+          public interface of 1 argument is stable.  The fact that any
+          arguments may be passed in after that one, and what those
+          arguments are, is _not_ part of the public interface and is
+          _not_ stable.
+        */
+        for(const i in args) args[i] = cxw.convertArgNoCheck(
+          argTypes[i], args[i], args, i
+        );
+        return cxw.convertResultNoCheck(resultType, xf.apply(null,args));
       }finally{
         target.scopedAllocPop(scope);
       }
     };
   }/*xWrap()*/;
 
-  /** Internal impl for xWrap.resultAdapter() and argAdaptor(). */
+  /** Internal impl for xWrap.resultAdapter() and argAdapter(). */
   const __xAdapter = function(func, argc, typeName, adapter, modeName, xcvPart){
     if('string'===typeof typeName){
-      if(1===argc) return xcvPart[typeName];
+      if(1===argc) return xcvPart.get(typeName);
       else if(2===argc){
         if(!adapter){
-          delete xcvPart[typeName];
+          delete xcvPart.get(typeName);
           return func;
         }else if(!(adapter instanceof Function)){
           toss(modeName,"requires a function argument.");
         }
-        xcvPart[typeName] = adapter;
+        xcvPart.set(typeName, adapter);
         return func;
       }
     }
@@ -1545,7 +2051,7 @@ self.WhWasmUtilInstaller = function(target){
   */
   target.xWrap.resultAdapter = function f(typeName, adapter){
     return __xAdapter(f, arguments.length, typeName, adapter,
-                      'resultAdaptor()', xcv.result);
+                      'resultAdapter()', xResult);
   };
 
   /**
@@ -1575,19 +2081,20 @@ self.WhWasmUtilInstaller = function(target){
   */
   target.xWrap.argAdapter = function f(typeName, adapter){
     return __xAdapter(f, arguments.length, typeName, adapter,
-                      'argAdaptor()', xcv.arg);
+                      'argAdapter()', xArg);
   };
+
+  target.xWrap.FuncPtrAdapter = xArg.FuncPtrAdapter;
 
   /**
      Functions like xCall() but performs argument and result type
-     conversions as for xWrap(). The first argument is the name of the
-     exported function to call. The 2nd its the name of its result
-     type, as documented for xWrap(). The 3rd is an array of argument
-     type name, as documented for xWrap() (use a falsy value or an
-     empty array for nullary functions). The 4th+ arguments are
-     arguments for the call, with the special case that if the 4th
-     argument is an array, it is used as the arguments for the
-     call. Returns the converted result of the call.
+     conversions as for xWrap(). The first, second, and third
+     arguments are as documented for xWrap(), except that the 3rd
+     argument may be either a falsy value or empty array to represent
+     nullary functions. The 4th+ arguments are arguments for the call,
+     with the special case that if the 4th argument is an array, it is
+     used as the arguments for the call. Returns the converted result
+     of the call.
 
      This is just a thin wrapper around xWrap(). If the given function
      is to be called more than once, it's more efficient to use
@@ -1596,10 +2103,40 @@ self.WhWasmUtilInstaller = function(target){
      arguably more efficient because it will hypothetically free the
      wrapper function quickly.
   */
-  target.xCallWrapped = function(fname, resultType, argTypes, ...args){
+  target.xCallWrapped = function(fArg, resultType, argTypes, ...args){
     if(Array.isArray(arguments[3])) args = arguments[3];
-    return target.xWrap(fname, resultType, argTypes||[]).apply(null, args||[]);
+    return target.xWrap(fArg, resultType, argTypes||[]).apply(null, args||[]);
   };
+
+  /**
+     This function is ONLY exposed in the public API to facilitate
+     testing. It should not be used in application-level code, only
+     in test code.
+
+     Expects to be given (typeName, value) and returns a conversion
+     of that value as has been registered using argAdapter().
+     It throws if no adapter is found.
+
+     ACHTUNG: the adapter may require that a scopedAllocPush() is
+     active and it may allocate memory within that scope. It may also
+     require additional arguments, depending on the type of
+     conversion.
+  */
+  target.xWrap.testConvertArg = cache.xWrap.convertArg;
+
+  /**
+     This function is ONLY exposed in the public API to facilitate
+     testing. It should not be used in application-level code, only
+     in test code.
+
+     Expects to be given (typeName, value) and returns a conversion
+     of that value as has been registered using resultAdapter().
+     It throws if no adapter is found.
+
+     ACHTUNG: the adapter may allocate memory which the caller may need
+     to know how to free.
+  */
+  target.xWrap.testConvertResult = cache.xWrap.convertResult;
 
   return target;
 };

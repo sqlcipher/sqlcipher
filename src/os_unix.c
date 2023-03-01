@@ -95,7 +95,8 @@
 #include <time.h>
 #include <sys/time.h>    /* amalgamator: keep */
 #include <errno.h>
-#if !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0
+#if (!defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0) \
+  && !defined(SQLITE_WASI)
 # include <sys/mman.h>
 #endif
 
@@ -183,9 +184,46 @@
 */
 #define SQLITE_MAX_SYMLINKS 100
 
+/*
+** Remove and stub certain info for WASI (WebAssembly System
+** Interface) builds.
+*/
+#ifdef SQLITE_WASI
+# undef HAVE_FCHMOD
+# undef HAVE_FCHOWN
+# undef HAVE_MREMAP
+# define HAVE_MREMAP 0
+# ifndef SQLITE_DEFAULT_UNIX_VFS
+#  define SQLITE_DEFAULT_UNIX_VFS "unix-dotfile"
+   /* ^^^ should SQLITE_DEFAULT_UNIX_VFS be "unix-none"? */
+# endif
+# ifndef F_RDLCK
+#  define F_RDLCK 0
+#  define F_WRLCK 1
+#  define F_UNLCK 2
+#  if __LONG_MAX == 0x7fffffffL
+#   define F_GETLK 12
+#   define F_SETLK 13
+#   define F_SETLKW 14
+#  else
+#   define F_GETLK 5
+#   define F_SETLK 6
+#   define F_SETLKW 7
+#  endif
+# endif
+#else /* !SQLITE_WASI */
+# ifndef HAVE_FCHMOD
+#  define HAVE_FCHMOD
+# endif
+#endif /* SQLITE_WASI */
+
+#ifdef SQLITE_WASI
+# define osGetpid(X) (pid_t)1
+#else
 /* Always cast the getpid() return type for compatibility with
 ** kernel modules in VxWorks. */
-#define osGetpid(X) (pid_t)getpid()
+# define osGetpid(X) (pid_t)getpid()
+#endif
 
 /*
 ** Only set the lastErrno if the error code is a real error and not 
@@ -457,7 +495,11 @@ static struct unix_syscall {
 #define osPwrite64  ((ssize_t(*)(int,const void*,size_t,off64_t))\
                     aSyscall[13].pCurrent)
 
+#if defined(HAVE_FCHMOD)
   { "fchmod",       (sqlite3_syscall_ptr)fchmod,          0  },
+#else
+  { "fchmod",       (sqlite3_syscall_ptr)0,               0  },
+#endif
 #define osFchmod    ((int(*)(int,mode_t))aSyscall[14].pCurrent)
 
 #if defined(HAVE_POSIX_FALLOCATE) && HAVE_POSIX_FALLOCATE
@@ -493,14 +535,16 @@ static struct unix_syscall {
 #endif
 #define osGeteuid   ((uid_t(*)(void))aSyscall[21].pCurrent)
 
-#if !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0
+#if (!defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0) \
+  && !defined(SQLITE_WASI)
   { "mmap",         (sqlite3_syscall_ptr)mmap,            0 },
 #else
   { "mmap",         (sqlite3_syscall_ptr)0,               0 },
 #endif
 #define osMmap ((void*(*)(void*,size_t,int,int,int,off_t))aSyscall[22].pCurrent)
 
-#if !defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0
+#if (!defined(SQLITE_OMIT_WAL) || SQLITE_MAX_MMAP_SIZE>0) \
+  && !defined(SQLITE_WASI)
   { "munmap",       (sqlite3_syscall_ptr)munmap,          0 },
 #else
   { "munmap",       (sqlite3_syscall_ptr)0,               0 },
@@ -1651,7 +1695,7 @@ static int unixFileLock(unixFile *pFile, struct flock *pLock){
 **
 **    UNLOCKED -> SHARED
 **    SHARED -> RESERVED
-**    SHARED -> (PENDING) -> EXCLUSIVE
+**    SHARED -> EXCLUSIVE
 **    RESERVED -> (PENDING) -> EXCLUSIVE
 **    PENDING -> EXCLUSIVE
 **
@@ -1684,19 +1728,20 @@ static int unixLock(sqlite3_file *id, int eFileLock){
   ** A RESERVED lock is implemented by grabbing a write-lock on the
   ** 'reserved byte'. 
   **
-  ** A process may only obtain a PENDING lock after it has obtained a
-  ** SHARED lock. A PENDING lock is implemented by obtaining a write-lock
-  ** on the 'pending byte'. This ensures that no new SHARED locks can be
-  ** obtained, but existing SHARED locks are allowed to persist. A process
-  ** does not have to obtain a RESERVED lock on the way to a PENDING lock.
-  ** This property is used by the algorithm for rolling back a journal file
-  ** after a crash.
+  ** An EXCLUSIVE lock may only be requested after either a SHARED or
+  ** RESERVED lock is held. An EXCLUSIVE lock is implemented by obtaining 
+  ** a write-lock on the entire 'shared byte range'. Since all other locks 
+  ** require a read-lock on one of the bytes within this range, this ensures 
+  ** that no other locks are held on the database. 
   **
-  ** An EXCLUSIVE lock, obtained after a PENDING lock is held, is
-  ** implemented by obtaining a write-lock on the entire 'shared byte
-  ** range'. Since all other locks require a read-lock on one of the bytes
-  ** within this range, this ensures that no other locks are held on the
-  ** database. 
+  ** If a process that holds a RESERVED lock requests an EXCLUSIVE, then
+  ** a PENDING lock is obtained first. A PENDING lock is implemented by 
+  ** obtaining a write-lock on the 'pending byte'. This ensures that no new 
+  ** SHARED locks can be obtained, but existing SHARED locks are allowed to 
+  ** persist. If the call to this function fails to obtain the EXCLUSIVE
+  ** lock in this case, it holds the PENDING lock intead. The client may
+  ** then re-attempt the EXCLUSIVE lock later on, after existing SHARED
+  ** locks have cleared.
   */
   int rc = SQLITE_OK;
   unixFile *pFile = (unixFile*)id;
@@ -1767,7 +1812,7 @@ static int unixLock(sqlite3_file *id, int eFileLock){
   lock.l_len = 1L;
   lock.l_whence = SEEK_SET;
   if( eFileLock==SHARED_LOCK 
-      || (eFileLock==EXCLUSIVE_LOCK && pFile->eFileLock<PENDING_LOCK)
+   || (eFileLock==EXCLUSIVE_LOCK && pFile->eFileLock==RESERVED_LOCK)
   ){
     lock.l_type = (eFileLock==SHARED_LOCK?F_RDLCK:F_WRLCK);
     lock.l_start = PENDING_BYTE;
@@ -1778,6 +1823,9 @@ static int unixLock(sqlite3_file *id, int eFileLock){
         storeLastErrno(pFile, tErrno);
       }
       goto end_lock;
+    }else if( eFileLock==EXCLUSIVE_LOCK ){
+      pFile->eFileLock = PENDING_LOCK;
+      pInode->eFileLock = PENDING_LOCK;
     }
   }
 
@@ -1865,13 +1913,9 @@ static int unixLock(sqlite3_file *id, int eFileLock){
   }
 #endif
 
-
   if( rc==SQLITE_OK ){
     pFile->eFileLock = eFileLock;
     pInode->eFileLock = eFileLock;
-  }else if( eFileLock==EXCLUSIVE_LOCK ){
-    pFile->eFileLock = PENDING_LOCK;
-    pInode->eFileLock = PENDING_LOCK;
   }
 
 end_lock:
@@ -6462,12 +6506,10 @@ static void appendOnePathElement(
   if( zName[0]=='.' ){
     if( nName==1 ) return;
     if( zName[1]=='.' && nName==2 ){
-      if( pPath->nUsed<=1 ){
-        pPath->rc = SQLITE_ERROR;
-        return;
+      if( pPath->nUsed>1 ){
+        assert( pPath->zOut[0]=='/' );
+        while( pPath->zOut[--pPath->nUsed]!='/' ){}
       }
-      assert( pPath->zOut[0]=='/' );
-      while( pPath->zOut[--pPath->nUsed]!='/' ){}
       return;
     }
   }
@@ -6679,7 +6721,7 @@ static int unixRandomness(sqlite3_vfs *NotUsed, int nBuf, char *zBuf){
 ** than the argument.
 */
 static int unixSleep(sqlite3_vfs *NotUsed, int microseconds){
-#if OS_VXWORKS
+#if OS_VXWORKS || _POSIX_C_SOURCE >= 199309L
   struct timespec sp;
 
   sp.tv_sec = microseconds / 1000000;

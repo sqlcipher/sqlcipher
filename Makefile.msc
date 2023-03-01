@@ -1420,20 +1420,6 @@ SRC05 = \
   $(TOP)\src\wal.h \
   $(TOP)\src\whereInt.h
 
-# Extension source code files, part 1.
-#
-SRC06 = \
-  $(TOP)\ext\fts1\fts1.c \
-  $(TOP)\ext\fts1\fts1_hash.c \
-  $(TOP)\ext\fts1\fts1_porter.c \
-  $(TOP)\ext\fts1\fts1_tokenizer1.c \
-  $(TOP)\ext\fts2\fts2.c \
-  $(TOP)\ext\fts2\fts2_hash.c \
-  $(TOP)\ext\fts2\fts2_icu.c \
-  $(TOP)\ext\fts2\fts2_porter.c \
-  $(TOP)\ext\fts2\fts2_tokenizer.c \
-  $(TOP)\ext\fts2\fts2_tokenizer1.c
-
 # Extension source code files, part 2.
 #
 SRC07 = \
@@ -1455,16 +1441,6 @@ SRC07 = \
   $(TOP)\ext\session\sqlite3session.c \
   $(TOP)\ext\rbu\sqlite3rbu.c \
   $(TOP)\ext\misc\stmt.c
-
-# Extension header files, part 1.
-#
-SRC08 = \
-  $(TOP)\ext\fts1\fts1.h \
-  $(TOP)\ext\fts1\fts1_hash.h \
-  $(TOP)\ext\fts1\fts1_tokenizer.h \
-  $(TOP)\ext\fts2\fts2.h \
-  $(TOP)\ext\fts2\fts2_hash.h \
-  $(TOP)\ext\fts2\fts2_tokenizer.h
 
 # Extension header files, part 2.
 #
@@ -1506,7 +1482,7 @@ SRC12 =
 
 # All source code files.
 #
-SRC = $(SRC00) $(SRC01) $(SRC03) $(SRC04) $(SRC05) $(SRC06) $(SRC07) $(SRC08) $(SRC09) $(SRC10) $(SRC11) $(SRC12)
+SRC = $(SRC00) $(SRC01) $(SRC03) $(SRC04) $(SRC05) $(SRC07) $(SRC09) $(SRC10) $(SRC11) $(SRC12)
 
 # Source code to the test files.
 #
@@ -1517,7 +1493,6 @@ TESTSRC = \
   $(TOP)\src\test4.c \
   $(TOP)\src\test5.c \
   $(TOP)\src\test6.c \
-  $(TOP)\src\test7.c \
   $(TOP)\src\test8.c \
   $(TOP)\src\test9.c \
   $(TOP)\src\test_autoext.c \
@@ -1546,7 +1521,6 @@ TESTSRC = \
   $(TOP)\src\test_quota.c \
   $(TOP)\src\test_rtree.c \
   $(TOP)\src\test_schema.c \
-  $(TOP)\src\test_server.c \
   $(TOP)\src\test_superlock.c \
   $(TOP)\src\test_syscall.c \
   $(TOP)\src\test_tclsh.c \
@@ -1569,6 +1543,7 @@ TESTEXT = \
   $(TOP)\ext\expert\test_expert.c \
   $(TOP)\ext\misc\amatch.c \
   $(TOP)\ext\misc\appendvfs.c \
+  $(TOP)\ext\misc\basexx.c \
   $(TOP)\ext\misc\carray.c \
   $(TOP)\ext\misc\cksumvfs.c \
   $(TOP)\ext\misc\closure.c \
@@ -1613,7 +1588,6 @@ TESTEXT = $(TESTEXT) $(TOP)\ext\misc\zipfile.c
 TESTSRC2 = \
   $(SRC00) \
   $(SRC01) \
-  $(SRC06) \
   $(SRC07) \
   $(SRC10) \
   $(TOP)\ext\async\sqlite3async.c
@@ -1648,14 +1622,6 @@ HDR = \
 
 # Header files used by extensions
 #
-EXTHDR = $(EXTHDR) \
-  $(TOP)\ext\fts1\fts1.h \
-  $(TOP)\ext\fts1\fts1_hash.h \
-  $(TOP)\ext\fts1\fts1_tokenizer.h
-EXTHDR = $(EXTHDR) \
-  $(TOP)\ext\fts2\fts2.h \
-  $(TOP)\ext\fts2\fts2_hash.h \
-  $(TOP)\ext\fts2\fts2_tokenizer.h
 EXTHDR = $(EXTHDR) \
   $(TOP)\ext\fts3\fts3.h \
   $(TOP)\ext\fts3\fts3Int.h \
@@ -1699,6 +1665,7 @@ FUZZDATA = \
 # when the shell is not being dynamically linked.
 #
 !IF $(DYNAMIC_SHELL)==0 && $(FOR_WIN10)==0
+SHELL_COMPILE_OPTS = $(SHELL_COMPILE_OPTS) -DSQLITE_DQS=0
 SHELL_COMPILE_OPTS = $(SHELL_COMPILE_OPTS) -DSQLITE_ENABLE_FTS4=1
 SHELL_COMPILE_OPTS = $(SHELL_COMPILE_OPTS) -DSQLITE_ENABLE_EXPLAIN_COMMENTS=1
 SHELL_COMPILE_OPTS = $(SHELL_COMPILE_OPTS) -DSQLITE_ENABLE_OFFSET_SQL_FUNC=1
@@ -1867,9 +1834,7 @@ mptest:	mptester.exe
 	for %i in ($(SRC03)) do copy /Y %i tsrc
 	for %i in ($(SRC04)) do copy /Y %i tsrc
 	for %i in ($(SRC05)) do copy /Y %i tsrc
-	for %i in ($(SRC06)) do copy /Y %i tsrc
 	for %i in ($(SRC07)) do copy /Y %i tsrc
-	for %i in ($(SRC08)) do copy /Y %i tsrc
 	for %i in ($(SRC09)) do copy /Y %i tsrc
 	for %i in ($(SRC10)) do copy /Y %i tsrc
 	for %i in ($(SRC11)) do copy /Y %i tsrc
@@ -2239,6 +2204,8 @@ SHELL_SRC = \
 	$(TOP)\src\shell.c.in \
 	$(TOP)\ext\misc\appendvfs.c \
 	$(TOP)\ext\misc\completion.c \
+        $(TOP)\ext\misc\base64.c \
+        $(TOP)\ext\misc\base85.c \
 	$(TOP)\ext\misc\decimal.c \
 	$(TOP)\ext\misc\fileio.c \
 	$(TOP)\ext\misc\ieee754.c \
@@ -2271,24 +2238,6 @@ zlib:
 #
 icu.lo:	$(TOP)\ext\icu\icu.c $(HDR) $(EXTHDR)
 	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\icu\icu.c
-
-fts2.lo:	$(TOP)\ext\fts2\fts2.c $(HDR) $(EXTHDR)
-	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\fts2\fts2.c
-
-fts2_hash.lo:	$(TOP)\ext\fts2\fts2_hash.c $(HDR) $(EXTHDR)
-	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\fts2\fts2_hash.c
-
-fts2_icu.lo:	$(TOP)\ext\fts2\fts2_icu.c $(HDR) $(EXTHDR)
-	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\fts2\fts2_icu.c
-
-fts2_porter.lo:	$(TOP)\ext\fts2\fts2_porter.c $(HDR) $(EXTHDR)
-	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\fts2\fts2_porter.c
-
-fts2_tokenizer.lo:	$(TOP)\ext\fts2\fts2_tokenizer.c $(HDR) $(EXTHDR)
-	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\fts2\fts2_tokenizer.c
-
-fts2_tokenizer1.lo:	$(TOP)\ext\fts2\fts2_tokenizer1.c $(HDR) $(EXTHDR)
-	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\fts2\fts2_tokenizer1.c
 
 fts3.lo:	$(TOP)\ext\fts3\fts3.c $(HDR) $(EXTHDR)
 	$(LTCOMPILE) $(CORE_COMPILE_OPTS) $(NO_WARN) -DSQLITE_CORE -c $(TOP)\ext\fts3\fts3.c
@@ -2508,6 +2457,16 @@ tcltest: testfixture.exe
 # concurrently.
 testrunner:	testfixture.exe
 	.\testfixture.exe $(TOP)\test\testrunner.tcl
+
+# Runs both fuzztest and testrunner, consecutively.
+#
+devtest:	testfixture.exe fuzztest testrunner
+
+# Testing for a release
+#
+releasetest: testfixture.exe fuzztest
+	testfixture.exe $(TOP)/test/testrunner.tcl release
+
 
 smoketest:	$(TESTPROGS)
 	@set PATH=$(LIBTCLPATH);$(PATH)
