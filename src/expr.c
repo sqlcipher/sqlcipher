@@ -278,11 +278,10 @@ CollSeq *sqlite3ExprCollSeq(Parse *pParse, const Expr *pExpr){
       }else{
         Expr *pNext  = p->pRight;
         /* The Expr.x union is never used at the same time as Expr.pRight */
-        assert( ExprUseXList(p) );
-        assert( p->x.pList==0 || p->pRight==0 );
-        if( p->x.pList!=0 && !db->mallocFailed ){
+        assert( !ExprUseXList(p) || p->x.pList==0 || p->pRight==0 );
+        if( ExprUseXList(p) && p->x.pList!=0 && !db->mallocFailed ){
           int i;
-          for(i=0; ALWAYS(i<p->x.pList->nExpr); i++){
+          for(i=0; i<p->x.pList->nExpr; i++){
             if( ExprHasProperty(p->x.pList->a[i].pExpr, EP_Collate) ){
               pNext = p->x.pList->a[i].pExpr;
               break;
@@ -1114,9 +1113,9 @@ Select *sqlite3ExprListToValues(Parse *pParse, int nElem, ExprList *pEList){
 ** Join two expressions using an AND operator.  If either expression is
 ** NULL, then just return the other expression.
 **
-** If one side or the other of the AND is known to be false, then instead
-** of returning an AND expression, just return a constant expression with
-** a value of false.
+** If one side or the other of the AND is known to be false, and neither side
+** is part of an ON clause, then instead of returning an AND expression,
+** just return a constant expression with a value of false.
 */
 Expr *sqlite3ExprAnd(Parse *pParse, Expr *pLeft, Expr *pRight){
   sqlite3 *db = pParse->db;
@@ -1124,14 +1123,17 @@ Expr *sqlite3ExprAnd(Parse *pParse, Expr *pLeft, Expr *pRight){
     return pRight;
   }else if( pRight==0 ){
     return pLeft;
-  }else if( (ExprAlwaysFalse(pLeft) || ExprAlwaysFalse(pRight)) 
-         && !IN_RENAME_OBJECT
-  ){
-    sqlite3ExprDeferredDelete(pParse, pLeft);
-    sqlite3ExprDeferredDelete(pParse, pRight);
-    return sqlite3Expr(db, TK_INTEGER, "0");
   }else{
-    return sqlite3PExpr(pParse, TK_AND, pLeft, pRight);
+    u32 f = pLeft->flags | pRight->flags;
+    if( (f&(EP_OuterON|EP_InnerON|EP_IsFalse))==EP_IsFalse 
+     && !IN_RENAME_OBJECT
+    ){
+      sqlite3ExprDeferredDelete(pParse, pLeft);
+      sqlite3ExprDeferredDelete(pParse, pRight);
+      return sqlite3Expr(db, TK_INTEGER, "0");
+    }else{
+      return sqlite3PExpr(pParse, TK_AND, pLeft, pRight);
+    }
   }
 }
 
@@ -2376,12 +2378,17 @@ int sqlite3ExprIsTableConstant(Expr *p, int iCur){
 }
 
 /*
-** Check pExpr to see if it is an invariant constraint on data source pSrc.
+** Check pExpr to see if it is an constraint on the single data source
+** pSrc = &pSrcList->a[iSrc].  In other words, check to see if pExpr
+** constrains pSrc but does not depend on any other tables or data
+** sources anywhere else in the query.  Return true (non-zero) if pExpr
+** is a constraint on pSrc only.
+**
 ** This is an optimization.  False negatives will perhaps cause slower
 ** queries, but false positives will yield incorrect answers.  So when in
 ** doubt, return 0.
 **
-** To be an invariant constraint, the following must be true:
+** To be an single-source constraint, the following must be true:
 **
 **   (1)  pExpr cannot refer to any table other than pSrc->iCursor.
 **
@@ -2392,13 +2399,31 @@ int sqlite3ExprIsTableConstant(Expr *p, int iCur){
 **
 **   (4)  If pSrc is the right operand of a LEFT JOIN, then...
 **         (4a)  pExpr must come from an ON clause..
-           (4b)  and specifically the ON clause associated with the LEFT JOIN.
+**         (4b)  and specifically the ON clause associated with the LEFT JOIN.
 **
 **   (5)  If pSrc is not the right operand of a LEFT JOIN or the left
 **        operand of a RIGHT JOIN, then pExpr must be from the WHERE
 **        clause, not an ON clause.
+**
+**   (6) Either:
+**
+**       (6a) pExpr does not originate in an ON or USING clause, or
+**
+**       (6b) The ON or USING clause from which pExpr is derived is
+**            not to the left of a RIGHT JOIN (or FULL JOIN).
+**
+**       Without this restriction, accepting pExpr as a single-table
+**       constraint might move the the ON/USING filter expression
+**       from the left side of a RIGHT JOIN over to the right side,
+**       which leads to incorrect answers.  See also restriction (9)
+**       on push-down.
 */
-int sqlite3ExprIsTableConstraint(Expr *pExpr, const SrcItem *pSrc){
+int sqlite3ExprIsSingleTableConstraint(
+  Expr *pExpr,                 /* The constraint */
+  const SrcList *pSrcList,     /* Complete FROM clause */
+  int iSrc                     /* Which element of pSrcList to use */
+){
+  const SrcItem *pSrc = &pSrcList->a[iSrc];
   if( pSrc->fg.jointype & JT_LTORJ ){
     return 0;  /* rule (3) */
   }
@@ -2407,6 +2432,19 @@ int sqlite3ExprIsTableConstraint(Expr *pExpr, const SrcItem *pSrc){
     if( pExpr->w.iJoin!=pSrc->iCursor ) return 0;         /* rule (4b) */
   }else{
     if( ExprHasProperty(pExpr, EP_OuterON) ) return 0;    /* rule (5) */
+  }
+  if( ExprHasProperty(pExpr, EP_OuterON|EP_InnerON)  /* (6a) */
+   && (pSrcList->a[0].fg.jointype & JT_LTORJ)!=0     /* Fast pre-test of (6b) */
+  ){
+    int jj;
+    for(jj=0; jj<iSrc; jj++){
+      if( pExpr->w.iJoin==pSrcList->a[jj].iCursor ){
+        if( (pSrcList->a[jj].fg.jointype & JT_LTORJ)!=0 ){
+          return 0;  /* restriction (6) */
+        }
+        break;
+      }
+    }
   }
   return sqlite3ExprIsTableConstant(pExpr, pSrc->iCursor); /* rules (1), (2) */
 }
@@ -2650,7 +2688,7 @@ int sqlite3IsRowid(const char *z){
 ** pX is the RHS of an IN operator.  If pX is a SELECT statement 
 ** that can be simplified to a direct table access, then return
 ** a pointer to the SELECT statement.  If pX is not a SELECT statement,
-** or if the SELECT statement needs to be manifested into a transient
+** or if the SELECT statement needs to be materialized into a transient
 ** table, then return NULL.
 */
 #ifndef SQLITE_OMIT_SUBQUERY
@@ -2936,7 +2974,6 @@ int sqlite3FindInIndex(
             CollSeq *pReq = sqlite3BinaryCompareCollSeq(pParse, pLhs, pRhs);
             int j;
   
-            assert( pReq!=0 || pRhs->iColumn==XN_ROWID || pParse->nErr );
             for(j=0; j<nExpr; j++){
               if( pIdx->aiColumn[j]!=pRhs->iColumn ) continue;
               assert( pIdx->azColl[j] );
@@ -3842,7 +3879,7 @@ void sqlite3ExprCodeGeneratedColumn(
   int nErr = pParse->nErr;
   assert( v!=0 );
   assert( pParse->iSelfTab!=0 );
-  if( pParse->iSelfTab>0 ){
+  if( pParse->iSelfTab>0 ){
     iAddr = sqlite3VdbeAddOp3(v, OP_IfNullRow, pParse->iSelfTab-1, 0, regOut);
   }else{
     iAddr = 0;
@@ -4222,7 +4259,19 @@ expr_code_doover:
       AggInfo *pAggInfo = pExpr->pAggInfo;
       struct AggInfo_col *pCol;
       assert( pAggInfo!=0 );
-      assert( pExpr->iAgg>=0 && pExpr->iAgg<pAggInfo->nColumn );
+      assert( pExpr->iAgg>=0 );
+      if( pExpr->iAgg>=pAggInfo->nColumn ){
+        /* Happens when the left table of a RIGHT JOIN is null and
+        ** is using an expression index */
+        sqlite3VdbeAddOp2(v, OP_Null, 0, target);
+#ifdef SQLITE_VDBE_COVERAGE
+        /* Verify that the OP_Null above is exercised by tests
+        ** tag-20230325-2 */
+        sqlite3VdbeAddOp2(v, OP_NotNull, target, 1);
+        VdbeCoverageNeverTaken(v);
+#endif
+        break;
+      }
       pCol = &pAggInfo->aCol[pExpr->iAgg];
       if( !pAggInfo->directMode ){
         return AggInfoColumnReg(pAggInfo, pExpr->iAgg);
@@ -4397,11 +4446,8 @@ expr_code_doover:
 #ifndef SQLITE_OMIT_CAST
     case TK_CAST: {
       /* Expressions of the form:   CAST(pLeft AS token) */
-      inReg = sqlite3ExprCodeTarget(pParse, pExpr->pLeft, target);
-      if( inReg!=target ){
-        sqlite3VdbeAddOp2(v, OP_SCopy, inReg, target);
-        inReg = target;
-      }
+      sqlite3ExprCode(pParse, pExpr->pLeft, target);
+      assert( inReg==target );
       assert( !ExprHasProperty(pExpr, EP_IntValue) );
       sqlite3VdbeAddOp2(v, OP_Cast, target,
                         sqlite3AffinityType(pExpr->u.zToken, 0));
@@ -4740,13 +4786,9 @@ expr_code_doover:
         ** Clear subtypes as subtypes may not cross a subquery boundary.
         */
         assert( pExpr->pLeft );
-        inReg = sqlite3ExprCodeTarget(pParse, pExpr->pLeft, target);
-        if( inReg!=target ){
-          sqlite3VdbeAddOp2(v, OP_SCopy, inReg, target);
-          inReg = target;
-        }
-        sqlite3VdbeAddOp1(v, OP_ClrSubtype, inReg);
-        return inReg;
+        sqlite3ExprCode(pParse, pExpr->pLeft, target);
+        sqlite3VdbeAddOp1(v, OP_ClrSubtype, target);
+        return target;
       }else{
         pExpr = pExpr->pLeft;
         goto expr_code_doover; /* 2018-04-28: Prevent deep recursion. */
@@ -4856,12 +4898,9 @@ expr_code_doover:
       **        "target" and not someplace else.
       */
       pParse->okConstFactor = 0;   /* note (1) above */
-      inReg = sqlite3ExprCodeTarget(pParse, pExpr->pLeft, target);
+      sqlite3ExprCode(pParse, pExpr->pLeft, target);
+      assert( target==inReg );
       pParse->okConstFactor = okConstFactor;
-      if( inReg!=target ){         /* note (2) above */
-        sqlite3VdbeAddOp2(v, OP_SCopy, inReg, target);
-        inReg = target;
-      }
       sqlite3VdbeJumpHere(v, addrINR);
       break;
     }
@@ -5099,7 +5138,9 @@ void sqlite3ExprCode(Parse *pParse, Expr *pExpr, int target){
   inReg = sqlite3ExprCodeTarget(pParse, pExpr, target);
   if( inReg!=target ){
     u8 op;
-    if( ALWAYS(pExpr) && ExprHasProperty(pExpr,EP_Subquery) ){
+    if( ALWAYS(pExpr)
+     && (ExprHasProperty(pExpr,EP_Subquery) || pExpr->op==TK_REGISTER)
+    ){
       op = OP_Copy;
     }else{
       op = OP_SCopy;
@@ -6284,9 +6325,11 @@ static int agginfoPersistExprCb(Walker *pWalker, Expr *pExpr){
     int iAgg = pExpr->iAgg;
     Parse *pParse = pWalker->pParse;
     sqlite3 *db = pParse->db;
+    assert( iAgg>=0 );
     if( pExpr->op!=TK_AGG_FUNCTION ){
-      assert( iAgg>=0 && iAgg<pAggInfo->nColumn );
-      if( pAggInfo->aCol[iAgg].pCExpr==pExpr ){
+      if( iAgg<pAggInfo->nColumn
+       && pAggInfo->aCol[iAgg].pCExpr==pExpr
+      ){
         pExpr = sqlite3ExprDup(db, pExpr, 0);
         if( pExpr ){
           pAggInfo->aCol[iAgg].pCExpr = pExpr;
@@ -6295,8 +6338,9 @@ static int agginfoPersistExprCb(Walker *pWalker, Expr *pExpr){
       }
     }else{
       assert( pExpr->op==TK_AGG_FUNCTION );
-      assert( iAgg>=0 && iAgg<pAggInfo->nFunc );
-      if( pAggInfo->aFunc[iAgg].pFExpr==pExpr ){
+      if( ALWAYS(iAgg<pAggInfo->nFunc)
+       && pAggInfo->aFunc[iAgg].pFExpr==pExpr
+      ){
         pExpr = sqlite3ExprDup(db, pExpr, 0);
         if( pExpr ){
           pAggInfo->aFunc[iAgg].pFExpr = pExpr;
@@ -6446,7 +6490,12 @@ static int analyzeAggregate(Walker *pWalker, Expr *pExpr){
       }
       if( pIEpr==0 ) break;
       if( NEVER(!ExprUseYTab(pExpr)) ) break;
-      if( pExpr->pAggInfo!=0 ) break; /* Already resolved by outer context */
+      for(i=0; i<pSrcList->nSrc; i++){
+         if( pSrcList->a[0].iCursor==pIEpr->iDataCur ) break;
+      }
+      if( i>=pSrcList->nSrc ) break;
+      if( NEVER(pExpr->pAggInfo!=0) ) break; /* Resolved by outer context */
+      if( pParse->nErr ){ return WRC_Abort; }
 
       /* If we reach this point, it means that expression pExpr can be
       ** translated into a reference to an index column as described by
@@ -6457,6 +6506,9 @@ static int analyzeAggregate(Walker *pWalker, Expr *pExpr){
       tmp.iTable = pIEpr->iIdxCur;
       tmp.iColumn = pIEpr->iIdxCol;
       findOrCreateAggInfoColumn(pParse, pAggInfo, &tmp);
+      if( pParse->nErr ){ return WRC_Abort; }
+      assert( pAggInfo->aCol!=0 );
+      assert( tmp.iAgg<pAggInfo->nColumn );
       pAggInfo->aCol[tmp.iAgg].pCExpr = pExpr;
       pExpr->pAggInfo = pAggInfo;
       pExpr->iAgg = tmp.iAgg;
@@ -6480,7 +6532,7 @@ static int analyzeAggregate(Walker *pWalker, Expr *pExpr){
           } /* endif pExpr->iTable==pItem->iCursor */
         } /* end loop over pSrcList */
       }
-      return WRC_Prune;
+      return WRC_Continue;
     }
     case TK_AGG_FUNCTION: {
       if( (pNC->ncFlags & NC_InAggFunc)==0
@@ -6634,6 +6686,37 @@ void sqlite3ClearTempRegCache(Parse *pParse){
 }
 
 /*
+** Make sure sufficient registers have been allocated so that
+** iReg is a valid register number.
+*/
+void sqlite3TouchRegister(Parse *pParse, int iReg){
+  if( pParse->nMem<iReg ) pParse->nMem = iReg;
+}
+
+#if defined(SQLITE_ENABLE_STAT4) || defined(SQLITE_DEBUG)
+/*
+** Return the latest reusable register in the set of all registers.
+** The value returned is no less than iMin.  If any register iMin or
+** greater is in permanent use, then return one more than that last
+** permanent register.
+*/
+int sqlite3FirstAvailableRegister(Parse *pParse, int iMin){
+  const ExprList *pList = pParse->pConstExpr;
+  if( pList ){
+    int i;
+    for(i=0; i<pList->nExpr; i++){
+      if( pList->a[i].u.iConstExprReg>=iMin ){
+        iMin = pList->a[i].u.iConstExprReg + 1;
+      }
+    }
+  }
+  pParse->nTempReg = 0;
+  pParse->nRangeReg = 0;
+  return iMin;
+}
+#endif /* SQLITE_ENABLE_STAT4 || SQLITE_DEBUG */
+
+/*
 ** Validate that no temporary register falls within the range of
 ** iFirst..iLast, inclusive.  This routine is only call from within assert()
 ** statements.
@@ -6650,6 +6733,14 @@ int sqlite3NoTempsInRange(Parse *pParse, int iFirst, int iLast){
   for(i=0; i<pParse->nTempReg; i++){
     if( pParse->aTempReg[i]>=iFirst && pParse->aTempReg[i]<=iLast ){
       return 0;
+    }
+  }
+  if( pParse->pConstExpr ){
+    ExprList *pList = pParse->pConstExpr;
+    for(i=0; i<pList->nExpr; i++){
+      int iReg = pList->a[i].u.iConstExprReg;
+      if( iReg==0 ) continue;
+      if( iReg>=iFirst && iReg<=iLast ) return 0;
     }
   }
   return 1;

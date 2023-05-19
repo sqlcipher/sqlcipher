@@ -683,7 +683,10 @@ static u64 filterHash(const Mem *aMem, const Op *pOp){
     }else if( p->flags & MEM_Real ){
       h += sqlite3VdbeIntValue(p);
     }else if( p->flags & (MEM_Str|MEM_Blob) ){
-      /* no-op */
+      /* All strings have the same hash and all blobs have the same hash,
+      ** though, at least, those hashes are different from each other and
+      ** from NULL. */
+      h += 4093 + (p->flags & (MEM_Str|MEM_Blob));
     }
   }
   return h;
@@ -733,6 +736,7 @@ int sqlite3VdbeExec(
   Mem *pOut = 0;             /* Output operand */
 #if defined(SQLITE_ENABLE_STMT_SCANSTATUS) || defined(VDBE_PROFILE)
   u64 *pnCycle = 0;
+  int bStmtScanStatus = IS_STMT_SCANSTATUS(db)!=0;
 #endif
   /*** INSERT STACK UNION HERE ***/
 
@@ -797,13 +801,17 @@ int sqlite3VdbeExec(
 
     assert( pOp>=aOp && pOp<&aOp[p->nOp]);
     nVmStep++;
-#if defined(SQLITE_ENABLE_STMT_SCANSTATUS) || defined(VDBE_PROFILE)
+
+#if defined(VDBE_PROFILE)
     pOp->nExec++;
     pnCycle = &pOp->nCycle;
-# ifdef VDBE_PROFILE
-    if( sqlite3NProfileCnt==0 )
-# endif
+    if( sqlite3NProfileCnt==0 ) *pnCycle -= sqlite3Hwtime();
+#elif defined(SQLITE_ENABLE_STMT_SCANSTATUS)
+    if( bStmtScanStatus ){
+      pOp->nExec++;
+      pnCycle = &pOp->nCycle;
       *pnCycle -= sqlite3Hwtime();
+    }
 #endif
 
     /* Only allow tracing if SQLITE_DEBUG is defined.
@@ -2391,7 +2399,7 @@ case OP_Compare: {
 /* Opcode: Jump P1 P2 P3 * *
 **
 ** Jump to the instruction at address P1, P2, or P3 depending on whether
-** in the most recent OP_Compare instruction the P1 vector was less than
+** in the most recent OP_Compare instruction the P1 vector was less than,
 ** equal to, or greater than the P2 vector, respectively.
 **
 ** This opcode must immediately follow an OP_Compare opcode.
@@ -2618,6 +2626,12 @@ case OP_IsNull: {            /* same as TK_ISNULL, jump, in1 */
 ** (0x01) bit. SQLITE_FLOAT is the 0x02 bit. SQLITE_TEXT is 0x04.
 ** SQLITE_BLOB is 0x08.  SQLITE_NULL is 0x10.
 **
+** WARNING: This opcode does not reliably distinguish between NULL and REAL
+** when P1>=0.  If the database contains a NaN value, this opcode will think
+** that the datatype is REAL when it should be NULL.  When P1<0 and the value
+** is already stored in register P3, then this opcode does reliably
+** distinguish between NULL and REAL.  The problem only arises then P1>=0.
+**
 ** Take the jump to address P2 if and only if the datatype of the
 ** value determined by P1 and P3 corresponds to one of the bits in the
 ** P5 bitmask.
@@ -2731,7 +2745,7 @@ case OP_IfNullRow: {         /* jump */
   VdbeCursor *pC;
   assert( pOp->p1>=0 && pOp->p1<p->nCursor );
   pC = p->apCsr[pOp->p1];
-  if( ALWAYS(pC) && pC->nullRow ){
+  if( pC && pC->nullRow ){
     sqlite3VdbeMemSetNull(aMem + pOp->p3);
     goto jump_to_p2;
   }
@@ -3226,7 +3240,7 @@ case OP_Affinity: {
       }else{
         pIn1->u.r = (double)pIn1->u.i;
         pIn1->flags |= MEM_Real;
-        pIn1->flags &= ~MEM_Int;
+        pIn1->flags &= ~(MEM_Int|MEM_Str);
       }
     }
     REGISTER_TRACE((int)(pIn1-aMem), pIn1);
@@ -4965,6 +4979,7 @@ case OP_SeekScan: {          /* ncycle */
       break;
     }
     nStep--;
+    pC->cacheStatus = CACHE_STALE;
     rc = sqlite3BtreeNext(pC->uc.pCursor, 0);
     if( rc ){
       if( rc==SQLITE_DONE ){
@@ -7617,6 +7632,7 @@ case OP_AggFinal: {
   }
   sqlite3VdbeChangeEncoding(pMem, encoding);
   UPDATE_MAX_BLOBSIZE(pMem);
+  REGISTER_TRACE((int)(pMem-aMem), pMem);
   break;
 }
 
@@ -8755,8 +8771,10 @@ default: {          /* This is really OP_Noop, OP_Explain */
     *pnCycle += sqlite3NProfileCnt ? sqlite3NProfileCnt : sqlite3Hwtime();
     pnCycle = 0;
 #elif defined(SQLITE_ENABLE_STMT_SCANSTATUS)
-    *pnCycle += sqlite3Hwtime();
-    pnCycle = 0;
+    if( pnCycle ){
+      *pnCycle += sqlite3Hwtime();
+      pnCycle = 0;
+    }
 #endif
 
     /* The following code adds nothing to the actual functionality

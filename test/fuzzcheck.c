@@ -1001,12 +1001,14 @@ static int recoverSqlCb(void *pCtx, const char *zSql){
 */
 static int recoverDatabase(sqlite3 *db){
   int rc;                                 /* Return code from this routine */
+  const char *zRecoveryDb = "";           /* Name of "recovery" database */
   const char *zLAF = "lost_and_found";    /* Name of "lost_and_found" table */
   int bFreelist = 1;                      /* True to scan the freelist */
   int bRowids = 1;                        /* True to restore ROWID values */
-  sqlite3_recover *p;                     /* The recovery object */
+  sqlite3_recover *p = 0;                 /* The recovery object */
 
   p = sqlite3_recover_init_sql(db, "main", recoverSqlCb, 0);
+  sqlite3_recover_config(p, 789, (void*)zRecoveryDb);
   sqlite3_recover_config(p, SQLITE_RECOVER_LOST_AND_FOUND, (void*)zLAF);
   sqlite3_recover_config(p, SQLITE_RECOVER_ROWIDS, (void*)&bRowids);
   sqlite3_recover_config(p, SQLITE_RECOVER_FREELIST_CORRUPT,(void*)&bFreelist);
@@ -1038,7 +1040,7 @@ static int runDbSql(sqlite3 *db, const char *zSql, unsigned int *pBtsFlags){
     printf("RUNNING-SQL: [%s]\n", zSql);
     fflush(stdout);
   }
-  (*pBtsFlags) &= ~BTS_BADPRAGMA;
+  (*pBtsFlags) &= BTS_BADPRAGMA;
   rc = sqlite3_prepare_v2(db, zSql, -1, &pStmt, 0);
   if( rc==SQLITE_OK ){
     int nRow = 0;
@@ -1181,6 +1183,7 @@ int runCombinedDbSqlInput(
     sqlite3_free(aDb);
     return 1;
   }
+  sqlite3_db_config(cx.db, SQLITE_DBCONFIG_STMT_SCANSTATUS, 1, 0);
   if( bVdbeDebug ){
     sqlite3_exec(cx.db, "PRAGMA vdbe_debug=ON", 0, 0, 0);
   }
@@ -1768,6 +1771,8 @@ static void showHelp(void){
 "  --timeout N          Maximum time for any one test in N millseconds\n"
 "  -v|--verbose         Increased output.  Repeat for more output.\n"
 "  --vdbe-debug         Activate VDBE debugging.\n"
+"  --wait N             Wait N seconds before continuing - useful for\n"
+"                          attaching an MSVC debugging.\n"
   );
 }
 
@@ -1979,6 +1984,22 @@ int main(int argc, char **argv){
           printf("%s\n", zz);
         }
         return 0;
+      }else
+      if( strcmp(z,"wait")==0 ){
+        int iDelay;
+        if( i>=argc-1 ) fatalError("missing arguments on %s", argv[i]);
+        iDelay = integerValue(argv[++i]);
+        printf("Waiting %d seconds:", iDelay);
+        fflush(stdout);
+        while( 1 /*exit-by-break*/ ){
+          sqlite3_sleep(1000);
+          iDelay--;
+          if( iDelay<=0 ) break;
+          printf(" %d", iDelay);
+          fflush(stdout);
+        }
+        printf("\n");
+        fflush(stdout);
       }else
       if( strcmp(z,"is-dbsql")==0 ){
         i++;

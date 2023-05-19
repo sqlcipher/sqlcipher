@@ -133,6 +133,17 @@ do_execsql_test 3.3 {
   CREATE VIEW v1(y) AS SELECT DISTINCT x FROM t1;
   SELECT count(*) FROM t1, v1 WHERE x='b ';
 } 3
+do_eqp_test 3.4 {
+  SELECT count(*) FROM t1, v1 WHERE x='b ';
+} {
+  QUERY PLAN
+  |--CO-ROUTINE v1
+  |  |--SCAN t1
+  |  `--USE TEMP B-TREE FOR DISTINCT
+  |--SCAN v1
+  |--BLOOM FILTER ON t1 (x=?)
+  `--SEARCH t1 USING AUTOMATIC PARTIAL COVERING INDEX (x=?)
+}
 
 # 2023-03-14 
 # https://sqlite.org/forum/forumpost/d47a0e8e3a
@@ -173,4 +184,5 @@ do_execsql_test 4.4 {
   SELECT * FROM t0 LEFT JOIN t1 LEFT JOIN t2 ON (b NOTNULL)==(c IN ()) WHERE c;
 } {xyz {} 7.0}
  
+
 finish_test
