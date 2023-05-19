@@ -717,7 +717,7 @@ static void pushOntoSorter(
   **   (2) All output columns are included in the sort record.  In that
   **       case regData==regOrigData.
   **   (3) Some output columns are omitted from the sort record due to
-  **       the SQLITE_ENABLE_SORTER_REFERENCE optimization, or due to the
+  **       the SQLITE_ENABLE_SORTER_REFERENCES optimization, or due to the
   **       SQLITE_ECEL_OMITREF optimization, or due to the 
   **       SortCtx.pDeferredRowLoad optimiation.  In any of these cases
   **       regOrigData is 0 to prevent this routine from trying to copy
@@ -2318,7 +2318,7 @@ void sqlite3SubqueryColumnTypes(
   assert( (pSelect->selFlags & SF_Resolved)!=0 );
   assert( pTab->nCol==pSelect->pEList->nExpr || pParse->nErr>0 );
   assert( aff==SQLITE_AFF_NONE || aff==SQLITE_AFF_BLOB );
-  if( db->mallocFailed ) return;
+  if( db->mallocFailed || IN_RENAME_OBJECT ) return;
   while( pSelect->pPrior ) pSelect = pSelect->pPrior;
   a = pSelect->pEList->a;
   memset(&sNC, 0, sizeof(sNC));
@@ -2363,18 +2363,16 @@ void sqlite3SubqueryColumnTypes(
             break;
           }
         }
-       }
-     }
-     if( zType ){
-       i64 m = sqlite3Strlen30(zType);
-       n = sqlite3Strlen30(pCol->zCnName);
-       pCol->zCnName = sqlite3DbReallocOrFree(db, pCol->zCnName, n+m+2);
-       if( pCol->zCnName ){
-         memcpy(&pCol->zCnName[n+1], zType, m+1);
-         pCol->colFlags |= COLFLAG_HASTYPE;
-       }else{
-         testcase( pCol->colFlags & COLFLAG_HASTYPE );
-        pCol->colFlags &= ~(COLFLAG_HASTYPE|COLFLAG_HASCOLL);
+      }
+    }
+    if( zType ){
+      i64 m = sqlite3Strlen30(zType);
+      n = sqlite3Strlen30(pCol->zCnName);
+      pCol->zCnName = sqlite3DbReallocOrFree(db, pCol->zCnName, n+m+2);
+      pCol->colFlags &= ~(COLFLAG_HASTYPE|COLFLAG_HASCOLL);
+      if( pCol->zCnName ){
+        memcpy(&pCol->zCnName[n+1], zType, m+1);
+        pCol->colFlags |= COLFLAG_HASTYPE;
       }
     }
     pColl = sqlite3ExprCollSeq(pParse, p);
@@ -4241,8 +4239,7 @@ static int compoundHasDifferentAffinities(Select *p){
 **              query or there are no RIGHT or FULL JOINs in any arm
 **              of the subquery.  (This is a duplicate of condition (27b).)
 **        (17h) The corresponding result set expressions in all arms of the
-**              compound must have the same affinity. (See restriction (9)
-**              on the push-down optimization.)
+**              compound must have the same affinity.
 **
 **        The parent and sub-query may contain WHERE clauses. Subject to
 **        rules (11), (13) and (14), they may also contain ORDER BY,
@@ -5110,10 +5107,24 @@ static int pushDownWindowCheck(Parse *pParse, Select *pSubq, Expr *pExpr){
 **       or EXCEPT, then all of the result set columns for all arms of
 **       the compound must use the BINARY collating sequence.
 **
-**   (9) If the subquery is a compound, then all arms of the compound must
-**       have the same affinity.  (This is the same as restriction (17h)
-**       for query flattening.)
-**       
+**   (9) All three of the following are true:
+**
+**       (9a) The WHERE clause expression originates in the ON or USING clause
+**            of a join (either an INNER or an OUTER join), and
+**
+**       (9b) The subquery is to the right of the ON/USING clause
+**
+**       (9c) There is a RIGHT JOIN (or FULL JOIN) in between the ON/USING
+**            clause and the subquery.
+**
+**       Without this restriction, the push-down optimization might move
+**       the ON/USING filter expression from the left side of a RIGHT JOIN
+**       over to the right side, which leads to incorrect answers.  See
+**       also restriction (6) in sqlite3ExprIsSingleTableConstraint().
+**
+**  (10) The inner query is not the right-hand table of a RIGHT JOIN.
+**
+**  (11) The subquery is not a VALUES clause
 **
 ** Return 0 if no changes are made and non-zero if one or more WHERE clause
 ** terms are duplicated into the subquery.
@@ -5122,13 +5133,20 @@ static int pushDownWhereTerms(
   Parse *pParse,        /* Parse context (for malloc() and error reporting) */
   Select *pSubq,        /* The subquery whose WHERE clause is to be augmented */
   Expr *pWhere,         /* The WHERE clause of the outer query */
-  SrcItem *pSrc         /* The subquery term of the outer FROM clause */
+  SrcList *pSrcList,    /* The complete from clause of the outer query */
+  int iSrc              /* Which FROM clause term to try to push into  */
 ){
   Expr *pNew;
+  SrcItem *pSrc;        /* The subquery FROM term into which WHERE is pushed */
   int nChng = 0;
+  pSrc = &pSrcList->a[iSrc];
   if( pWhere==0 ) return 0;
-  if( pSubq->selFlags & (SF_Recursive|SF_MultiPart) ) return 0;
-  if( pSrc->fg.jointype & (JT_LTORJ|JT_RIGHT) ) return 0;
+  if( pSubq->selFlags & (SF_Recursive|SF_MultiPart) ){
+    return 0;           /* restrictions (2) and (11) */
+  }
+  if( pSrc->fg.jointype & (JT_LTORJ|JT_RIGHT) ){
+    return 0;           /* restrictions (10) */
+  }
 
   if( pSubq->pPrior ){
     Select *pSel;
@@ -5143,9 +5161,6 @@ static int pushDownWhereTerms(
 #ifndef SQLITE_OMIT_WINDOWFUNC
       if( pSel->pWin ) return 0;    /* restriction (6b) */
 #endif
-    }
-    if( compoundHasDifferentAffinities(pSubq) ){
-      return 0;  /* restriction (9) */
     }
     if( notUnionAll ){
       /* If any of the compound arms are connected using UNION, INTERSECT,
@@ -5186,11 +5201,28 @@ static int pushDownWhereTerms(
     return 0; /* restriction (3) */
   }
   while( pWhere->op==TK_AND ){
-    nChng += pushDownWhereTerms(pParse, pSubq, pWhere->pRight, pSrc);
+    nChng += pushDownWhereTerms(pParse, pSubq, pWhere->pRight, pSrcList, iSrc);
     pWhere = pWhere->pLeft;
   }
 
-#if 0  /* Legacy code. Checks now done by sqlite3ExprIsTableConstraint() */
+#if 0 /* These checks now done by sqlite3ExprIsSingleTableConstraint() */
+  if( ExprHasProperty(pWhere, EP_OuterON|EP_InnerON) /* (9a) */
+   && (pSrcList->a[0].fg.jointype & JT_LTORJ)!=0     /* Fast pre-test of (9c) */
+  ){
+    int jj;
+    for(jj=0; jj<iSrc; jj++){
+      if( pWhere->w.iJoin==pSrcList->a[jj].iCursor ){
+        /* If we reach this point, both (9a) and (9b) are satisfied.
+        ** The following loop checks (9c):
+        */
+        for(jj++; jj<iSrc; jj++){
+          if( (pSrcList->a[jj].fg.jointype & JT_RIGHT)!=0 ){
+            return 0;  /* restriction (9) */
+          }
+        }
+      }
+    }
+  }
   if( isLeftJoin
    && (ExprHasProperty(pWhere,EP_OuterON)==0
          || pWhere->w.iJoin!=iCursor)
@@ -5204,7 +5236,7 @@ static int pushDownWhereTerms(
   }
 #endif
 
-  if( sqlite3ExprIsTableConstraint(pWhere, pSrc) ){
+  if( sqlite3ExprIsSingleTableConstraint(pWhere, pSrcList, iSrc) ){
     nChng++;
     pSubq->selFlags |= SF_PushDown;
     while( pSubq ){
@@ -5237,6 +5269,78 @@ static int pushDownWhereTerms(
   return nChng;
 }
 #endif /* !defined(SQLITE_OMIT_SUBQUERY) || !defined(SQLITE_OMIT_VIEW) */
+
+/*
+** Check to see if a subquery contains result-set columns that are
+** never used.  If it does, change the value of those result-set columns
+** to NULL so that they do not cause unnecessary work to compute.
+**
+** Return the number of column that were changed to NULL.
+*/
+static int disableUnusedSubqueryResultColumns(SrcItem *pItem){
+  int nCol;
+  Select *pSub;      /* The subquery to be simplified */
+  Select *pX;        /* For looping over compound elements of pSub */
+  Table *pTab;       /* The table that describes the subquery */
+  int j;             /* Column number */
+  int nChng = 0;     /* Number of columns converted to NULL */
+  Bitmask colUsed;   /* Columns that may not be NULLed out */
+
+  assert( pItem!=0 );
+  if( pItem->fg.isCorrelated || pItem->fg.isCte ){
+    return 0;
+  }
+  assert( pItem->pTab!=0 );
+  pTab = pItem->pTab;
+  assert( pItem->pSelect!=0 );
+  pSub = pItem->pSelect;
+  assert( pSub->pEList->nExpr==pTab->nCol );
+  if( (pSub->selFlags & (SF_Distinct|SF_Aggregate))!=0 ){
+    testcase( pSub->selFlags & SF_Distinct );
+    testcase( pSub->selFlags & SF_Aggregate );
+    return 0;
+  }
+  for(pX=pSub; pX; pX=pX->pPrior){
+    if( pX->pPrior && pX->op!=TK_ALL ){
+      /* This optimization does not work for compound subqueries that
+      ** use UNION, INTERSECT, or EXCEPT.  Only UNION ALL is allowed. */
+      return 0;
+    }
+#ifndef SQLITE_OMIT_WINDOWFUNC
+    if( pX->pWin ){
+      /* This optimization does not work for subqueries that use window
+      ** functions. */
+      return 0;
+    }
+#endif
+  }
+  colUsed = pItem->colUsed;
+  if( pSub->pOrderBy ){
+    ExprList *pList = pSub->pOrderBy;
+    for(j=0; j<pList->nExpr; j++){
+      u16 iCol = pList->a[j].u.x.iOrderByCol;
+      if( iCol>0 ){
+        iCol--;
+        colUsed |= ((Bitmask)1)<<(iCol>=BMS ? BMS-1 : iCol);
+      }
+    }
+  }
+  nCol = pTab->nCol;
+  for(j=0; j<nCol; j++){
+    Bitmask m = j<BMS-1 ? MASKBIT(j) : TOPBIT;
+    if( (m & colUsed)!=0 ) continue;
+    for(pX=pSub; pX; pX=pX->pPrior) {
+      Expr *pY = pX->pEList->a[j].pExpr;
+      if( pY->op==TK_NULL ) continue;
+      pY->op = TK_NULL;
+      ExprClearProperty(pY, EP_Skip|EP_Unlikely);
+      pX->selFlags |= SF_PushDown;
+      nChng++;
+    }
+  }
+  return nChng;
+}
+
 
 /*
 ** The pFunc is the only aggregate function in the query.  Check to see
@@ -6384,12 +6488,13 @@ static void optimizeAggregateUseOfIndexedExpr(
   assert( pSelect->pGroupBy!=0 );
   pAggInfo->nColumn = pAggInfo->nAccumulator;
   if( ALWAYS(pAggInfo->nSortingColumn>0) ){
-    if( pAggInfo->nColumn==0 ){
-      pAggInfo->nSortingColumn = pSelect->pGroupBy->nExpr;
-    }else{
-      pAggInfo->nSortingColumn =
-        pAggInfo->aCol[pAggInfo->nColumn-1].iSorterColumn+1;
+    int mx = pSelect->pGroupBy->nExpr - 1;
+    int j, k;
+    for(j=0; j<pAggInfo->nColumn; j++){
+      k = pAggInfo->aCol[j].iSorterColumn;
+      if( k>mx ) mx = k;
     }
+    pAggInfo->nSortingColumn = mx+1;
   }
   analyzeAggFuncArgs(pAggInfo, pNC);
 #if TREETRACE_ENABLED
@@ -6423,11 +6528,13 @@ static int aggregateIdxEprRefToColCallback(Walker *pWalker, Expr *pExpr){
   if( pExpr->op==TK_AGG_FUNCTION ) return WRC_Continue;
   if( pExpr->op==TK_IF_NULL_ROW ) return WRC_Continue;
   pAggInfo = pExpr->pAggInfo;
-  assert( pExpr->iAgg>=0 && pExpr->iAgg<pAggInfo->nColumn );
+  if( NEVER(pExpr->iAgg>=pAggInfo->nColumn) ) return WRC_Continue;
+  assert( pExpr->iAgg>=0 );
   pCol = &pAggInfo->aCol[pExpr->iAgg];
   pExpr->op = TK_AGG_COLUMN;
   pExpr->iTable = pCol->iTable;
   pExpr->iColumn = pCol->iColumn;
+  ExprClearProperty(pExpr, EP_Skip|EP_Collate);
   return WRC_Prune;
 }
 
@@ -6781,7 +6888,6 @@ static void agginfoFree(sqlite3 *db, AggInfo *p){
   sqlite3DbFreeNN(db, p);
 }
 
-#ifdef SQLITE_COUNTOFVIEW_OPTIMIZATION
 /*
 ** Attempt to transform a query of the form
 **
@@ -6809,6 +6915,7 @@ static int countOfViewOptimization(Parse *pParse, Select *p){
   if( (p->selFlags & SF_Aggregate)==0 ) return 0;   /* This is an aggregate */
   if( p->pEList->nExpr!=1 ) return 0;               /* Single result column */
   if( p->pWhere ) return 0;
+  if( p->pHaving ) return 0;
   if( p->pGroupBy ) return 0;
   if( p->pOrderBy ) return 0;
   pExpr = p->pEList->a[0].pExpr;
@@ -6828,7 +6935,8 @@ static int countOfViewOptimization(Parse *pParse, Select *p){
     if( pSub->pWhere ) return 0;                      /* No WHERE clause */
     if( pSub->pLimit ) return 0;                      /* No LIMIT clause */
     if( pSub->selFlags & SF_Aggregate ) return 0;     /* Not an aggregate */
-    pSub = pSub->pPrior;                              /* Repeat over compound */
+    assert( pSub->pHaving==0 );  /* Due to the previous */
+   pSub = pSub->pPrior;                              /* Repeat over compound */
   }while( pSub );
 
   /* If we reach this point then it is OK to perform the transformation */
@@ -6871,7 +6979,6 @@ static int countOfViewOptimization(Parse *pParse, Select *p){
 #endif
   return 1;
 }
-#endif /* SQLITE_COUNTOFVIEW_OPTIMIZATION */
 
 /*
 ** If any term of pSrc, or any SF_NestedFrom sub-query, is not the same
@@ -7127,7 +7234,7 @@ int sqlite3Select(
                     pTabList->a[0].fg.jointype & JT_LTORJ);
     }
 
-    /* No futher action if this term of the FROM clause is no a subquery */
+    /* No futher action if this term of the FROM clause is not a subquery */
     if( pSub==0 ) continue;
 
     /* Catch mismatch in the declared columns of a view and the number of
@@ -7260,14 +7367,12 @@ int sqlite3Select(
     TREETRACE(0x2000,pParse,p,("Constant propagation not helpful\n"));
   }
 
-#ifdef SQLITE_COUNTOFVIEW_OPTIMIZATION
   if( OptimizationEnabled(db, SQLITE_QueryFlattener|SQLITE_CountOfView)
    && countOfViewOptimization(pParse, p)
   ){
     if( db->mallocFailed ) goto select_end;
     pTabList = p->pSrc;
   }
-#endif
 
   /* For each term in the FROM clause, do two things:
   ** (1) Authorized unreferenced tables
@@ -7326,7 +7431,7 @@ int sqlite3Select(
     if( OptimizationEnabled(db, SQLITE_PushDown)
      && (pItem->fg.isCte==0 
          || (pItem->u2.pCteUse->eM10d!=M10d_Yes && pItem->u2.pCteUse->nUse<2))
-     && pushDownWhereTerms(pParse, pSub, p->pWhere, pItem)
+     && pushDownWhereTerms(pParse, pSub, p->pWhere, pTabList, i)
     ){
 #if TREETRACE_ENABLED
       if( sqlite3TreeTrace & 0x4000 ){
@@ -7338,6 +7443,22 @@ int sqlite3Select(
       assert( pItem->pSelect && (pItem->pSelect->selFlags & SF_PushDown)!=0 );
     }else{
       TREETRACE(0x4000,pParse,p,("Push-down not possible\n"));
+    }
+
+    /* Convert unused result columns of the subquery into simple NULL
+    ** expressions, to avoid unneeded searching and computation.
+    */
+    if( OptimizationEnabled(db, SQLITE_NullUnusedCols)
+     && disableUnusedSubqueryResultColumns(pItem)
+    ){
+#if TREETRACE_ENABLED
+      if( sqlite3TreeTrace & 0x4000 ){
+        TREETRACE(0x4000,pParse,p,
+            ("Change unused result columns to NULL for subquery %d:\n",
+             pSub->selId));
+        sqlite3TreeViewSelect(0, p, 0);
+      }
+#endif
     }
 
     zSavedAuthContext = pParse->zAuthContext;

@@ -2706,6 +2706,8 @@ static int pager_truncate(Pager *pPager, Pgno nPage){
   int rc = SQLITE_OK;
   assert( pPager->eState!=PAGER_ERROR );
   assert( pPager->eState!=PAGER_READER );
+  PAGERTRACE(("Truncate %d npage %u\n", PAGERID(pPager), nPage));
+
   
   if( isOpen(pPager->fd) 
    && (pPager->eState>=PAGER_WRITER_DBMOD || pPager->eState==PAGER_OPEN) 
@@ -5642,6 +5644,10 @@ static int getPageNormal(
     if( !isOpen(pPager->fd) || pPager->dbSize<pgno || noContent ){
       if( pgno>pPager->mxPgno ){
         rc = SQLITE_FULL;
+        if( pgno<=pPager->dbSize ){
+          sqlite3PcacheRelease(pPg);
+          pPg = 0;
+        }
         goto pager_acquire_err;
       }
       if( noContent ){
@@ -5811,10 +5817,12 @@ DbPage *sqlite3PagerLookup(Pager *pPager, Pgno pgno){
 /*
 ** Release a page reference.
 **
-** The sqlite3PagerUnref() and sqlite3PagerUnrefNotNull() may only be
-** used if we know that the page being released is not the last page.
+** The sqlite3PagerUnref() and sqlite3PagerUnrefNotNull() may only be used
+** if we know that the page being released is not the last reference to page1.
 ** The btree layer always holds page1 open until the end, so these first
-** to routines can be used to release any page other than BtShared.pPage1.
+** two routines can be used to release any page other than BtShared.pPage1.
+** The assert() at tag-20230419-2 proves that this constraint is always
+** honored.
 **
 ** Use sqlite3PagerUnrefPageOne() to release page1.  This latter routine
 ** checks the total number of outstanding pages and if the number of
@@ -5830,7 +5838,7 @@ void sqlite3PagerUnrefNotNull(DbPage *pPg){
     sqlite3PcacheRelease(pPg);
   }
   /* Do not use this routine to release the last reference to page1 */
-  assert( sqlite3PcacheRefCount(pPager->pPCache)>0 );
+  assert( sqlite3PcacheRefCount(pPager->pPCache)>0 ); /* tag-20230419-2 */
 }
 void sqlite3PagerUnref(DbPage *pPg){
   if( pPg ) sqlite3PagerUnrefNotNull(pPg);
@@ -7633,13 +7641,15 @@ int sqlite3PagerWalSupported(Pager *pPager){
 */
 static int pagerExclusiveLock(Pager *pPager){
   int rc;                         /* Return code */
+  u8 eOrigLock;                   /* Original lock */
 
-  assert( pPager->eLock==SHARED_LOCK || pPager->eLock==EXCLUSIVE_LOCK );
+  assert( pPager->eLock>=SHARED_LOCK );
+  eOrigLock = pPager->eLock;
   rc = pagerLockDb(pPager, EXCLUSIVE_LOCK);
   if( rc!=SQLITE_OK ){
     /* If the attempt to grab the exclusive lock failed, release the 
     ** pending lock that may have been obtained instead.  */
-    pagerUnlockDb(pPager, SHARED_LOCK);
+    pagerUnlockDb(pPager, eOrigLock);
   }
 
   return rc;

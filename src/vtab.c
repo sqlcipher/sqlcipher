@@ -1102,7 +1102,10 @@ int sqlite3VtabSavepoint(sqlite3 *db, int op, int iSavepoint){
             break;
         }
         if( xMethod && pVTab->iSavepoint>iSavepoint ){
+          u64 savedFlags = (db->flags & SQLITE_Defensive);
+          db->flags &= ~(u64)SQLITE_Defensive;
           rc = xMethod(pVTab->pVtab, iSavepoint);
+          db->flags |= savedFlags;
         }
         sqlite3VtabUnlock(pVTab);
       }
@@ -1329,6 +1332,10 @@ int sqlite3_vtab_config(sqlite3 *db, int op, ...){
       }
       case SQLITE_VTAB_DIRECTONLY: {
         p->pVTable->eVtabRisk = SQLITE_VTABRISK_High;
+        break;
+      }
+      case SQLITE_VTAB_USES_ALL_SCHEMAS: {
+        p->pVTable->bAllSchemas = 1;
         break;
       }
       default: {
