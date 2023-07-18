@@ -285,7 +285,7 @@ void sqlcipher_deactivate() {
    Note: As suggested by Joachim Schipper (joachim.schipper@fox-it.com)
 */
 void* sqlcipher_memset(void *v, unsigned char value, sqlite_uint64 len) {
-  sqlite_uint64 i = 0;
+  volatile sqlite_uint64 i = 0;
   volatile unsigned char *a = v;
 
   if (v == NULL) return v;
@@ -302,8 +302,8 @@ void* sqlcipher_memset(void *v, unsigned char value, sqlite_uint64 len) {
    matches a single value (i.e. the memory is all zeros)
    returns 0 if match, 1 of no match */
 int sqlcipher_ismemset(const void *v, unsigned char value, sqlite_uint64 len) {
-  const unsigned char *a = v;
-  sqlite_uint64 i = 0, result = 0;
+  const volatile unsigned char *a = v;
+  volatile sqlite_uint64 i = 0, result = 0;
 
   for(i = 0; i < len; i++) {
     result |= a[i] ^ value;
@@ -315,8 +315,8 @@ int sqlcipher_ismemset(const void *v, unsigned char value, sqlite_uint64 len) {
 /* constant time memory comparison routine. 
    returns 0 if match, 1 if no match */
 int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
-  const unsigned char *a0 = v0, *a1 = v1;
-  int i = 0, result = 0;
+  const volatile unsigned char *a0 = v0, *a1 = v1;
+  volatile int i = 0, result = 0;
 
   for(i = 0; i < len; i++) {
     result |= a0[i] ^ a1[i];
