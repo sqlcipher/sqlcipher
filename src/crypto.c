@@ -770,6 +770,8 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error decrypting page %d data: %d", pgno, rc);
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
+      } else {
+        ctx->flags |= CIPHER_FLAG_KEY_USED; /* inline to avoid function call */
       }
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
@@ -804,6 +806,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         sqlcipher_codec_ctx_set_error(ctx, rc);
         return NULL;
       }
+      ctx->flags |= CIPHER_FLAG_KEY_USED; /* inline to avoid function call */
       return buffer; /* return persistent buffer data, pData remains intact */
       break;
 
@@ -832,6 +835,14 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     Pager *pPager = pDb->pBt->pBt->pPager;
     sqlite3_file *fd;
     codec_ctx *ctx;
+
+    ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+
+    if(ctx != NULL && sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_KEY_USED)) {
+      /* there is already a codec attached to this database, so we should not proceed */
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipherCodecAttach: no codec attached to db, exiting");
+      return SQLITE_OK;
+    }
 
     /* check if the sqlite3_file is open, and if not force handle to NULL */ 
     if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL; 

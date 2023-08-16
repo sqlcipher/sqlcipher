@@ -103,9 +103,10 @@ void sqlite3pager_reset(Pager *pPager);
 #endif
 
 /* possible flags for cipher_ctx->flags */
-#define CIPHER_FLAG_HMAC          0x01
-#define CIPHER_FLAG_LE_PGNO       0x02
-#define CIPHER_FLAG_BE_PGNO       0x04
+#define CIPHER_FLAG_HMAC          (1 << 0)
+#define CIPHER_FLAG_LE_PGNO       (1 << 1)
+#define CIPHER_FLAG_BE_PGNO       (1 << 2)
+#define CIPHER_FLAG_KEY_USED      (1 << 3)
 
 #ifndef DEFAULT_CIPHER_FLAGS
 #define DEFAULT_CIPHER_FLAGS CIPHER_FLAG_HMAC | CIPHER_FLAG_LE_PGNO
@@ -356,3 +357,4 @@ void sqlcipher_vdbe_return_string(Parse*, const char*, const char*, int);
 #endif
 #endif
 /* END SQLCIPHER */
+

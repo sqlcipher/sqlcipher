@@ -583,8 +583,8 @@ void sqlcipher_codec_get_pass(codec_ctx *ctx, void **zKey, int *nKey) {
 }
 
 static void sqlcipher_set_derive_key(codec_ctx *ctx, int derive) {
-  if(ctx->read_ctx != NULL) ctx->read_ctx->derive_key = 1;
-  if(ctx->write_ctx != NULL) ctx->write_ctx->derive_key = 1;
+  if(ctx->read_ctx != NULL) ctx->read_ctx->derive_key = derive;
+  if(ctx->write_ctx != NULL) ctx->write_ctx->derive_key = derive;
 }
 
 /**
@@ -1541,6 +1541,7 @@ migrate:
   if( rc!=SQLITE_OK ) goto handle_error;
 
   sqlcipherCodecGetKey(db, db->nDb - 1, (void**)&keyspec, &keyspec_sz);
+  sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_KEY_USED);
   sqlcipherCodecAttach(db, 0, keyspec, keyspec_sz);
   
   srcfile = sqlite3PagerFile(pSrc->pBt->pPager);
