@@ -107,6 +107,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_FLAG_LE_PGNO       (1 << 1)
 #define CIPHER_FLAG_BE_PGNO       (1 << 2)
 #define CIPHER_FLAG_KEY_USED      (1 << 3)
+#define CIPHER_FLAG_HAS_KDF_SALT  (1 << 4)
 
 #ifndef DEFAULT_CIPHER_FLAGS
 #define DEFAULT_CIPHER_FLAGS CIPHER_FLAG_HMAC | CIPHER_FLAG_LE_PGNO
@@ -215,7 +216,6 @@ typedef struct {
   int plaintext_header_sz;
   int hmac_algorithm;
   int kdf_algorithm;
-  unsigned int need_kdf_salt;
   unsigned int flags;
   unsigned char *kdf_salt;
   unsigned char *hmac_kdf_salt;

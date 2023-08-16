@@ -792,7 +792,7 @@ void* sqlcipher_codec_ctx_get_data(codec_ctx *ctx) {
 static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
   sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
 
-  if(!ctx->need_kdf_salt) {
+  if(sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT)) {
     return SQLITE_OK; /* don't reload salt when not needed */
   }
 
@@ -805,14 +805,14 @@ static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
       return SQLITE_ERROR;
     }
   }
-  ctx->need_kdf_salt = 0;
+  sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT);
   return SQLITE_OK; 
 }
 
 int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int size) {
   if(size >= ctx->kdf_salt_sz) {
     memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
-    ctx->need_kdf_salt = 0;
+    sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT);
     return SQLITE_OK;
   }
   sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_set_kdf_salt: attempt to set salt of incorrect size %d", size);
@@ -821,7 +821,7 @@ int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int si
 
 int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
   int rc = SQLITE_OK;
-  if(ctx->need_kdf_salt) {
+  if(!sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT)) {
     if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_get_kdf_salt: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
     }
@@ -913,9 +913,6 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const voi
 
   /* setup default flags */
   ctx->flags = default_flags;
-
-  /* defer attempt to read KDF salt until first use */
-  ctx->need_kdf_salt = 1;
 
   /* setup the crypto provider  */
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_init: allocating provider");
@@ -1181,7 +1178,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   if(c_ctx->pass && c_ctx->pass_sz) {  /* if key material is present on the context for derivation */ 
    
     /* if necessary, initialize the salt from the header or random source */
-    if(ctx->need_kdf_salt) {
+    if(!sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT)) {
       if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
         sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_cipher_ctx_key_derive: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
         return rc;
