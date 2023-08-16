@@ -38,72 +38,20 @@ set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 source $testdir/sqlcipher.tcl
 
-# Test rekey as first operation on an empty database. should be a no-op
-do_test rekey-as-first-op {
+# Test rekey as first operation on an empty database
+# it should raise an error
+do_test rekey-as-first-op-on-empty {
   sqlite_orig db test.db
 
-  execsql {
+  catchsql {
     PRAGMA rekey = 'testkey';
-    CREATE table t1(a,b);
-    BEGIN;
   }
 
-  for {set i 1} {$i<=100} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
-  }
-
-  execsql {
-    COMMIT;
-  } 
-
-  db close
-  sqlite_orig db test.db
-
-  execsql {
-    PRAGMA rekey = 'testkey';
-    SELECT count(*) FROM t1;
-  }
-
-} {ok 100}
+} {1 {An error occurred with PRAGMA key or rekey. PRAGMA key requires a key of one or more characters. PRAGMA rekey can only be run on an existing encrypted database. Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.}}
 db close
 file delete -force test.db
 
-# Test rekey as first operation follwed by key
-do_test rekey-then-key-as-first-ops {
-  sqlite_orig db test.db
-
-  execsql {
-    PRAGMA rekey = '1234';
-    PRAGMA key = 'testkey';
-    CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=100} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
-  }
-
-  execsql {
-    COMMIT;
-  } 
-
-  db close
-  sqlite_orig db test.db
-
-  execsql {
-    PRAGMA rekey = '4321';
-    PRAGMA key = 'testkey';
-    SELECT count(*) FROM t1;
-  }
-
-} {ok ok 100}
-db close
-file delete -force test.db
-
-
-# test a rekey operation as the first op on a database
+# test a rekey operation as the first op on an existing database
 # then test that now the new key opens the database
 # now close database re-open with new key
 setup test.db "'testkey'"

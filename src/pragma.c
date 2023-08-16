@@ -2621,6 +2621,12 @@ void sqlite3Pragma(
         sqlite3VdbeSetNumCols(v, 1);
         sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "ok", SQLITE_STATIC);
         returnSingleText(v, "ok");
+      } else {
+        sqlite3ErrorMsg(pParse, "An error occurred with PRAGMA key or rekey. "
+                                "PRAGMA key requires a key of one or more characters. "
+                                "PRAGMA rekey can only be run on an existing encrypted database. "
+                                "Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.");
+        goto pragma_out;
       }
     }
     break;

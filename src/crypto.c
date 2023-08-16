@@ -971,7 +971,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
         sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no codec attached to db, exiting");
-        return SQLITE_OK;
+        return SQLITE_MISUSE;
       }
 
       sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3_rekey_v2: entering database mutex %p", db->mutex);

@@ -877,6 +877,19 @@ do_test test_flags_combo {
 } {0 5 0}
 db close
 
+# test empty key
+# it should raise an error
+do_test empty-key {
+  sqlite_orig db test.db
+
+  catchsql {
+    PRAGMA key = '';
+  }
+
+} {1 {An error occurred with PRAGMA key or rekey. PRAGMA key requires a key of one or more characters. PRAGMA rekey can only be run on an existing encrypted database. Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.}}
+db close
+file delete -force test.db
+
 # configure URI filename support
 # create a new encrypted database with the key via parameter
 # close database
