@@ -215,7 +215,6 @@ typedef struct {
   int plaintext_header_sz;
   int hmac_algorithm;
   int kdf_algorithm;
-  unsigned int skip_read_hmac;
   unsigned int need_kdf_salt;
   unsigned int flags;
   unsigned char *kdf_salt;

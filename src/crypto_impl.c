@@ -1112,7 +1112,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     memcpy(iv_out, iv_in, ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
 
-  if((ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT) && !ctx->skip_read_hmac) {
+  if((ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
     if(sqlcipher_page_hmac(ctx, c_ctx, pgno, in, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_page_cipher: hmac operation on decrypt failed for pgno=%d", pgno);
       goto error;
