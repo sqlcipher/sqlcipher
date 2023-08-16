@@ -102,12 +102,17 @@ void sqlite3pager_reset(Pager *pPager);
 #define PBKDF2_ITER 256000
 #endif
 
-/* possible flags for cipher_ctx->flags */
+#define SQLCIPHER_FLAG_GET(FLAG,BIT) ((FLAG & BIT) != 0)
+#define SQLCIPHER_FLAG_SET(FLAG,BIT) FLAG |= BIT
+#define SQLCIPHER_FLAG_UNSET(FLAG,BIT) FLAG &= ~BIT
+
+/* possible flags for codec_ctx->flags */
 #define CIPHER_FLAG_HMAC          (1 << 0)
 #define CIPHER_FLAG_LE_PGNO       (1 << 1)
 #define CIPHER_FLAG_BE_PGNO       (1 << 2)
 #define CIPHER_FLAG_KEY_USED      (1 << 3)
 #define CIPHER_FLAG_HAS_KDF_SALT  (1 << 4)
+
 
 #ifndef DEFAULT_CIPHER_FLAGS
 #define DEFAULT_CIPHER_FLAGS CIPHER_FLAG_HMAC | CIPHER_FLAG_LE_PGNO
@@ -286,10 +291,6 @@ unsigned char sqlcipher_get_hmac_salt_mask(void);
 
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use);
 int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx);
-
-int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag);
-int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag);
-int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag);
 
 const char* sqlcipher_codec_get_cipher_provider(codec_ctx *ctx);
 int sqlcipher_codec_ctx_migrate(codec_ctx *ctx);

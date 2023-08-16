@@ -664,12 +664,12 @@ int sqlcipher_codec_ctx_get_fast_kdf_iter(codec_ctx *ctx) {
 
 /* set the global default flag for HMAC */
 void sqlcipher_set_default_use_hmac(int use) {
-  if(use) default_flags |= CIPHER_FLAG_HMAC; 
-  else default_flags &= ~CIPHER_FLAG_HMAC; 
+  if(use) SQLCIPHER_FLAG_SET(default_flags, CIPHER_FLAG_HMAC);
+  else SQLCIPHER_FLAG_UNSET(default_flags,CIPHER_FLAG_HMAC);
 }
 
 int sqlcipher_get_default_use_hmac() {
-  return (default_flags & CIPHER_FLAG_HMAC) != 0;
+  return SQLCIPHER_FLAG_GET(default_flags, CIPHER_FLAG_HMAC);
 }
 
 void sqlcipher_set_hmac_salt_mask(unsigned char mask) {
@@ -683,16 +683,16 @@ unsigned char sqlcipher_get_hmac_salt_mask() {
 /* set the codec flag for whether this individual database should be using hmac */
 int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
   if(use) {
-    sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HMAC);
+    SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HMAC);
   } else {
-    sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_HMAC);
+    SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_HMAC);
   } 
 
   return sqlcipher_codec_ctx_reserve_setup(ctx);
 }
 
 int sqlcipher_codec_ctx_get_use_hmac(codec_ctx *ctx) {
-  return (ctx->flags & CIPHER_FLAG_HMAC) != 0;
+  return SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC);
 }
 
 /* the length of plaintext header size must be:
@@ -761,20 +761,6 @@ int sqlcipher_codec_ctx_get_kdf_algorithm(codec_ctx *ctx) {
   return ctx->kdf_algorithm;
 }
 
-int sqlcipher_codec_ctx_set_flag(codec_ctx *ctx, unsigned int flag) {
-  ctx->flags |= flag;
-  return SQLITE_OK;
-}
-
-int sqlcipher_codec_ctx_unset_flag(codec_ctx *ctx, unsigned int flag) {
-  ctx->flags &= ~flag;
-  return SQLITE_OK;
-}
-
-int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag) {
-  return (ctx->flags & flag) != 0;
-}
-
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_set_error: ctx=%p, error=%d", ctx, error);
   sqlite3pager_error(ctx->pBt->pBt->pPager, error);
@@ -792,7 +778,7 @@ void* sqlcipher_codec_ctx_get_data(codec_ctx *ctx) {
 static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
   sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
 
-  if(sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT)) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
     return SQLITE_OK; /* don't reload salt when not needed */
   }
 
@@ -805,14 +791,14 @@ static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
       return SQLITE_ERROR;
     }
   }
-  sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT);
+  SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT);
   return SQLITE_OK; 
 }
 
 int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int size) {
   if(size >= ctx->kdf_salt_sz) {
     memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
-    sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT);
+    SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT);
     return SQLITE_OK;
   }
   sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_set_kdf_salt: attempt to set salt of incorrect size %d", size);
@@ -821,7 +807,7 @@ int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int si
 
 int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
   int rc = SQLITE_OK;
-  if(!sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT)) {
+  if(!SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
     if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_get_kdf_salt: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
     }
@@ -973,8 +959,8 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, const voi
 
   /* Note that use_hmac is a special case that requires recalculation of page size
      so we call set_use_hmac to perform setup */
-  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_flags & CIPHER_FLAG_HMAC)) != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting use_hmac %d", rc, default_flags & CIPHER_FLAG_HMAC);
+  if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, SQLCIPHER_FLAG_GET(default_flags, CIPHER_FLAG_HMAC))) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_init: error %d setting use_hmac %d", rc, SQLCIPHER_FLAG_GET(default_flags, CIPHER_FLAG_HMAC));
     return rc;
   }
 
@@ -1051,9 +1037,9 @@ static int sqlcipher_page_hmac(codec_ctx *ctx, cipher_ctx *c_ctx, Pgno pgno, uns
      backwards compatibility on the most popular platforms, but can optionally be configured
      to use either big endian or native byte ordering via pragma. */
 
-  if(ctx->flags & CIPHER_FLAG_LE_PGNO) { /* compute hmac using little endian pgno*/
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_LE_PGNO)) { /* compute hmac using little endian pgno*/
     sqlcipher_put4byte_le(pgno_raw, pgno);
-  } else if(ctx->flags & CIPHER_FLAG_BE_PGNO) { /* compute hmac using big endian pgno */
+  } else if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_BE_PGNO)) { /* compute hmac using big endian pgno */
     sqlite3Put4byte(pgno_raw, pgno); /* sqlite3Put4byte converts 32bit uint to big endian  */
   } else { /* use native byte ordering */
     memcpy(pgno_raw, &pgno, sizeof(pgno));
@@ -1109,7 +1095,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     memcpy(iv_out, iv_in, ctx->iv_sz); /* copy the iv from the input to output buffer */
   } 
 
-  if((ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
     if(sqlcipher_page_hmac(ctx, c_ctx, pgno, in, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_page_cipher: hmac operation on decrypt failed for pgno=%d", pgno);
       goto error;
@@ -1140,7 +1126,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
     goto error;
   };
 
-  if((ctx->flags & CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
     if(sqlcipher_page_hmac(ctx, c_ctx, pgno, out_start, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_page_cipher: hmac operation on encrypt failed for pgno=%d", pgno);
       goto error;
@@ -1178,7 +1164,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   if(c_ctx->pass && c_ctx->pass_sz) {  /* if key material is present on the context for derivation */ 
    
     /* if necessary, initialize the salt from the header or random source */
-    if(!sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_HAS_KDF_SALT)) {
+    if(!SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
       if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
         sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_cipher_ctx_key_derive: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
         return rc;
@@ -1538,7 +1524,7 @@ migrate:
   if( rc!=SQLITE_OK ) goto handle_error;
 
   sqlcipherCodecGetKey(db, db->nDb - 1, (void**)&keyspec, &keyspec_sz);
-  sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_KEY_USED);
+  SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_KEY_USED);
   sqlcipherCodecAttach(db, 0, keyspec, keyspec_sz);
   
   srcfile = sqlite3PagerFile(pSrc->pBt->pPager);
