@@ -1,7 +1,13 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
-## [unreleased] - (? 2023 - [unreleased changes])
+## [4.5.5] - (August 2023 - [4.5.5 changes])
+- Updates baseline to upstream SQLite 3.42.0
+- Do not allow key to be changed on a connection after it has been successfully used for an encryption or decryption operation to prevent accidental database corruption
+- Raise an error if a rekey operation is attempted on an unencrypted database
+- Raise an error when a key or rekey operation is passed an empty key
+- Minor improvements to constant time functions
+- Miscellaneous code and comment cleanup
 
 ## [4.5.4] - (April 2023 - [4.5.4 changes])
 - Updates baseline to upstream SQLite 3.41.2
@@ -220,7 +226,8 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
-[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.4...prerelease
+[unreleased]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.5...prerelease
+[4.5.5]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.4...v4.5.5
 [4.5.4]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.4
 [4.5.4 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.3...v4.5.4
 [4.5.3]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.3
