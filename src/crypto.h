@@ -84,7 +84,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_STR(s) #s
 
 #ifndef CIPHER_VERSION_NUMBER
-#define CIPHER_VERSION_NUMBER 4.5.5
+#define CIPHER_VERSION_NUMBER 4.5.6
 #endif
 
 #ifndef CIPHER_VERSION_BUILD
