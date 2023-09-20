@@ -99,9 +99,7 @@ static void resolveAlias(
         pExpr->y.pWin->pOwner = pExpr;
       }
     }
-    sqlite3ParserAddCleanup(pParse,
-      (void(*)(sqlite3*,void*))sqlite3ExprDelete,
-      pDup);
+    sqlite3ExprDeferredDelete(pParse, pDup);
   }
 }
 
@@ -202,6 +200,32 @@ static void extendFJMatch(
     ExprSetProperty(pNew, EP_CanBeNull);
     *ppList = sqlite3ExprListAppend(pParse, *ppList, pNew);
   }
+}
+
+/*
+** Return TRUE (non-zero) if zTab is a valid name for the schema table pTab.
+*/
+static SQLITE_NOINLINE int isValidSchemaTableName(
+  const char *zTab,         /* Name as it appears in the SQL */
+  Table *pTab,              /* The schema table we are trying to match */
+  Schema *pSchema           /* non-NULL if a database qualifier is present */
+){
+  const char *zLegacy;
+  assert( pTab!=0 );
+  assert( pTab->tnum==1 );
+  if( sqlite3StrNICmp(zTab, "sqlite_", 7)!=0 ) return 0;
+  zLegacy = pTab->zName;
+  if( strcmp(zLegacy+7, &LEGACY_TEMP_SCHEMA_TABLE[7])==0 ){
+    if( sqlite3StrICmp(zTab+7, &PREFERRED_TEMP_SCHEMA_TABLE[7])==0 ){
+      return 1;
+    }
+    if( pSchema==0 ) return 0;
+    if( sqlite3StrICmp(zTab+7, &LEGACY_SCHEMA_TABLE[7])==0 ) return 1;
+    if( sqlite3StrICmp(zTab+7, &PREFERRED_SCHEMA_TABLE[7])==0 ) return 1;
+  }else{
+    if( sqlite3StrICmp(zTab+7, &PREFERRED_SCHEMA_TABLE[7])==0 ) return 1;
+  }
+  return 0;
 }
 
 /*
@@ -357,15 +381,17 @@ static int lookupName(
         }
         assert( zDb==0 || zTab!=0 );
         if( zTab ){
-          const char *zTabName;
           if( zDb ){
             if( pTab->pSchema!=pSchema ) continue;
             if( pSchema==0 && strcmp(zDb,"*")!=0 ) continue;
           }
-          zTabName = pItem->zAlias ? pItem->zAlias : pTab->zName;
-          assert( zTabName!=0 );
-          if( sqlite3StrICmp(zTabName, zTab)!=0 ){
-            continue;
+          if( pItem->zAlias!=0 ){
+            if( sqlite3StrICmp(zTab, pItem->zAlias)!=0 ){
+              continue;
+            }
+          }else if( sqlite3StrICmp(zTab, pTab->zName)!=0 ){
+            if( pTab->tnum!=1 ) continue;
+            if( !isValidSchemaTableName(zTab, pTab, pSchema) ) continue;
           }
           assert( ExprUseYTab(pExpr) );
           if( IN_RENAME_OBJECT && pItem->zAlias ){
@@ -441,7 +467,8 @@ static int lookupName(
         assert( op==TK_DELETE || op==TK_UPDATE || op==TK_INSERT );
         if( pParse->bReturning ){
           if( (pNC->ncFlags & NC_UBaseReg)!=0
-           && (zTab==0 || sqlite3StrICmp(zTab,pParse->pTriggerTab->zName)==0)
+           && ALWAYS(zTab==0
+                     || sqlite3StrICmp(zTab,pParse->pTriggerTab->zName)==0)
           ){
             pExpr->iTable = op!=TK_DELETE;
             pTab = pParse->pTriggerTab;
@@ -508,6 +535,7 @@ static int lookupName(
             if( pParse->bReturning ){
               eNewExprOp = TK_REGISTER;
               pExpr->op2 = TK_COLUMN;
+              pExpr->iColumn = iCol;
               pExpr->iTable = pNC->uNC.iBaseReg + (pTab->nCol+1)*pExpr->iTable +
                  sqlite3TableColumnToStorage(pTab, iCol) + 1;
             }else{
@@ -920,14 +948,10 @@ static int resolveExprStep(Walker *pWalker, Expr *pExpr){
       if( 0==sqlite3ExprCanBeNull(pExpr->pLeft) && !IN_RENAME_OBJECT ){
         testcase( ExprHasProperty(pExpr, EP_OuterON) );
         assert( !ExprHasProperty(pExpr, EP_IntValue) );
-        if( pExpr->op==TK_NOTNULL ){
-          pExpr->u.zToken = "true";
-          ExprSetProperty(pExpr, EP_IsTrue);
-        }else{
-          pExpr->u.zToken = "false";
-          ExprSetProperty(pExpr, EP_IsFalse);
-        }
-        pExpr->op = TK_TRUEFALSE;
+        pExpr->u.iValue = (pExpr->op==TK_NOTNULL);
+        pExpr->flags |= EP_IntValue;
+        pExpr->op = TK_INTEGER;
+
         for(i=0, p=pNC; p && i<ArraySize(anRef); p=p->pNext, i++){
           p->nRef = anRef[i];
         }
@@ -1229,8 +1253,8 @@ static int resolveExprStep(Walker *pWalker, Expr *pExpr){
         assert( pNC->nRef>=nRef );
         if( nRef!=pNC->nRef ){
           ExprSetProperty(pExpr, EP_VarSelect);
-          pNC->ncFlags |= NC_VarSelect;
         }
+        pNC->ncFlags |= NC_Subquery;
       }
       break;
     }

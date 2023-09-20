@@ -114,13 +114,13 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if( zRight ) {
       unsigned int flags = sqlcipher_get_test_flags();
       if(sqlite3_stricmp(zRight, "fail_encrypt")==0) {
-        flags |= TEST_FAIL_ENCRYPT;
+        SQLCIPHER_FLAG_SET(flags,TEST_FAIL_ENCRYPT);
       } else
       if(sqlite3_stricmp(zRight, "fail_decrypt")==0) {
-        flags |= TEST_FAIL_DECRYPT;
+        SQLCIPHER_FLAG_SET(flags,TEST_FAIL_DECRYPT);
       } else
       if(sqlite3_stricmp(zRight, "fail_migrate")==0) {
-        flags |= TEST_FAIL_MIGRATE;
+        SQLCIPHER_FLAG_SET(flags,TEST_FAIL_MIGRATE);
       }
       sqlcipher_set_test_flags(flags);
     }
@@ -129,13 +129,13 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if( zRight ) {
       unsigned int flags = sqlcipher_get_test_flags();
       if(sqlite3_stricmp(zRight, "fail_encrypt")==0) {
-        flags &= ~TEST_FAIL_ENCRYPT;
+        SQLCIPHER_FLAG_UNSET(flags,TEST_FAIL_ENCRYPT);
       } else
       if(sqlite3_stricmp(zRight, "fail_decrypt")==0) {
-        flags &= ~TEST_FAIL_DECRYPT;
+        SQLCIPHER_FLAG_UNSET(flags,TEST_FAIL_DECRYPT);
       } else
       if(sqlite3_stricmp(zRight, "fail_migrate")==0) {
-        flags &= ~TEST_FAIL_MIGRATE;
+        SQLCIPHER_FLAG_UNSET(flags,TEST_FAIL_MIGRATE);
       }
       sqlcipher_set_test_flags(flags);
     }
@@ -310,22 +310,22 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
         char *deprecation = "PRAGMA cipher_hmac_pgno is deprecated, please remove from use";
         /* clear both pgno endian flags */
         if(sqlite3_stricmp(zRight, "le") == 0) {
-          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
-          sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_LE_PGNO);
+          SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_BE_PGNO);
+          SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_LE_PGNO);
         } else if(sqlite3_stricmp(zRight, "be") == 0) {
-          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
-          sqlcipher_codec_ctx_set_flag(ctx, CIPHER_FLAG_BE_PGNO);
+          SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_LE_PGNO);
+          SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_BE_PGNO);
         } else if(sqlite3_stricmp(zRight, "native") == 0) {
-          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_LE_PGNO);
-          sqlcipher_codec_ctx_unset_flag(ctx, CIPHER_FLAG_BE_PGNO);
+          SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_LE_PGNO);
+          SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_BE_PGNO);
         }
         sqlcipher_vdbe_return_string(pParse, "cipher_hmac_pgno", deprecation, P4_TRANSIENT);
         sqlite3_log(SQLITE_WARNING, deprecation);
  
       } else {
-        if(sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_LE_PGNO)) {
+        if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_LE_PGNO)) {
           sqlcipher_vdbe_return_string(pParse, "cipher_hmac_pgno", "le", P4_TRANSIENT);
-        } else if(sqlcipher_codec_ctx_get_flag(ctx, CIPHER_FLAG_BE_PGNO)) {
+        } else if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_BE_PGNO)) {
           sqlcipher_vdbe_return_string(pParse, "cipher_hmac_pgno", "be", P4_TRANSIENT);
         } else {
           sqlcipher_vdbe_return_string(pParse, "cipher_hmac_pgno", "native", P4_TRANSIENT);
@@ -770,6 +770,8 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error decrypting page %d data: %d", pgno, rc);
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
+      } else {
+        SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
       }
       memcpy(pData, buffer, page_sz); /* copy buffer data back to pData and return */
       return pData;
@@ -804,6 +806,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         sqlcipher_codec_ctx_set_error(ctx, rc);
         return NULL;
       }
+      SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
       return buffer; /* return persistent buffer data, pData remains intact */
       break;
 
@@ -832,6 +835,14 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     Pager *pPager = pDb->pBt->pBt->pPager;
     sqlite3_file *fd;
     codec_ctx *ctx;
+
+    ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+
+    if(ctx != NULL && SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
+      /* there is already a codec attached to this database, so we should not proceed */
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipherCodecAttach: no codec attached to db, exiting");
+      return SQLITE_OK;
+    }
 
     /* check if the sqlite3_file is open, and if not force handle to NULL */ 
     if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL; 
@@ -960,7 +971,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
         sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no codec attached to db, exiting");
-        return SQLITE_OK;
+        return SQLITE_MISUSE;
       }
 
       sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3_rekey_v2: entering database mutex %p", db->mutex);

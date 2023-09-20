@@ -341,4 +341,42 @@ do_test integrity-check-plaintext-header {
 } {{} 1 {{HMAC verification failed for page 1} {HMAC verification failed for page 2}}}
 file delete -force test.db
 
+# test that changing the key in the middle of database operations does
+# not cause a corruption
+do_test change-key-middle {
+  sqlite_orig db test.db
+
+  set rc {}
+
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    execsql "INSERT INTO t1 VALUES($i,'value $i');"
+  }
+
+  execsql {
+    PRAGMA key = 'diffkey';
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    execsql "INSERT INTO t1 VALUES($i,'value $i');"
+  }
+
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT name FROM sqlite_schema;
+    PRAGMA cipher_integrity_check;
+    PRAGMA integrity_check;
+    SELECT count(*) FROM t1;
+  }
+} {ok t1 ok 2000}
+db close
+file delete -force test.db
+
 finish_test
