@@ -260,7 +260,12 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     sqlcipher_vdbe_return_string(pParse, "rekey_kdf_iter", message, P4_TRANSIENT);
     sqlite3_log(SQLITE_WARNING, message);
   }else
-  if( sqlite3_stricmp(zLeft,"cipher_page_size")==0 ){
+  if( sqlite3_stricmp(zLeft,"page_size")==0 || sqlite3_stricmp(zLeft,"cipher_page_size")==0 ){
+    /* PRAGMA cipher_page_size will alter the size of the database pages while ensuring that the
+       required reserve space is allocated at the end of each page. This will also override the
+       standard SQLite PRAGMA page_size behavior if a codec context is attached to the database handle.
+       If PRAGMA page_size is invoked but a codec context is not attached (i.e. dealing with a standard
+       unencrypted database) then return early and allow the standard PRAGMA page_size logic to apply. */
     if(ctx) {
       if( zRight ) {
         int size = atoi(zRight);
@@ -272,6 +277,8 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
         char * page_size = sqlite3_mprintf("%d", sqlcipher_codec_ctx_get_pagesize(ctx));
         sqlcipher_vdbe_return_string(pParse, "cipher_page_size", page_size, P4_DYNAMIC);
       }
+    } else {
+      return 0; /* return early so that the PragTyp_PAGE_SIZE case logic in pragma.c will take effect */
     }
   }else
   if( sqlite3_stricmp(zLeft,"cipher_default_page_size")==0 ){

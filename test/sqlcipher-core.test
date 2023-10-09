@@ -498,7 +498,7 @@ file delete -force test.db
 #    key and page size
 # 4. verify that the table is readable
 #    and the data just inserted is visible
-do_test custom-pagesize {
+do_test custom-pagesize-pragma-cipher-page-size {
   sqlite_orig db test.db
 
   execsql {
@@ -528,11 +528,55 @@ do_test custom-pagesize {
 
 } {ok 1000}
 db close
+file delete -force test.db
+
+# run the same logic as previous test but use
+# pragma page_size instead
+do_test custom-pagesize-pragma-pagesize {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA page_size = 8192;
+    CREATE table t1(a,b);
+    BEGIN;
+  }
+
+  for {set i 1} {$i<=1000} {incr i} {
+    set r [expr {int(rand()*500000)}]
+    execsql "INSERT INTO t1 VALUES($i,'value $r');"
+  }
+
+  execsql {
+    COMMIT;
+  }
+
+  db close
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA page_size = 8192;
+    SELECT count(*) FROM t1;
+  }
+
+} {ok 1000}
+db close
+file delete -force test.db
 
 # open the database with the default page size
 ## and verfiy that it is not readable 
 do_test custom-pagesize-must-match {
   sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 8192;
+    CREATE table t1(a,b);
+  }
+
+  db close
+  sqlite_orig db test.db
+
   catchsql {
     PRAGMA key = 'testkey';
     SELECT name FROM sqlite_schema WHERE type='table';
