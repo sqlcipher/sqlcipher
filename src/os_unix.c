@@ -100,7 +100,7 @@
 # include <sys/mman.h>
 #endif
 
-#if SQLITE_ENABLE_LOCKING_STYLE
+#if SQLITE_ENABLE_LOCKING_STYLE || defined(__GNU__)
 # include <sys/ioctl.h>
 # include <sys/file.h>
 # include <sys/param.h>
@@ -2441,7 +2441,7 @@ static int dotlockClose(sqlite3_file *id) {
 **
 ** Omit this section if SQLITE_ENABLE_LOCKING_STYLE is turned off
 */
-#if SQLITE_ENABLE_LOCKING_STYLE
+#if SQLITE_ENABLE_LOCKING_STYLE || defined(__GNU__)
 
 /*
 ** Retry flock() calls that fail with EINTR
@@ -5476,7 +5476,7 @@ IOMETHODS(
   0                         /* xShmMap method */
 )
 
-#if SQLITE_ENABLE_LOCKING_STYLE
+#if SQLITE_ENABLE_LOCKING_STYLE || defined(__GNU__)
 IOMETHODS(
   flockIoFinder,            /* Finder function name */
   flockIoMethods,           /* sqlite3_io_methods object name */
@@ -8068,6 +8068,8 @@ int sqlite3_os_init(void){
     UNIXVFS("unix",          autolockIoFinder ),
 #elif OS_VXWORKS
     UNIXVFS("unix",          vxworksIoFinder ),
+#elif defined(__GNU__)
+    UNIXVFS("unix",          flockIoFinder ),
 #else
     UNIXVFS("unix",          posixIoFinder ),
 #endif
@@ -8077,7 +8079,7 @@ int sqlite3_os_init(void){
 #if OS_VXWORKS
     UNIXVFS("unix-namedsem", semIoFinder ),
 #endif
-#if SQLITE_ENABLE_LOCKING_STYLE || OS_VXWORKS
+#if SQLITE_ENABLE_LOCKING_STYLE || OS_VXWORKS || defined(__GNU__)
     UNIXVFS("unix-posix",    posixIoFinder ),
 #endif
 #if SQLITE_ENABLE_LOCKING_STYLE
