@@ -142,6 +142,10 @@ if test "x${TCLLIBDIR+set}" != "xset" ; then
   TCLLIBDIR="${TCLLIBDIR}/sqlite3"
 fi
 
+SQLCIPHER_VERSION=[`cat $srcdir/VERSION_SQLCIPHER | sed 's/^\([0-9]*\.*[0-9]*\).*/\1/'`]
+AC_MSG_NOTICE(SQLCipher Version set to $SQLCIPHER_VERSION)
+AC_SUBST(SQLCIPHER_VERSION)
+
 #########
 # Set up an appropriate program prefix
 #
