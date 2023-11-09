@@ -225,6 +225,38 @@ fi
 AC_SUBST(BUILD_CC)
 
 ##########
+# Do we want to support load_extension()?
+#
+AC_ARG_ENABLE(load-extension, 
+AC_HELP_STRING([--enable-load-extension],
+	       [Include SQL functions for loading extension libraries]),,
+               enable_load_extension=auto)
+
+if test "x$enable_load_extension" = xyes ||
+   test "x$enable_load_extension" = xauto; then
+
+  can_load_extension=yes
+  # libtool will already have looked for <dlfcn.h>
+  if test $ac_cv_header_dlfcn_h = no; then
+    can_load_extension=no
+  else
+    AC_SEARCH_LIBS(dlopen, dl, , [can_load_extension=no])
+  fi
+elif test "x$enable_load_extension" = xno; then
+  can_load_extension=no
+else
+  AC_MSG_ERROR([invalid argument to --enable-load-extension])
+fi
+
+if test $can_load_extension = no; then
+  if test "x$enable_load_extension" = xyes; then
+    AC_MSG_ERROR([<dlfcn.h> routines missing, load_extension() not supported])
+  fi
+  AC_DEFINE(SQLITE_OMIT_LOAD_EXTENSION, 1,
+            [Define if the load_extension() sql function should be omitted.])
+fi
+
+##########
 # Do we want to support multithreaded use of sqlite
 #
 AC_ARG_ENABLE(threadsafe, 
