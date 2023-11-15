@@ -310,7 +310,7 @@ do_test version-4-integrity-check-invalid-last-page {
     PRAGMA key = 'testkey';
     PRAGMA cipher_integrity_check;
   } 
-} {ok {page 240 has an invalid size of 2 bytes}}
+} {ok {page 240 has an invalid size of 2 bytes (expected 4096 bytes)}}
 db close
 file delete -force test.db
 

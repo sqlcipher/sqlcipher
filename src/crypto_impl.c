@@ -1391,7 +1391,7 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, char *col
   }
 
   if(file_sz % ctx->page_sz != 0) {
-    result = sqlite3_mprintf("page %d has an invalid size of %lld bytes", page, file_sz - ((file_sz / ctx->page_sz) * ctx->page_sz));
+    result = sqlite3_mprintf("page %d has an invalid size of %lld bytes (expected %d bytes)", page, file_sz - ((file_sz / ctx->page_sz) * ctx->page_sz), ctx->page_sz);
     sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
   }
