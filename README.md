@@ -56,6 +56,10 @@ $ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 $ make
 ```
 
+## Compiling - Android
+
+To compile on android you can simply run the bash script located in android/compile-android.sh. This script requires [Docker](https://www.docker.com/products/docker-desktop/) to run and internet connectivity to build the image. After running the script the binary file will be located in the source directory (where this readme file is located).
+
 ## Testing
 
 The full SQLite test suite will not complete successfully when using SQLCipher. In some cases encryption interferes with low-level tests that require access to database file data or features which are unsupported by SQLCipher. Those tests that are intended to support encryption are intended for non-SQLCipher implementations. In addition, because SQLite tests are not always isolated, if one test fails it can trigger a domino effect with other failures in later steps.
