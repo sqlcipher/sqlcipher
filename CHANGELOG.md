@@ -1,7 +1,11 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
-## [4.5.6] - (TBD - [4.5.6 changes])
+## [4.5.6] - (January 2024 - [4.5.6 changes])
+- Updates baseline to upstream SQLite 3.44.2
+- Improve PRAGMA cipher_integrity check to report expected page size if invalid
+- Implement PRAGMA page_size compatibility with PRAGMA cipher_page_size so both will operate properly on encrypted databases
+- Updates LICENSE.md with SQLCipher license to avoid ambiguity and remove redundance
 
 ## [4.5.5] - (August 2023 - [4.5.5 changes])
 - Updates baseline to upstream SQLite 3.42.0
