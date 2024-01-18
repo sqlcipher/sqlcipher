@@ -28,7 +28,7 @@
 ** CIO_WIN_WC_XLATE is defined as 0 or 1, reflecting whether console I/O
 ** translation for Windows is effected for the build.
 */
-
+#define HAVE_CONSOLE_IO_H 1
 #ifndef SQLITE_INTERNAL_LINKAGE
 # define SQLITE_INTERNAL_LINKAGE extern /* external to translation unit */
 # include <stdio.h>
@@ -166,8 +166,8 @@ SQLITE_INTERNAL_LINKAGE int ePutsUtf8(const char *z);
 #ifdef CONSIO_SPUTB
 SQLITE_INTERNAL_LINKAGE int
 fPutbUtf8(FILE *pfOut, const char *cBuf, int nAccept);
-#endif
 /* Like fPutbUtf8 except stream is always the designated output. */
+#endif
 SQLITE_INTERNAL_LINKAGE int
 oPutbUtf8(const char *cBuf, int nAccept);
 /* Like fPutbUtf8 except stream is always the designated error. */

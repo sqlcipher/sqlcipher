@@ -1,3 +1,4 @@
+//#ifnot omit-oo1
 /*
   2022-08-24
 
@@ -199,10 +200,11 @@ globalThis.sqlite3Worker1Promiser = function callee(config = callee.defaultConfi
       msg = Object.create(null);
       msg.type = arguments[0];
       msg.args = arguments[1];
+      msg.dbId = msg.args.dbId;
     }else{
       toss("Invalid arugments for sqlite3Worker1Promiser()-created factory.");
     }
-    if(!msg.dbId) msg.dbId = dbId;
+    if(!msg.dbId && msg.type!=='open') msg.dbId = dbId;
     msg.messageId = genMsgId(msg);
     msg.departureTime = performance.now();
     const proxy = Object.create(null);
@@ -275,3 +277,6 @@ globalThis.sqlite3Worker1Promiser.defaultConfig = {
   ,
   onerror: (...args)=>console.error('worker1 promiser error',...args)
 };
+//#else
+/* Built with the omit-oo1 flag. */
+//#endif ifnot omit-oo1
