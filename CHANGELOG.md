@@ -1,6 +1,8 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
+## [4.5.7] - (TBD - [4.5.7 changes])
+
 ## [4.5.6] - (January 2024 - [4.5.6 changes])
 - Updates baseline to upstream SQLite 3.44.2
 - Improve PRAGMA cipher_integrity check to report expected page size if invalid
@@ -232,6 +234,8 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
+[4.5.7]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.7
+[4.5.7 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.6...v4.5.7
 [4.5.6]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.6
 [4.5.6 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.5...v4.5.6
 [4.5.5]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.5
