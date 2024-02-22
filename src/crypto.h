@@ -326,7 +326,6 @@ int sqlcipher_codec_ctx_integrity_check(codec_ctx *, Parse *, char *);
 
 int sqlcipher_set_log(const char *destination);
 void sqlcipher_set_log_level(unsigned int level);
-void sqlcipher_log(unsigned int tag, const char *message, ...);
 
 #define SQLCIPHER_LOG_NONE          0x00
 #define SQLCIPHER_LOG_ERROR         0x01
@@ -335,6 +334,12 @@ void sqlcipher_log(unsigned int tag, const char *message, ...);
 #define SQLCIPHER_LOG_DEBUG         0x08
 #define SQLCIPHER_LOG_TRACE         0x10
 #define SQLCIPHER_LOG_ALL           0xffffffff
+
+#ifdef SQLCIPHER_OMIT_LOG
+#define sqlcipher_log(tag, message, ...)
+#else
+void sqlcipher_log(unsigned int tag, const char *message, ...);
+#endif
 
 void sqlcipher_vdbe_return_string(Parse*, const char*, const char*, int);
 
