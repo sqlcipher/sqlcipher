@@ -49,6 +49,7 @@
       ],
       "name": "common",
       "source_files": "sqlite3.{h,c}",
+      "resource_bundles": {"SQLCipher": ["sqlcipher-resources/PrivacyInfo.xcprivacy"]},
       "xcconfig": {
         "HEADER_SEARCH_PATHS": "$(PODS_ROOT)/SQLCipher",
         "GCC_PREPROCESSOR_DEFINITIONS": "$(inherited) SQLITE_HAS_CODEC=1",
