@@ -40,7 +40,7 @@ file delete -force test3.db
 file delete -force test4.db
                           
 set testdir [file dirname $argv0]
-set sampleDir [file normalize [file dirname [file dirname $argv0]]]
+set sampleDir [file normalize [file dirname [file dirname $argv0]]]/sqlcipher-resources
 
 # If the library is not compiled with has_codec support then
 # skip all tests in this file.
