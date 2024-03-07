@@ -44,6 +44,11 @@
 #include <android/log.h>
 #endif
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#include <os/log.h>
+#endif
+
 #include <time.h>
 
 #if defined(_WIN32) || defined(SQLITE_OS_WINRT)

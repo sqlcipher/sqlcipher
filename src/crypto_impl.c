@@ -79,7 +79,7 @@ static sqlcipher_provider *default_provider = NULL;
 
 static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
 static FILE* sqlcipher_log_file = NULL;
-static volatile int sqlcipher_log_logcat = 0;
+static volatile int sqlcipher_log_device = 0;
 static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
@@ -1630,16 +1630,22 @@ int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int random_sz
 }
 
 #if !defined(SQLITE_OMIT_TRACE)
+
+#define SQLCIPHER_PROFILE_FMT        "Elapsed time:%.3f ms - %s\n"
+#define SQLCIPHER_PROFILE_FMT_OSLOG  "Elapsed time:%{public}.3f ms - %{public}s\n"
+
 static int sqlcipher_profile_callback(unsigned int trace, void *file, void *stmt, void *run_time){
   FILE *f = (FILE*) file;
-  char *fmt = "Elapsed time:%.3f ms - %s\n";
   double elapsed = (*((sqlite3_uint64*)run_time))/1000000.0;
-#ifdef __ANDROID__
   if(f == NULL) {
-    __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", fmt, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
-  }
+#if defined(__ANDROID__)
+    __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", SQLCIPHER_PROFILE_FMT, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
+#elif defined(__APPLE__)
+    os_log(OS_LOG_DEFAULT, SQLCIPHER_PROFILE_FMT_OSLOG, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
 #endif
-  if(f) fprintf(f, fmt, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
+  } else {
+    fprintf(f, SQLCIPHER_PROFILE_FMT, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
+  }
   return SQLITE_OK;
 }
 #endif
@@ -1656,8 +1662,8 @@ int sqlcipher_cipher_profile(sqlite3 *db, const char *destination){
       f = stdout;
     }else if(sqlite3_stricmp(destination, "stderr") == 0){
       f = stderr;
-    }else if(sqlite3_stricmp(destination, "logcat") == 0){
-      f = NULL; /* file pointer will be NULL indicating logcat on android */
+    }else if(sqlite3_stricmp(destination, "logcat") == 0 || sqlite3_stricmp(destination, "device") == 0){
+      f = NULL; /* file pointer will be NULL indicating the device target (i.e. logcat or oslog). We will accept logcat for backwards compatibility */
     }else{
 #if !defined(SQLCIPHER_PROFILE_USE_FOPEN) && (defined(_WIN32) && (__STDC_VERSION__ > 199901L) || defined(SQLITE_OS_WINRT))
       if(fopen_s(&f, destination, "a") != 0) return SQLITE_ERROR;
@@ -1686,17 +1692,22 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
 void sqlcipher_log(unsigned int level, const char *message, ...) {
   va_list params;
   va_start(params, message);
+  char *formatted = NULL;
 
 #ifdef CODEC_DEBUG
-#ifdef __ANDROID__
+#if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
+#elif define(__APPLE__)
+    formatted = sqlite3_mprintf(message, params);
+    os_log(OS_LOG_DEFAULT, "%s", formatted);
+    sqlite3_free(formatted);
 #else
     vfprintf(stderr, message, params);
     fprintf(stderr, "\n");
 #endif
 #endif
 
-  if(level > sqlcipher_log_level || (sqlcipher_log_logcat == 0 && sqlcipher_log_file == NULL)) {
+  if(level > sqlcipher_log_level || (sqlcipher_log_device == 0 && sqlcipher_log_file == NULL)) {
     /* no log target or tag not in included filters */
     goto end;
   }
@@ -1726,11 +1737,15 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
       fprintf((FILE*)sqlcipher_log_file, "\n");
     }
   }
-#ifdef __ANDROID__
-  if(sqlcipher_log_logcat) {
+  if(sqlcipher_log_device) {
+#if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
-  }
+#elif defined(__APPLE__)
+    formatted = sqlite3_mprintf(message, params);
+    os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
+    sqlite3_free(formatted);
 #endif
+  }
 end:
   va_end(params);
 }
@@ -1750,10 +1765,11 @@ int sqlcipher_set_log(const char *destination){
     fclose((FILE*)sqlcipher_log_file);
   }
   sqlcipher_log_file = NULL;
-  sqlcipher_log_logcat = 0;
+  sqlcipher_log_device = 0;
 
-  if(sqlite3_stricmp(destination, "logcat") == 0){
-    sqlcipher_log_logcat = 1;
+  if(sqlite3_stricmp(destination, "logcat") == 0 || sqlite3_stricmp(destination, "device") == 0){
+    /* use the appropriate device log. accept logcat for backwards compatibility */
+    sqlcipher_log_device = 1;
   } else if(sqlite3_stricmp(destination, "stdout") == 0){
     sqlcipher_log_file = stdout;
   }else if(sqlite3_stricmp(destination, "stderr") == 0){
