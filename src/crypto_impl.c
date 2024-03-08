@@ -1698,7 +1698,7 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
 #if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
 #elif define(__APPLE__)
-    formatted = sqlite3_mprintf(message, params);
+    formatted = sqlite3_vmprintf(message, params);
     os_log(OS_LOG_DEFAULT, "%s", formatted);
     sqlite3_free(formatted);
 #else
@@ -1741,7 +1741,7 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
 #if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
 #elif defined(__APPLE__)
-    formatted = sqlite3_mprintf(message, params);
+    formatted = sqlite3_vmprintf(message, params);
     os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
     sqlite3_free(formatted);
 #endif
