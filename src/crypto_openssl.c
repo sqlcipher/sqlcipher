@@ -34,12 +34,12 @@
 #include "sqliteInt.h"
 #include "crypto.h"
 #include "sqlcipher.h"
-#include <openssl/crypto.h>
-#include <openssl/rand.h>
-#include <openssl/evp.h>
-#include <openssl/objects.h>
-#include <openssl/hmac.h>
-#include <openssl/err.h>
+#include <openssl/crypto.h> /* amalgamator: dontcache */
+#include <openssl/rand.h> /* amalgamator: dontcache */
+#include <openssl/evp.h> /* amalgamator: dontcache */
+#include <openssl/objects.h> /* amalgamator: dontcache */
+#include <openssl/hmac.h> /* amalgamator: dontcache */
+#include <openssl/err.h> /* amalgamator: dontcache */
 
 static unsigned int openssl_init_count = 0;
 
