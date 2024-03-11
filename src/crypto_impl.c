@@ -1638,10 +1638,12 @@ static int sqlcipher_profile_callback(unsigned int trace, void *file, void *stmt
   FILE *f = (FILE*) file;
   double elapsed = (*((sqlite3_uint64*)run_time))/1000000.0;
   if(f == NULL) {
+#if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
 #if defined(__ANDROID__)
     __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", SQLCIPHER_PROFILE_FMT, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
 #elif defined(__APPLE__)
     os_log(OS_LOG_DEFAULT, SQLCIPHER_PROFILE_FMT_OSLOG, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
+#endif
 #endif
   } else {
     fprintf(f, SQLCIPHER_PROFILE_FMT, elapsed, sqlite3_sql((sqlite3_stmt*)stmt));
@@ -1695,16 +1697,17 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
   char *formatted = NULL;
 
 #ifdef CODEC_DEBUG
+#if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
 #if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
-#elif define(__APPLE__)
+#elif defined(__APPLE__)
     formatted = sqlite3_vmprintf(message, params);
     os_log(OS_LOG_DEFAULT, "%s", formatted);
     sqlite3_free(formatted);
-#else
+#endif
+#endif
     vfprintf(stderr, message, params);
     fprintf(stderr, "\n");
-#endif
 #endif
 
   if(level > sqlcipher_log_level || (sqlcipher_log_device == 0 && sqlcipher_log_file == NULL)) {
@@ -1737,6 +1740,7 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
       fprintf((FILE*)sqlcipher_log_file, "\n");
     }
   }
+#if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
   if(sqlcipher_log_device) {
 #if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
@@ -1746,6 +1750,8 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
     sqlite3_free(formatted);
 #endif
   }
+#endif
+
 end:
   va_end(params);
 }
