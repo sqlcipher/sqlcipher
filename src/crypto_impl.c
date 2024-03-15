@@ -1697,23 +1697,46 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
   char *formatted = NULL;
 
 #ifdef CODEC_DEBUG
-#if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
+#if defined(SQLCIPHER_OMIT_LOG_DEVICE)
+    vfprintf(stderr, message, params);
+    fprintf(stderr, "\n");
+    goto end;
+#else
 #if defined(__ANDROID__)
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
+    goto end;
 #elif defined(__APPLE__)
     formatted = sqlite3_vmprintf(message, params);
     os_log(OS_LOG_DEFAULT, "%s", formatted);
     sqlite3_free(formatted);
-#endif
-#endif
+    goto end;
+#else
     vfprintf(stderr, message, params);
     fprintf(stderr, "\n");
+    goto end;
+#endif
+#endif
 #endif
 
   if(level > sqlcipher_log_level || (sqlcipher_log_device == 0 && sqlcipher_log_file == NULL)) {
     /* no log target or tag not in included filters */
     goto end;
   }
+
+#if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
+  if(sqlcipher_log_device) {
+#if defined(__ANDROID__)
+    __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
+    goto end;
+#elif defined(__APPLE__)
+    formatted = sqlite3_vmprintf(message, params);
+    os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
+    sqlite3_free(formatted);
+    goto end;
+#endif
+  }
+#endif
+
   if(sqlcipher_log_file != NULL){
     char buffer[24];
     struct tm tt;
@@ -1738,19 +1761,9 @@ void sqlcipher_log(unsigned int level, const char *message, ...) {
       fprintf((FILE*)sqlcipher_log_file, "%s.%03d: ", buffer, ms);
       vfprintf((FILE*)sqlcipher_log_file, message, params);
       fprintf((FILE*)sqlcipher_log_file, "\n");
+      goto end;
     }
   }
-#if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
-  if(sqlcipher_log_device) {
-#if defined(__ANDROID__)
-    __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
-#elif defined(__APPLE__)
-    formatted = sqlite3_vmprintf(message, params);
-    os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
-    sqlite3_free(formatted);
-#endif
-  }
-#endif
 
 end:
   va_end(params);
