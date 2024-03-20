@@ -38,3 +38,4 @@ xcuserdata/*
 /sqlite3ext.h
 /libsqlcipher.la
 /.DS_Store
+/build
