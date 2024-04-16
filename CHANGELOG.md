@@ -1,7 +1,12 @@
 # SQLCipher Change Log
 All notable changes to this project will be documented in this file.
 
-## [4.5.7] - (TBD - [4.5.7 changes])
+## [4.5.7] - (April 2024 - [4.5.7 changes])
+- Updates baseline to upstream SQLite 3.45.3
+- Adds "device" logging and profile target using os_log for Apple (and logcat on Android)
+- Fixes issues compiling with SQLITE_OMIT_LOG
+- fixes malformed man page caused by old merge conflict
+- Updates podspec for current Xcode versions, improved Swift support, and Privacy Manifest
 
 ## [4.5.6] - (January 2024 - [4.5.6 changes])
 - Updates baseline to upstream SQLite 3.44.2
