@@ -1108,7 +1108,7 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
            resulted from a short read (i.e. sqlite attempted to pull a page after the end of the file. these 
            short read failures must be ignored for autovaccum mode to work so wipe the output buffer 
            and return SQLITE_OK to skip the decryption step. */
-        sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlcipher_page_cipher: zeroed page (short read) for pgno %d, encryption but returning SQLITE_OK", pgno);
+        sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_page_cipher: zeroed page (short read) for pgno %d with autovacuum enabled, returning SQLITE_OK", pgno);
         sqlcipher_memset(out, 0, page_sz); 
         return SQLITE_OK;
       } else {
