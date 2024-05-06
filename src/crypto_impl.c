@@ -81,6 +81,7 @@ static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
 static FILE* sqlcipher_log_file = NULL;
 static volatile int sqlcipher_log_device = 0;
 static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
+static volatile int sqlcipher_log_set = 0;
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
   if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
@@ -203,6 +204,19 @@ void sqlcipher_activate() {
     for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
       sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
     }
+#ifndef SQLCIPHER_OMIT_DEFAULT_LOGGING
+    /* when sqlcipher is first activated, set a default log target and level of WARN. Use the "device log"
+       for android (logcat) or apple (console). Use stderr on all other platforms. */
+    if(!sqlcipher_log_set) {
+      sqlcipher_log_level = SQLCIPHER_LOG_WARN;
+#if defined(__ANDROID__) || defined(__APPLE_)
+      sqlcipher_log_device = 1;
+#else
+      sqlcipher_log_file = stderr;
+#endif
+      sqlcipher_log_set = 1;
+    }
+#endif
   }
 
   /* check to see if there is a provider registered at this point
