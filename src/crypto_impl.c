@@ -351,7 +351,8 @@ void sqlcipher_mlock(void *ptr, sqlite_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_lock: calling mlock(%p,%lu); _SC_PAGESIZE=%lu", ptr - offset, sz + offset, pagesize);
   rc = mlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_lock: mlock(%p,%lu) returned %d errno=%d", ptr - offset, sz + offset, rc, errno);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_lock: mlock() returned %d errno=%d", rc, errno);
+    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_mem_lock: mlock(%p,%lu) returned %d errno=%d", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
@@ -359,7 +360,8 @@ void sqlcipher_mlock(void *ptr, sqlite_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_lock: calling VirtualLock(%p,%d)", ptr, sz);
   rc = VirtualLock(ptr, sz);
   if(rc==0) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_lock: VirtualLock(%p,%d) returned %d LastError=%d", ptr, sz, rc, GetLastError());
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_lock: VirtualLock() returned %d LastError=%d", rc, GetLastError());
+    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_mem_lock: VirtualLock(%p,%d) returned %d LastError=%d", ptr, sz, rc, GetLastError());
   }
 #endif
 #endif
@@ -378,7 +380,8 @@ void sqlcipher_munlock(void *ptr, sqlite_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_unlock: calling munlock(%p,%lu)", ptr - offset, sz + offset);
   rc = munlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d", ptr - offset, sz + offset, rc, errno);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_unlock: munlock() returned %d errno=%d", rc, errno);
+    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
@@ -386,7 +389,8 @@ void sqlcipher_munlock(void *ptr, sqlite_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_lock: calling VirtualUnlock(%p,%d)", ptr, sz);
   rc = VirtualUnlock(ptr, sz);
   if(!rc) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_unlock: VirtualUnlock(%p,%d) returned %d LastError=%d", ptr, sz, rc, GetLastError());
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_unlock: VirtualUnlock() returned %d LastError=%d", rc, GetLastError());
+    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_mem_unlock: VirtualUnlock(%p,%d) returned %d LastError=%d", ptr, sz, rc, GetLastError());
   }
 #endif
 #endif
@@ -776,7 +780,7 @@ int sqlcipher_codec_ctx_get_kdf_algorithm(codec_ctx *ctx) {
 }
 
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_set_error: ctx=%p, error=%d", ctx, error);
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_set_error %d", error);
   sqlite3pager_error(ctx->pBt->pBt->pPager, error);
   ctx->pBt->pBt->db->errCode = error;
 }
@@ -1122,21 +1126,21 @@ int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int 
            resulted from a short read (i.e. sqlite attempted to pull a page after the end of the file. these 
            short read failures must be ignored for autovaccum mode to work so wipe the output buffer 
            and return SQLITE_OK to skip the decryption step. */
-        sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_page_cipher: zeroed page (short read) for pgno %d with autovacuum enabled, returning SQLITE_OK", pgno);
+        sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_page_cipher: zeroed page (short read) for pgno %d with autovacuum enabled", pgno);
         sqlcipher_memset(out, 0, page_sz); 
         return SQLITE_OK;
       } else {
         /* if the page memory is not all zeros, it means the there was data and a hmac on the page. 
            since the check failed, the page was either tampered with or corrupted. wipe the output buffer,
            and return SQLITE_ERROR to the caller */
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_page_cipher: hmac check failed for pgno=%d returning SQLITE_ERROR", pgno);
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_page_cipher: hmac check failed for pgno=%d", pgno);
         goto error;
       }
     }
   } 
   
   if(ctx->provider->cipher(ctx->provider_ctx, mode, c_ctx->key, ctx->key_sz, iv_out, in, size, out) != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_page_cipher: cipher operation mode=%d failed for pgno=%d returning SQLITE_ERROR", mode, pgno);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_page_cipher: cipher operation mode=%d failed for pgno=%d", mode, pgno);
     goto error;
   };
 
@@ -1188,19 +1192,19 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "cipher_ctx_key_derive: using raw key from hex");
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_key_derive: using raw key from hex");
       cipher_hex2bin(z, n, c_ctx->key);
     } else if (c_ctx->pass_sz == (((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, (ctx->key_sz + ctx->kdf_salt_sz) * 2)) { 
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "cipher_ctx_key_derive: using raw key from hex"); 
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_key_derive: using raw key from hex"); 
       cipher_hex2bin(z, (ctx->key_sz * 2), c_ctx->key);
       cipher_hex2bin(z + (ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
     } else { 
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations", ctx->kdf_iter);
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations", ctx->kdf_iter);
       if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz, 
                     ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
                     ctx->key_sz, c_ctx->key) != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "cipher_ctx_key_derive: error occurred from provider kdf generating encryption key");
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_cipher_ctx_key_derive: error occurred from provider kdf generating encryption key");
         return SQLITE_ERROR;
       }
     }
@@ -1234,7 +1238,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, ctx->key_sz, 
                     ctx->hmac_kdf_salt, ctx->kdf_salt_sz, ctx->fast_kdf_iter,
                     ctx->key_sz, c_ctx->hmac_key) != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "cipher_ctx_key_derive: error occurred from provider kdf generating HMAC key");
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_cipher_ctx_key_derive: error occurred from provider kdf generating HMAC key");
         return SQLITE_ERROR;
       }
     }
@@ -1242,7 +1246,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     c_ctx->derive_key = 0;
     return SQLITE_OK;
   }
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "cipher_ctx_key_derive: key material is not present on the context for key derivation");
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_cipher_ctx_key_derive: key material is not present on the context for key derivation");
   return SQLITE_ERROR;
 }
 
@@ -1441,7 +1445,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   /* Version 4 - current, no upgrade required, so exit immediately */
   rc = sqlcipher_check_connection(db_filename, pass, pass_sz, "", &user_version, &journal_mode);
   if(rc == SQLITE_OK){
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "No upgrade required - exiting");
+    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_codec_ctx_migrate: no upgrade required - exiting");
     goto cleanup;
   }
 
@@ -1449,7 +1453,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
     pragma_compat = sqlite3_mprintf("PRAGMA cipher_compatibility = %d;", i);
     rc = sqlcipher_check_connection(db_filename, pass, pass_sz, pragma_compat, &user_version, &journal_mode);
     if(rc == SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "Version %d format found", i);
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_migrate: version %d format found", i);
       goto migrate;
     }
     if(pragma_compat) sqlcipher_free(pragma_compat, sqlite3Strlen30(pragma_compat)); 
@@ -1457,7 +1461,7 @@ int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   }
   
   /* if we exit the loop normally we failed to determine the version, this is an error */
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "Upgrade format not determined");
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: unable to determine format version for upgrade: this may indicate custom settings were used ");
   goto handle_error;
 
 migrate:
@@ -1474,55 +1478,55 @@ migrate:
 
   rc = sqlite3_exec(db, pragma_compat, NULL, NULL, NULL);
   if(rc != SQLITE_OK){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "set compatibility mode failed, error code %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: set compatibility mode failed, error code %d", rc);
     goto handle_error;
   }
 
   /* force journal mode to DELETE, we will set it back later if different */
   rc = sqlite3_exec(db, "PRAGMA journal_mode = delete;", NULL, NULL, NULL);
   if(rc != SQLITE_OK){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "force journal mode DELETE failed, error code %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: force journal mode DELETE failed, error code %d", rc);
     goto handle_error;
   }
 
   rc = sqlite3_exec(db, attach_command, NULL, NULL, NULL);
   if(rc != SQLITE_OK){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "attach failed, error code %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: attach failed, error code %d", rc);
     goto handle_error;
   }
 
   rc = sqlite3_key_v2(db, "migrate", pass, pass_sz);
   if(rc != SQLITE_OK){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "keying attached database failed, error code %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: keying attached database failed, error code %d", rc);
     goto handle_error;
   }
 
   rc = sqlite3_exec(db, "SELECT sqlcipher_export('migrate');", NULL, NULL, NULL);
   if(rc != SQLITE_OK){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_export failed, error code %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: sqlcipher_export failed, error code %d", rc);
     goto handle_error;
   }
 
 #ifdef SQLCIPHER_TEST
   if((sqlcipher_get_test_flags() & TEST_FAIL_MIGRATE) > 0) {
     rc = SQLITE_ERROR;
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "simulated migrate failure, error code %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlcipher_codec_ctx_migrate: simulated migrate failure, error code %d", rc);
     goto handle_error;
   }
 #endif
 
   rc = sqlite3_exec(db, set_user_version, NULL, NULL, NULL);
   if(rc != SQLITE_OK){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "set user version failed, error code %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: set user version failed, error code %d", rc);
     goto handle_error;
   }
 
   if( !db->autoCommit ){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "cannot migrate from within a transaction");
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: cannot migrate from within a transaction");
     goto handle_error;
   }
   if( db->nVdbeActive>1 ){
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "cannot migrate - SQL statements in progress");
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: cannot migrate - SQL statements in progress");
     goto handle_error;
   }
 
@@ -1560,13 +1564,13 @@ migrate:
 
   if(!MoveFileExW(w_migrated_db_filename, w_db_filename, MOVEFILE_REPLACE_EXISTING)) {
     rc = SQLITE_ERROR;
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "error occurred while renaming %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: error occurred while renaming migration files %d", rc);
     goto handle_error;
   }
 #else
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, "performing POSIX rename");
   if ((rc = rename(migrated_db_filename, db_filename)) != 0) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "error occurred while renaming %d", rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: error occurred while renaming migration files %d", rc);
     goto handle_error;
   }
 #endif
@@ -1598,12 +1602,12 @@ migrate:
   goto cleanup;
 
 handle_error:
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "An error occurred attempting to migrate the database - last error %d", rc);
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_ctx_migrate: an error occurred attempting to migrate the database - last error %d", rc);
 
 cleanup:
   if(migrated_db_filename) {
     int del_rc = sqlite3OsDelete(db->pVfs, migrated_db_filename, 0);
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "deleted migration database: %d", del_rc);
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_ctx_migrate: deleted migration database: %d", del_rc);
   }
 
   if(pass) sqlcipher_free(pass, pass_sz);

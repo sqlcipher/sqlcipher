@@ -41,6 +41,12 @@ source $testdir/permutations.test
 
 set pretests ""
 
+sqlite_orig db :memory:
+execsql {
+  PRAGMA cipher_log_level = NONE;
+}
+db close
+
 test_suite "sqlcipher" -prefix "" -description {
   Runs SQLCipher tests
 } -files [

@@ -768,7 +768,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #ifdef SQLCIPHER_TEST
       if((sqlcipher_get_test_flags() & TEST_FAIL_DECRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "simulating decryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
+        sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlite3Codec: simulating decryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
       }
 #endif
       if(rc != SQLITE_OK) {
@@ -802,7 +802,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #ifdef SQLCIPHER_TEST
       if((sqlcipher_get_test_flags() & TEST_FAIL_ENCRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "simulating encryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
+        sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlite3Codec: simulating encryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
       }
 #endif
       if(rc != SQLITE_OK) {
@@ -847,7 +847,7 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     if(ctx != NULL && SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
       /* there is already a codec attached to this database, so we should not proceed */
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipherCodecAttach: no codec attached to db, exiting");
+      sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlcipherCodecAttach: no codec attached to db");
       return SQLITE_OK;
     }
 
@@ -874,7 +874,7 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     if(rc != SQLITE_OK) {
       /* initialization failed, do not attach potentially corrupted context */
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipherCodecAttach: context initialization failed forcing error state with rc=%d", rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipherCodecAttach: context initialization failed, forcing error state with rc=%d", rc);
       /* force an error at the pager level, such that even the upstream caller ignores the return code
          the pager will be in an error state and will process no further operations */
       sqlite3pager_error(pPager, rc);
@@ -941,7 +941,7 @@ int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     return sqlcipherCodecAttach(db, db_index, pKey, nKey); 
   }
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_key_v2: no key provided");
+  sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlite3_key_v2: no key provided");
   return SQLITE_ERROR;
 }
 
@@ -977,7 +977,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
      
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no codec attached to db, exiting");
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no codec attached to db %s: rekey can't be used on an unencrypted database", zDb);
         return SQLITE_MISUSE;
       }
 
@@ -1006,7 +1006,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
              sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: error %d occurred writing page %d", rc, pgno);  
             }
           } else {
-             sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: error %d occurred getting page %d", rc, pgno);  
+             sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: error %d occurred reading page %d", rc, pgno);  
           }
         } 
       }
@@ -1027,7 +1027,7 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     }
     return SQLITE_OK;
   }
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no key provided");
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no key provided for db %s: rekey can't be used to decrypt an encrypted database", zDb);
   return SQLITE_ERROR;
 }
 
