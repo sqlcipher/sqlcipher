@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased] - (? 2024 - [unreleased changes])
 
+## [4.6.0] - (May 2024 - [4.6.0 changes])
+- Sets default log level to WARN
+- Sends default log output to: logcat for Android; Console for iOS and macOS; and stderr for all other platforms
+- General improvements to log level assignments, output, and sanitization
+- Fixes Apple Privacy Manifest by removing empty NSPrivacyCollectedDataType from PrivacyInfo.xcprivacy
+- Moves Swift support defines for podspec user_target_xcconfig so they only apply to the consuming project
+
 ## [4.5.7] - (April 2024 - [4.5.7 changes])
 - Updates baseline to upstream SQLite 3.45.3
 - Adds "device" logging and profile target using os_log for Apple (and logcat on Android)
@@ -242,7 +249,9 @@ All notable changes to this project will be documented in this file.
 - Change KDF iteration length from 4,000 to 64,000
 
 [unreleased]: https://github.com/sqlcipher/sqlcipher/tree/prerelease
-[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.7...prerelease
+[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.0...prerelease
+[4.6.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.6.0
+[4.6.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.7...v4.6.0
 [4.5.7]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.7
 [4.5.7 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.6...v4.5.7
 [4.5.6]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.6
