@@ -377,20 +377,25 @@ void sqlcipher_munlock(void *ptr, sqlite_uint64 sz) {
 
   if(ptr == NULL || sz == 0) return;
 
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_unlock: calling munlock(%p,%lu)", ptr - offset, sz + offset);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_munlock: calling munlock(%p,%lu)", ptr - offset, sz + offset);
   rc = munlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_unlock: munlock() returned %d errno=%d", rc, errno);
-    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_mem_unlock: munlock(%p,%lu) returned %d errno=%d", ptr - offset, sz + offset, rc, errno);
+    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_munlock: munlock(%p,%lu) returned %d errno=%d", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
 #if !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_APP))
   int rc;
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_mem_lock: calling VirtualUnlock(%p,%d)", ptr, sz);
+
+  if(ptr == NULL || sz == 0) return;
+
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipher_munlock: calling VirtualUnlock(%p,%d)", ptr, sz);
   rc = VirtualUnlock(ptr, sz);
+
+  /* because memory allocations may be made from the same individual page, it is possible for VirtualUnlock to be called
+   * multiple times for the same page. Subsequent calls will return an error, but this can be safely ignored (i.e. because
+   * the previous call for that page unlocked the memory already). Log an info level event only in that case. */
   if(!rc) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_mem_unlock: VirtualUnlock() returned %d LastError=%d", rc, GetLastError());
-    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_mem_unlock: VirtualUnlock(%p,%d) returned %d LastError=%d", ptr, sz, rc, GetLastError());
+    sqlcipher_log(SQLCIPHER_LOG_INFO, "sqlcipher_munlock: VirtualUnlock(%p,%d) returned %d LastError=%d", ptr, sz, rc, GetLastError());
   }
 #endif
 #endif
