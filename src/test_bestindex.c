@@ -215,6 +215,9 @@ static int tclConnect(
       rc = SQLITE_ERROR;
     }else{
       rc = sqlite3_declare_vtab(db, Tcl_GetStringResult(interp));
+      if( rc!=SQLITE_OK ){
+        *pzErr = sqlite3_mprintf("declare_vtab: %s", sqlite3_errmsg(db));
+      }
     }
 
     if( rc!=SQLITE_OK ){
@@ -226,7 +229,7 @@ static int tclConnect(
   }
 
   sqlite3_free(zCmd);
-  *ppVtab = &pTab->base;
+  *ppVtab = pTab ? &pTab->base : 0;
   return rc;
 }
 

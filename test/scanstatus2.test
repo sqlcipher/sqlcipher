@@ -247,7 +247,7 @@ QUERY (nCycle=nnn)
 ----SCAN rt2 (nCycle=nnn)
 ----USE TEMP B-TREE FOR GROUP BY (nCycle=nnn)
 --SCAN rt1 (nCycle=nnn)
---CREATE AUTOMATIC INDEX ON v1(x1, cnt, x1) (nCycle=nnn)
+--CREATE AUTOMATIC INDEX ON v1(x1, cnt) (nCycle=nnn)
 --BLOOM FILTER ON v1 (x1=?)
 --SEARCH v1 USING AUTOMATIC COVERING INDEX (x1=?) (nCycle=nnn)
 }
@@ -327,6 +327,17 @@ QUERY (nCycle=nnn)
 --SCAN xy (nCycle=nnn)
 --SCAN xy2 (nCycle=nnn)
 }
+
+#-------------------------------------------------------------------------
+reset_db
+
+# Check that an OOB parameter (45) does not cause asan or valgrind errors.
+#
+do_test 7.0 {
+  db eval {SELECT * FROM sqlite_schema}
+  set stmt [db version -last-stmt-ptr]
+  sqlite3_stmt_scanstatus -flags complex $stmt 1000000
+} {}
 
 #explain_i { SELECT (a % 2), group_concat(b) FROM t1 GROUP BY 1 }
 #puts_debug_info { SELECT (a % 2), group_concat(b) FROM t1 GROUP BY 1 }
