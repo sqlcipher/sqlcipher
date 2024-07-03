@@ -205,15 +205,24 @@ void sqlcipher_activate() {
       sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
     }
 #ifndef SQLCIPHER_OMIT_DEFAULT_LOGGING
-    /* when sqlcipher is first activated, set a default log target and level of WARN. Use the "device log"
-       for android (logcat) or apple (console). Use stderr on all other platforms. */
+    /* when sqlcipher is first activated, set a default log target and level of WARN if the
+       logging settings have not yet been initialized. Use the "device log" for 
+       android (logcat) or apple (console). Use stderr on all other platforms. */  
     if(!sqlcipher_log_set) {
-      sqlcipher_log_level = SQLCIPHER_LOG_WARN;
+
+      /* set log level if it is different than the uninitalized default value of NONE */ 
+      if(sqlcipher_log_level == SQLCIPHER_LOG_NONE) {
+        sqlcipher_log_level = SQLCIPHER_LOG_WARN;
+      }
+
+      /* set the default file or device if neither is already set */
+      if(sqlcipher_log_device == 0 && sqlcipher_log_file == NULL) {
 #if defined(__ANDROID__) || defined(__APPLE_)
-      sqlcipher_log_device = 1;
+        sqlcipher_log_device = 1;
 #else
-      sqlcipher_log_file = stderr;
+        sqlcipher_log_file = stderr;
 #endif
+      }
       sqlcipher_log_set = 1;
     }
 #endif
