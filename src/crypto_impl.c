@@ -1823,8 +1823,16 @@ void sqlcipher_set_log_level(unsigned int level) {
   sqlcipher_log_level = level;
 }
 
+unsigned int sqlcipher_get_log_level() {
+  return sqlcipher_log_level;
+}
+
 void sqlcipher_set_log_subsystem(unsigned int subsys) {
   sqlcipher_log_subsys = subsys;
+}
+
+unsigned int sqlcipher_get_log_subsystem() {
+  return sqlcipher_log_subsys;
 }
 
 int sqlcipher_set_log(const char *destination){
