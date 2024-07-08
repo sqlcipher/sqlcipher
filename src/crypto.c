@@ -53,11 +53,11 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
   page_sz = sqlcipher_codec_ctx_get_pagesize(ctx);
   reserve_sz = sqlcipher_codec_ctx_get_reservesize(ctx);
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize() size=%d reserve=%d", page_sz, reserve_sz);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize() size=%d reserve=%d", page_sz, reserve_sz);
 
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, "codec_set_btree_to_codec_pagesize: entering database mutex %p", db->mutex);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "codec_set_btree_to_codec_pagesize: entering database mutex %p", db->mutex);
   sqlite3_mutex_enter(db->mutex);
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, "codec_set_btree_to_codec_pagesize: entered database mutex %p", db->mutex);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "codec_set_btree_to_codec_pagesize: entered database mutex %p", db->mutex);
   db->nextPagesize = page_sz; 
 
   /* before forcing the page size we need to unset the BTS_PAGESIZE_FIXED flag, else  
@@ -65,29 +65,29 @@ static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ct
   pDb->pBt->pBt->btsFlags &= ~BTS_PAGESIZE_FIXED;
   rc = sqlite3BtreeSetPageSize(pDb->pBt, page_sz, reserve_sz, 0);
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize returned %d", rc);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "codec_set_btree_to_codec_pagesize: sqlite3BtreeSetPageSize returned %d", rc);
 
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, "codec_set_btree_to_codec_pagesize: leaving database mutex %p", db->mutex);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "codec_set_btree_to_codec_pagesize: leaving database mutex %p", db->mutex);
   sqlite3_mutex_leave(db->mutex);
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, "codec_set_btree_to_codec_pagesize: left database mutex %p", db->mutex);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "codec_set_btree_to_codec_pagesize: left database mutex %p", db->mutex);
 
   return rc;
 }
 
 static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, int for_ctx) {
   struct Db *pDb = &db->aDb[nDb];
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "codec_set_pass_key: db=%p nDb=%d for_ctx=%d", db, nDb, for_ctx);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "codec_set_pass_key: db=%p nDb=%d for_ctx=%d", db, nDb, for_ctx);
   if(pDb->pBt) {
     codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
 
     if(ctx) {
       return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
     } else {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, "codec_set_pass_key: error ocurred fetching codec from pager on db %d", nDb);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "codec_set_pass_key: error ocurred fetching codec from pager on db %d", nDb);
       return SQLITE_ERROR;
     }
   }
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "codec_set_pass_key: no btree present on db %d", nDb);
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "codec_set_pass_key: no btree present on db %d", nDb);
   return SQLITE_ERROR;
 } 
 
@@ -101,12 +101,12 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   }
 
   if(sqlite3_stricmp(zLeft, "key") !=0 && sqlite3_stricmp(zLeft, "rekey") != 0) {
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_pragma: db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p", db, iDb, pParse, zLeft, zRight, ctx);
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_pragma: db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p", db, iDb, pParse, zLeft, zRight, ctx);
   }
 
 #ifdef SQLCIPHER_EXT
   if(sqlcipher_ext_pragma(db, iDb, pParse, zLeft, zRight)) {
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipher_codec_pragma: PRAGMA handled by sqlcipher_ext_pragma");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_pragma: PRAGMA handled by sqlcipher_ext_pragma");
   } else
 #endif
 #ifdef SQLCIPHER_TEST
@@ -190,7 +190,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       char *migrate_status = sqlite3_mprintf("%d", status);
       sqlcipher_vdbe_return_string(pParse, "cipher_migrate", migrate_status, P4_DYNAMIC);
       if(status != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipher_codec_pragma: error occurred during cipher_migrate: %d", status);
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_pragma: error occurred during cipher_migrate: %d", status);
         sqlcipher_codec_ctx_set_error(ctx, status);
       }
     }
@@ -698,6 +698,17 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       sqlcipher_set_log_level(level);
       sqlcipher_vdbe_return_string(pParse, "cipher_log_level", sqlite3_mprintf("%u", level), P4_DYNAMIC);
   } else
+  if( sqlite3_stricmp(zLeft, "cipher_log_subsystem")==0 && zRight){
+      unsigned int subsys = SQLCIPHER_LOG_ALL;
+      if(sqlite3_stricmp(zRight,      "NONE"    )==0) subsys = SQLCIPHER_LOG_NONE;
+      else if(sqlite3_stricmp(zRight, "ALL"     )==0) subsys = SQLCIPHER_LOG_ALL;
+      else if(sqlite3_stricmp(zRight, "CORE"    )==0) subsys = SQLCIPHER_LOG_CORE;
+      else if(sqlite3_stricmp(zRight, "MEMORY"  )==0) subsys = SQLCIPHER_LOG_MEMORY;
+      else if(sqlite3_stricmp(zRight, "MUTEX"   )==0) subsys = SQLCIPHER_LOG_MUTEX;
+      else if(sqlite3_stricmp(zRight, "PROVIDER")==0) subsys = SQLCIPHER_LOG_PROVIDER;
+      sqlcipher_set_log_subsystem(subsys);
+      sqlcipher_vdbe_return_string(pParse, "cipher_log_subsystem", sqlite3_mprintf("%u", subsys), P4_DYNAMIC);
+  } else
   if( sqlite3_stricmp(zLeft, "cipher_log")== 0 && zRight ){
       char *status = sqlite3_mprintf("%d", sqlcipher_set_log(zRight));
       sqlcipher_vdbe_return_string(pParse, "cipher_log", status, P4_DYNAMIC);
@@ -732,7 +743,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   int plaintext_header_sz = sqlcipher_codec_ctx_get_plaintext_header_size(ctx);
   int cctx = CIPHER_READ_CTX;
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3Codec: pgno=%d, mode=%d, page_sz=%d", pgno, mode, page_sz);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3Codec: pgno=%d, mode=%d, page_sz=%d", pgno, mode, page_sz);
 
 #ifdef SQLCIPHER_EXT
   if(sqlcipher_license_check(ctx) != SQLITE_OK) return NULL;
@@ -740,7 +751,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
-   sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error occurred during key derivation: %d", rc);
+   sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error occurred during key derivation: %d", rc);
    sqlcipher_codec_ctx_set_error(ctx, rc); 
    return NULL;
   }
@@ -749,7 +760,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
      PRAGMA. We can't set the error state on the pager at that point because the pager
      may not be open yet. However, this is a fatal error state, so abort the codec */
   if(plaintext_header_sz < 0) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error invalid plaintext_header_sz: %d", plaintext_header_sz);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error invalid plaintext_header_sz: %d", plaintext_header_sz);
     sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
     return NULL;
   }
@@ -758,7 +769,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
     offset = plaintext_header_sz ? plaintext_header_sz : FILE_HEADER_SZ; 
   
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3Codec: switch mode=%d offset=%d",  mode, offset);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3Codec: switch mode=%d offset=%d",  mode, offset);
   switch(mode) {
     case CODEC_READ_OP: /* decrypt */
       if(pgno == 1) /* copy initial part of file header or SQLite magic to buffer */ 
@@ -768,13 +779,13 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #ifdef SQLCIPHER_TEST
       if((sqlcipher_get_test_flags() & TEST_FAIL_DECRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
-        sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlite3Codec: simulating decryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
+        sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3Codec: simulating decryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
       }
 #endif
       if(rc != SQLITE_OK) {
         /* failure to decrypt a page is considered a permanent error and will render the pager unusable
            in order to prevent inconsistent data being loaded into page cache */
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error decrypting page %d data: %d", pgno, rc);
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error decrypting page %d data: %d", pgno, rc);
         sqlcipher_memset((unsigned char*) buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
       } else {
@@ -792,7 +803,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         void *kdf_salt = NULL; 
         /* retrieve the kdf salt */
         if((rc = sqlcipher_codec_ctx_get_kdf_salt(ctx, &kdf_salt)) != SQLITE_OK) {
-          sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error retrieving salt: %d", rc);
+          sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error retrieving salt: %d", rc);
           sqlcipher_codec_ctx_set_error(ctx, rc); 
           return NULL;
         }
@@ -802,13 +813,13 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #ifdef SQLCIPHER_TEST
       if((sqlcipher_get_test_flags() & TEST_FAIL_ENCRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
-        sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlite3Codec: simulating encryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
+        sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3Codec: simulating encryption failure for pgno=%d, mode=%d, page_sz=%d\n", pgno, mode, page_sz);
       }
 #endif
       if(rc != SQLITE_OK) {
         /* failure to encrypt a page is considered a permanent error and will render the pager unusable
            in order to prevent corrupted pages from being written to the main databased when using WAL */
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error encrypting page %d data: %d", pgno, rc);
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error encrypting page %d data: %d", pgno, rc);
         sqlcipher_memset((unsigned char*)buffer+offset, 0, page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
         return NULL;
@@ -818,7 +829,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       break;
 
     default:
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3Codec: error unsupported codec mode %d", mode);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error unsupported codec mode %d", mode);
       sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR); /* unsupported mode, set error */
       return pData;
       break;
@@ -835,7 +846,7 @@ static void sqlite3FreeCodecArg(void *pCodecArg) {
 int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   struct Db *pDb = &db->aDb[nDb];
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: db=%p, nDb=%d", db, nDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: db=%p, nDb=%d", db, nDb);
 
   if(nKey && zKey && pDb->pBt) {
     int rc;
@@ -847,19 +858,19 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     if(ctx != NULL && SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
       /* there is already a codec attached to this database, so we should not proceed */
-      sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlcipherCodecAttach: no codec attached to db");
+      sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: no codec attached to db");
       return SQLITE_OK;
     }
 
     /* check if the sqlite3_file is open, and if not force handle to NULL */ 
     if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL; 
 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlcipher_activate()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlcipher_activate()");
     sqlcipher_activate(); /* perform internal initialization for sqlcipher */
 
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: entering database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: entering database mutex %p", db->mutex);
     sqlite3_mutex_enter(db->mutex);
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: entered database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: entered database mutex %p", db->mutex);
 
 #ifdef SQLCIPHER_EXT
     if((rc = sqlite3_set_authorizer(db, sqlcipher_license_authorizer, db)) != SQLITE_OK) {
@@ -869,44 +880,44 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 #endif
 
     /* point the internal codec argument against the contet to be prepared */
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlcipher_codec_ctx_init()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlcipher_codec_ctx_init()");
     rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, zKey, nKey);
 
     if(rc != SQLITE_OK) {
       /* initialization failed, do not attach potentially corrupted context */
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlcipherCodecAttach: context initialization failed, forcing error state with rc=%d", rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: context initialization failed, forcing error state with rc=%d", rc);
       /* force an error at the pager level, such that even the upstream caller ignores the return code
          the pager will be in an error state and will process no further operations */
       sqlite3pager_error(pPager, rc);
       pDb->pBt->pBt->db->errCode = rc;
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: leaving database mutex %p (early return on rc=%d)", db->mutex, rc);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: leaving database mutex %p (early return on rc=%d)", db->mutex, rc);
       sqlite3_mutex_leave(db->mutex);
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: left database mutex %p (early return on rc=%d)", db->mutex, rc);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: left database mutex %p (early return on rc=%d)", db->mutex, rc);
       return rc;
     }
 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlcipherPagerSetCodec()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlcipherPagerSetCodec()");
     sqlcipherPagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling codec_set_btree_to_codec_pagesize()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling codec_set_btree_to_codec_pagesize()");
     codec_set_btree_to_codec_pagesize(db, pDb, ctx);
 
     /* force secure delete. This has the benefit of wiping internal data when deleted
        and also ensures that all pages are written to disk (i.e. not skipped by
        sqlite3PagerDontWrite optimizations) */ 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlite3BtreeSecureDelete()");
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlite3BtreeSecureDelete()");
     sqlite3BtreeSecureDelete(pDb->pBt, 1); 
 
     /* if fd is null, then this is an in-memory database and
        we dont' want to overwrite the AutoVacuum settings
        if not null, then set to the default */
     if(fd != NULL) { 
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecAttach: calling sqlite3BtreeSetAutoVacuum()");
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlite3BtreeSetAutoVacuum()");
       sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
     }
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: leaving database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: leaving database mutex %p", db->mutex);
     sqlite3_mutex_leave(db->mutex);
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlcipherCodecAttach: left database mutex %p", db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: left database mutex %p", db->mutex);
   }
   return SQLITE_OK;
 }
@@ -930,23 +941,23 @@ void sqlite3_activate_see(const char* in) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_key: db=%p", db);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_key: db=%p", db);
   return sqlite3_key_v2(db, "main", pKey, nKey);
 }
 
 int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_key_v2: db=%p zDb=%s", db, zDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_key_v2: db=%p zDb=%s", db, zDb);
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     return sqlcipherCodecAttach(db, db_index, pKey, nKey); 
   }
-  sqlcipher_log(SQLCIPHER_LOG_WARN, "sqlite3_key_v2: no key provided");
+  sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3_key_v2: no key provided");
   return SQLITE_ERROR;
 }
 
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey: db=%p", db);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_rekey: db=%p", db);
   return sqlite3_rekey_v2(db, "main", pKey, nKey);
 }
 
@@ -961,11 +972,11 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: db=%p zDb=%s", db, zDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: db=%p zDb=%s", db, zDb);
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = &db->aDb[db_index];
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: database zDb=%p db_index:%d", zDb, db_index);
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: database zDb=%p db_index:%d", zDb, db_index);
     if(pDb->pBt) {
       codec_ctx *ctx;
       int rc, page_count;
@@ -977,13 +988,13 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
      
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no codec attached to db %s: rekey can't be used on an unencrypted database", zDb);
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: no codec attached to db %s: rekey can't be used on an unencrypted database", zDb);
         return SQLITE_MISUSE;
       }
 
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3_rekey_v2: entering database mutex %p", db->mutex);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: entering database mutex %p", db->mutex);
       sqlite3_mutex_enter(db->mutex);
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3_rekey_v2: entered database mutex %p", db->mutex);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: entered database mutex %p", db->mutex);
 
       codec_set_pass_key(db, db_index, pKey, nKey, CIPHER_WRITE_CTX);
     
@@ -1003,37 +1014,37 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
             if(rc == SQLITE_OK) {
               sqlite3PagerUnref(page);
             } else {
-             sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: error %d occurred writing page %d", rc, pgno);  
+             sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: error %d occurred writing page %d", rc, pgno);  
             }
           } else {
-             sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: error %d occurred reading page %d", rc, pgno);  
+             sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: error %d occurred reading page %d", rc, pgno);  
           }
         } 
       }
 
       /* if commit was successful commit and copy the rekey data to current key, else rollback to release locks */
       if(rc == SQLITE_OK) { 
-        sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: committing");
+        sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: committing");
         rc = sqlite3BtreeCommit(pDb->pBt); 
         sqlcipher_codec_key_copy(ctx, CIPHER_WRITE_CTX);
       } else {
-        sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlite3_rekey_v2: rollback");
+        sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: rollback");
         sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK, 0);
       }
 
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3_rekey_v2: leaving database mutex %p", db->mutex);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: leaving database mutex %p", db->mutex);
       sqlite3_mutex_leave(db->mutex);
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, "sqlite3_rekey_v2: left database mutex %p", db->mutex);
+      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: left database mutex %p", db->mutex);
     }
     return SQLITE_OK;
   }
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, "sqlite3_rekey_v2: no key provided for db %s: rekey can't be used to decrypt an encrypted database", zDb);
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: no key provided for db %s: rekey can't be used to decrypt an encrypted database", zDb);
   return SQLITE_ERROR;
 }
 
 void sqlcipherCodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, "sqlcipherCodecGetKey:db=%p, nDb=%d", db, nDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecGetKey:db=%p, nDb=%d", db, nDb);
   if( pDb->pBt ) {
     codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
     
