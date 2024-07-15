@@ -700,22 +700,22 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     } else {
       level = sqlcipher_get_log_level();
     }
-    sqlcipher_vdbe_return_string(pParse, "cipher_log_level", sqlcipher_get_log_subsystem_str(level), P4_TRANSIENT);
+    sqlcipher_vdbe_return_string(pParse, "cipher_log_level", sqlcipher_get_log_source_str(level), P4_TRANSIENT);
   } else
-  if( sqlite3_stricmp(zLeft, "cipher_log_subsystem")==0 ){
-    unsigned int subsys = SQLCIPHER_LOG_NONE;
+  if( sqlite3_stricmp(zLeft, "cipher_log_source")==0 ){
+    unsigned int source = SQLCIPHER_LOG_NONE;
     if(zRight) {
-      if(sqlite3_stricmp(zRight,      "NONE"    )==0) subsys = SQLCIPHER_LOG_NONE;
-      else if(sqlite3_stricmp(zRight, "ALL"     )==0) subsys = SQLCIPHER_LOG_ALL;
-      else if(sqlite3_stricmp(zRight, "CORE"    )==0) subsys = SQLCIPHER_LOG_CORE;
-      else if(sqlite3_stricmp(zRight, "MEMORY"  )==0) subsys = SQLCIPHER_LOG_MEMORY;
-      else if(sqlite3_stricmp(zRight, "MUTEX"   )==0) subsys = SQLCIPHER_LOG_MUTEX;
-      else if(sqlite3_stricmp(zRight, "PROVIDER")==0) subsys = SQLCIPHER_LOG_PROVIDER;
-      sqlcipher_set_log_subsystem(subsys);
+      if(sqlite3_stricmp(zRight,      "NONE"    )==0) source = SQLCIPHER_LOG_NONE;
+      else if(sqlite3_stricmp(zRight, "ALL"     )==0) source = SQLCIPHER_LOG_ALL;
+      else if(sqlite3_stricmp(zRight, "CORE"    )==0) source = SQLCIPHER_LOG_CORE;
+      else if(sqlite3_stricmp(zRight, "MEMORY"  )==0) source = SQLCIPHER_LOG_MEMORY;
+      else if(sqlite3_stricmp(zRight, "MUTEX"   )==0) source = SQLCIPHER_LOG_MUTEX;
+      else if(sqlite3_stricmp(zRight, "PROVIDER")==0) source = SQLCIPHER_LOG_PROVIDER;
+      sqlcipher_set_log_source(source);
     } else {
-      subsys = sqlcipher_get_log_subsystem();
+      source = sqlcipher_get_log_source();
     }
-    sqlcipher_vdbe_return_string(pParse, "cipher_log_subsystem", sqlcipher_get_log_subsystem_str(subsys), P4_TRANSIENT);
+    sqlcipher_vdbe_return_string(pParse, "cipher_log_source", sqlcipher_get_log_source_str(source), P4_TRANSIENT);
   } else
   if( sqlite3_stricmp(zLeft, "cipher_log")== 0 && zRight ){
       char *status = sqlite3_mprintf("%d", sqlcipher_set_log(zRight));

@@ -81,7 +81,7 @@ static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
 static FILE* sqlcipher_log_file = NULL;
 static volatile int sqlcipher_log_device = 0;
 static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
-static volatile unsigned int sqlcipher_log_subsys = SQLCIPHER_LOG_ALL;
+static volatile unsigned int sqlcipher_log_source = SQLCIPHER_LOG_ALL;
 static volatile int sqlcipher_log_set = 0;
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
@@ -1751,8 +1751,8 @@ char *sqlcipher_get_log_level_str(unsigned int level) {
   return "NONE";
 }
 
-char *sqlcipher_get_log_subsystem_str(unsigned int subsys) {
-  switch(subsys) {
+char *sqlcipher_get_log_source_str(unsigned int source) {
+  switch(source) {
     case SQLCIPHER_LOG_NONE:
       return "NONE";
     case SQLCIPHER_LOG_CORE:
@@ -1773,7 +1773,7 @@ char *sqlcipher_get_log_subsystem_str(unsigned int subsys) {
 #define FILETIME_1970 116444736000000000ull /* seconds between 1/1/1601 and 1/1/1970 */
 #define HECTONANOSEC_PER_SEC 10000000ull
 #define MAX_LOG_LEN 8192
-void sqlcipher_log(unsigned int level, unsigned int subsys, const char *message, ...) {
+void sqlcipher_log(unsigned int level, unsigned int source, const char *message, ...) {
   va_list params;
   va_start(params, message);
   char formatted[MAX_LOG_LEN];
@@ -1803,14 +1803,14 @@ void sqlcipher_log(unsigned int level, unsigned int subsys, const char *message,
 #endif
   if(
     level > sqlcipher_log_level /* log level is higher, e.g. level filter is at ERROR but this message is DEBUG */
-    || (sqlcipher_log_subsys & subsys) == 0 /* subsystem filter doesn't match this message subsys */
+    || (sqlcipher_log_source & source) == 0 /* source filter doesn't match this message source */
     || (sqlcipher_log_device == 0 && sqlcipher_log_file == NULL) /* no configured log target */
   ) {
     /* skip logging this message */
     goto end;
   }
 
-  sqlite3_snprintf(MAX_LOG_LEN, formatted, "%s %s |", sqlcipher_get_log_level_str(level), sqlcipher_get_log_subsystem_str(subsys));
+  sqlite3_snprintf(MAX_LOG_LEN, formatted, "%s %s ", sqlcipher_get_log_level_str(level), sqlcipher_get_log_source_str(source));
   len = strlen(formatted);
   sqlite3_vsnprintf(MAX_LOG_LEN - len, formatted + len, message, params);
 
@@ -1865,12 +1865,12 @@ unsigned int sqlcipher_get_log_level() {
   return sqlcipher_log_level;
 }
 
-void sqlcipher_set_log_subsystem(unsigned int subsys) {
-  sqlcipher_log_subsys = subsys;
+void sqlcipher_set_log_source(unsigned int source) {
+  sqlcipher_log_source = source;
 }
 
-unsigned int sqlcipher_get_log_subsystem() {
-  return sqlcipher_log_subsys;
+unsigned int sqlcipher_get_log_source() {
+  return sqlcipher_log_source;
 }
 
 int sqlcipher_set_log(const char *destination){
