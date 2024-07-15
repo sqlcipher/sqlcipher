@@ -31,7 +31,6 @@
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 #ifdef SQLCIPHER_CRYPTO_CC
-#include "crypto.h"
 #include "sqlcipher.h"
 #include <CommonCrypto/CommonCrypto.h>
 #include <Security/SecRandom.h>

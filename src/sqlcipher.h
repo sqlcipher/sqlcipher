@@ -52,7 +52,6 @@
 #define SQLCIPHER_PBKDF2_HMAC_SHA512 2
 #define SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL "PBKDF2_HMAC_SHA512"
 
-
 typedef struct {
   int (*activate)(void *ctx);
   int (*deactivate)(void *ctx);
@@ -73,10 +72,16 @@ typedef struct {
   const char* (*get_provider_version)(void *ctx);
 } sqlcipher_provider;
 
+/* public interfaces called externally */
+void sqlcipher_init_memmethods(void);
+int sqlcipher_codec_pragma(sqlite3*, int, Parse*, const char *, const char*);
+int sqlcipherCodecAttach(sqlite3*, int, const void *, int);
+void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
+void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
+int sqlcipher_find_db_index(sqlite3 *, const char *);
+
 /* utility functions */
 void* sqlcipher_malloc(sqlite_uint64);
-void sqlcipher_mlock(void *, sqlite_uint64);
-void sqlcipher_munlock(void *, sqlite_uint64);
 void* sqlcipher_memset(void *, unsigned char, sqlite_uint64);
 int sqlcipher_ismemset(const void *, unsigned char, sqlite_uint64);
 int sqlcipher_memcmp(const void *, const void *, int);
@@ -96,6 +101,41 @@ sqlcipher_provider* sqlcipher_get_provider(void);
 #define SQLCIPHER_MUTEX_COUNT             6
 
 sqlite3_mutex* sqlcipher_mutex(int);
+
+#define SQLCIPHER_LOG_NONE          0x00
+#define SQLCIPHER_LOG_ERROR         0x01
+#define SQLCIPHER_LOG_WARN          0x02
+#define SQLCIPHER_LOG_INFO          0x04
+#define SQLCIPHER_LOG_DEBUG         0x08
+#define SQLCIPHER_LOG_TRACE         0x10
+#define SQLCIPHER_LOG_ALL           0xffffffff
+
+#define SQLCIPHER_LOG_CORE          0x01
+#define SQLCIPHER_LOG_MEMORY        0x02
+#define SQLCIPHER_LOG_MUTEX         0x04
+#define SQLCIPHER_LOG_PROVIDER      0x08
+
+#ifdef SQLCIPHER_OMIT_LOG
+#define sqlcipher_log(level, source, message, ...)
+#else
+void sqlcipher_log(unsigned int level, unsigned int source, const char *message, ...);
+#endif
+
+#ifdef CODEC_DEBUG_PAGEDATA
+#define CODEC_HEXDUMP(DESC,BUFFER,LEN)  \
+  { \
+    int __pctr; \
+    printf(DESC); \
+    for(__pctr=0; __pctr < LEN; __pctr++) { \
+      if(__pctr % 16 == 0) printf("\n%05x: ",__pctr); \
+      printf("%02x ",((unsigned char*) BUFFER)[__pctr]); \
+    } \
+    printf("\n"); \
+    fflush(stdout); \
+  }
+#else
+#define CODEC_HEXDUMP(DESC,BUFFER,LEN)
+#endif
 
 #endif
 #endif

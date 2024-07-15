@@ -31,7 +31,6 @@
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 #ifdef SQLCIPHER_CRYPTO_NSS
-#include "crypto.h"
 #include "sqlcipher.h"
 #include <nss/blapit.h>
 #include <nss/nss.h>

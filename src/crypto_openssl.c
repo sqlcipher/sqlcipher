@@ -32,7 +32,6 @@
 #ifdef SQLITE_HAS_CODEC
 #ifdef SQLCIPHER_CRYPTO_OPENSSL
 #include "sqliteInt.h"
-#include "crypto.h"
 #include "sqlcipher.h"
 #include <openssl/crypto.h> /* amalgamator: dontcache */
 #include <openssl/rand.h> /* amalgamator: dontcache */

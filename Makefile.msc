@@ -1327,13 +1327,11 @@ LIBRESOBJS =
 # Core source code files, part 1.
 #
 SRC00 = \
-	$(TOP)\src\crypto.c \
+	$(TOP)\src\sqlcipher.c \
 	$(TOP)\src\crypto_cc.c \
-	$(TOP)\src\crypto_impl.c \
 	$(TOP)\src\crypto_libtomcrypt.c \
 	$(TOP)\src\crypto_nss.c \
 	$(TOP)\src\crypto_openssl.c \
-	$(TOP)\src\crypto.h \
 	$(TOP)\src\sqlcipher.h \
   $(TOP)\src\alter.c \
   $(TOP)\src\analyze.c \

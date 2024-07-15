@@ -159,7 +159,6 @@ close $in
 # text of the file in-line.  The file only needs to be included once.
 #
 foreach hdr {
-   crypto.h
    sqlcipher.h
    btree.h
    btreeInt.h
@@ -430,8 +429,7 @@ set flist {
    vdbevtab.c
    memjournal.c
 
-   crypto.c
-   crypto_impl.c
+   sqlcipher.c
    crypto_libtomcrypt.c
    crypto_nss.c
    crypto_openssl.c
