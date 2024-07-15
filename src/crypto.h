@@ -335,6 +335,9 @@ unsigned int sqlcipher_get_log_level();
 void sqlcipher_set_log_subsystem(unsigned int subsys);
 unsigned int sqlcipher_get_log_subsystem();
 
+char *sqlcipher_get_log_level_str(unsigned int);
+char *sqlcipher_get_log_subsystem_str(unsigned int);
+
 #define SQLCIPHER_LOG_NONE          0x00
 #define SQLCIPHER_LOG_ERROR         0x01
 #define SQLCIPHER_LOG_WARN          0x02

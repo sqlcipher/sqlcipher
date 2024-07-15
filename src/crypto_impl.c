@@ -1733,14 +1733,52 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
   return ctx->provider->get_provider_version(ctx->provider_ctx);
 }
 
+char *sqlcipher_get_log_level_str(unsigned int level) {
+  switch(level) {
+    case SQLCIPHER_LOG_ERROR:
+      return "ERROR";
+    case SQLCIPHER_LOG_WARN:
+      return "WARN";
+    case SQLCIPHER_LOG_INFO:
+      return "INFO";
+    case SQLCIPHER_LOG_DEBUG:
+      return "DEBUG";
+    case SQLCIPHER_LOG_TRACE:
+      return "TRACE";
+    case SQLCIPHER_LOG_ALL:
+      return "ALL";
+  }
+  return "NONE";
+}
+
+char *sqlcipher_get_log_subsystem_str(unsigned int subsys) {
+  switch(subsys) {
+    case SQLCIPHER_LOG_NONE:
+      return "NONE";
+    case SQLCIPHER_LOG_CORE:
+      return "CORE";
+    case SQLCIPHER_LOG_MEMORY:
+      return "MEMORY";
+    case SQLCIPHER_LOG_MUTEX:
+      return "MUTEX";
+    case SQLCIPHER_LOG_PROVIDER:
+      return "PROVIDER";
+  }
+  return "ALL";
+}
+
+
 #ifndef SQLCIPHER_OMIT_LOG
 /* constants from https://github.com/Alexpux/mingw-w64/blob/master/mingw-w64-crt/misc/gettimeofday.c */
 #define FILETIME_1970 116444736000000000ull /* seconds between 1/1/1601 and 1/1/1970 */
 #define HECTONANOSEC_PER_SEC 10000000ull
+#define MAX_LOG_LEN 8192
 void sqlcipher_log(unsigned int level, unsigned int subsys, const char *message, ...) {
   va_list params;
   va_start(params, message);
-  char *formatted = NULL;
+  char formatted[MAX_LOG_LEN];
+  char *out = NULL;
+  int len = 0;
 
 #ifdef CODEC_DEBUG
 #if defined(SQLCIPHER_OMIT_LOG_DEVICE)
@@ -1772,15 +1810,17 @@ void sqlcipher_log(unsigned int level, unsigned int subsys, const char *message,
     goto end;
   }
 
+  sqlite3_snprintf(MAX_LOG_LEN, formatted, "%s %s |", sqlcipher_get_log_level_str(level), sqlcipher_get_log_subsystem_str(subsys));
+  len = strlen(formatted);
+  sqlite3_vsnprintf(MAX_LOG_LEN - len, formatted + len, message, params);
+
 #if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
   if(sqlcipher_log_device) {
 #if defined(__ANDROID__)
-    __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
+    __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", formatted);
     goto end;
-#elif defined(__APPLE__)
-    formatted = sqlite3_vmprintf(message, params);
+#elif defined(__APPLEformattes__)
     os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
-    sqlite3_free(formatted);
     goto end;
 #endif
   }
@@ -1807,9 +1847,7 @@ void sqlcipher_log(unsigned int level, unsigned int subsys, const char *message,
     localtime_r(&sec, &tt);
 #endif
     if(strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tt)) {
-      fprintf((FILE*)sqlcipher_log_file, "%s.%03d: ", buffer, ms);
-      vfprintf((FILE*)sqlcipher_log_file, message, params);
-      fprintf((FILE*)sqlcipher_log_file, "\n");
+      fprintf((FILE*)sqlcipher_log_file, "%s.%03d: %s\n", buffer, ms, formatted);
       goto end;
     }
   }

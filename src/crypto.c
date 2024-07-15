@@ -690,8 +690,6 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   } else
   if( sqlite3_stricmp(zLeft, "cipher_log_level")==0 ){
     unsigned int level = SQLCIPHER_LOG_NONE;
-    char *out = NULL;
-
     if(zRight) {
       if(sqlite3_stricmp(zRight,      "ERROR")==0) level = SQLCIPHER_LOG_ERROR;
       else if(sqlite3_stricmp(zRight, "WARN" )==0) level = SQLCIPHER_LOG_WARN;
@@ -702,35 +700,10 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     } else {
       level = sqlcipher_get_log_level();
     }
-    switch(level) {
-      case SQLCIPHER_LOG_NONE:
-         out = "NONE";
-         break;
-      case SQLCIPHER_LOG_ERROR:
-         out = "ERROR";
-         break;
-      case SQLCIPHER_LOG_WARN:
-         out = "WARN";
-         break;
-      case SQLCIPHER_LOG_INFO:
-         out = "INFO";
-         break;
-      case SQLCIPHER_LOG_DEBUG:
-         out = "DEBUG";
-         break;
-      case SQLCIPHER_LOG_TRACE:
-         out = "TRACE";
-         break;
-      case SQLCIPHER_LOG_ALL:
-         out = "ALL";
-         break;
-    }
-    sqlcipher_vdbe_return_string(pParse, "cipher_log_level", out, P4_TRANSIENT);
+    sqlcipher_vdbe_return_string(pParse, "cipher_log_level", sqlcipher_get_log_subsystem_str(level), P4_TRANSIENT);
   } else
   if( sqlite3_stricmp(zLeft, "cipher_log_subsystem")==0 ){
     unsigned int subsys = SQLCIPHER_LOG_NONE;
-    char *out = NULL;
-
     if(zRight) {
       if(sqlite3_stricmp(zRight,      "NONE"    )==0) subsys = SQLCIPHER_LOG_NONE;
       else if(sqlite3_stricmp(zRight, "ALL"     )==0) subsys = SQLCIPHER_LOG_ALL;
@@ -742,27 +715,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     } else {
       subsys = sqlcipher_get_log_subsystem();
     }
-    switch(subsys) {
-      case SQLCIPHER_LOG_NONE:
-         out = "NONE";
-         break;
-      case SQLCIPHER_LOG_ALL:
-         out = "ALL";
-         break;
-      case SQLCIPHER_LOG_CORE:
-         out = "CORE";
-         break;
-      case SQLCIPHER_LOG_MEMORY:
-         out = "MEMORY";
-         break;
-      case SQLCIPHER_LOG_MUTEX:
-         out = "MUTEX";
-         break;
-      case SQLCIPHER_LOG_PROVIDER:
-         out = "PROVIDER";
-         break;
-    }
-    sqlcipher_vdbe_return_string(pParse, "cipher_log_subsystem", out, P4_TRANSIENT);
+    sqlcipher_vdbe_return_string(pParse, "cipher_log_subsystem", sqlcipher_get_log_subsystem_str(subsys), P4_TRANSIENT);
   } else
   if( sqlite3_stricmp(zLeft, "cipher_log")== 0 && zRight ){
       char *status = sqlite3_mprintf("%d", sqlcipher_set_log(zRight));
