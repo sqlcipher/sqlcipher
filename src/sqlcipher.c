@@ -242,6 +242,11 @@ static int sqlcipher_get_test_fail() {
 }
 #endif
 
+#ifdef SQLCIPHER_EXT
+int sqlcipher_ext_provider_setup(sqlcipher_provider *);
+void sqlcipher_ext_provider_destroy();
+#endif
+
 static volatile unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static volatile unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static volatile int default_kdf_iter = PBKDF2_ITER;
@@ -488,6 +493,9 @@ static void sqlcipher_activate() {
 #elif defined (SQLCIPHER_CRYPTO_OPENSSL)
     extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
     sqlcipher_openssl_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_OSSL3)
+    extern int sqlcipher_ossl3_setup(sqlcipher_provider *p);
+    sqlcipher_ossl3_setup(p);
 #else
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
@@ -1922,10 +1930,6 @@ static int sqlcipher_set_log(const char *destination){
 #endif
 }
 
-#ifdef SQLCIPHER_EXT
-#include "sqlcipher_ext.h"
-#endif
-
 static void sqlcipher_vdbe_return_string(Parse *pParse, const char *zLabel, const char *value, int value_type){
   Vdbe *v = sqlite3GetVdbe(pParse);
   sqlite3VdbeSetNumCols(v, 1);
@@ -1933,6 +1937,10 @@ static void sqlcipher_vdbe_return_string(Parse *pParse, const char *zLabel, cons
   sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, value, value_type);
   sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
 }
+
+#ifdef SQLCIPHER_EXT
+#include "sqlcipher_ext.h"
+#endif
 
 static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ctx) {
   int rc;
