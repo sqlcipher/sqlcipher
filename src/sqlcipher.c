@@ -1794,7 +1794,7 @@ static char *sqlcipher_get_log_source_str(unsigned int source) {
     case SQLCIPHER_LOG_PROVIDER:
       return "PROVIDER";
   }
-  return "ALL";
+  return "ANY";
 }
 
 static char *sqlcipher_get_log_sources_str(unsigned int source) {
