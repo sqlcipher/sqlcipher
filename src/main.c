@@ -3589,13 +3589,6 @@ static int openDatabase(
     }
   }
 
-#ifdef SQLCIPHER_EXT
-  if( !db->mallocFailed && rc==SQLITE_OK ){
-    extern int sqlcipherVtabInit(sqlite3 *);
-    rc = sqlcipherVtabInit(db);
-  }
-#endif
-
 #ifdef SQLITE_ENABLE_INTERNAL_FUNCTIONS
   /* Testing use only!!! The -DSQLITE_ENABLE_INTERNAL_FUNCTIONS=1 compile-time
   ** option gives access to internal functions by default. 

@@ -242,11 +242,6 @@ static int sqlcipher_get_test_fail() {
 }
 #endif
 
-#ifdef SQLCIPHER_EXT
-int sqlcipher_ext_provider_setup(sqlcipher_provider *);
-void sqlcipher_ext_provider_destroy();
-#endif
-
 static volatile unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static volatile unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static volatile int default_kdf_iter = PBKDF2_ITER;
@@ -500,9 +495,6 @@ static void sqlcipher_activate() {
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_activate: calling sqlcipher_register_provider(%p)", p);
-#ifdef SQLCIPHER_EXT
-    sqlcipher_ext_provider_setup(p);
-#endif
     sqlcipher_register_provider(p);
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_activate: called sqlcipher_register_provider(%p)",p);
   }
@@ -534,10 +526,6 @@ static void sqlcipher_deactivate() {
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: leaving SQLCIPHER_MUTEX_PROVIDER");
     sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: left SQLCIPHER_MUTEX_PROVIDER");
-
-#ifdef SQLCIPHER_EXT
-    sqlcipher_ext_provider_destroy();
-#endif
 
     /* last connection closed, free mutexes */
     if(sqlcipher_activate_count == 0) {
@@ -1938,10 +1926,6 @@ static void sqlcipher_vdbe_return_string(Parse *pParse, const char *zLabel, cons
   sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
 }
 
-#ifdef SQLCIPHER_EXT
-#include "sqlcipher_ext.h"
-#endif
-
 static int codec_set_btree_to_codec_pagesize(sqlite3 *db, Db *pDb, codec_ctx *ctx) {
   int rc;
 
@@ -1996,11 +1980,6 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_pragma: db=%p iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p", db, iDb, pParse, zLeft, zRight, ctx);
   }
 
-#ifdef SQLCIPHER_EXT
-  if(sqlcipher_ext_pragma(db, iDb, pParse, zLeft, zRight)) {
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_pragma: PRAGMA handled by sqlcipher_ext_pragma");
-  } else
-#endif
 #ifdef SQLCIPHER_TEST
   if( sqlite3_stricmp(zLeft,"cipher_test_on")==0 ){
     if( zRight ) {
@@ -2639,10 +2618,6 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3Codec: pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
 
-#ifdef SQLCIPHER_EXT
-  if(sqlcipher_license_check(ctx) != SQLITE_OK) return NULL;
-#endif
-
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error occurred during key derivation: %d", rc);
@@ -2765,13 +2740,6 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: entering database mutex %p", db->mutex);
     sqlite3_mutex_enter(db->mutex);
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: entered database mutex %p", db->mutex);
-
-#ifdef SQLCIPHER_EXT
-    if((rc = sqlite3_set_authorizer(db, sqlcipher_license_authorizer, db)) != SQLITE_OK) {
-      sqlite3_mutex_leave(db->mutex);
-      return rc;
-    }
-#endif
 
     /* point the internal codec argument against the contet to be prepared */
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlcipher_codec_ctx_init()");

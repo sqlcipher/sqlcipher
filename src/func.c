@@ -2233,9 +2233,6 @@ void sqlite3RegisterPerConnectionBuiltinFunctions(sqlite3 *db){
     extern void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
     sqlite3CreateFunc(db, "sqlcipher_export", -1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0, 0, 0);
   }
-#ifdef SQLCIPHER_EXT
-#include "sqlcipher_funcs_init.h"
-#endif
 #endif
 /* END SQLCIPHER */
 }
