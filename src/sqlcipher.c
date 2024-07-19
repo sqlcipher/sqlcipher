@@ -1864,7 +1864,7 @@ void sqlcipher_log(unsigned int level, unsigned int source, const char *message,
 #if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
   if(sqlcipher_log_device) {
 #if defined(__ANDROID__)
-    __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", formatted);
+    __android_log_write(ANDROID_LOG_DEBUG, "sqlcipher", formatted);
     goto end;
 #elif defined(__APPLE__)
     os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
