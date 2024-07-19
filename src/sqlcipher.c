@@ -1807,11 +1807,10 @@ void sqlcipher_log(unsigned int level, unsigned int source, const char *message,
   va_list params;
   va_start(params, message);
   char formatted[MAX_LOG_LEN];
-  char *out = NULL;
   int len = 0;
 
 #ifdef CODEC_DEBUG
-#if defined(SQLCIPHER_OMIT_LOG_DEVICE)
+#if defined(SQLCIPHER_OMIT_LOG_DEVICE) || (!defined(__ANDROID__) && !defined(__APPLE__))
     vfprintf(stderr, message, params);
     fprintf(stderr, "\n");
     goto end;
@@ -1820,13 +1819,8 @@ void sqlcipher_log(unsigned int level, unsigned int source, const char *message,
     __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", message, params);
     goto end;
 #elif defined(__APPLE__)
-    formatted = sqlite3_vmprintf(message, params);
-    os_log(OS_LOG_DEFAULT, "%s", formatted);
-    sqlite3_free(formatted);
-    goto end;
-#else
-    vfprintf(stderr, message, params);
-    fprintf(stderr, "\n");
+    sqlite3_vsnprintf(MAX_LOG_LEN, formatted, message, params);
+    os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
     goto end;
 #endif
 #endif
@@ -1847,9 +1841,9 @@ void sqlcipher_log(unsigned int level, unsigned int source, const char *message,
 #if !defined(SQLCIPHER_OMIT_LOG_DEVICE)
   if(sqlcipher_log_device) {
 #if defined(__ANDROID__)
-    __android_log_vprint(ANDROID_LOG_DEBUG, "sqlcipher", formatted);
+    __android_log_print(ANDROID_LOG_DEBUG, "sqlcipher", formatted);
     goto end;
-#elif defined(__APPLEformattes__)
+#elif defined(__APPLE__)
     os_log(OS_LOG_DEFAULT, "%{public}s", formatted);
     goto end;
 #endif
