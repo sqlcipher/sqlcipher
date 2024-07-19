@@ -468,6 +468,32 @@ do_test verify-cipher_default_settings_default {
 db close
 file delete -force test.db
 
+do_test verify-cipher_log_source {
+    sqlite_orig db :memory:
+    execsql {
+        PRAGMA cipher_log_source; -- default should be ANY
+        PRAGMA cipher_log_source = NONE; --reset to NONE
+        PRAGMA cipher_log_source = PROVIDER; -- add PROVIDER to log source
+        PRAGMA cipher_log_source = CORE; -- add CORE to log source
+        PRAGMA cipher_log_source = MEMORY; -- add MEMORY to log source
+        PRAGMA cipher_log_source = NOTASOURCE; -- stay the same
+        PRAGMA cipher_log_source = ANY; -- reset to ANY
+    }
+} {ANY NONE PROVIDER {CORE PROVIDER} {CORE MEMORY PROVIDER} {CORE MEMORY PROVIDER} ANY}
+db close
 
+do_test verify-cipher_log_level {
+    sqlite_orig db :memory:
+    execsql {
+        PRAGMA cipher_log_level; -- default should be error
+        PRAGMA cipher_log_level = TRACE;
+        PRAGMA cipher_log_level = DEBUG;
+        PRAGMA cipher_log_level = INFO;
+        PRAGMA cipher_log_level = WARN;
+        PRAGMA cipher_log_level = ERROR;
+        PRAGMA cipher_log_level = NOTALEVEL; -- an unknown level should set back to none
+    }
+} {WARN TRACE DEBUG INFO WARN ERROR NONE}
+db close
 
 finish_test

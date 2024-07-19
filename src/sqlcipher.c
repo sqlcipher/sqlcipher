@@ -260,7 +260,7 @@ static sqlite3_mutex* sqlcipher_static_mutex[SQLCIPHER_MUTEX_COUNT];
 static FILE* sqlcipher_log_file = NULL;
 static volatile int sqlcipher_log_device = 0;
 static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
-static volatile unsigned int sqlcipher_log_source = SQLCIPHER_LOG_ALL;
+static volatile unsigned int sqlcipher_log_source = SQLCIPHER_LOG_ANY;
 static volatile int sqlcipher_log_set = 0;
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
@@ -1775,8 +1775,8 @@ static char *sqlcipher_get_log_level_str(unsigned int level) {
       return "DEBUG";
     case SQLCIPHER_LOG_TRACE:
       return "TRACE";
-    case SQLCIPHER_LOG_ALL:
-      return "ALL";
+    case SQLCIPHER_LOG_ANY:
+      return "ANY";
   }
   return "NONE";
 }
@@ -1797,6 +1797,29 @@ static char *sqlcipher_get_log_source_str(unsigned int source) {
   return "ALL";
 }
 
+static char *sqlcipher_get_log_sources_str(unsigned int source) {
+  if(source == SQLCIPHER_LOG_NONE) {
+    return sqlite3_mprintf("%s", "NONE");
+  } else if (source == SQLCIPHER_LOG_ANY) {
+    return sqlite3_mprintf("%s", "ANY");
+  } else {
+    char *sources = NULL;
+    unsigned int flag;
+    for(flag = SQLCIPHER_LOG_CORE; flag != 0; flag = flag << 1) {
+      if(SQLCIPHER_FLAG_GET(source, flag)) {
+        char *src = sqlcipher_get_log_source_str(flag);
+        if(sources) {
+          char *tmp = sqlite3_mprintf("%s %s", sources, src);
+          sqlite3_free(sources);
+          sources = tmp;
+        } else {
+          sources = sqlite3_mprintf("%s", src);
+        }
+      }
+    }
+    return sources;
+  }
+}
 
 #ifndef SQLCIPHER_OMIT_LOG
 /* constants from https://github.com/Alexpux/mingw-w64/blob/master/mingw-w64-crt/misc/gettimeofday.c */
@@ -1827,7 +1850,7 @@ void sqlcipher_log(unsigned int level, unsigned int source, const char *message,
 #endif
   if(
     level > sqlcipher_log_level /* log level is higher, e.g. level filter is at ERROR but this message is DEBUG */
-    || (sqlcipher_log_source & source) == 0 /* source filter doesn't match this message source */
+    || !SQLCIPHER_FLAG_GET(sqlcipher_log_source, source) /* source filter doesn't match this message source */
     || (sqlcipher_log_device == 0 && sqlcipher_log_file == NULL) /* no configured log target */
   ) {
     /* skip logging this message */
@@ -2569,15 +2592,16 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   } else
   if( sqlite3_stricmp(zLeft, "cipher_log_source")==0 ){
     if(zRight) {
-      sqlcipher_log_source = SQLCIPHER_LOG_NONE;
       if(sqlite3_stricmp(zRight,      "NONE"    )==0) sqlcipher_log_source = SQLCIPHER_LOG_NONE;
-      else if(sqlite3_stricmp(zRight, "ALL"     )==0) sqlcipher_log_source = SQLCIPHER_LOG_ALL;
-      else if(sqlite3_stricmp(zRight, "CORE"    )==0) sqlcipher_log_source = SQLCIPHER_LOG_CORE;
-      else if(sqlite3_stricmp(zRight, "MEMORY"  )==0) sqlcipher_log_source = SQLCIPHER_LOG_MEMORY;
-      else if(sqlite3_stricmp(zRight, "MUTEX"   )==0) sqlcipher_log_source = SQLCIPHER_LOG_MUTEX;
-      else if(sqlite3_stricmp(zRight, "PROVIDER")==0) sqlcipher_log_source = SQLCIPHER_LOG_PROVIDER;
+      else if(sqlite3_stricmp(zRight, "ANY"     )==0) sqlcipher_log_source = SQLCIPHER_LOG_ANY;
+      else {
+        if(sqlite3_stricmp(zRight,      "CORE"    )==0) SQLCIPHER_FLAG_SET(sqlcipher_log_source, SQLCIPHER_LOG_CORE);
+        else if(sqlite3_stricmp(zRight, "MEMORY"  )==0) SQLCIPHER_FLAG_SET(sqlcipher_log_source, SQLCIPHER_LOG_MEMORY);
+        else if(sqlite3_stricmp(zRight, "MUTEX"   )==0) SQLCIPHER_FLAG_SET(sqlcipher_log_source, SQLCIPHER_LOG_MUTEX);
+        else if(sqlite3_stricmp(zRight, "PROVIDER")==0) SQLCIPHER_FLAG_SET(sqlcipher_log_source, SQLCIPHER_LOG_PROVIDER);
+      }
     }
-    sqlcipher_vdbe_return_string(pParse, "cipher_log_source", sqlcipher_get_log_source_str(sqlcipher_log_source), P4_TRANSIENT);
+    sqlcipher_vdbe_return_string(pParse, "cipher_log_source", sqlcipher_get_log_sources_str(sqlcipher_log_source), P4_DYNAMIC);
   } else
   if( sqlite3_stricmp(zLeft, "cipher_log")== 0 && zRight ){
       char *status = sqlite3_mprintf("%d", sqlcipher_set_log(zRight));

@@ -102,18 +102,19 @@ sqlcipher_provider* sqlcipher_get_provider(void);
 
 sqlite3_mutex* sqlcipher_mutex(int);
 
-#define SQLCIPHER_LOG_NONE          0x00
-#define SQLCIPHER_LOG_ERROR         0x01
-#define SQLCIPHER_LOG_WARN          0x02
-#define SQLCIPHER_LOG_INFO          0x04
-#define SQLCIPHER_LOG_DEBUG         0x08
-#define SQLCIPHER_LOG_TRACE         0x10
-#define SQLCIPHER_LOG_ALL           0xffffffff
+#define SQLCIPHER_LOG_NONE          0
+#define SQLCIPHER_LOG_ANY           0xffffffff
 
-#define SQLCIPHER_LOG_CORE          0x01
-#define SQLCIPHER_LOG_MEMORY        0x02
-#define SQLCIPHER_LOG_MUTEX         0x04
-#define SQLCIPHER_LOG_PROVIDER      0x08
+#define SQLCIPHER_LOG_ERROR         (1<<0)
+#define SQLCIPHER_LOG_WARN          (1<<1)
+#define SQLCIPHER_LOG_INFO          (1<<2)
+#define SQLCIPHER_LOG_DEBUG         (1<<3)
+#define SQLCIPHER_LOG_TRACE         (1<<4)
+
+#define SQLCIPHER_LOG_CORE          (1<<0)
+#define SQLCIPHER_LOG_MEMORY        (1<<1)
+#define SQLCIPHER_LOG_MUTEX         (1<<2)
+#define SQLCIPHER_LOG_PROVIDER      (1<<3)
 
 #ifdef SQLCIPHER_OMIT_LOG
 #define sqlcipher_log(level, source, message, ...)
