@@ -485,7 +485,7 @@ db close
 do_test verify-cipher_log_level {
     sqlite_orig db :memory:
     execsql {
-        PRAGMA cipher_log_level; -- default should be error
+        PRAGMA cipher_log_level; -- default should be WARN
         PRAGMA cipher_log_level = TRACE;
         PRAGMA cipher_log_level = DEBUG;
         PRAGMA cipher_log_level = INFO;

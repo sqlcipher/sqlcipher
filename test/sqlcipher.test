@@ -43,7 +43,7 @@ set pretests ""
 
 sqlite_orig db :memory:
 execsql {
-  PRAGMA cipher_log_level = NONE;
+  PRAGMA cipher_log = 'sqlcipher-test.log';
 }
 db close
 
