@@ -6,7 +6,7 @@
   "license": {
     "type": "BSD-3-Clause",
     "file": "LICENSE.md"
-  }
+  },
   "name": "SQLCipher",
   "platforms": {
     "ios": "12.0",
