@@ -3,7 +3,10 @@
   "default_subspecs": "standard",
   "description": "SQLCipher is an open source extension to SQLite that provides transparent 256-bit AES encryption of database files.",
   "homepage": "https://www.zetetic.net/sqlcipher/",
-  "license": "BSD",
+  "license": {
+    "type": "BSD-3-Clause",
+    "file": "LICENSE.md"
+  }
   "name": "SQLCipher",
   "platforms": {
     "ios": "12.0",
