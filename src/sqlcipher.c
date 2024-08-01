@@ -406,6 +406,55 @@ void sqlcipher_init_memmethods() {
      sqlite3_config(SQLITE_CONFIG_MALLOC, &sqlcipher_mem_methods)  != SQLITE_OK) {
      sqlcipher_mem_security_on = sqlcipher_mem_executed = sqlcipher_mem_initialized = 0;
   } else {
+#if !defined(OMIT_MEMLOCK) && defined(_WIN32) && !(defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINAPI_FAMILY == WINAPI_FAMILY_PC_APP))
+    HANDLE process = NULL;
+    SYSTEM_INFO info;
+    SIZE_T dflt_min_size, dflt_max_size, min_size, max_size;
+    DWORD pid = GetCurrentProcessId();
+
+    if(pid == 0) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: error calling GetCurrentProcessId: %d", GetLastError());
+      goto cleanup;
+    }
+
+    if((process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, FALSE, pid)) == NULL) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: error calling OpenProcess for pid=%d: %d", pid, GetLastError());
+      goto cleanup;
+    }
+
+    /* lookup native memory page size for caclulating default working set sizes */
+    GetNativeSystemInfo(&info);
+
+    /* https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-setprocessworkingsetsize#parameters
+       Default Min Set Size is 50 pages. 
+       Default Max Set Size is 345 pages */ 
+    dflt_min_size = info.dwPageSize * 50; 
+    dflt_max_size = info.dwPageSize * 345;
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: calculated dflt_min_size=%zu dflt_max_size=%zu for memory page size %d", dflt_min_size, dflt_max_size, info.dwPageSize);
+
+    /* retrieve current min and max set sizes for comparison */
+    if(!GetProcessWorkingSetSize(process, &min_size, &max_size)) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: error calling GetProcessWorkingSetSize %d",  GetLastError());
+      goto cleanup;
+    }
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: GetProcessWorkingSetSize returned min=%zu max=%zu", min_size, max_size);
+
+    if(min_size == dflt_min_size && max_size == dflt_max_size) {
+      /* application has not set any special non-default working set sizes. Caclulate the new min working set size to be 
+         5 times default to allow greater number of pages to be VirtualLocked, max size will be left unchanged */ 
+      min_size *= 5;
+      if(!SetProcessWorkingSetSize(process, min_size, max_size)) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: error calling SetProcessWorkingSetSize with min=%zu max=%zu: %d", min_size, max_size, GetLastError());
+        goto cleanup;
+      }
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: called SetProcessWorkingSetSize for min=%zu max=%zu", min_size, max_size);
+    } else {
+      sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "sqlcipher_init_memmethods: application has custom working set sizes min=%zu max=%zu - skipped alteration of working set sizes", min_size, max_size);
+    }
+
+cleanup:
+    if (process) CloseHandle(process);
+#endif
     sqlcipher_mem_initialized = 1;
   }
 }
