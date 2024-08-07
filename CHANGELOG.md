@@ -3,6 +3,16 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased] - (? 2024 - [unreleased changes])
 
+## [4.6.1] - (August 2024 - [4.6.1 changes])
+- Updates baseline to upstream SQLite 3.46.0
+- Significant refactor to merge `crypto.h`, `crypto.c`, and `crypto_impl.c` into a single `sqlcipher.c` source file for simplicity.
+- Updates minimum working set size on windows to increase lockable pages
+- Adds new `PRAGMA cipher_log_source` for filtering log output on higher verbosity levels
+- Improves log output by including the log level and source prior to message
+- Improves error logging in `PRAGMA cipher_migrate`
+- Fixes issue where log level and target would be overwritten if set prior to initialization
+- Corrects Podspec license element to use specific BSD 3 Clause
+
 ## [4.6.0] - (May 2024 - [4.6.0 changes])
 - Sets default log level to WARN
 - Sends default log output to: logcat for Android; Console for iOS and macOS; and stderr for all other platforms
@@ -249,7 +259,9 @@ All notable changes to this project will be documented in this file.
 - Change KDF iteration length from 4,000 to 64,000
 
 [unreleased]: https://github.com/sqlcipher/sqlcipher/tree/prerelease
-[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.0...prerelease
+[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.1...prerelease
+[4.6.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.6.1
+[4.6.1 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.6.0
 [4.6.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.5.7...v4.6.0
 [4.5.7]: https://github.com/sqlcipher/sqlcipher/tree/v4.5.7
