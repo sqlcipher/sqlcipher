@@ -1717,9 +1717,9 @@ const char* sqlcipher_codec_get_provider_version(codec_ctx *ctx) {
 #define FILETIME_1970 116444736000000000ull /* seconds between 1/1/1601 and 1/1/1970 */
 #define HECTONANOSEC_PER_SEC 10000000ull
 void sqlcipher_log(unsigned int level, const char *message, ...) {
+  char *formatted = NULL;
   va_list params;
   va_start(params, message);
-  char *formatted = NULL;
 
 #ifdef CODEC_DEBUG
 #if defined(SQLCIPHER_OMIT_LOG_DEVICE)
