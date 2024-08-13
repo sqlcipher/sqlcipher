@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 ## [unreleased] - (? 2024 - [unreleased changes])
 
 ## [4.6.1] - (August 2024 - [4.6.1 changes])
-- Updates baseline to upstream SQLite 3.46.0
+- Updates baseline to upstream SQLite 3.46.1
 - Significant refactor to merge `crypto.h`, `crypto.c`, and `crypto_impl.c` into a single `sqlcipher.c` source file for simplicity.
 - Updates minimum working set size on windows to increase lockable pages
 - Adds new `PRAGMA cipher_log_source` for filtering log output on higher verbosity levels
