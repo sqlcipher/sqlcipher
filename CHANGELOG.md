@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Improves error logging in `PRAGMA cipher_migrate`
 - Fixes issue where log level and target would be overwritten if set prior to initialization
 - Corrects Podspec license element to use specific BSD 3 Clause
+- Fixes default log output to console for macOS
 
 ## [4.6.0] - (May 2024 - [4.6.0 changes])
 - Sets default log level to WARN

@@ -509,7 +509,7 @@ static void sqlcipher_activate() {
 
       /* set the default file or device if neither is already set */
       if(sqlcipher_log_device == 0 && sqlcipher_log_file == NULL) {
-#if defined(__ANDROID__) || defined(__APPLE_)
+#if defined(__ANDROID__) || defined(__APPLE__)
         sqlcipher_log_device = 1;
 #else
         sqlcipher_log_file = stderr;
