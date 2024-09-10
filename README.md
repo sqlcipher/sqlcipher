@@ -39,6 +39,8 @@ Building SQLCipher is similar to compiling a regular version of SQLite from sour
  
 The following examples demonstrate linking against OpenSSL, which is a readily available provider on most Unix-like systems. 
 
+### POSIX
+
 Example 1. Static linking (replace /opt/local/lib with the path to libcrypto.a). Note in this 
 example, `--enable-tempstore=yes` is setting `SQLITE_TEMP_STORE=2` for the build.
 
@@ -54,6 +56,20 @@ Example 2. Dynamic linking
 $ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 	LDFLAGS="-lcrypto"
 $ make
+```
+
+### Windows
+
+Example 1. Compiling dll using Microsoft Visual Studio.
+You need to enter the command inside Native Tools Command Prompt.
+A path to OpenSSL is an example - it is recommended to install OpenSSL into
+a custom directory without spaces (official installer uses "Program Files"
+which contains a problematic space)
+
+```
+mkdir build
+cd build
+nmake /f ..\Makefile.msc dll CCOPTS="-DSQLITE_HAS_CODEC=1 -IC:\dev\OpenSSL-Win64\include" LDFLAGS="C:\dev\OpenSSL-Win64\lib\libcrypto.lib" TOP=..
 ```
 
 ## Testing
