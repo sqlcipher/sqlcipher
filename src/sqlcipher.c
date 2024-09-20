@@ -2794,7 +2794,7 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     if(ctx != NULL && SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
       /* there is already a codec attached to this database, so we should not proceed */
-      sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: no codec attached to db");
+      sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: disregarding attempt to set key on an previously keyed database connection handle");
       return SQLITE_OK;
     }
 
