@@ -874,12 +874,15 @@ static int sqlcipher_codec_ctx_set_pass(codec_ctx *ctx, const void *zKey, int nK
 } 
 
 static int sqlcipher_codec_ctx_set_kdf_iter(codec_ctx *ctx, int kdf_iter) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
   ctx->kdf_iter = kdf_iter;
   sqlcipher_set_derive_key(ctx, 1);
   return SQLITE_OK;
 }
 
 static int sqlcipher_codec_ctx_set_fast_kdf_iter(codec_ctx *ctx, int fast_kdf_iter) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+
   ctx->fast_kdf_iter = fast_kdf_iter;
   sqlcipher_set_derive_key(ctx, 1);
   return SQLITE_OK;
@@ -893,6 +896,8 @@ static void sqlcipher_set_default_use_hmac(int use) {
 
 /* set the codec flag for whether this individual database should be using hmac */
 static int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+
   if(use) {
     SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HMAC);
   } else {
@@ -918,11 +923,15 @@ static int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int siz
 } 
 
 static int sqlcipher_codec_ctx_set_hmac_algorithm(codec_ctx *ctx, int algorithm) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+
   ctx->hmac_algorithm = algorithm;
   return sqlcipher_codec_ctx_reserve_setup(ctx);
 } 
 
 static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+
   ctx->kdf_algorithm = algorithm;
   return SQLITE_OK;
 } 
@@ -954,6 +963,8 @@ static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
 }
 
 static int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt, int size) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+
   if(size >= ctx->kdf_salt_sz) {
     memcpy(ctx->kdf_salt, salt, ctx->kdf_salt_sz);
     SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT);
@@ -976,6 +987,8 @@ static int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
 }
 
 static int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+
   if(!((size != 0) && ((size & (size - 1)) == 0)) || size < 512 || size > 65536) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "cipher_page_size not a power of 2 and between 512 and 65536 inclusive");
     return SQLITE_ERROR;

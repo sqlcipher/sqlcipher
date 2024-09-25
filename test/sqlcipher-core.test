@@ -666,6 +666,28 @@ do_test multiple-key-calls-safe {
 db close
 file delete -force test.db
 
+# open a databse and use the valid key. Then
+# use pragma cipher_compatability to adjust settings that
+# would normally trigger key derivation again. 
+# the new settings should be ignored
+
+setup test.db "'testkey'"
+do_test setting-changes-after-key-calls-safe {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cache_size = 0;
+    SELECT name FROM sqlite_schema WHERE type='table';
+    INSERT INTO t1(a,b) VALUES (2,zeroblob(8192));
+    PRAGMA cipher_compatibility=3;
+    INSERT INTO t1(a,b) VALUES (3,zeroblob(8192));
+    SELECT name FROM sqlite_schema WHERE type='table';
+    SELECT count(*) FROM t1;
+  }
+} {ok t1 t1 3}
+db close
+file delete -force test.db
+
 # 1. create a database with a custom hmac kdf iteration count, 
 # 2. create table and insert operations should work
 # 3. close database, open it again with the same
