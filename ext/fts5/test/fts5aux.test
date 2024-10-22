@@ -15,7 +15,7 @@
 source [file join [file dirname [info script]] fts5_common.tcl]
 set testprefix fts5aux
 
-# If SQLITE_ENABLE_FTS5 is defined, omit this file.
+# If SQLITE_ENABLE_FTS5 is not defined, omit this file.
 ifcapable !fts5 {
   finish_test
   return
@@ -399,6 +399,6 @@ db close
 sqlite3 db test.db
 do_catchsql_test 13.4 {
   SELECT highlight(t1, 0, '[', ']') FROM t1
-} {1 {no such tokenizer: blah}}
+} {1 {SQL logic error}}
 
 finish_test

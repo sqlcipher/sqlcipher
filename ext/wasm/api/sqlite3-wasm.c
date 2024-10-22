@@ -14,16 +14,17 @@
 */
 #define SQLITE_WASM
 #ifdef SQLITE_WASM_ENABLE_C_TESTS
+#  undef SQLITE_WASM_ENABLE_C_TESTS
+#  define SQLITE_WASM_ENABLE_C_TESTS 1
 /*
-** Code blocked off by SQLITE_WASM_TESTS is intended solely for use in
-** unit/regression testing. They may be safely omitted from
+** Code blocked off by SQLITE_WASM_ENABLE_C_TESTS is intended solely
+** for use in unit/regression testing. They may be safely omitted from
 ** client-side builds. The main unit test script, tester1.js, will
 ** skip related tests if it doesn't find the corresponding functions
 ** in the WASM exports.
 */
-#  define SQLITE_WASM_TESTS 1
 #else
-#  define SQLITE_WASM_TESTS 0
+#  define SQLITE_WASM_ENABLE_C_TESTS 0
 #endif
 
 /*
@@ -92,60 +93,18 @@
 #undef SQLITE_ENABLE_API_ARMOR
 #define SQLITE_ENABLE_API_ARMOR 1
 
-#ifndef SQLITE_ENABLE_BYTECODE_VTAB
-#  define SQLITE_ENABLE_BYTECODE_VTAB 1
-#endif
-#ifndef SQLITE_ENABLE_DBPAGE_VTAB
-#  define SQLITE_ENABLE_DBPAGE_VTAB 1
-#endif
-#ifndef SQLITE_ENABLE_DBSTAT_VTAB
-#  define SQLITE_ENABLE_DBSTAT_VTAB 1
-#endif
-#ifndef SQLITE_ENABLE_EXPLAIN_COMMENTS
-#  define SQLITE_ENABLE_EXPLAIN_COMMENTS 1
-#endif
-#ifndef SQLITE_ENABLE_FTS4
-#  define SQLITE_ENABLE_FTS4 1
-#endif
-#ifndef SQLITE_ENABLE_MATH_FUNCTIONS
-#  define SQLITE_ENABLE_MATH_FUNCTIONS 1
-#endif
-#ifndef SQLITE_ENABLE_OFFSET_SQL_FUNC
-#  define SQLITE_ENABLE_OFFSET_SQL_FUNC 1
-#endif
-#ifndef SQLITE_ENABLE_PREUPDATE_HOOK
-#  define SQLITE_ENABLE_PREUPDATE_HOOK 1 /*required by session extension*/
-#endif
-#ifndef SQLITE_ENABLE_RTREE
-#  define SQLITE_ENABLE_RTREE 1
-#endif
-#ifndef SQLITE_ENABLE_SESSION
-#  define SQLITE_ENABLE_SESSION 1
-#endif
-#ifndef SQLITE_ENABLE_STMTVTAB
-#  define SQLITE_ENABLE_STMTVTAB 1
-#endif
-#ifndef SQLITE_ENABLE_UNKNOWN_SQL_FUNCTION
-#  define SQLITE_ENABLE_UNKNOWN_SQL_FUNCTION
-#endif
-
 /**********************************************************************/
 /* SQLITE_O... */
-#ifndef SQLITE_OMIT_DEPRECATED
-# define SQLITE_OMIT_DEPRECATED 1
-#endif
-#ifndef SQLITE_OMIT_LOAD_EXTENSION
-# define SQLITE_OMIT_LOAD_EXTENSION 1
-#endif
-#ifndef SQLITE_OMIT_SHARED_CACHE
-# define SQLITE_OMIT_SHARED_CACHE 1
-#endif
-#ifndef SQLITE_OMIT_UTF16
-# define SQLITE_OMIT_UTF16 1
-#endif
-#ifndef SQLITE_OS_KV_OPTIONAL
-# define SQLITE_OS_KV_OPTIONAL 1
-#endif
+#undef SQLITE_OMIT_DEPRECATED
+#define SQLITE_OMIT_DEPRECATED 1
+#undef SQLITE_OMIT_LOAD_EXTENSION
+#define SQLITE_OMIT_LOAD_EXTENSION 1
+#undef SQLITE_OMIT_SHARED_CACHE
+#define SQLITE_OMIT_SHARED_CACHE 1
+#undef SQLITE_OMIT_UTF16
+#define SQLITE_OMIT_UTF16 1
+#undef SQLITE_OS_KV_OPTIONAL
+#define SQLITE_OS_KV_OPTIONAL 1
 
 /**********************************************************************/
 /* SQLITE_S... */
@@ -170,6 +129,67 @@
 
 #ifdef SQLITE_WASM_EXTRA_INIT
 #  define SQLITE_EXTRA_INIT sqlite3_wasm_extra_init
+#endif
+
+/*
+** If SQLITE_WASM_BARE_BONES is defined, undefine most of the ENABLE
+** macros.
+*/
+#ifdef SQLITE_WASM_BARE_BONES
+#  undef  SQLITE_ENABLE_DBPAGE_VTAB
+#  undef  SQLITE_ENABLE_DBSTAT_VTAB
+#  undef  SQLITE_ENABLE_EXPLAIN_COMMENTS
+#  undef  SQLITE_ENABLE_FTS5
+#  undef  SQLITE_ENABLE_OFFSET_SQL_FUNC
+#  undef  SQLITE_ENABLE_PREUPDATE_HOOK
+#  undef  SQLITE_ENABLE_RTREE
+#  undef  SQLITE_ENABLE_SESSION
+#  undef  SQLITE_ENABLE_STMTVTAB
+#  undef  SQLITE_OMIT_AUTHORIZATION
+#  define SQLITE_OMIT_AUTHORIZATION
+#  undef  SQLITE_OMIT_GET_TABLE
+#  define SQLITE_OMIT_GET_TABLE
+#  undef  SQLITE_OMIT_INCRBLOB
+#  define SQLITE_OMIT_INCRBLOB
+#  undef  SQLITE_OMIT_INTROSPECTION_PRAGMAS
+#  define SQLITE_OMIT_INTROSPECTION_PRAGMAS
+#  undef  SQLITE_OMIT_JSON
+#  define SQLITE_OMIT_JSON
+#  undef  SQLITE_OMIT_PROGRESS_CALLBACK
+#  define SQLITE_OMIT_PROGRESS_CALLBACK
+#  undef  SQLITE_OMIT_WAL
+#  define SQLITE_OMIT_WAL
+/*
+  The following OMITs do not work with the standard amalgamation, so
+  require a custom build:
+
+  fossil clean -x
+  ./configure
+  OPTS='...' make -e sqlite3
+
+  where ... has a -D... for each of the following OMIT flags:
+
+#  undef SQLITE_OMIT_EXPLAIN
+#  define SQLITE_OMIT_EXPLAIN
+
+#  undef SQLITE_OMIT_TRIGGER
+#  define SQLITE_OMIT_TRIGGER
+
+#  undef SQLITE_OMIT_VIRTUALTABLE
+#  define SQLITE_OMIT_VIRTUALTABLE
+
+#  undef SQLITE_OMIT_WINDOWFUNC
+#  define SQLITE_OMIT_WINDOWFUNC
+
+  As of this writing (2024-07-25), such a build fails in various ways
+  for as-yet-unknown reasons.
+*/
+#endif
+
+#if !defined(SQLITE_OMIT_VIRTUALTABLE) && !defined(SQLITE_WASM_BARE_BONES)
+#  define SQLITE_WASM_HAS_VTAB 1
+#else
+#  define SQLITE_WASM_HAS_VTAB 0
 #endif
 
 #include <assert.h>
@@ -221,10 +241,6 @@
 #undef INC__STRINGIFY_
 #undef INC__STRINGIFY
 #undef SQLITE_C
-
-#if defined(__EMSCRIPTEN__)
-#  include <emscripten/console.h>
-#endif
 
 #if 0
 /*
@@ -370,7 +386,7 @@ int sqlite3__wasm_db_error(sqlite3*db, int err_code, const char *zMsg){
   return err_code;
 }
 
-#if SQLITE_WASM_TESTS
+#if SQLITE_WASM_ENABLE_C_TESTS
 struct WasmTestStruct {
   int v4;
   void * ppV;
@@ -390,7 +406,7 @@ void sqlite3__wasm_test_struct(WasmTestStruct * s){
   }
   return;
 }
-#endif /* SQLITE_WASM_TESTS */
+#endif /* SQLITE_WASM_ENABLE_C_TESTS */
 
 /*
 ** This function is NOT part of the sqlite3 public API. It is strictly
@@ -499,6 +515,7 @@ const char * sqlite3__wasm_enum_json(void){
   } _DefGroup;
 
   DefGroup(changeset){
+#ifdef SQLITE_CHANGESETSTART_INVERT
     DefInt(SQLITE_CHANGESETSTART_INVERT);
     DefInt(SQLITE_CHANGESETAPPLY_NOSAVEPOINT);
     DefInt(SQLITE_CHANGESETAPPLY_INVERT);
@@ -513,6 +530,7 @@ const char * sqlite3__wasm_enum_json(void){
     DefInt(SQLITE_CHANGESET_OMIT);
     DefInt(SQLITE_CHANGESET_REPLACE);
     DefInt(SQLITE_CHANGESET_ABORT);
+#endif
   } _DefGroup;
 
   DefGroup(config){
@@ -564,7 +582,6 @@ const char * sqlite3__wasm_enum_json(void){
     DefInt(SQLITE_DBCONFIG_LOOKASIDE);
     DefInt(SQLITE_DBCONFIG_ENABLE_FKEY);
     DefInt(SQLITE_DBCONFIG_ENABLE_TRIGGER);
-    DefInt(SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER);
     DefInt(SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION);
     DefInt(SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE);
     DefInt(SQLITE_DBCONFIG_ENABLE_QPSG);
@@ -859,8 +876,10 @@ const char * sqlite3__wasm_enum_json(void){
   } _DefGroup;
 
   DefGroup(session){
+#ifdef SQLITE_SESSION_CONFIG_STRMSIZE
     DefInt(SQLITE_SESSION_CONFIG_STRMSIZE);
     DefInt(SQLITE_SESSION_OBJCONFIG_SIZE);
+#endif
   } _DefGroup;
 
   DefGroup(sqlite3Status){
@@ -922,6 +941,7 @@ const char * sqlite3__wasm_enum_json(void){
   } _DefGroup;
 
   DefGroup(vtab) {
+#if SQLITE_WASM_HAS_VTAB
     DefInt(SQLITE_INDEX_SCAN_UNIQUE);
     DefInt(SQLITE_INDEX_CONSTRAINT_EQ);
     DefInt(SQLITE_INDEX_CONSTRAINT_GT);
@@ -949,6 +969,7 @@ const char * sqlite3__wasm_enum_json(void){
     DefInt(SQLITE_FAIL);
     //DefInt(SQLITE_ABORT); // Also an error code
     DefInt(SQLITE_REPLACE);
+#endif /*SQLITE_WASM_HAS_VTAB*/
   } _DefGroup;
 
 #undef DefGroup
@@ -1063,6 +1084,7 @@ const char * sqlite3__wasm_enum_json(void){
 #undef CurrentStruct
 
 
+#if SQLITE_WASM_HAS_VTAB
 #define CurrentStruct sqlite3_vtab
     StructBinder {
       M(pModule, "p");
@@ -1184,7 +1206,9 @@ const char * sqlite3__wasm_enum_json(void){
     } _StructBinder;
 #undef CurrentStruct
 
-#if SQLITE_WASM_TESTS
+#endif /*SQLITE_WASM_HAS_VTAB*/
+
+#if SQLITE_WASM_ENABLE_C_TESTS
 #define CurrentStruct WasmTestStruct
     StructBinder {
       M(v4,    "i");
@@ -1194,7 +1218,7 @@ const char * sqlite3__wasm_enum_json(void){
       M(xFunc, "v(p)");
     } _StructBinder;
 #undef CurrentStruct
-#endif
+#endif /*SQLITE_WASM_ENABLE_C_TESTS*/
 
   } out( "]"/*structs*/);
 
@@ -1553,6 +1577,7 @@ sqlite3_kvvfs_methods * sqlite3__wasm_kvvfs_methods(void){
   return &sqlite3KvvfsMethods;
 }
 
+#if SQLITE_WASM_HAS_VTAB
 /*
 ** This function is NOT part of the sqlite3 public API. It is strictly
 ** for use by the sqlite project's own JS/WASM bindings.
@@ -1575,6 +1600,7 @@ int sqlite3__wasm_vtab_config(sqlite3 *pDb, int op, int arg){
     return SQLITE_MISUSE;
   }
 }
+#endif /*SQLITE_WASM_HAS_VTAB*/
 
 /*
 ** This function is NOT part of the sqlite3 public API. It is strictly
@@ -1698,6 +1724,7 @@ char * sqlite3__wasm_qfmt_token(char *z, int addQuotes){
 }
 
 #if defined(__EMSCRIPTEN__) && defined(SQLITE_ENABLE_WASMFS)
+#include <emscripten/console.h>
 #include <emscripten/wasmfs.h>
 
 /*
@@ -1749,7 +1776,7 @@ int sqlite3__wasm_init_wasmfs(const char *zUnused){
 }
 #endif /* __EMSCRIPTEN__ && SQLITE_ENABLE_WASMFS */
 
-#if SQLITE_WASM_TESTS
+#if SQLITE_WASM_ENABLE_C_TESTS
 
 SQLITE_WASM_EXPORT
 int sqlite3__wasm_test_intptr(int * p){
@@ -1915,6 +1942,9 @@ int sqlite3__wasm_SQLTester_strglob(const char *zGlob, const char *z){
  return !sqlite3__wasm_SQLTester_strnotglob(zGlob, z);
 }
 
-#endif /* SQLITE_WASM_TESTS */
+#endif /* SQLITE_WASM_ENABLE_C_TESTS */
 
 #undef SQLITE_WASM_EXPORT
+#undef SQLITE_WASM_HAS_VTAB
+#undef SQLITE_WASM_BARE_BONES
+#undef SQLITE_WASM_ENABLE_C_TESTS

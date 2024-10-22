@@ -15,7 +15,7 @@
 source [file join [file dirname [info script]] fts5_common.tcl]
 set testprefix fts5integrity
 
-# If SQLITE_ENABLE_FTS5 is defined, omit this file.
+# If SQLITE_ENABLE_FTS5 is not defined, omit this file.
 ifcapable !fts5 {
   finish_test
   return
@@ -153,6 +153,7 @@ do_execsql_test 5.3 {
   INSERT INTO gg(gg) VALUES('integrity-check');
 }
 
+unset -nocomplain res
 do_test 5.4.1 {
   set ok 0
   for {set i 0} {$i < 10000} {incr i} {
@@ -405,7 +406,7 @@ sqlite3 db test.db
 breakpoint
 do_catchsql_test 13.4 {
   PRAGMA integrity_check;
-} {1 {no such tokenizer: blah}}
+} {1 {SQL logic error}}
 
 
 finish_test
