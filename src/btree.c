@@ -4746,6 +4746,25 @@ int sqlite3BtreeCursorSize(void){
   return ROUND8(sizeof(BtCursor));
 }
 
+#ifdef SQLITE_DEBUG
+/*
+** Return true if and only if the Btree object will be automatically
+** closed with the BtCursor closes.  This is used within assert() statements
+** only.
+*/
+int sqlite3BtreeClosesWithCursor(
+  Btree *pBtree,       /* the btree object */
+  BtCursor *pCur       /* Corresponding cursor */
+){
+  BtShared *pBt = pBtree->pBt;
+  if( (pBt->openFlags & BTREE_SINGLE)==0 ) return 0;
+  if( pBt->pCursor!=pCur ) return 0;
+  if( pCur->pNext!=0 ) return 0;
+  if( pCur->pBtree!=pBtree ) return 0;
+  return 1;
+}
+#endif
+
 /*
 ** Initialize memory that will be converted into a BtCursor object.
 **
@@ -5989,7 +6008,7 @@ int sqlite3BtreeIndexMoveto(
      && indexCellCompare(pCur, 0, pIdxKey, xRecordCompare)<=0
      && pIdxKey->errCode==SQLITE_OK
     ){
-      pCur->curFlags &= ~BTCF_ValidOvfl;
+      pCur->curFlags &= ~(BTCF_ValidOvfl|BTCF_AtLast);
       if( !pCur->pPage->isInit ){
         return SQLITE_CORRUPT_BKPT;
       }
@@ -7567,7 +7586,8 @@ static int rebuildPage(
   if( j>(u32)usableSize ){ j = 0; }
   memcpy(&pTmp[j], &aData[j], usableSize - j);
 
-  for(k=0; ALWAYS(k<NB*2) && pCArray->ixNx[k]<=i; k++){}
+  assert( pCArray->ixNx[NB*2-1]>i );
+  for(k=0; pCArray->ixNx[k]<=i; k++){}
   pSrcEnd = pCArray->apEnd[k];
 
   pData = pEnd;
@@ -7650,7 +7670,8 @@ static int pageInsertArray(
   u8 *pEnd;                       /* Maximum extent of cell data */
   assert( CORRUPT_DB || pPg->hdrOffset==0 );    /* Never called on page 1 */
   if( iEnd<=iFirst ) return 0;
-  for(k=0; ALWAYS(k<NB*2) && pCArray->ixNx[k]<=i ; k++){}
+  assert( pCArray->ixNx[NB*2-1]>i );
+  for(k=0; pCArray->ixNx[k]<=i ; k++){}
   pEnd = pCArray->apEnd[k];
   while( 1 /*Exit by break*/ ){
     int sz, rc;
@@ -7935,6 +7956,7 @@ static int balance_quick(MemPage *pParent, MemPage *pPage, u8 *pSpace){
     b.szCell = &szCell;
     b.apEnd[0] = pPage->aDataEnd;
     b.ixNx[0] = 2;
+    b.ixNx[NB*2-1] = 0x7fffffff;
     rc = rebuildPage(&b, 0, 1, pNew);
     if( NEVER(rc) ){
       releasePage(pNew);
@@ -8170,7 +8192,9 @@ static int balance_nonroot(
   CellArray b;                 /* Parsed information on cells being balanced */
 
   memset(abDone, 0, sizeof(abDone));
-  memset(&b, 0, sizeof(b));
+  assert( sizeof(b) - sizeof(b.ixNx) == offsetof(CellArray,ixNx) );
+  memset(&b, 0, sizeof(b)-sizeof(b.ixNx[0]));
+  b.ixNx[NB*2-1] = 0x7fffffff;
   pBt = pParent->pBt;
   assert( sqlite3_mutex_held(pBt->mutex) );
   assert( sqlite3PagerIswriteable(pParent->pDbPage) );
@@ -8761,7 +8785,8 @@ static int balance_nonroot(
     iOvflSpace += sz;
     assert( sz<=pBt->maxLocal+23 );
     assert( iOvflSpace <= (int)pBt->pageSize );
-    for(k=0; ALWAYS(k<NB*2) && b.ixNx[k]<=j; k++){}
+    assert( b.ixNx[NB*2-1]>j );
+    for(k=0; b.ixNx[k]<=j; k++){}
     pSrcEnd = b.apEnd[k];
     if( SQLITE_OVERFLOW(pSrcEnd, pCell, pCell+sz) ){
       rc = SQLITE_CORRUPT_BKPT;

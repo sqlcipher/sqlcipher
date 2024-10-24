@@ -1413,6 +1413,12 @@ static void freeP4(sqlite3 *db, int p4type, void *p4){
       if( db->pnBytesFreed==0 ) sqlite3DeleteTable(db, (Table*)p4);
       break;
     }
+    case P4_SUBRTNSIG: {
+      SubrtnSig *pSig = (SubrtnSig*)p4;
+      sqlite3DbFree(db, pSig->zAff);
+      sqlite3DbFree(db, pSig);
+      break;
+    }
   }
 }
 
@@ -1990,6 +1996,11 @@ char *sqlite3VdbeDisplayP4(sqlite3 *db, Op *pOp){
     }
     case P4_TABLE: {
       zP4 = pOp->p4.pTab->zName;
+      break;
+    }
+    case P4_SUBRTNSIG: {
+      SubrtnSig *pSig = pOp->p4.pSubrtnSig;
+      sqlite3_str_appendf(&x, "subrtnsig:%d,%s", pSig->selId, pSig->zAff);
       break;
     }
     default: {
@@ -4501,7 +4512,7 @@ SQLITE_NOINLINE int sqlite3BlobCompare(const Mem *pB1, const Mem *pB2){
 ** We must use separate SQLITE_NOINLINE functions here, since otherwise
 ** optimizer code movement causes gcov to become very confused.
 */
-#if  defined(SQLITE_COVERAGE_TEST) || defined(SQLITE_DEBUG)
+#if defined(SQLITE_COVERAGE_TEST) || defined(SQLITE_DEBUG)
 static int SQLITE_NOINLINE doubleLt(double a, double b){ return a<b; }
 static int SQLITE_NOINLINE doubleEq(double a, double b){ return a==b; }
 #endif
@@ -4516,13 +4527,6 @@ int sqlite3IntFloatCompare(i64 i, double r){
     /* SQLite considers NaN to be a NULL. And all integer values are greater
     ** than NULL */
     return 1;
-  }
-  if( sqlite3Config.bUseLongDouble ){
-    LONGDOUBLE_TYPE x = (LONGDOUBLE_TYPE)i;
-    testcase( x<r );
-    testcase( x>r );
-    testcase( x==r );
-    return (x<r) ? -1 : (x>r);
   }else{
     i64 y;
     if( r<-9223372036854775808.0 ) return +1;
@@ -5531,6 +5535,13 @@ void sqlite3VdbePreUpdateHook(
       sqlite3VdbeMemRelease(&preupdate.aNew[i]);
     }
     sqlite3DbNNFreeNN(db, preupdate.aNew);
+  }
+  if( preupdate.apDflt ){
+    int i;
+    for(i=0; i<pTab->nCol; i++){
+      sqlite3ValueFree(preupdate.apDflt[i]);
+    }
+    sqlite3DbFree(db, preupdate.apDflt);
   }
 }
 #endif /* SQLITE_ENABLE_PREUPDATE_HOOK */

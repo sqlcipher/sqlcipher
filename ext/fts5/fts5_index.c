@@ -831,11 +831,12 @@ static Fts5Data *fts5DataRead(Fts5Index *p, i64 iRowid){
     if( rc==SQLITE_OK ){
       u8 *aOut = 0;               /* Read blob data into this buffer */
       int nByte = sqlite3_blob_bytes(p->pReader);
-      sqlite3_int64 nAlloc = sizeof(Fts5Data) + nByte + FTS5_DATA_PADDING;
+      int szData = (sizeof(Fts5Data) + 7) & ~7;
+      sqlite3_int64 nAlloc = szData + nByte + FTS5_DATA_PADDING;
       pRet = (Fts5Data*)sqlite3_malloc64(nAlloc);
       if( pRet ){
         pRet->nn = nByte;
-        aOut = pRet->p = (u8*)&pRet[1];
+        aOut = pRet->p = (u8*)pRet + szData;
       }else{
         rc = SQLITE_NOMEM;
       }
@@ -858,6 +859,7 @@ static Fts5Data *fts5DataRead(Fts5Index *p, i64 iRowid){
   }
 
   assert( (pRet==0)==(p->rc!=SQLITE_OK) );
+  assert( pRet==0 || EIGHT_BYTE_ALIGNMENT( pRet->p ) );
   return pRet;
 }
 
@@ -2183,7 +2185,7 @@ static void fts5SegIterNext_None(
 
   if( iOff<pIter->iEndofDoclist ){
     /* Next entry is on the current page */
-    i64 iDelta;
+    u64 iDelta;
     iOff += sqlite3Fts5GetVarint(&pIter->pLeaf->p[iOff], (u64*)&iDelta);
     pIter->iLeafOffset = iOff;
     pIter->iRowid += iDelta;
@@ -4887,6 +4889,11 @@ static int fts5IndexFindDeleteMerge(Fts5Index *p, Fts5Structure *pStruct){
           nBest = nPercent;
         }
       }
+
+      /* If pLvl is already the input level to an ongoing merge, look no
+      ** further for a merge candidate. The caller should be allowed to
+      ** continue merging from pLvl first.  */
+      if( pLvl->nMerge ) break;
     }
   }
   return iRet;
@@ -8811,7 +8818,7 @@ static int fts5structConnectMethod(
 
 /*
 ** We must have a single struct=? constraint that will be passed through
-** into the xFilter method.  If there is no valid stmt=? constraint,
+** into the xFilter method.  If there is no valid struct=? constraint,
 ** then return an SQLITE_CONSTRAINT error.
 */
 static int fts5structBestIndexMethod(

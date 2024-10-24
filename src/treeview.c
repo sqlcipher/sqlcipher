@@ -193,9 +193,9 @@ void sqlite3TreeViewSrcList(TreeView *pView, const SrcList *pSrc){
     sqlite3StrAccumInit(&x, 0, zLine, sizeof(zLine), 0);
     x.printfFlags |= SQLITE_PRINTF_INTERNAL;
     sqlite3_str_appendf(&x, "{%d:*} %!S", pItem->iCursor, pItem);
-    if( pItem->pTab ){
+    if( pItem->pSTab ){
       sqlite3_str_appendf(&x, " tab=%Q nCol=%d ptr=%p used=%llx%s",
-           pItem->pTab->zName, pItem->pTab->nCol, pItem->pTab, 
+           pItem->pSTab->zName, pItem->pSTab->nCol, pItem->pSTab, 
            pItem->colUsed,
            pItem->fg.rowidUsed ? "+rowid" : "");
     }
@@ -226,25 +226,30 @@ void sqlite3TreeViewSrcList(TreeView *pView, const SrcList *pSrc){
     if( pItem->fg.viaCoroutine )   sqlite3_str_appendf(&x, " viaCoroutine");
     if( pItem->fg.notCte )         sqlite3_str_appendf(&x, " notCte");
     if( pItem->fg.isNestedFrom )   sqlite3_str_appendf(&x, " isNestedFrom");
+    if( pItem->fg.fixedSchema )    sqlite3_str_appendf(&x, " fixedSchema");
+    if( pItem->fg.hadSchema )      sqlite3_str_appendf(&x, " hadSchema");
+    if( pItem->fg.isSubquery )     sqlite3_str_appendf(&x, " isSubquery");
 
     sqlite3StrAccumFinish(&x);
     sqlite3TreeViewItem(pView, zLine, i<pSrc->nSrc-1);
     n = 0;
-    if( pItem->pSelect ) n++;
+    if( pItem->fg.isSubquery ) n++;
     if( pItem->fg.isTabFunc ) n++;
     if( pItem->fg.isUsing ) n++;
     if( pItem->fg.isUsing ){
       sqlite3TreeViewIdList(pView, pItem->u3.pUsing, (--n)>0, "USING");
     }
-    if( pItem->pSelect ){
-      sqlite3TreeViewPush(&pView, i+1<pSrc->nSrc);
-      if( pItem->pTab ){
-        Table *pTab = pItem->pTab;
+    if( pItem->fg.isSubquery ){
+      assert( n==1 );
+      if( pItem->pSTab ){
+        Table *pTab = pItem->pSTab;
         sqlite3TreeViewColumnList(pView, pTab->aCol, pTab->nCol, 1);
       }
-      assert( (int)pItem->fg.isNestedFrom == IsNestedFrom(pItem->pSelect) );
-      sqlite3TreeViewSelect(pView, pItem->pSelect, (--n)>0);
+      assert( (int)pItem->fg.isNestedFrom == IsNestedFrom(pItem) );
+      sqlite3TreeViewPush(&pView, 0);
+      sqlite3TreeViewLine(pView, "SUBQUERY");
       sqlite3TreeViewPop(&pView);
+      sqlite3TreeViewSelect(pView, pItem->u4.pSubq->pSelect, 0);
     }
     if( pItem->fg.isTabFunc ){
       sqlite3TreeViewExprList(pView, pItem->u1.pFuncArg, 0, "func-args:");
@@ -286,7 +291,7 @@ void sqlite3TreeViewSelect(TreeView *pView, const Select *p, u8 moreToFollow){
       n = 1000;
     }else{
       n = 0;
-      if( p->pSrc && p->pSrc->nSrc ) n++;
+      if( p->pSrc && p->pSrc->nSrc && p->pSrc->nAlloc ) n++;
       if( p->pWhere ) n++;
       if( p->pGroupBy ) n++;
       if( p->pHaving ) n++;
@@ -312,7 +317,7 @@ void sqlite3TreeViewSelect(TreeView *pView, const Select *p, u8 moreToFollow){
       sqlite3TreeViewPop(&pView);
     }
 #endif
-    if( p->pSrc && p->pSrc->nSrc ){
+    if( p->pSrc && p->pSrc->nSrc && p->pSrc->nAlloc ){
       sqlite3TreeViewPush(&pView, (n--)>0);
       sqlite3TreeViewLine(pView, "FROM");
       sqlite3TreeViewSrcList(pView, p->pSrc);
@@ -820,7 +825,8 @@ void sqlite3TreeViewExpr(TreeView *pView, const Expr *pExpr, u8 moreToFollow){
         case OE_Ignore:     zType = "ignore";    break;
       }
       assert( !ExprHasProperty(pExpr, EP_IntValue) );
-      sqlite3TreeViewLine(pView, "RAISE %s(%Q)", zType, pExpr->u.zToken);
+      sqlite3TreeViewLine(pView, "RAISE %s", zType);
+      sqlite3TreeViewExpr(pView, pExpr->pLeft, 0);
       break;
     }
 #endif
@@ -900,9 +906,10 @@ void sqlite3TreeViewBareExprList(
     sqlite3TreeViewLine(pView, "%s", zLabel);
     for(i=0; i<pList->nExpr; i++){
       int j = pList->a[i].u.x.iOrderByCol;
+      u8 sortFlags = pList->a[i].fg.sortFlags;
       char *zName = pList->a[i].zEName;
       int moreToFollow = i<pList->nExpr - 1;
-      if( j || zName ){
+      if( j || zName || sortFlags ){
         sqlite3TreeViewPush(&pView, moreToFollow);
         moreToFollow = 0;
         sqlite3TreeViewLine(pView, 0);
@@ -923,13 +930,18 @@ void sqlite3TreeViewBareExprList(
           }
         }
         if( j ){
-          fprintf(stdout, "iOrderByCol=%d", j);
+          fprintf(stdout, "iOrderByCol=%d ", j);
+        }
+        if( sortFlags & KEYINFO_ORDER_DESC ){
+          fprintf(stdout, "DESC ");
+        }else if( sortFlags & KEYINFO_ORDER_BIGNULL ){
+          fprintf(stdout, "NULLS-LAST");
         }
         fprintf(stdout, "\n");
         fflush(stdout);
       }
       sqlite3TreeViewExpr(pView, pList->a[i].pExpr, moreToFollow);
-      if( j || zName ){
+      if( j || zName || sortFlags ){
         sqlite3TreeViewPop(&pView);
       }
     }
