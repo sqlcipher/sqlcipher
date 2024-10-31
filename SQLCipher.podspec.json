@@ -5,7 +5,7 @@
   "homepage": "https://www.zetetic.net/sqlcipher/",
   "license": {
     "type": "BSD-3-Clause",
-    "file": "LICENSE.md"
+    "file": "LICENSE.txt"
   },
   "name": "SQLCipher",
   "platforms": {
