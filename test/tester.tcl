@@ -1328,6 +1328,12 @@ proc finalize_testing {} {
       incr nErr
     }
   }
+  # BEGIN SQLCIPHER 
+  # prior to calculating malloc stats, call sqlite3_shutdown to invoke
+  # sqlcipher_extra_shutdown() to release private heap memory if all
+  # private allocations have been freed
+  sqlite3_shutdown
+  # END SQLCIPHER
   if {[lindex [sqlite3_status SQLITE_STATUS_MALLOC_COUNT 0] 1]>0 ||
               [sqlite3_memory_used]>0} {
     output2 "Unfreed memory: [sqlite3_memory_used] bytes in\

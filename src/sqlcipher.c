@@ -146,42 +146,6 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_MAX_KEY_SZ 64
 #endif
 
- 
-/*
-**  Simple shared routines for converting hex char strings to binary data
- */
-static int cipher_hex2int(char c) {
-  return (c>='0' && c<='9') ? (c)-'0' :
-         (c>='A' && c<='F') ? (c)-'A'+10 :
-         (c>='a' && c<='f') ? (c)-'a'+10 : 0;
-}
-
-static void cipher_hex2bin(const unsigned char *hex, int sz, unsigned char *out){
-  int i;
-  for(i = 0; i < sz; i += 2){
-    out[i/2] = (cipher_hex2int(hex[i])<<4) | cipher_hex2int(hex[i+1]);
-  }
-}
-
-static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
-    int i;
-    for(i=0; i < sz; i++) {
-      sqlite3_snprintf(3, out + (i*2), "%02x ", in[i]);
-    } 
-}
-
-static int cipher_isHex(const unsigned char *hex, int sz){
-  int i;
-  for(i = 0; i < sz; i++) {
-    unsigned char c = hex[i];
-    if ((c < '0' || c > '9') &&
-        (c < 'A' || c > 'F') &&
-        (c < 'a' || c > 'f')) {
-      return 0;
-    }
-  }
-  return 1;
-}
 
 /* the default implementation of SQLCipher uses a cipher_ctx
    to keep track of read / write state separately. The following
@@ -222,6 +186,12 @@ typedef struct {
   void *provider_ctx;
 } codec_ctx ;
 
+typedef struct private_block private_block;
+struct private_block {
+  uint8_t is_used;
+  sqlite3_uint64 size;
+  private_block *next;
+};
 
 #ifdef SQLCIPHER_TEST
 /* possible flags for simulating specific test conditions */
@@ -253,7 +223,6 @@ static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
 static volatile int sqlcipher_mem_security_on = 0;
 static volatile int sqlcipher_mem_executed = 0;
 static volatile int sqlcipher_mem_initialized = 0;
-static volatile unsigned int sqlcipher_activate_count = 0;
 static volatile sqlite3_mem_methods default_mem_methods;
 static sqlcipher_provider *default_provider = NULL;
 
@@ -264,9 +233,334 @@ static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
 static volatile unsigned int sqlcipher_log_source = SQLCIPHER_LOG_ANY;
 static volatile int sqlcipher_log_set = 0;
 
+/* Establish the default size of the private heap. This can be overriden 
+ * at compile time by setting -DSQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT=X */
+#ifndef SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT
+#ifdef __ANDROID__
+/* On android, the maximim amount of memory that can be memlocked in 64k.
+ * The default heap size is chosen as 48K, which is either 4 (with 4k page size)
+ * or 1 (with 16k age size) less than the max. We choose to allocate slightly
+ * less than the max just in case the app has locked some other page(s) */
+#define SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT 49152
+#else
+/* On non-android platforms we'll attempt to allocate and lock a larger private heap 
+ * of around 128k instead. */
+#define SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT 131072
+#endif
+#endif
+/* if default allocation fails, we'll reduce the size by this amount
+ * and try again. This is also the minimium of the private heap. */
+#define SQLCIPHER_PRIVATE_HEAP_SIZE_STEP 8192
+
+static volatile size_t private_heap_sz = SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT;
+static uint8_t* private_heap = NULL;
+
+/* to prevent excessive fragmentation blocks will
+   only be split if there are at least this many
+   bytes available after the split */
+#define MIN_SPLIT_SIZE 32
+
+static volatile int sqlcipher_init = 0;
+static volatile int sqlcipher_shutdown = 0;
+static volatile int sqlcipher_cleanup = 0;
+
+/*
+**  Simple shared routines for converting hex char strings to binary data
+ */
+static int cipher_hex2int(char c) {
+  return (c>='0' && c<='9') ? (c)-'0' :
+         (c>='A' && c<='F') ? (c)-'A'+10 :
+         (c>='a' && c<='f') ? (c)-'a'+10 : 0;
+}
+
+static void cipher_hex2bin(const unsigned char *hex, int sz, unsigned char *out){
+  int i;
+  for(i = 0; i < sz; i += 2){
+    out[i/2] = (cipher_hex2int(hex[i])<<4) | cipher_hex2int(hex[i+1]);
+  }
+}
+
+static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
+    int i;
+    for(i=0; i < sz; i++) {
+      sqlite3_snprintf(3, out + (i*2), "%02x ", in[i]);
+    } 
+}
+
+static int cipher_isHex(const unsigned char *hex, int sz){
+  int i;
+  for(i = 0; i < sz; i++) {
+    unsigned char c = hex[i];
+    if ((c < '0' || c > '9') &&
+        (c < 'A' || c > 'F') &&
+        (c < 'a' || c > 'f')) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
   if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
   return sqlcipher_static_mutex[mutex];
+}
+
+#if !defined(SQLITE_EXTRA_INIT) || !defined(SQLITE_EXTRA_SHUTDOWN)
+#error "SQLCipher must be compiled with -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
+#endif
+
+static void sqlcipher_atexit(void) {
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()\n", __func__);
+  sqlcipher_extra_shutdown();
+}
+
+static void sqlcipher_fini(void) {
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()\n", __func__);
+  sqlcipher_extra_shutdown();
+}
+
+#if defined(_WIN32)
+#ifndef SQLCIPHER_OMIT_DLLMAIN
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
+  switch (fdwReason) {
+    case DLL_PROCESS_DETACH:
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()\n", __func__);
+      sqlcipher_extra_shutdown();
+      break;
+    default:
+      break;
+  }
+  return TRUE;
+}
+#endif
+#elif defined(__APPLE__)
+static void (*const sqlcipher_fini_func)(void) __attribute__((used, section("__DATA,__mod_term_func"))) = sqlcipher_fini;
+#else
+static void (*const sqlcipher_fini_func)(void) __attribute__((used, section(".fini_array"))) = sqlcipher_fini;
+#endif
+
+/* The extra_init function is called by sqlite3_init automaticay by virtue of
+ * being defined with SQLITE_EXTRA_INIT. This function sets up 
+ * static mutexes used internally by SQLCipher and initializes
+ * the internal private heap */
+int sqlcipher_extra_init(const char* arg) {
+  int rc = SQLITE_OK, i=0;
+
+  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+
+  if(sqlcipher_init) {
+    goto cleanup;
+  }
+
+  /* only register cleanup handlers once per process */
+  if(!sqlcipher_cleanup) {
+    atexit(sqlcipher_atexit);
+    sqlcipher_cleanup = 1;
+  }
+
+  /* allocate static mutexe, and return error if any fail to allocate */
+  for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+    if(sqlcipher_static_mutex[i] == NULL) {
+      if((sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST)) == NULL) {
+        rc = SQLITE_NOMEM; 
+        goto cleanup;
+      }
+    }
+  }
+
+#ifndef SQLCIPHER_OMIT_DEFAULT_LOGGING
+  /* when sqlcipher is first activated, set a default log target and level of WARN if the
+     logging settings have not yet been initialized. Use the "device log" for 
+     android (logcat) or apple (console). Use stderr on all other platforms. */  
+  if(!sqlcipher_log_set) {
+
+    /* set log level if it is different than the uninitalized default value of NONE */ 
+    if(sqlcipher_log_level == SQLCIPHER_LOG_NONE) {
+      sqlcipher_log_level = SQLCIPHER_LOG_WARN;
+    }
+
+    /* set the default file or device if neither is already set */
+    if(sqlcipher_log_device == 0 && sqlcipher_log_file == NULL) {
+#if defined(__ANDROID__) || defined(__APPLE__)
+      sqlcipher_log_device = 1;
+#else
+      sqlcipher_log_file = stderr;
+#endif
+    }
+    sqlcipher_log_set = 1;
+  }
+#endif
+
+  /* initialize the private heap for use in internal SQLCipher memory allocations */
+  if(private_heap == NULL) {
+    while(private_heap_sz >= SQLCIPHER_PRIVATE_HEAP_SIZE_STEP) {
+      /* attempt to allocate the private heap. If allocation fails, reduce the size and try again */
+      if((private_heap = sqlcipher_malloc(private_heap_sz))) {
+        /* initialize the head block of the linked list at the start of the heap */ 
+        private_block *head = (private_block *) private_heap; 
+        head->is_used = 0;
+        head->size = private_heap_sz - sizeof(private_block);
+        head->next = NULL;
+        break;
+      }
+
+      /* allocation failed, reduce the requested size of the heap */
+      private_heap_sz -= SQLCIPHER_PRIVATE_HEAP_SIZE_STEP;
+    }
+  }
+  if(!private_heap) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate privte heap\n", __func__); 
+  }
+
+  /* check to see if there is a provider registered at this point
+     if there no provider registered at this point, register the 
+     default provider */
+  if(sqlcipher_get_provider() == NULL) {
+    sqlcipher_provider *p = sqlcipher_malloc(sizeof(sqlcipher_provider)); 
+#if defined (SQLCIPHER_CRYPTO_CC)
+    extern int sqlcipher_cc_setup(sqlcipher_provider *p);
+    sqlcipher_cc_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
+    extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
+    sqlcipher_ltc_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_NSS)
+    extern int sqlcipher_nss_setup(sqlcipher_provider *p);
+    sqlcipher_nss_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_OPENSSL)
+    extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
+    sqlcipher_openssl_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_OSSL3)
+    extern int sqlcipher_ossl3_setup(sqlcipher_provider *p);
+    sqlcipher_ossl3_setup(p);
+#elif defined (SQLCIPHER_CRYPTO_CUSTOM)
+    extern int SQLCIPHER_CRYPTO_CUSTOM(sqlcipher_provider *p);
+    SQLCIPHER_CRYPTO_CUSTOM(p);
+#else
+#error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
+#endif
+    sqlcipher_register_provider(p);
+  }
+
+  sqlcipher_init = 1;
+  sqlcipher_shutdown = 0;
+   
+cleanup: 
+  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  return rc;
+}
+
+/* The extra_shutdown function is called by sqlite3_shutdown()
+ * because it is defined with SQLITE_EXTRA_SHUTDOWN. In addition it will
+ * be called via atexit(), finalizer, and DllMain. The function will
+ * cleanup resources allocated by SQLCipher including mutexes,
+ * the private heap, and default provider. */
+void sqlcipher_extra_shutdown(void) {
+  int i = 0;
+  sqlite3_mutex *mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER); 
+
+  if(mutex) {
+    sqlite3_mutex_enter(mutex);
+  }
+
+  /* if sqlcipher hasn't been initialized or the shutdown already completed exit early */
+  if(!sqlcipher_init || sqlcipher_shutdown) {
+    goto cleanup;
+  }
+
+  /* free the default provider */
+  if(default_provider != NULL) {
+    sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
+    default_provider = NULL;
+  }
+
+  /* free private heap. If SQLCipher is compiled in test mode, it will deliberately
+     not free the heap (leaking it) if the heap is not empty. This will allow tooling
+     to detect memory issues like unfreed private heap memory */
+  if(private_heap) {
+#ifdef SQLCIPHER_TEST
+    size_t used = 0;
+    private_block *block = NULL;
+    block = (private_block *) private_heap;
+    while (block != NULL) {
+      if(block->is_used) {
+        used+= block->size;
+        i++;
+      }
+      block = block->next;
+    }
+    if(used > 0) {
+      /* don't free the heap so that sqlite treats this as unfreed memory */ 
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, 
+        "%s: SQLCipher private heap unfreed memory: %zu bytes in %d allocations\n", __func__, used, i);
+    } else {
+      sqlcipher_free(private_heap, private_heap_sz);
+      private_heap = NULL;
+    }
+#else
+    sqlcipher_free(private_heap, private_heap_sz);
+    private_heap = NULL;
+#endif
+  }
+
+  /* free all of sqlcipher's static mutexes */
+  for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+    if(sqlcipher_static_mutex[i]) {
+      sqlite3_mutex_free(sqlcipher_static_mutex[i]);
+      sqlcipher_static_mutex[i] = NULL;
+    }
+  }
+
+cleanup: 
+  sqlcipher_init = 0;
+  sqlcipher_shutdown = 1;
+  if(mutex) {
+    sqlite3_mutex_leave(mutex);
+  }
+}
+
+/* constant time memset using volitile to avoid having the memset
+   optimized out by the compiler. 
+   Note: As suggested by Joachim Schipper (joachim.schipper@fox-it.com)
+*/
+void* sqlcipher_memset(void *v, unsigned char value, sqlite_uint64 len) {
+  volatile sqlite_uint64 i = 0;
+  volatile unsigned char *a = v;
+
+  if (v == NULL) return v;
+
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_memset: setting %p[0-%llu]=%d)", a, len, value);
+  for(i = 0; i < len; i++) {
+    a[i] = value;
+  }
+
+  return v;
+}
+
+/* constant time memory check tests every position of a memory segement
+   matches a single value (i.e. the memory is all zeros)
+   returns 0 if match, 1 of no match */
+int sqlcipher_ismemset(const void *v, unsigned char value, sqlite_uint64 len) {
+  const volatile unsigned char *a = v;
+  volatile sqlite_uint64 i = 0, result = 0;
+
+  for(i = 0; i < len; i++) {
+    result |= a[i] ^ value;
+  }
+
+  return (result != 0);
+}
+
+/* constant time memory comparison routine. 
+   returns 0 if match, 1 if no match */
+int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
+  const volatile unsigned char *a0 = v0, *a1 = v1;
+  volatile int i = 0, result = 0;
+
+  for(i = 0; i < len; i++) {
+    result |= a0[i] ^ a1[i];
+  }
+  
+  return (result != 0);
 }
 
 static void sqlcipher_mlock(void *ptr, sqlite_uint64 sz) {
@@ -332,6 +626,12 @@ static void sqlcipher_munlock(void *ptr, sqlite_uint64 sz) {
 #endif
 }
 
+/** sqlcipher wraps the default memory subsystem so it can optionally provide the
+  * memory security feature which will lock and sanitize ALL memory used by 
+  * the sqlite library internally. Memory security feature is disabled by default
+  * but but the wrapper is used regardless, it just forwards to the default
+  * memory management implementation when disabled
+  */
 static int sqlcipher_mem_init(void *pAppData) {
   return default_mem_methods.xInit(pAppData);
 }
@@ -460,6 +760,142 @@ cleanup:
   }
 }
 
+/**
+  * Free and wipe memory. Uses SQLites internal sqlite3_free so that memory
+  * can be countend and memory leak detection works in the test suite. 
+  * If ptr is not null memory will be freed. 
+  * If sz is greater than zero, the memory will be overwritten with zero before it is freed
+  * If sz is > 0, and not compiled with OMIT_MEMLOCK, system will attempt to unlock the
+  * memory segment so it can be paged
+  */
+static void sqlcipher_internal_free(void *ptr, sqlite_uint64 sz) {
+  sqlcipher_memset(ptr, 0, sz);
+  sqlcipher_munlock(ptr, sz);
+  sqlite3_free(ptr);
+}
+
+/**
+  * allocate memory. Uses sqlite's internall malloc wrapper so memory can be 
+  * reference counted and leak detection works. Unless compiled with OMIT_MEMLOCK
+  * attempts to lock the memory pages so sensitive information won't be swapped
+  */
+static void* sqlcipher_internal_malloc(sqlite_uint64 sz) {
+  void *ptr;
+  ptr = sqlite3_malloc(sz);
+  sqlcipher_memset(ptr, 0, sz);
+  sqlcipher_mlock(ptr, sz);
+  return ptr;
+}
+
+void *sqlcipher_malloc(sqlite3_uint64 size) {
+  void *alloc = NULL;
+  private_block *block = NULL, *split = NULL;
+
+  if(size < 1) return NULL;
+
+  block = (private_block *) private_heap;
+
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering SQLCIPHER_MUTEX_MEM", __func__);
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_MEM));
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered SQLCIPHER_MUTEX_MEM", __func__);
+
+    /* iterate through the blocks in the heap to find one which is big enough to hold
+       the requested allocation. Stop when one is found. */
+  while(block != NULL && alloc == NULL) {
+    if(!block->is_used && block->size >= size) {
+      /* mark the block as in use and set the return pointer to the start
+         of the block free space */
+      block->is_used = 1;
+      alloc = ((uint8_t*)block) + sizeof(private_block);
+      sqlcipher_memset(alloc, 0, size);
+
+      /* if there is at least the minimim amount of required space left after allocation, 
+         split off a new free block  and insert it after the in-use block */ 
+      if(block->size >= size + sizeof(private_block) + MIN_SPLIT_SIZE) {
+        split = (private_block*) (((uint8_t*) block) + size + sizeof(private_block));
+        split->is_used = 0;
+        split->size = block->size - size - sizeof(private_block);
+
+        /* insert inbetween current block and next */
+        split->next = block->next;
+        block->next = split;
+        
+        /* only set the size of the current block to the requested amount 
+           if the block was split. otherwise, size will be the full amount
+           of the block, which will actually be larger than the requested amount */
+        block->size = size;
+      } 
+    }
+    block = block->next;
+  }
+
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_MEM", __func__);
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_MEM));
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left SQLCIPHER_MUTEX_MEM", __func__);
+
+  /* If we were unable to locate a free block large enough to service the request, the fallback
+     behavior will simply attempt to allocate additional memory using malloc. */
+  if(alloc == NULL) {
+    alloc = sqlcipher_internal_malloc(size);
+  }
+
+  return alloc;
+}
+
+void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
+  private_block *block = NULL, *prev = NULL;
+  void *alloc = NULL;
+  block = (private_block *) private_heap;
+
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering SQLCIPHER_MUTEX_MEM", __func__);
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_MEM));
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered SQLCIPHER_MUTEX_MEM", __func__);
+
+  /* search the heap for the block that contains this address */
+  while(block != NULL) {
+    alloc = ((uint8_t*)block)+sizeof(private_block); 
+    /* if the memory address to be freed corresponds to this block's
+       allocation, mark it as unused. If they don't match, move
+       on to the next block */
+    if(mem == alloc) {
+      block->is_used = 0;
+      sqlcipher_memset(alloc, 0, block->size);
+
+      /* check whether the previous block is free, if so merge*/
+      if(prev && !prev->is_used) {
+        prev->size = prev->size + sizeof(private_block) + block->size;
+        prev->next = block->next;
+        block = prev;
+      }
+
+      /* check to see whether the next block is free, if so merge */
+      if(block->next && !block->next->is_used) {
+        block->size = block->size + sizeof(private_block) + block->next->size;
+        block->next = block->next->next;
+      }
+
+      /* once the block has been identified, marked free, and optionally
+         consolidated with it's neighbors, exit the loop, but leave
+         the block pointer intact so we know we found it in the heap */
+      break;
+    }
+
+    prev = block;
+    block = block->next;
+  }
+
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_MEM", __func__);
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_MEM));
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left SQLCIPHER_MUTEX_MEM", __func__);
+
+  /* If the memory address couldn't be found in the private heap
+     then it was allocated by the fallback mechanism and should
+     be deallocated with free() */
+  if(!block) {
+    sqlcipher_internal_free(mem, sz);
+  }
+}
+
 int sqlcipher_register_provider(sqlcipher_provider *p) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_register_provider: entering SQLCIPHER_MUTEX_PROVIDER");
   sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
@@ -484,190 +920,6 @@ int sqlcipher_register_provider(sqlcipher_provider *p) {
    make minor changes to it */
 sqlcipher_provider* sqlcipher_get_provider() {
   return default_provider;
-}
-
-static void sqlcipher_activate() {
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_activate: entering static master mutex");
-  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_activate: entered static master mutex");
-
-  /* allocate new mutexes */
-  if(sqlcipher_activate_count == 0) {
-    int i;
-    for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
-      sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
-    }
-#ifndef SQLCIPHER_OMIT_DEFAULT_LOGGING
-    /* when sqlcipher is first activated, set a default log target and level of WARN if the
-       logging settings have not yet been initialized. Use the "device log" for 
-       android (logcat) or apple (console). Use stderr on all other platforms. */  
-    if(!sqlcipher_log_set) {
-
-      /* set log level if it is different than the uninitalized default value of NONE */ 
-      if(sqlcipher_log_level == SQLCIPHER_LOG_NONE) {
-        sqlcipher_log_level = SQLCIPHER_LOG_WARN;
-      }
-
-      /* set the default file or device if neither is already set */
-      if(sqlcipher_log_device == 0 && sqlcipher_log_file == NULL) {
-#if defined(__ANDROID__) || defined(__APPLE__)
-        sqlcipher_log_device = 1;
-#else
-        sqlcipher_log_file = stderr;
-#endif
-      }
-      sqlcipher_log_set = 1;
-    }
-#endif
-  }
-
-  /* check to see if there is a provider registered at this point
-     if there no provider registered at this point, register the 
-     default provider */
-  if(sqlcipher_get_provider() == NULL) {
-    sqlcipher_provider *p = sqlcipher_malloc(sizeof(sqlcipher_provider)); 
-#if defined (SQLCIPHER_CRYPTO_CC)
-    extern int sqlcipher_cc_setup(sqlcipher_provider *p);
-    sqlcipher_cc_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
-    extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
-    sqlcipher_ltc_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_NSS)
-    extern int sqlcipher_nss_setup(sqlcipher_provider *p);
-    sqlcipher_nss_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_OPENSSL)
-    extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
-    sqlcipher_openssl_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_OSSL3)
-    extern int sqlcipher_ossl3_setup(sqlcipher_provider *p);
-    sqlcipher_ossl3_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_CUSTOM)
-    extern int SQLCIPHER_CRYPTO_CUSTOM(sqlcipher_provider *p);
-    SQLCIPHER_CRYPTO_CUSTOM(p);
-#else
-#error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
-#endif
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_activate: calling sqlcipher_register_provider(%p)", p);
-    sqlcipher_register_provider(p);
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_activate: called sqlcipher_register_provider(%p)",p);
-  }
-
-  sqlcipher_activate_count++; /* increment activation count */
-
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_activate: leaving static master mutex");
-  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_activate: left static master mutex");
-}
-
-static void sqlcipher_deactivate() {
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: entering static master mutex");
-  sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: entered static master mutex");
-
-  sqlcipher_activate_count--;
-  /* if no connections are using sqlcipher, cleanup globals */
-  if(sqlcipher_activate_count < 1) {
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: entering SQLCIPHER_MUTEX_PROVIDER");
-    sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: entered SQLCIPHER_MUTEX_PROVIDER");
-
-    if(default_provider != NULL) {
-      sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
-      default_provider = NULL;
-    }
-
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: leaving SQLCIPHER_MUTEX_PROVIDER");
-    sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: left SQLCIPHER_MUTEX_PROVIDER");
-
-    /* last connection closed, free mutexes */
-    if(sqlcipher_activate_count == 0) {
-      int i;
-      for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
-        sqlite3_mutex_free(sqlcipher_static_mutex[i]);
-      }
-    }
-    sqlcipher_activate_count = 0; /* reset activation count */
-  }
-
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: leaving static master mutex");
-  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_deactivate: left static master mutex");
-}
-
-/* constant time memset using volitile to avoid having the memset
-   optimized out by the compiler. 
-   Note: As suggested by Joachim Schipper (joachim.schipper@fox-it.com)
-*/
-void* sqlcipher_memset(void *v, unsigned char value, sqlite_uint64 len) {
-  volatile sqlite_uint64 i = 0;
-  volatile unsigned char *a = v;
-
-  if (v == NULL) return v;
-
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_memset: setting %p[0-%llu]=%d)", a, len, value);
-  for(i = 0; i < len; i++) {
-    a[i] = value;
-  }
-
-  return v;
-}
-
-/* constant time memory check tests every position of a memory segement
-   matches a single value (i.e. the memory is all zeros)
-   returns 0 if match, 1 of no match */
-int sqlcipher_ismemset(const void *v, unsigned char value, sqlite_uint64 len) {
-  const volatile unsigned char *a = v;
-  volatile sqlite_uint64 i = 0, result = 0;
-
-  for(i = 0; i < len; i++) {
-    result |= a[i] ^ value;
-  }
-
-  return (result != 0);
-}
-
-/* constant time memory comparison routine. 
-   returns 0 if match, 1 if no match */
-int sqlcipher_memcmp(const void *v0, const void *v1, int len) {
-  const volatile unsigned char *a0 = v0, *a1 = v1;
-  volatile int i = 0, result = 0;
-
-  for(i = 0; i < len; i++) {
-    result |= a0[i] ^ a1[i];
-  }
-  
-  return (result != 0);
-}
-
-/**
-  * Free and wipe memory. Uses SQLites internal sqlite3_free so that memory
-  * can be countend and memory leak detection works in the test suite. 
-  * If ptr is not null memory will be freed. 
-  * If sz is greater than zero, the memory will be overwritten with zero before it is freed
-  * If sz is > 0, and not compiled with OMIT_MEMLOCK, system will attempt to unlock the
-  * memory segment so it can be paged
-  */
-void sqlcipher_free(void *ptr, sqlite_uint64 sz) {
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_free: calling sqlcipher_memset(%p,0,%llu)", ptr, sz);
-  sqlcipher_memset(ptr, 0, sz);
-  sqlcipher_munlock(ptr, sz);
-  sqlite3_free(ptr);
-}
-
-/**
-  * allocate memory. Uses sqlite's internall malloc wrapper so memory can be 
-  * reference counted and leak detection works. Unless compiled with OMIT_MEMLOCK
-  * attempts to lock the memory pages so sensitive information won't be swapped
-  */
-void* sqlcipher_malloc(sqlite_uint64 sz) {
-  void *ptr;
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_malloc: calling sqlite3Malloc(%llu)", sz);
-  ptr = sqlite3Malloc(sz);
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_malloc: calling sqlcipher_memset(%p,0,%llu)", ptr, sz);
-  sqlcipher_memset(ptr, 0, sz);
-  sqlcipher_mlock(ptr, sz);
-  return ptr;
 }
 
 char* sqlcipher_version() {
@@ -2793,7 +3045,6 @@ static void sqlite3FreeCodecArg(void *pCodecArg) {
   codec_ctx *ctx = (codec_ctx *) pCodecArg;
   if(pCodecArg == NULL) return;
   sqlcipher_codec_ctx_free(&ctx); /* wipe and free allocated memory for the context */
-  sqlcipher_deactivate(); /* cleanup related structures, OpenSSL etc, when codec is detatched */
 }
 
 int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
@@ -2817,9 +3068,6 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
     /* check if the sqlite3_file is open, and if not force handle to NULL */ 
     if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL; 
-
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlcipher_activate()");
-    sqlcipher_activate(); /* perform internal initialization for sqlcipher */
 
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: entering database mutex %p", db->mutex);
     sqlite3_mutex_enter(db->mutex);

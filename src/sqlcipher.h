@@ -73,6 +73,9 @@ typedef struct {
 } sqlcipher_provider;
 
 /* public interfaces called externally */
+
+int sqlcipher_extra_init(const char*);
+void sqlcipher_extra_shutdown(void);
 void sqlcipher_init_memmethods(void);
 int sqlcipher_codec_pragma(sqlite3*, int, Parse*, const char *, const char*);
 int sqlcipherCodecAttach(sqlite3*, int, const void *, int);
@@ -81,10 +84,10 @@ void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 int sqlcipher_find_db_index(sqlite3 *, const char *);
 
 /* utility functions */
-void* sqlcipher_malloc(sqlite_uint64);
 void* sqlcipher_memset(void *, unsigned char, sqlite_uint64);
 int sqlcipher_ismemset(const void *, unsigned char, sqlite_uint64);
 int sqlcipher_memcmp(const void *, const void *, int);
+void* sqlcipher_malloc(sqlite_uint64);
 void sqlcipher_free(void *, sqlite_uint64);
 char* sqlcipher_version();
 
@@ -98,7 +101,8 @@ sqlcipher_provider* sqlcipher_get_provider(void);
 #define SQLCIPHER_MUTEX_RESERVED1         3
 #define SQLCIPHER_MUTEX_RESERVED2         4
 #define SQLCIPHER_MUTEX_RESERVED3         5
-#define SQLCIPHER_MUTEX_COUNT             6
+#define SQLCIPHER_MUTEX_MEM               6
+#define SQLCIPHER_MUTEX_COUNT             7
 
 sqlite3_mutex* sqlcipher_mutex(int);
 
