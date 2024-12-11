@@ -45,7 +45,6 @@
 #endif
 #endif
 
-#include <stdint.h>
 #include <time.h>
 
 #if defined(_WIN32) || defined(SQLITE_OS_WINRT)
@@ -189,7 +188,7 @@ typedef struct {
 
 typedef struct private_block private_block;
 struct private_block {
-  uint8_t is_used;
+  u8 is_used;
   sqlite3_uint64 size;
   private_block *next;
 };
@@ -254,7 +253,7 @@ static volatile int sqlcipher_log_set = 0;
 #define SQLCIPHER_PRIVATE_HEAP_SIZE_STEP 8192
 
 static volatile size_t private_heap_sz = SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT;
-static uint8_t* private_heap = NULL;
+static u8* private_heap = NULL;
 
 /* to prevent excessive fragmentation blocks will
    only be split if there are at least this many
@@ -807,13 +806,13 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
       /* mark the block as in use and set the return pointer to the start
          of the block free space */
       block->is_used = 1;
-      alloc = ((uint8_t*)block) + sizeof(private_block);
+      alloc = ((u8*)block) + sizeof(private_block);
       sqlcipher_memset(alloc, 0, size);
 
       /* if there is at least the minimim amount of required space left after allocation, 
          split off a new free block  and insert it after the in-use block */ 
       if(block->size >= size + sizeof(private_block) + MIN_SPLIT_SIZE) {
-        split = (private_block*) (((uint8_t*) block) + size + sizeof(private_block));
+        split = (private_block*) (((u8*) block) + size + sizeof(private_block));
         split->is_used = 0;
         split->size = block->size - size - sizeof(private_block);
 
@@ -854,7 +853,7 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
 
   /* search the heap for the block that contains this address */
   while(block != NULL) {
-    alloc = ((uint8_t*)block)+sizeof(private_block); 
+    alloc = ((u8*)block)+sizeof(private_block);
     /* if the memory address to be freed corresponds to this block's
        allocation, mark it as unused. If they don't match, move
        on to the next block */
