@@ -188,9 +188,9 @@ typedef struct {
 
 typedef struct private_block private_block;
 struct private_block {
-  u8 is_used;
-  sqlite3_uint64 size;
   private_block *next;
+  sqlite3_uint32 size;
+  sqlite3_uint32 is_used;
 };
 
 #ifdef SQLCIPHER_TEST
@@ -249,20 +249,30 @@ static volatile int sqlcipher_log_set = 0;
 #endif
 #endif
 /* if default allocation fails, we'll reduce the size by this amount
- * and try again. This is also the minimium of the private heap. */
-#define SQLCIPHER_PRIVATE_HEAP_SIZE_STEP 8192
+ * and try again. This is also the minimium of the private heap. The minimum
+ * size will be 4 4K pages or 1 16K page (possible with latest android)*/
+#define SQLCIPHER_PRIVATE_HEAP_SIZE_STEP 16384
 
 static volatile size_t private_heap_sz = SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT;
 static u8* private_heap = NULL;
 
 /* to prevent excessive fragmentation blocks will
-   only be split if there are at least this many
-   bytes available after the split */
-#define MIN_SPLIT_SIZE 32
+ * only be split if there are at least this many
+ * bytes available after the split. This should allow for at
+ * least two addtional small allocations */
+#define SQLCIPHER_PRIVATE_HEAP_MIN_SPLIT_SIZE 32
+
+/* requested sizes will be rounded up to the nearest 8 bytes for alignment */
+#define SQLCIPHER_PRIVATE_HEAP_ALIGNMENT 8
+#define SQLCIPHER_PRIVATE_HEAP_ROUNDUP(x) ((x % SQLCIPHER_PRIVATE_HEAP_ALIGNMENT) ? \
+  ((x / SQLCIPHER_PRIVATE_HEAP_ALIGNMENT) + 1) * SQLCIPHER_PRIVATE_HEAP_ALIGNMENT : x)
 
 static volatile int sqlcipher_init = 0;
 static volatile int sqlcipher_shutdown = 0;
 static volatile int sqlcipher_cleanup = 0;
+
+static void sqlcipher_internal_free(void *, sqlite_uint64);
+static void *sqlcipher_internal_malloc(sqlite_uint64);
 
 /*
 **  Simple shared routines for converting hex char strings to binary data
@@ -304,6 +314,7 @@ sqlite3_mutex* sqlcipher_mutex(int mutex) {
   if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
   return sqlcipher_static_mutex[mutex];
 }
+
 
 #if !defined(SQLITE_EXTRA_INIT) || !defined(SQLITE_EXTRA_SHUTDOWN)
 #error "SQLCipher must be compiled with -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
@@ -395,7 +406,7 @@ int sqlcipher_extra_init(const char* arg) {
   if(private_heap == NULL) {
     while(private_heap_sz >= SQLCIPHER_PRIVATE_HEAP_SIZE_STEP) {
       /* attempt to allocate the private heap. If allocation fails, reduce the size and try again */
-      if((private_heap = sqlcipher_malloc(private_heap_sz))) {
+      if((private_heap = sqlcipher_internal_malloc(private_heap_sz))) {
         /* initialize the head block of the linked list at the start of the heap */ 
         private_block *head = (private_block *) private_heap; 
         head->is_used = 0;
@@ -493,11 +504,11 @@ void sqlcipher_extra_shutdown(void) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, 
         "%s: SQLCipher private heap unfreed memory: %zu bytes in %d allocations\n", __func__, used, i);
     } else {
-      sqlcipher_free(private_heap, private_heap_sz);
+      sqlcipher_internal_free(private_heap, private_heap_sz);
       private_heap = NULL;
     }
 #else
-    sqlcipher_free(private_heap, private_heap_sz);
+    sqlcipher_internal_free(private_heap, private_heap_sz);
     private_heap = NULL;
 #endif
   }
@@ -793,6 +804,8 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
 
   if(size < 1) return NULL;
 
+  size = SQLCIPHER_PRIVATE_HEAP_ROUNDUP(size);
+
   block = (private_block *) private_heap;
 
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering SQLCIPHER_MUTEX_MEM", __func__);
@@ -811,7 +824,7 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
 
       /* if there is at least the minimim amount of required space left after allocation, 
          split off a new free block  and insert it after the in-use block */ 
-      if(block->size >= size + sizeof(private_block) + MIN_SPLIT_SIZE) {
+      if(block->size >= size + sizeof(private_block) + SQLCIPHER_PRIVATE_HEAP_MIN_SPLIT_SIZE) {
         split = (private_block*) (((u8*) block) + size + sizeof(private_block));
         split->is_used = 0;
         split->size = block->size - size - sizeof(private_block);
@@ -836,6 +849,7 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
   /* If we were unable to locate a free block large enough to service the request, the fallback
      behavior will simply attempt to allocate additional memory using malloc. */
   if(alloc == NULL) {
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to allocate %llu bytes on private heap, calling sqlcipher_internal_malloc fallback", __func__, size);
     alloc = sqlcipher_internal_malloc(size);
   }
 
@@ -892,6 +906,7 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
      then it was allocated by the fallback mechanism and should
      be deallocated with free() */
   if(!block) {
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to find %p with %llu bytes on private heap, calling sqlcipher_internal_free fallback", __func__, mem, sz);
     sqlcipher_internal_free(mem, sz);
   }
 }
