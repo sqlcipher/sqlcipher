@@ -189,8 +189,8 @@ typedef struct {
 typedef struct private_block private_block;
 struct private_block {
   private_block *next;
-  sqlite3_uint32 size;
-  sqlite3_uint32 is_used;
+  u32 size;
+  u32 is_used;
 };
 
 #ifdef SQLCIPHER_TEST
