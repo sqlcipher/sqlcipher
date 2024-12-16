@@ -53,8 +53,6 @@
 #define SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL "PBKDF2_HMAC_SHA512"
 
 typedef struct {
-  int (*activate)(void *ctx);
-  int (*deactivate)(void *ctx);
   const char* (*get_provider_name)(void *ctx);
   int (*add_random)(void *ctx, void *buffer, int length);
   int (*random)(void *ctx, void *buffer, int length);
