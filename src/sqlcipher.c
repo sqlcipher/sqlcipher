@@ -420,7 +420,7 @@ int sqlcipher_extra_init(const char* arg) {
     }
   }
   if(!private_heap) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate privte heap\n", __func__); 
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate private heap\n", __func__); 
   }
 
   /* check to see if there is a provider registered at this point
