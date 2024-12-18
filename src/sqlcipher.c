@@ -175,6 +175,7 @@ typedef struct {
   int plaintext_header_sz;
   int hmac_algorithm;
   int kdf_algorithm;
+  int error;
   unsigned int flags;
   unsigned char *kdf_salt;
   unsigned char *hmac_kdf_salt;
@@ -1211,6 +1212,7 @@ static void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_set_error %d", error);
   sqlite3pager_error(ctx->pBt->pBt->pPager, error);
   ctx->pBt->pBt->db->errCode = error;
+  ctx->error = error;
 }
 
 static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
@@ -1808,7 +1810,7 @@ cleanup:
 }
 
 static int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
-  int i, pass_sz, keyspec_sz, nRes, user_version, rc, oflags;
+  int i, pass_sz, keyspec_sz, nRes, user_version, rc, rc_cleanup, oflags;
   Db *pDb = 0;
   sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
@@ -1981,32 +1983,42 @@ migrate:
   sqlite3pager_reset(pDest->pBt->pPager);
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: reset pager");
 
-  rc = sqlite3_exec(db, "DETACH DATABASE migrate;", NULL, NULL, NULL);
-  if(rc != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: DETACH DATABASE migrate failed: %d", rc);
+handle_error:
+cleanup:
+  rc_cleanup = sqlite3_exec(db, "DETACH DATABASE migrate;", NULL, NULL, NULL);
+  if(rc_cleanup != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: DETACH DATABASE migrate failed: %d", rc_cleanup);
+    /* only overwrite the rc in the cleanup stage if it is currently not an error. This will prevent overwriting a previous error that occured earlier in migration */
+    if(rc == SQLITE_OK) { 
+      rc = rc_cleanup;
+    }
   }
 
   sqlite3ResetAllSchemasOfConnection(db);
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: reset all schemas");
 
-  set_journal_mode = sqlite3_mprintf("PRAGMA journal_mode = %s;", journal_mode);
-  rc = sqlite3_exec(db, set_journal_mode, NULL, NULL, NULL); 
-  if(rc != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: failed to re-set journal mode via %s: %d", set_journal_mode, rc);
-    goto handle_error;
+  if(journal_mode) {
+    set_journal_mode = sqlite3_mprintf("PRAGMA journal_mode = %s;", journal_mode);
+    rc_cleanup = sqlite3_exec(db, set_journal_mode, NULL, NULL, NULL);
+    if(rc_cleanup != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: failed to re-set journal mode via %s: %d", set_journal_mode, rc_cleanup);
+      if(rc == SQLITE_OK) {
+        rc = rc_cleanup;
+      }
+    }
   }
 
-  goto cleanup;
-
-handle_error:
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: an error occurred attempting to migrate the database - last error %d", rc);
-
-cleanup:
   if(migrated_db_filename) {
     int del_rc = sqlite3OsDelete(db->pVfs, migrated_db_filename, 0);
     if(del_rc != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: failed to delete migration database %s: %d", migrated_db_filename, del_rc);
     }
+  }
+
+  if(rc != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: an error occurred attempting to migrate the database - last error %d", rc);
+    sqlite3pager_reset(ctx->pBt->pBt->pPager);
+    ctx->error = rc; /* set flag for deferred error */
   }
 
   if(pass) sqlcipher_free(pass, pass_sz);
@@ -2020,6 +2032,7 @@ cleanup:
   if(w_db_filename) sqlcipher_free(w_db_filename, w_db_filename_sz);
   if(w_migrated_db_filename) sqlcipher_free(w_migrated_db_filename, w_migrated_db_filename_sz);
 #endif
+
   return rc;
 }
 
@@ -2408,7 +2421,6 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       sqlcipher_vdbe_return_string(pParse, "cipher_migrate", migrate_status, P4_DYNAMIC);
       if(status != SQLITE_OK) {
         sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_pragma: error occurred during cipher_migrate: %d", status);
-        sqlcipher_codec_ctx_set_error(ctx, status);
       }
     }
   } else
@@ -2968,6 +2980,12 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   int cctx = CIPHER_READ_CTX;
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3Codec: pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
+
+  if(ctx->error != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d", __func__, rc);
+    sqlcipher_codec_ctx_set_error(ctx, ctx->error);
+    return NULL;
+  }
 
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {

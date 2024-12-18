@@ -1188,7 +1188,7 @@ do_test migrate-failure-readable {
     PRAGMA cipher_test_off = fail_migrate;
     PRAGMA cipher_test;
   }]
-} {{ok 1} {1 {SQL logic error}} 0}
+} {{ok 1} {1 {out of memory}} 0}
 db close
 file delete -force test.db 
 
