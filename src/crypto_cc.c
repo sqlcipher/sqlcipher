@@ -38,7 +38,7 @@
 
 int sqlcipher_cc_setup(sqlcipher_provider *p);
 
-static int sqlcipher_cc_add_random(void *ctx, void *buffer, int length) {
+static int sqlcipher_cc_add_random(void *ctx, const void *buffer, int length) {
   return SQLITE_OK;
 }
 
@@ -65,7 +65,13 @@ static const char* sqlcipher_cc_get_provider_version(void *ctx) {
 #endif
 }
 
-static int sqlcipher_cc_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_cc_hmac(
+  void *ctx, int algorithm,
+  const unsigned char *hmac_key, int key_sz,
+  const unsigned char *in, int in_sz,
+  const unsigned char *in2, int in2_sz,
+  unsigned char *out
+) {
   CCHmacContext hmac_context;
   if(in == NULL) return SQLITE_ERROR;
   switch(algorithm) {
@@ -87,7 +93,13 @@ static int sqlcipher_cc_hmac(void *ctx, int algorithm, unsigned char *hmac_key, 
   return SQLITE_OK; 
 }
 
-static int sqlcipher_cc_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_cc_kdf(
+  void *ctx, int algorithm,
+  const unsigned char *pass, int pass_sz,
+  const unsigned char* salt, int salt_sz,
+  int workfactor,
+  int key_sz, unsigned char *key
+) {
   switch(algorithm) {
     case SQLCIPHER_HMAC_SHA1:
       if(CCKeyDerivationPBKDF(kCCPBKDF2, (const char *)pass, pass_sz, salt, salt_sz, kCCPRFHmacAlgSHA1, workfactor, key, key_sz) != kCCSuccess) return SQLITE_ERROR;
@@ -104,7 +116,13 @@ static int sqlcipher_cc_kdf(void *ctx, int algorithm, const unsigned char *pass,
   return SQLITE_OK; 
 }
 
-static int sqlcipher_cc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
+static int sqlcipher_cc_cipher(
+  void *ctx, int mode,
+  const unsigned char *key, int key_sz,
+  const unsigned char *iv,
+  const unsigned char *in, int in_sz,
+  unsigned char *out
+) {
   CCCryptorRef cryptor;
   size_t tmp_csz, csz;
   CCOperation op = mode == CIPHER_ENCRYPT ? kCCEncrypt : kCCDecrypt;

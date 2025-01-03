@@ -42,7 +42,7 @@ static volatile unsigned int ltc_ref_count = 0;
 
 #define LTC_CIPHER "rijndael"
 
-static int sqlcipher_ltc_add_random(void *ctx, void *buffer, int length) {
+static int sqlcipher_ltc_add_random(void *ctx, const void *buffer, int length) {
   int rc = 0;
   int data_to_read = length;
   int block_sz = data_to_read < FORTUNA_MAX_SZ ? data_to_read : FORTUNA_MAX_SZ;
@@ -149,7 +149,13 @@ static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_ltc_hmac(
+  void *ctx, int algorithm,
+  const unsigned char *hmac_key, int key_sz,
+  const unsigned char *in, int in_sz,
+  const unsigned char *in2, int in2_sz,
+  unsigned char *out
+) {
   int rc, hash_idx;
   hmac_state hmac;
   unsigned long outlen;
@@ -178,7 +184,13 @@ static int sqlcipher_ltc_hmac(void *ctx, int algorithm, unsigned char *hmac_key,
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_ltc_kdf(
+  void *ctx, int algorithm,
+  const unsigned char *pass, int pass_sz,
+  const unsigned char* salt, int salt_sz,
+  int workfactor,
+  int key_sz, unsigned char *key
+) {
   int rc, hash_idx;
   unsigned long outlen = key_sz;
 
@@ -208,7 +220,13 @@ static const char* sqlcipher_ltc_get_cipher(void *ctx) {
   return "aes-256-cbc";
 }
 
-static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
+static int sqlcipher_ltc_cipher(
+  void *ctx, int mode,
+  const unsigned char *key, int key_sz,
+  const unsigned char *iv,
+  const unsigned char *in, int in_sz,
+  unsigned char *out
+) {
   int rc, cipher_idx;
   symmetric_CBC cbc;
 

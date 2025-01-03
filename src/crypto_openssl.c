@@ -72,7 +72,7 @@ static void HMAC_CTX_free(HMAC_CTX *ctx)
 }
 #endif
 
-static int sqlcipher_openssl_add_random(void *ctx, void *buffer, int length) {
+static int sqlcipher_openssl_add_random(void *ctx, const void *buffer, int length) {
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_openssl_add_random: entering SQLCIPHER_MUTEX_PROVIDER_RAND");
   sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
@@ -179,7 +179,13 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   return SQLITE_OK;
 }
 
-static int sqlcipher_openssl_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_openssl_hmac(
+  void *ctx, int algorithm,
+  const unsigned char *hmac_key, int key_sz,
+  const unsigned char *in, int in_sz,
+  const unsigned char *in2, int in2_sz,
+  unsigned char *out
+) {
   int rc = 0;
 
 #if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x30000000L)
@@ -343,7 +349,13 @@ cleanup:
   return rc;
 }
 
-static int sqlcipher_openssl_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_openssl_kdf(
+  void *ctx, int algorithm,
+  const unsigned char *pass, int pass_sz,
+  const unsigned char* salt, int salt_sz,
+  int workfactor,
+  int key_sz, unsigned char *key
+) {
   int rc = 0;
 
   switch(algorithm) {
@@ -380,7 +392,13 @@ cleanup:
   return rc;
 }
 
-static int sqlcipher_openssl_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
+static int sqlcipher_openssl_cipher(
+  void *ctx, int mode,
+  const unsigned char *key, int key_sz,
+  const unsigned char *iv,
+  const unsigned char *in, int in_sz,
+  unsigned char *out
+) {
   int tmp_csz, csz, rc = 0;
   EVP_CIPHER_CTX* ectx = EVP_CIPHER_CTX_new();
   if(ectx == NULL) {

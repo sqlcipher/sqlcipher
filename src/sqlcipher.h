@@ -54,11 +54,23 @@
 
 typedef struct {
   const char* (*get_provider_name)(void *ctx);
-  int (*add_random)(void *ctx, void *buffer, int length);
+  int (*add_random)(void *ctx, const void *buffer, int length);
   int (*random)(void *ctx, void *buffer, int length);
-  int (*hmac)(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out);
-  int (*kdf)(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key);
-  int (*cipher)(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out);
+  int (*hmac)(void *ctx, int algorithm,
+              const unsigned char *hmac_key, int key_sz,
+              const unsigned char *in, int in_sz,
+              const unsigned char *in2, int in2_sz,
+              unsigned char *out);
+  int (*kdf)(void *ctx, int algorithm,
+              const unsigned char *pass, int pass_sz,
+              const unsigned char* salt, int salt_sz,
+              int workfactor,
+              int key_sz, unsigned char *key);
+  int (*cipher)(void *ctx, int mode,
+              const unsigned char *key, int key_sz,
+              const unsigned char *iv,
+              const unsigned char *in, int in_sz,
+              unsigned char *out);
   const char* (*get_cipher)(void *ctx);
   int (*get_key_sz)(void *ctx);
   int (*get_iv_sz)(void *ctx);
@@ -85,7 +97,7 @@ int sqlcipher_ismemset(const void *, unsigned char, sqlite_uint64);
 int sqlcipher_memcmp(const void *, const void *, int);
 void* sqlcipher_malloc(sqlite_uint64);
 void sqlcipher_free(void *, sqlite_uint64);
-char* sqlcipher_version();
+char* sqlcipher_version(void);
 
 /* provider interfaces */
 int sqlcipher_register_provider(sqlcipher_provider *);

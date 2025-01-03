@@ -75,7 +75,7 @@ static int sqlcipher_nss_deactivate(void *ctx) {
   return SQLITE_OK;
 }
 
-static int sqlcipher_nss_add_random(void *ctx, void *buffer, int length) {
+static int sqlcipher_nss_add_random(void *ctx, const void *buffer, int length) {
   return SQLITE_OK;
 }
 
@@ -125,7 +125,13 @@ static int sqlcipher_nss_get_hmac_sz(void *ctx, int algorithm) {
   }
 }
 
-static int sqlcipher_nss_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_nss_hmac(
+  void *ctx, int algorithm,
+  const unsigned char *hmac_key, int key_sz,
+  const unsigned char *in, int in_sz,
+  const unsigned char *in2, int in2_sz,
+  unsigned char *out
+) {
   int rc = SQLITE_OK;
   unsigned int length;
   unsigned int outLen;
@@ -178,7 +184,13 @@ static int sqlcipher_nss_hmac(void *ctx, int algorithm, unsigned char *hmac_key,
     return rc;
 }
 
-static int sqlcipher_nss_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_nss_kdf(
+  void *ctx, int algorithm,
+  const unsigned char *pass, int pass_sz,
+  const unsigned char* salt, int salt_sz,
+   int workfactor,
+   int key_sz, unsigned char *key
+) {
   int rc = SQLITE_OK;
   PK11SlotInfo * slot = NULL;
   SECAlgorithmID * algid = NULL;
@@ -230,7 +242,13 @@ static int sqlcipher_nss_kdf(void *ctx, int algorithm, const unsigned char *pass
     return rc;
 }
 
-static int sqlcipher_nss_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
+static int sqlcipher_nss_cipher(
+  void *ctx, int mode,
+  const unsigned char *key, int key_sz,
+  const unsigned char *iv,
+  const unsigned char *in,
+  int in_sz, unsigned char *out
+) {
   int rc = SQLITE_OK;
   PK11SlotInfo * slot = NULL;
   PK11SymKey* symKey = NULL;

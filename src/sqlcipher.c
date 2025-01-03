@@ -949,7 +949,7 @@ sqlcipher_provider* sqlcipher_get_provider() {
   return default_provider;
 }
 
-char* sqlcipher_version() {
+char* sqlcipher_version(void) {
 #ifdef CIPHER_VERSION_QUALIFIER
     char *version = sqlite3_mprintf("%s %s %s", CIPHER_XSTR(CIPHER_VERSION_NUMBER), CIPHER_XSTR(CIPHER_VERSION_QUALIFIER), CIPHER_XSTR(CIPHER_VERSION_BUILD));
 #else
