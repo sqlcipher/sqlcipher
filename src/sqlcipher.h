@@ -71,14 +71,12 @@ typedef struct {
 } sqlcipher_provider;
 
 /* public interfaces called externally */
-
 int sqlcipher_extra_init(const char*);
 void sqlcipher_extra_shutdown(void);
 void sqlcipher_init_memmethods(void);
 int sqlcipher_codec_pragma(sqlite3*, int, Parse*, const char *, const char*);
 int sqlcipherCodecAttach(sqlite3*, int, const void *, int);
 void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
-void sqlcipher_exportFunc(sqlite3_context *, int, sqlite3_value **);
 int sqlcipher_find_db_index(sqlite3 *, const char *);
 
 /* utility functions */

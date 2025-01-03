@@ -351,6 +351,12 @@ static void (*const sqlcipher_fini_func)(void) __attribute__((used, section("__D
 static void (*const sqlcipher_fini_func)(void) __attribute__((used, section(".fini_array"))) = sqlcipher_fini;
 #endif
 
+static void sqlcipher_exportFunc(sqlite3_context*, int, sqlite3_value**);
+
+static void sqlcipher_export_init(sqlite3* db, const char** errmsg, const struct sqlite3_api_routines* api) { 
+    sqlite3_create_function_v2(db, "sqlcipher_export", -1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0);
+}
+
 /* The extra_init function is called by sqlite3_init automaticay by virtue of
  * being defined with SQLITE_EXTRA_INIT. This function sets up 
  * static mutexes used internally by SQLCipher and initializes
@@ -458,6 +464,11 @@ int sqlcipher_extra_init(const char* arg) {
    
 cleanup: 
   sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  if(rc == SQLITE_OK) {
+    /* extension registration occurs outside of the mutex because it is
+     * uses SQLITE_MUTEX_STATIC_MASTER internally */
+    sqlite3_auto_extension((void (*)(void))sqlcipher_export_init);
+  }
   return rc;
 }
 
@@ -3370,7 +3381,7 @@ static int sqlcipher_execExecSql(sqlite3 *db, char **pzErrMsg, const char *zSql)
  * 
  * Based on sqlite3RunVacuum from vacuum.c
 */
-void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **argv) {
+static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_value **argv) {
   sqlite3 *db = sqlite3_context_db_handle(context);
   const char* targetDb, *sourceDb; 
   int targetDb_idx = 0;
