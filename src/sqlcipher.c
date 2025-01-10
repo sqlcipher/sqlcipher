@@ -232,6 +232,9 @@ static volatile unsigned int sqlcipher_log_level = SQLCIPHER_LOG_NONE;
 static volatile unsigned int sqlcipher_log_source = SQLCIPHER_LOG_ANY;
 static volatile int sqlcipher_log_set = 0;
 
+static size_t sqlcipher_shield_mask_sz  = 32;
+static u8* sqlcipher_shield_mask = NULL;
+
 /* Establish the default size of the private heap. This can be overriden 
  * at compile time by setting -DSQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT=X */
 #ifndef SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT
@@ -457,6 +460,14 @@ int sqlcipher_extra_init(const char* arg) {
     sqlcipher_register_provider(p);
   }
 
+  if(!sqlcipher_shield_mask) {
+    void* provider_ctx = NULL;
+    sqlcipher_shield_mask = sqlcipher_internal_malloc(sqlcipher_shield_mask_sz);
+    default_provider->ctx_init(&provider_ctx);
+    default_provider->random(provider_ctx, sqlcipher_shield_mask, sqlcipher_shield_mask_sz);
+    default_provider->ctx_free(provider_ctx);
+  }
+
   sqlcipher_init = 1;
   sqlcipher_shutdown = 0;
    
@@ -486,6 +497,11 @@ void sqlcipher_extra_shutdown(void) {
   /* if sqlcipher hasn't been initialized or the shutdown already completed exit early */
   if(!sqlcipher_init || sqlcipher_shutdown) {
     goto cleanup;
+  }
+
+  if(sqlcipher_shield_mask) {
+    sqlcipher_internal_free(sqlcipher_shield_mask, sqlcipher_shield_mask_sz);
+    sqlcipher_shield_mask = NULL;
   }
 
   /* free the default provider */
@@ -536,6 +552,13 @@ cleanup:
   sqlcipher_shutdown = 1;
   if(mutex) {
     sqlite3_mutex_leave(mutex);
+  }
+}
+
+static void sqlcipher_shield(unsigned char *in, int sz) {
+  int i = 0;
+  for(i = 0; i < sz; i++) {
+    in[i] ^= sqlcipher_shield_mask[i % sqlcipher_shield_mask_sz];
   }
 }
 
@@ -1105,7 +1128,9 @@ static int sqlcipher_cipher_ctx_get_keyspec(codec_ctx *ctx, cipher_ctx *c_ctx, c
   keyspec[0] = 'x';
   keyspec[1] = '\'';
 
+  sqlcipher_shield(c_ctx->key, ctx->key_sz);
   cipher_bin2hex(c_ctx->key, ctx->key_sz, keyspec + 2);
+  sqlcipher_shield(c_ctx->key, ctx->key_sz);
 
   cipher_bin2hex(ctx->kdf_salt, ctx->kdf_salt_sz, keyspec + (ctx->key_sz * 2) + 2);
   keyspec[sz - 1] = '\'';
@@ -1454,6 +1479,7 @@ static void sqlcipher_put4byte_le(unsigned char *p, u32 v) {
 
 static int sqlcipher_page_hmac(codec_ctx *ctx, cipher_ctx *c_ctx, Pgno pgno, unsigned char *in, int in_sz, unsigned char *out) {
   unsigned char pgno_raw[sizeof(pgno)];
+  int rc;
   /* we may convert page number to consistent representation before calculating MAC for
      compatibility across big-endian and little-endian platforms. 
 
@@ -1473,11 +1499,15 @@ static int sqlcipher_page_hmac(codec_ctx *ctx, cipher_ctx *c_ctx, Pgno pgno, uns
   /* include the encrypted page data,  initialization vector, and page number in HMAC. This will 
      prevent both tampering with the ciphertext, manipulation of the IV, or resequencing otherwise
      valid pages out of order in a database */ 
-  return ctx->provider->hmac(
+  sqlcipher_shield(c_ctx->hmac_key, ctx->key_sz);
+  rc = ctx->provider->hmac(
     ctx->provider_ctx, ctx->hmac_algorithm, c_ctx->hmac_key,
     ctx->key_sz, in,
     in_sz, (unsigned char*) &pgno_raw,
     sizeof(pgno), out);
+  sqlcipher_shield(c_ctx->hmac_key, ctx->key_sz);
+
+  return rc;
 }
 
 /*
@@ -1546,8 +1576,9 @@ static int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mod
     }
   } 
   
-
+  sqlcipher_shield(c_ctx->key, ctx->key_sz);
   rc = ctx->provider->cipher(ctx->provider_ctx, mode, c_ctx->key, ctx->key_sz, iv_out, in, size, out);
+  sqlcipher_shield(c_ctx->key, ctx->key_sz);
 
   if(rc != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: cipher operation mode=%d failed for pgno=%d", mode, pgno);
@@ -1586,70 +1617,79 @@ error:
   */
 static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   int rc;
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: ctx->kdf_salt_sz=%d ctx->kdf_iter=%d ctx->fast_kdf_iter=%d ctx->key_sz=%d",
-    ctx->kdf_salt_sz, ctx->kdf_iter, ctx->fast_kdf_iter, ctx->key_sz);
-  
-  if(c_ctx->pass && c_ctx->pass_sz) {  /* if key material is present on the context for derivation */ 
-   
-    /* if necessary, initialize the salt from the header or random source */
-    if(!SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
-      if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
-        return rc;
-      }
-    }
- 
-    if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) { 
-      int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
-      const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: using raw key from hex");
-      cipher_hex2bin(z, n, c_ctx->key);
-    } else if (c_ctx->pass_sz == (((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, (ctx->key_sz + ctx->kdf_salt_sz) * 2)) { 
-      const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: using raw key from hex"); 
-      cipher_hex2bin(z, (ctx->key_sz * 2), c_ctx->key);
-      cipher_hex2bin(z + (ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
-    } else { 
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: deriving key using full PBKDF2 with %d iterations", ctx->kdf_iter);
-      if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz, 
-                    ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
-                    ctx->key_sz, c_ctx->key) != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: error occurred from provider kdf generating encryption key");
-        return SQLITE_ERROR;
-      }
-    }
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: ctx->kdf_salt_sz=%d ctx->kdf_iter=%d ctx->fast_kdf_iter=%d ctx->key_sz=%d",
+    __func__, ctx->kdf_salt_sz, ctx->kdf_iter, ctx->fast_kdf_iter, ctx->key_sz);
 
-    /* if this context is setup to use hmac checks, generate a seperate and different 
-       key for HMAC. In this case, we use the output of the previous KDF as the input to 
-       this KDF run. This ensures a distinct but predictable HMAC key. */
-    if(ctx->flags & CIPHER_FLAG_HMAC) {
-      int i;
-
-      /* start by copying the kdf key into the hmac salt slot
-         then XOR it with the fixed hmac salt defined at compile time
-         this ensures that the salt passed in to derive the hmac key, while 
-         easy to derive and publically known, is not the same as the salt used 
-         to generate the encryption key */ 
-      memcpy(ctx->hmac_kdf_salt, ctx->kdf_salt, ctx->kdf_salt_sz);
-      for(i = 0; i < ctx->kdf_salt_sz; i++) {
-        ctx->hmac_kdf_salt[i] ^= hmac_salt_mask;
-      } 
-
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "cipher_ctx_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations", 
-        ctx->fast_kdf_iter);
-      
-      if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, ctx->key_sz, 
-                    ctx->hmac_kdf_salt, ctx->kdf_salt_sz, ctx->fast_kdf_iter,
-                    ctx->key_sz, c_ctx->hmac_key) != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: error occurred from provider kdf generating HMAC key");
-        return SQLITE_ERROR;
-      }
-    }
-
-    c_ctx->derive_key = 0;
-    return SQLITE_OK;
+  /* if key material is present on the context for derivation */
+  if(!c_ctx->pass || !c_ctx->pass_sz) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: key material is not present on the context for key derivation");
+    return SQLITE_ERROR;
   }
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: key material is not present on the context for key derivation");
+
+  /* if necessary, initialize the salt from the header or random source */
+  if(!SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
+    if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d from sqlcipher_codec_ctx_init_kdf_salt", __func__, rc);
+      goto error;
+    }
+  }
+
+  if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) {
+    int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
+    const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key only", __func__);
+    cipher_hex2bin(z, n, c_ctx->key);
+  } else if (c_ctx->pass_sz == (((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, (ctx->key_sz + ctx->kdf_salt_sz) * 2)) {
+    const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key and salt from hex (full keyspec)", __func__);
+    cipher_hex2bin(z, (ctx->key_sz * 2), c_ctx->key);
+    cipher_hex2bin(z + (ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
+  } else {
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: deriving key using PBKDF2 with %d iterations", __func__, ctx->kdf_iter);
+    if((rc = ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz,
+                  ctx->kdf_salt, ctx->kdf_salt_sz, ctx->kdf_iter,
+                  ctx->key_sz, c_ctx->key)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d occurred from provider kdf generating encryption key", __func__, rc);
+      goto error;
+    }
+  }
+
+  /* if this context is setup to use hmac checks, generate a seperate and different
+     key for HMAC. In this case, we use the output of the previous KDF as the input to
+     this KDF run. This ensures a distinct but predictable HMAC key. */
+  if(ctx->flags & CIPHER_FLAG_HMAC) {
+    int i;
+
+    /* start by copying the kdf key into the hmac salt slot
+       then XOR it with the fixed hmac salt defined at compile time
+       this ensures that the salt passed in to derive the hmac key, while
+       easy to derive and publically known, is not the same as the salt used
+       to generate the encryption key */
+    memcpy(ctx->hmac_kdf_salt, ctx->kdf_salt, ctx->kdf_salt_sz);
+    for(i = 0; i < ctx->kdf_salt_sz; i++) {
+      ctx->hmac_kdf_salt[i] ^= hmac_salt_mask;
+    }
+
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: deriving hmac key from encryption key using PBKDF2 with %d iterations",
+      __func__, ctx->fast_kdf_iter);
+
+    if((rc = ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, ctx->key_sz,
+                  ctx->hmac_kdf_salt, ctx->kdf_salt_sz, ctx->fast_kdf_iter,
+                  ctx->key_sz, c_ctx->hmac_key)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error occurred from provider kdf generating HMAC key", __func__, rc);
+      goto error;
+    }
+  }
+
+  sqlcipher_shield(c_ctx->key, ctx->key_sz);
+  sqlcipher_shield(c_ctx->hmac_key, ctx->key_sz);
+  c_ctx->derive_key = 0;
+  return SQLITE_OK;
+
+error:
+  /* if an error occurred, wipe any derived key material */
+  sqlcipher_memset(c_ctx->key, 0, ctx->key_sz);
+  sqlcipher_memset(c_ctx->hmac_key, 0, ctx->key_sz);
   return SQLITE_ERROR;
 }
 
