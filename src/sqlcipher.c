@@ -156,7 +156,6 @@ typedef struct {
   unsigned char *key;
   unsigned char *hmac_key;
   unsigned char *pass;
-  char *keyspec;
 } cipher_ctx;
 
 
@@ -169,7 +168,6 @@ typedef struct {
   int iv_sz;
   int block_sz;
   int page_sz;
-  int keyspec_sz;
   int reserve_sz;
   int hmac_sz;
   int plaintext_header_sz;
@@ -861,8 +859,10 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
   /* If we were unable to locate a free block large enough to service the request, the fallback
      behavior will simply attempt to allocate additional memory using malloc. */
   if(alloc == NULL) {
-    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to allocate %llu bytes on private heap, calling sqlcipher_internal_malloc fallback", __func__, size);
     alloc = sqlcipher_internal_malloc(size);
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to allocate %llu bytes on private heap, allocated %p using sqlcipher_internal_malloc fallback", __func__, size, alloc);
+  } else {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s allocated %llu bytes on private heap at %p", __func__, size, alloc);
   }
 
   return alloc;
@@ -920,6 +920,8 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
   if(!block) {
     sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to find %p with %llu bytes on private heap, calling sqlcipher_internal_free fallback", __func__, mem, sz);
     sqlcipher_internal_free(mem, sz);
+  } else {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s freed %llu bytes on private heap at %p", __func__, sz, mem);
   }
 }
 
@@ -978,8 +980,7 @@ static int sqlcipher_cipher_ctx_init(codec_ctx *ctx, cipher_ctx **iCtx) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_MEMORY, "sqlcipher_cipher_ctx_init: allocating hmac_key");
   c_ctx->hmac_key = (unsigned char *) sqlcipher_malloc(ctx->key_sz);
 
-  if(c_ctx->key == NULL) return SQLITE_NOMEM;
-  if(c_ctx->hmac_key == NULL) return SQLITE_NOMEM;
+  if(!c_ctx->key || !c_ctx->hmac_key) return SQLITE_NOMEM;
 
   return SQLITE_OK;
 }
@@ -993,7 +994,6 @@ static void sqlcipher_cipher_ctx_free(codec_ctx* ctx, cipher_ctx **iCtx) {
   if(c_ctx->key) sqlcipher_free(c_ctx->key, ctx->key_sz);
   if(c_ctx->hmac_key) sqlcipher_free(c_ctx->hmac_key, ctx->key_sz);
   if(c_ctx->pass) sqlcipher_free(c_ctx->pass, c_ctx->pass_sz);
-  if(c_ctx->keyspec) sqlcipher_free(c_ctx->keyspec, ctx->keyspec_sz);
   sqlcipher_free(c_ctx, sizeof(cipher_ctx)); 
 }
 
@@ -1065,7 +1065,6 @@ static int sqlcipher_cipher_ctx_copy(codec_ctx *ctx, cipher_ctx *target, cipher_
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_copy: target=%p, source=%p", target, source);
   if(target->pass) sqlcipher_free(target->pass, target->pass_sz);
-  if(target->keyspec) sqlcipher_free(target->keyspec, ctx->keyspec_sz);
   memcpy(target, source, sizeof(cipher_ctx));
 
   target->key = key; /* restore pointer to previously allocated key data */
@@ -1079,33 +1078,40 @@ static int sqlcipher_cipher_ctx_copy(codec_ctx *ctx, cipher_ctx *target, cipher_
     if(target->pass == NULL) return SQLITE_NOMEM;
     memcpy(target->pass, source->pass, source->pass_sz);
   }
-  if(source->keyspec) {
-    target->keyspec = sqlcipher_malloc(ctx->keyspec_sz);
-    if(target->keyspec == NULL) return SQLITE_NOMEM;
-    memcpy(target->keyspec, source->keyspec, ctx->keyspec_sz);
-  }
   return SQLITE_OK;
 }
 
 /**
-  * Set the keyspec for the cipher_ctx
+  * Get the keyspec for the cipher_ctx
   * 
   * returns SQLITE_OK if assignment was successfull
   * returns SQLITE_NOMEM if an error occured allocating memory
   */
-static int sqlcipher_cipher_ctx_set_keyspec(codec_ctx *ctx, cipher_ctx *c_ctx, const unsigned char *key) {
-  /* free, zero existing pointers and size */
-  if(c_ctx->keyspec) sqlcipher_free(c_ctx->keyspec, ctx->keyspec_sz);
-  c_ctx->keyspec = NULL;
+static int sqlcipher_cipher_ctx_get_keyspec(codec_ctx *ctx, cipher_ctx *c_ctx, char **keyspec_ptr, int *keyspec_sz) {
+  int sz = 0;
+  char *keyspec;
 
-  c_ctx->keyspec = sqlcipher_malloc(ctx->keyspec_sz);
-  if(c_ctx->keyspec == NULL) return SQLITE_NOMEM;
+  if(keyspec_ptr == NULL) return SQLITE_NOMEM;
 
-  c_ctx->keyspec[0] = 'x';
-  c_ctx->keyspec[1] = '\'';
-  cipher_bin2hex(key, ctx->key_sz, c_ctx->keyspec + 2);
-  cipher_bin2hex(ctx->kdf_salt, ctx->kdf_salt_sz, c_ctx->keyspec + (ctx->key_sz * 2) + 2);
-  c_ctx->keyspec[ctx->keyspec_sz - 1] = '\'';
+  /* establish the size for a hex-formated key specification, containing the 
+     raw encryption key and the salt used to generate it format. will be x'hexkey...hexsalt'
+     so oversize by 3 bytes */
+  sz = ((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3;
+  *keyspec_ptr = sqlcipher_malloc(sz);
+  keyspec = *keyspec_ptr;
+
+  if(keyspec == NULL) return SQLITE_NOMEM;
+
+  keyspec[0] = 'x';
+  keyspec[1] = '\'';
+
+  cipher_bin2hex(c_ctx->key, ctx->key_sz, keyspec + 2);
+
+  cipher_bin2hex(ctx->kdf_salt, ctx->kdf_salt_sz, keyspec + (ctx->key_sz * 2) + 2);
+  keyspec[sz - 1] = '\'';
+
+  *keyspec_sz = sz;
+
   return SQLITE_OK;
 }
 
@@ -1347,11 +1353,6 @@ static int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, co
   ctx->iv_sz = ctx->provider->get_iv_sz(ctx->provider_ctx);
   ctx->block_sz = ctx->provider->get_block_sz(ctx->provider_ctx);
 
-  /* establic the size for a hex-formated key specification, containing the 
-     raw encryption key and the salt used to generate it format. will be x'hexkey...hexsalt'
-     so oversize by 3 bytes */ 
-  ctx->keyspec_sz = ((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3;
-
   /*
      Always overwrite page size and set to the default because the first page of the database
      in encrypted and thus sqlite can't effectively determine the pagesize. this causes an issue in 
@@ -1490,7 +1491,7 @@ static int sqlcipher_page_hmac(codec_ctx *ctx, cipher_ctx *c_ctx, Pgno pgno, uns
 static int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mode, int page_sz, unsigned char *in, unsigned char *out) {
   cipher_ctx *c_ctx = for_ctx ? ctx->write_ctx : ctx->read_ctx;
   unsigned char *iv_in, *iv_out, *hmac_in, *hmac_out, *out_start;
-  int size;
+  int size, rc;
 
   /* calculate some required positions into various buffers */
   size = page_sz - ctx->reserve_sz; /* adjust size to useable size and memset reserve at end of page */
@@ -1545,11 +1546,14 @@ static int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mod
     }
   } 
   
-  if(ctx->provider->cipher(ctx->provider_ctx, mode, c_ctx->key, ctx->key_sz, iv_out, in, size, out) != SQLITE_OK) {
+
+  rc = ctx->provider->cipher(ctx->provider_ctx, mode, c_ctx->key, ctx->key_sz, iv_out, in, size, out);
+
+  if(rc != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: cipher operation mode=%d failed for pgno=%d", mode, pgno);
     goto error;
   };
-
+ 
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
     if(sqlcipher_page_hmac(ctx, c_ctx, pgno, out_start, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: hmac operation on encrypt failed for pgno=%d", pgno);
@@ -1615,12 +1619,6 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       }
     }
 
-    /* set the context "keyspec" containing the hex-formatted key and salt to be used when attaching databases */
-    if((rc = sqlcipher_cipher_ctx_set_keyspec(ctx, c_ctx, c_ctx->key)) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_cipher_ctx_key_derive: error %d from sqlcipher_cipher_ctx_set_keyspec", rc);
-      return rc;
-    }
-
     /* if this context is setup to use hmac checks, generate a seperate and different 
        key for HMAC. In this case, we use the output of the previous KDF as the input to 
        this KDF run. This ensures a distinct but predictable HMAC key. */
@@ -1639,7 +1637,6 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 
       sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "cipher_ctx_key_derive: deriving hmac key from encryption key using PBKDF2 with %d iterations", 
         ctx->fast_kdf_iter);
-
       
       if(ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->key, ctx->key_sz, 
                     ctx->hmac_kdf_salt, ctx->kdf_salt_sz, ctx->fast_kdf_iter,
@@ -2033,6 +2030,7 @@ cleanup:
   }
 
   if(pass) sqlcipher_free(pass, pass_sz);
+  if(keyspec) sqlcipher_free(keyspec, keyspec_sz);
   if(attach_command) sqlcipher_free(attach_command, sqlite3Strlen30(attach_command)); 
   if(migrated_db_filename) sqlcipher_free(migrated_db_filename, sqlite3Strlen30(migrated_db_filename)); 
   if(set_user_version) sqlcipher_free(set_user_version, sqlite3Strlen30(set_user_version)); 
@@ -3280,6 +3278,15 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   return SQLITE_ERROR;
 }
 
+/*
+ * Retrieves the current key attached to the database if there is a codec attached to it.
+ * The key will be passed back using internally allocated memory and must be freed using
+ * sqlcipher_free to avoid memory leaks. If no key is present, zKey will be set to NULL
+ * and nKey to 0.
+ *
+ * If the encryption key has not yet been derived or the key material is stored, it will
+ * be passed back directly. Otherwise, a "keyspec" consisting of the raw key and salt
+ * will be used instead. */
 void sqlcipherCodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecGetKey:db=%p, nDb=%d", db, nDb);
@@ -3287,14 +3294,14 @@ void sqlcipherCodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
     codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
     
     if(ctx) {
-      /* pass back the keyspec from the codec, unless PRAGMA cipher_store_pass
-         is set or keyspec has not yet been derived, in which case pass
-         back the password key material */
-      *zKey = ctx->read_ctx->keyspec;
-      *nKey = ctx->keyspec_sz;
-      if(ctx->store_pass == 1 || *zKey == NULL) {
-        *zKey = ctx->read_ctx->pass;
+      /* if the key has not been derived yet, or the key is stored (vi PRAGMA cipher_store_pass)
+       * then return the key material. Other wise pass back the keyspec */
+      if(ctx->read_ctx->derive_key || ctx->store_pass == 1) {
+        *zKey = sqlcipher_malloc(ctx->read_ctx->pass_sz);
         *nKey = ctx->read_ctx->pass_sz;
+        memcpy(*zKey, ctx->read_ctx->pass, ctx->read_ctx->pass_sz);
+      } else {
+        sqlcipher_cipher_ctx_get_keyspec(ctx, ctx->read_ctx, (char**) zKey, nKey);
       }
     } else {
       *zKey = NULL;

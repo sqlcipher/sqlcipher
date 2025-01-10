@@ -241,6 +241,7 @@ static void attachFunc(
           if( nKey || sqlite3BtreeGetRequestedReserve(db->aDb[0].pBt)>0 ){
             rc = sqlcipherCodecAttach(db, db->nDb-1, zKey, nKey);
           }
+          if(nKey) sqlcipher_free(zKey, nKey);
         }
         break;
     }

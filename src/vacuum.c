@@ -255,6 +255,7 @@ SQLITE_NOINLINE int sqlite3RunVacuum(
     char *zKey;
     sqlcipherCodecGetKey(db, iDb, (void**)&zKey, &nKey);
     if( nKey ) db->nextPagesize = 0;
+    if(nKey) sqlcipher_free(zKey, nKey);
   }
 #endif
 /* END SQLCIPHER */

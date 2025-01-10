@@ -157,12 +157,14 @@ sqlite3_backup *sqlite3_backup_init(
   {
     extern int sqlcipher_find_db_index(sqlite3*, const char*);
     extern void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
+    extern void sqlcipher_free(void*, sqlite3_uint64);
     int srcNKey, destNKey;
     void *zKey;
 
     sqlcipherCodecGetKey(pSrcDb, sqlcipher_find_db_index(pSrcDb, zSrcDb), &zKey, &srcNKey);
+    if(srcNKey) sqlcipher_free(zKey, srcNKey);
     sqlcipherCodecGetKey(pDestDb, sqlcipher_find_db_index(pDestDb, zDestDb), &zKey, &destNKey);
-    zKey = NULL;
+    if(destNKey) sqlcipher_free(zKey, destNKey);
 
     /* either both databases must be plaintext, or both must be encrypted */
     if((srcNKey == 0 && destNKey > 0) || (srcNKey > 0 && destNKey == 0)) {
