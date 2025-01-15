@@ -192,6 +192,44 @@ struct private_block {
   u32 is_used;
 };
 
+/* implementation of simple, fast PSRNG function using xoshiro256++ (XOR/shift/rotate)
+ * https://prng.di.unimi.it/ under the public domain via https://prng.di.unimi.it/xoshiro256plusplus.c
+ * xoshiro is NEVER used for any cryptographic functions as CSPRNG. It is solely used for
+ * generating random data for testing, debugging, and forensic purposes (overwriting memory segments) */
+static volatile uint64_t xoshiro_s[4];
+
+static inline uint64_t xoshiro_rotl(const uint64_t x, int k) {
+  return (x << k) | (x >> (64 - k));
+}
+
+uint64_t xoshiro_next(void) {
+  volatile uint64_t result = xoshiro_rotl(xoshiro_s[0] + xoshiro_s[3], 23) + xoshiro_s[0];
+  volatile uint64_t t = xoshiro_s[1] << 17;
+
+  xoshiro_s[2] ^= xoshiro_s[0];
+  xoshiro_s[3] ^= xoshiro_s[1];
+  xoshiro_s[1] ^= xoshiro_s[2];
+  xoshiro_s[0] ^= xoshiro_s[3];
+
+  xoshiro_s[2] ^= t;
+
+  xoshiro_s[3] = xoshiro_rotl(xoshiro_s[3], 45);
+
+  return result;
+}
+
+static void xoshiro_randomness(unsigned char *ptr, int sz) {
+  volatile uint64_t val;
+  volatile int to_copy;
+  while (sz > 0) {
+    val = xoshiro_next();
+    to_copy = (sz >= sizeof(val)) ? sizeof(val) : sz;
+    memcpy(ptr, (void *) &val, to_copy);
+    ptr += to_copy;
+    sz -= to_copy;
+  }
+}
+
 #ifdef SQLCIPHER_TEST
 /* possible flags for simulating specific test conditions */
 #define TEST_FAIL_ENCRYPT 0x01
@@ -207,7 +245,7 @@ static int sqlcipher_get_test_fail() {
   /* if cipher_test_rand is not set to a non-zero value always fail (return true) */
   if (cipher_test_rand == 0) return 1;
 
-  sqlite3_randomness(sizeof(x), &x);
+  xoshiro_randomness((unsigned char *) &x, sizeof(x));
   return ((x % cipher_test_rand) == 0);
 }
 #endif
@@ -275,6 +313,7 @@ static volatile int sqlcipher_cleanup = 0;
 
 static void sqlcipher_internal_free(void *, sqlite_uint64);
 static void *sqlcipher_internal_malloc(sqlite_uint64);
+
 
 /*
 **  Simple shared routines for converting hex char strings to binary data
@@ -364,6 +403,7 @@ static void sqlcipher_export_init(sqlite3* db, const char** errmsg, const struct
  * the internal private heap */
 int sqlcipher_extra_init(const char* arg) {
   int rc = SQLITE_OK, i=0;
+  void* provider_ctx = NULL;
 
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
 
@@ -415,6 +455,7 @@ int sqlcipher_extra_init(const char* arg) {
     while(private_heap_sz >= SQLCIPHER_PRIVATE_HEAP_SIZE_STEP) {
       /* attempt to allocate the private heap. If allocation fails, reduce the size and try again */
       if((private_heap = sqlcipher_internal_malloc(private_heap_sz))) {
+        xoshiro_randomness(private_heap, private_heap_sz);
         /* initialize the head block of the linked list at the start of the heap */ 
         private_block *head = (private_block *) private_heap; 
         head->is_used = 0;
@@ -460,13 +501,14 @@ int sqlcipher_extra_init(const char* arg) {
     sqlcipher_register_provider(p);
   }
 
+  /* required random data */
+  default_provider->ctx_init(&provider_ctx);
+  default_provider->random(provider_ctx, (void *)xoshiro_s, sizeof(xoshiro_s));
   if(!sqlcipher_shield_mask) {
-    void* provider_ctx = NULL;
     sqlcipher_shield_mask = sqlcipher_internal_malloc(sqlcipher_shield_mask_sz);
-    default_provider->ctx_init(&provider_ctx);
     default_provider->random(provider_ctx, sqlcipher_shield_mask, sqlcipher_shield_mask_sz);
-    default_provider->ctx_free(provider_ctx);
   }
+  default_provider->ctx_free(provider_ctx);
 
   sqlcipher_init = 1;
   sqlcipher_shutdown = 0;
@@ -699,8 +741,8 @@ static void sqlcipher_mem_free(void *p) {
   if(!sqlcipher_mem_executed) sqlcipher_mem_executed = 1;
   if(sqlcipher_mem_security_on) {
     sz = sqlcipher_mem_size(p);
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_mem_free: calling sqlcipher_memset(%p,0,%d) and sqlcipher_munlock(%p, %d)", p, sz, p, sz);
-    sqlcipher_memset(p, 0, sz);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s: calling xoshiro_randomness(%p,%d) and sqlcipher_munlock(%p, %d)", __func__, p, sz, p, sz);
+    xoshiro_randomness(p, sz);
     sqlcipher_munlock(p, sz);
   }
   default_mem_methods.xFree(p);
@@ -813,7 +855,7 @@ cleanup:
   * memory segment so it can be paged
   */
 static void sqlcipher_internal_free(void *ptr, sqlite_uint64 sz) {
-  sqlcipher_memset(ptr, 0, sz);
+  xoshiro_randomness(ptr, sz);
   sqlcipher_munlock(ptr, sz);
   sqlite3_free(ptr);
 }
@@ -908,7 +950,7 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
        on to the next block */
     if(mem == alloc) {
       block->is_used = 0;
-      sqlcipher_memset(alloc, 0, block->size);
+      xoshiro_randomness(alloc, block->size);
 
       /* check whether the previous block is free, if so merge*/
       if(prev && !prev->is_used) {
@@ -1687,9 +1729,9 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
   return SQLITE_OK;
 
 error:
-  /* if an error occurred, wipe any derived key material */
-  sqlcipher_memset(c_ctx->key, 0, ctx->key_sz);
-  sqlcipher_memset(c_ctx->hmac_key, 0, ctx->key_sz);
+  /* if an error occurred, overwrite any derived key material */
+  xoshiro_randomness(c_ctx->key, ctx->key_sz);
+  xoshiro_randomness(c_ctx->hmac_key, ctx->key_sz);
   return SQLITE_ERROR;
 }
 
