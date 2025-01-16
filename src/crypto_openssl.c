@@ -49,29 +49,6 @@ static void sqlcipher_openssl_log_errors() {
     }
 }
 
-#if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x10100000L) || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x20700000L)
-static HMAC_CTX *HMAC_CTX_new(void)
-{
-  HMAC_CTX *ctx = OPENSSL_malloc(sizeof(*ctx));
-  if (ctx != NULL) {
-    HMAC_CTX_init(ctx);
-  }
-  return ctx;
-}
-
-/* Per 1.1.0 (https://wiki.openssl.org/index.php/1.1_API_Changes)
-   HMAC_CTX_free should call HMAC_CTX_cleanup, then EVP_MD_CTX_Cleanup.
-   HMAC_CTX_cleanup internally calls EVP_MD_CTX_cleanup so these
-   calls are not needed. */
-static void HMAC_CTX_free(HMAC_CTX *ctx)
-{
-  if (ctx != NULL) {
-    HMAC_CTX_cleanup(ctx);
-    OPENSSL_free(ctx);
-  }
-}
-#endif
-
 static int sqlcipher_openssl_add_random(void *ctx, const void *buffer, int length) {
 #ifndef SQLCIPHER_OPENSSL_NO_MUTEX_RAND
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_openssl_add_random: entering SQLCIPHER_MUTEX_PROVIDER_RAND");
@@ -105,15 +82,6 @@ static int sqlcipher_openssl_activate(void *ctx) {
 
 #if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x10100000L)
   ERR_load_crypto_strings();
-#endif
-
-#ifdef SQLCIPHER_FIPS
-  if(!FIPS_mode()){
-    if(!(rc = FIPS_mode_set(1))){
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_activate: FIPS_mode_set() returned %d", rc);
-      sqlcipher_openssl_log_errors();
-    }
-  }
 #endif
 
   openssl_init_count++; 
@@ -188,76 +156,6 @@ static int sqlcipher_openssl_hmac(
 ) {
   int rc = 0;
 
-#if (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x30000000L)
-  unsigned int outlen;
-  HMAC_CTX* hctx = NULL;
-
-  if(in == NULL) goto error;
-
-  hctx = HMAC_CTX_new();
-  if(hctx == NULL) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: HMAC_CTX_new() failed");
-    sqlcipher_openssl_log_errors();
-    goto error;
-  }
-
-  switch(algorithm) {
-    case SQLCIPHER_HMAC_SHA1:
-      if(!(rc = HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha1(), NULL))) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: HMAC_Init_ex() with key size %d and EVP_sha1() returned %d", key_sz, rc);
-        sqlcipher_openssl_log_errors();
-        goto error;
-      }
-      break;
-    case SQLCIPHER_HMAC_SHA256:
-      if(!(rc = HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha256(), NULL))) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: HMAC_Init_ex() with key size %d and EVP_sha256() returned %d", key_sz, rc);
-        sqlcipher_openssl_log_errors();
-        goto error;
-      }
-      break;
-    case SQLCIPHER_HMAC_SHA512:
-      if(!(rc = HMAC_Init_ex(hctx, hmac_key, key_sz, EVP_sha512(), NULL))) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: HMAC_Init_ex() with key size %d and EVP_sha512() returned %d", key_sz, rc);
-        sqlcipher_openssl_log_errors();
-        goto error;
-      }
-      break;
-    default:
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: invalid algorithm %d", algorithm);
-      goto error;
-  }
-
-  if(!(rc = HMAC_Update(hctx, in, in_sz))) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: HMAC_Update() on 1st input buffer of %d bytes using algorithm %d returned %d", in_sz, algorithm, rc);
-    sqlcipher_openssl_log_errors();
-    goto error;
-  }
-
-  if(in2 != NULL) {
-    if(!(rc = HMAC_Update(hctx, in2, in2_sz))) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: HMAC_Update() on 2nd input buffer of %d bytes using algorithm %d returned %d", in2_sz, algorithm, rc);
-      sqlcipher_openssl_log_errors();
-      goto error;
-    }
-  }
-
-  if(!(rc = HMAC_Final(hctx, out, &outlen))) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: HMAC_Final() using algorithm %d returned %d", algorithm, rc);
-    sqlcipher_openssl_log_errors();
-    goto error;
-  }
-
-  rc = SQLITE_OK;
-  goto cleanup;
-
-error:
-  rc = SQLITE_ERROR;
-
-cleanup:
-  if(hctx) HMAC_CTX_free(hctx);
-
-#else
   size_t outlen;
   EVP_MAC *mac = NULL;
   EVP_MAC_CTX *hctx = NULL;
@@ -343,8 +241,6 @@ error:
 cleanup:
   if(hctx) EVP_MAC_CTX_free(hctx);
   if(mac) EVP_MAC_free(mac);
-
-#endif
 
   return rc;
 }
@@ -492,11 +388,7 @@ static int sqlcipher_openssl_ctx_free(void **ctx) {
 }
 
 static int sqlcipher_openssl_fips_status(void *ctx) {
-#ifdef SQLCIPHER_FIPS  
-  return FIPS_mode();
-#else
   return 0;
-#endif
 }
 
 int sqlcipher_openssl_setup(sqlcipher_provider *p) {
