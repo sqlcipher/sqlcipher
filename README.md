@@ -40,10 +40,10 @@ Building SQLCipher is similar to compiling a regular version of SQLite from sour
 The following examples demonstrate linking against OpenSSL, which is a readily available provider on most Unix-like systems. 
 
 Example 1. Static linking (replace /opt/local/lib with the path to libcrypto.a). Note in this 
-example, `--enable-tempstore=yes` is setting `SQLITE_TEMP_STORE=2` for the build.
+example, `--with-tempstore=yes` is setting `SQLITE_TEMP_STORE=2` for the build.
 
 ```
-$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
+$ ./configure --with-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 	LDFLAGS="/opt/local/lib/libcrypto.a"
 $ make
 ```
@@ -51,7 +51,7 @@ $ make
 Example 2. Dynamic linking
 
 ```
-$ ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
+$ ./configure --with-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC" \
 	LDFLAGS="-lcrypto"
 $ make
 ```
@@ -65,7 +65,7 @@ As a result, the SQLCipher package includes it's own independent tests that exer
 To run SQLCipher specific tests, configure as described here and run the following to execute the tests and receive a report of the results:
 
 ```
-$ ./configure --enable-tempstore=yes --enable-fts5 CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
+$ ./configure --with-tempstore=yes --enable-fts5 CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_TEST" \
 	LDFLAGS="-lcrypto"
 $ make testfixture
 $ ./testfixture test/sqlcipher.test
