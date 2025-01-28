@@ -393,8 +393,9 @@ static void (*const sqlcipher_fini_func)(void) __attribute__((used, section(".fi
 
 static void sqlcipher_exportFunc(sqlite3_context*, int, sqlite3_value**);
 
-static void sqlcipher_export_init(sqlite3* db, const char** errmsg, const struct sqlite3_api_routines* api) { 
-    sqlite3_create_function_v2(db, "sqlcipher_export", -1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0);
+static int sqlcipher_export_init(sqlite3* db, const char** errmsg, const struct sqlite3_api_routines* api) { 
+  sqlite3_create_function_v2(db, "sqlcipher_export", -1, SQLITE_TEXT, 0, sqlcipher_exportFunc, 0, 0, 0);
+  return SQLITE_OK;
 }
 
 /* The extra_init function is called by sqlite3_init automaticay by virtue of
