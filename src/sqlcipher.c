@@ -531,8 +531,8 @@ cleanup:
  * the private heap, and default provider. */
 void sqlcipher_extra_shutdown(void) {
   int i = 0;
+  sqlcipher_provider *provider = NULL;
   sqlite3_mutex *mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER); 
-
   if(mutex) {
     sqlite3_mutex_enter(mutex);
   }
@@ -547,11 +547,19 @@ void sqlcipher_extra_shutdown(void) {
     sqlcipher_shield_mask = NULL;
   }
 
-  /* free the default provider */
-  if(default_provider != NULL) {
-    sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
-    default_provider = NULL;
+  /* free the provider list. start at the default provider and move through the list
+   * freeing each one. If a provider has a shutdown function, call it before freeing.
+   * finally NULL out the default_provider */
+  provider = default_provider;
+  while(provider) {
+    sqlcipher_provider *next = provider->next;
+    if(provider->shutdown) {
+      provider->shutdown();
+    }
+    sqlcipher_free(provider, sizeof(sqlcipher_provider));
+    provider = next;
   }
+  default_provider = NULL;
 
   /* free private heap. If SQLCipher is compiled in test mode, it will deliberately
      not free the heap (leaking it) if the heap is not empty. This will allow tooling
@@ -992,22 +1000,52 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
 }
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_register_provider: entering SQLCIPHER_MUTEX_PROVIDER");
+  int preexisting = 0, rc = SQLITE_OK;
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering SQLCIPHER_MUTEX_PROVIDER", __func__);
   sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_register_provider: entered SQLCIPHER_MUTEX_PROVIDER");
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered SQLCIPHER_MUTEX_PROVIDER", __func__);
 
-  if(default_provider != NULL && default_provider != p) {
-    /* only free the current registerd provider if it has been initialized
-       and it isn't a pointer to the same provider passed to the function
-       (i.e. protect against a caller calling register twice for the same provider) */
-    sqlcipher_free(default_provider, sizeof(sqlcipher_provider));
+  if(!p || default_provider == p) {
+    goto cleanup;
+  }
+
+  if(!default_provider) {
+    /* initial provider registration, NULL out previous pointer*/
+    p->next = NULL;
+  } else {
+    /* one or more previous provider has already been registered, search through
+     * the list to see if the new provider has already been registered and handle
+     * appropriately */
+    sqlcipher_provider *previous = default_provider;
+    sqlcipher_provider *current = default_provider->next;
+    while(current) {
+      if(current == p) {
+        /* this is a duplicate provider registration, and the provider in question
+         * already exists on the list. In that case, pop it out so it can be moved up to default.
+         * note that if we found an existing match we should avoid re-initializing the provider */
+        previous->next = current->next;
+        preexisting = 1;
+        break;
+      }
+      previous = current;
+      current = current->next;
+    }
+    /* the current default_provider gets tacked on the list */
+    p->next = default_provider;
+  }
+
+  /* the new provider is elevated to default. if the provider was not preexisting and it has an initializer, call it */
+  if(!preexisting && p->init) {
+    rc = p->init();
   }
   default_provider = p;   
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_register_provider: leaving SQLCIPHER_MUTEX_PROVIDER");
-  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_register_provider: left SQLCIPHER_MUTEX_PROVIDER");
 
-  return SQLITE_OK;
+cleanup:
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_PROVIDER", __func__);
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left SQLCIPHER_MUTEX_PROVIDER", __func__);
+
+  return rc;
 }
 
 /* return a pointer to the currently registered provider. This will
@@ -1396,21 +1434,8 @@ static int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, co
   /* setup default flags */
   ctx->flags = default_flags;
 
-  /* setup the crypto provider  */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_MEMORY, "sqlcipher_codec_ctx_init: allocating provider");
-  ctx->provider = (sqlcipher_provider *) sqlcipher_malloc(sizeof(sqlcipher_provider));
-  if(ctx->provider == NULL) return SQLITE_NOMEM;
-
-  /* make a copy of the provider to be used for the duration of the context */
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_codec_ctx_init: entering SQLCIPHER_MUTEX_PROVIDER");
-  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_codec_ctx_init: entered SQLCIPHER_MUTEX_PROVIDER");
-
-  memcpy(ctx->provider, default_provider, sizeof(sqlcipher_provider));
-
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_codec_ctx_init: leaving SQLCIPHER_MUTEX_PROVIDER");
-  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_codec_ctx_init: left SQLCIPHER_MUTEX_PROVIDER");
+  /* the context will use the current default crypto provider  */
+  ctx->provider = default_provider;
 
   if((rc = ctx->provider->ctx_init(&ctx->provider_ctx)) != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_init: error %d returned from ctx_init", rc);
@@ -1501,11 +1526,6 @@ static void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   if(ctx->kdf_salt) sqlcipher_free(ctx->kdf_salt, ctx->kdf_salt_sz);
   if(ctx->hmac_kdf_salt) sqlcipher_free(ctx->hmac_kdf_salt, ctx->kdf_salt_sz);
   if(ctx->buffer) sqlcipher_free(ctx->buffer, ctx->page_sz);
-
-  if(ctx->provider) {
-    ctx->provider->ctx_free(&ctx->provider_ctx);
-    sqlcipher_free(ctx->provider, sizeof(sqlcipher_provider));
-  }
 
   sqlcipher_cipher_ctx_free(ctx, &ctx->read_ctx);
   sqlcipher_cipher_ctx_free(ctx, &ctx->write_ctx);

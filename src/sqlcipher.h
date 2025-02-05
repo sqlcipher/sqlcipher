@@ -52,7 +52,10 @@
 #define SQLCIPHER_PBKDF2_HMAC_SHA512 2
 #define SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL "PBKDF2_HMAC_SHA512"
 
-typedef struct {
+typedef struct sqlcipher_provider sqlcipher_provider;
+struct sqlcipher_provider {
+  int (*init)(void);
+  void (*shutdown)(void);
   const char* (*get_provider_name)(void *ctx);
   int (*add_random)(void *ctx, const void *buffer, int length);
   int (*random)(void *ctx, void *buffer, int length);
@@ -80,7 +83,8 @@ typedef struct {
   int (*ctx_free)(void **ctx);
   int (*fips_status)(void *ctx);
   const char* (*get_provider_version)(void *ctx);
-} sqlcipher_provider;
+  sqlcipher_provider *next;
+};
 
 /* public interfaces called externally */
 int sqlcipher_extra_init(const char*);

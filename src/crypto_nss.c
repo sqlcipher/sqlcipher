@@ -298,6 +298,8 @@ static int sqlcipher_nss_fips_status(void *ctx) {
 }
 
 int sqlcipher_nss_setup(sqlcipher_provider *p) {
+  p->init = NULL;
+  p->shutdown = NULL;
   p->random = sqlcipher_nss_random;
   p->get_provider_name = sqlcipher_nss_get_provider_name;
   p->hmac = sqlcipher_nss_hmac;

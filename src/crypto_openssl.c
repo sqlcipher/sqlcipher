@@ -392,6 +392,8 @@ static int sqlcipher_openssl_fips_status(void *ctx) {
 }
 
 int sqlcipher_openssl_setup(sqlcipher_provider *p) {
+  p->init = NULL;
+  p->shutdown = NULL;
   p->get_provider_name = sqlcipher_openssl_get_provider_name;
   p->random = sqlcipher_openssl_random;
   p->hmac = sqlcipher_openssl_hmac;

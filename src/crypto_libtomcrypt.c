@@ -289,6 +289,8 @@ static int sqlcipher_ltc_fips_status(void *ctx) {
 }
 
 int sqlcipher_ltc_setup(sqlcipher_provider *p) {
+  p->init = NULL;
+  p->shutdown = NULL;
   p->get_provider_name = sqlcipher_ltc_get_provider_name;
   p->random = sqlcipher_ltc_random;
   p->hmac = sqlcipher_ltc_hmac;

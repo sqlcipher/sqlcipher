@@ -184,6 +184,8 @@ static int sqlcipher_cc_fips_status(void *ctx) {
 }
 
 int sqlcipher_cc_setup(sqlcipher_provider *p) {
+  p->init = NULL;
+  p->shutdown = NULL;
   p->random = sqlcipher_cc_random;
   p->get_provider_name = sqlcipher_cc_get_provider_name;
   p->hmac = sqlcipher_cc_hmac;
