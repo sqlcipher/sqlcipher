@@ -1526,6 +1526,7 @@ static void sqlcipher_codec_ctx_free(codec_ctx **iCtx) {
   if(ctx->kdf_salt) sqlcipher_free(ctx->kdf_salt, ctx->kdf_salt_sz);
   if(ctx->hmac_kdf_salt) sqlcipher_free(ctx->hmac_kdf_salt, ctx->kdf_salt_sz);
   if(ctx->buffer) sqlcipher_free(ctx->buffer, ctx->page_sz);
+  if(ctx->provider) ctx->provider->ctx_free(&ctx->provider_ctx);
 
   sqlcipher_cipher_ctx_free(ctx, &ctx->read_ctx);
   sqlcipher_cipher_ctx_free(ctx, &ctx->write_ctx);
