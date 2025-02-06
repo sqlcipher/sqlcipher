@@ -310,6 +310,7 @@ static u8* private_heap = NULL;
 static volatile int sqlcipher_init = 0;
 static volatile int sqlcipher_shutdown = 0;
 static volatile int sqlcipher_cleanup = 0;
+static int sqlcipher_init_error = SQLITE_ERROR;
 
 static void sqlcipher_internal_free(void *, sqlite_uint64);
 static void *sqlcipher_internal_malloc(sqlite_uint64);
@@ -409,23 +410,15 @@ int sqlcipher_extra_init(const char* arg) {
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
 
   if(sqlcipher_init) {
-    goto cleanup;
+    /* if this init routine already completed successfully return immediately */
+    sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+    return SQLITE_OK;
   }
 
   /* only register cleanup handlers once per process */
   if(!sqlcipher_cleanup) {
     atexit(sqlcipher_atexit);
     sqlcipher_cleanup = 1;
-  }
-
-  /* allocate static mutexe, and return error if any fail to allocate */
-  for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
-    if(sqlcipher_static_mutex[i] == NULL) {
-      if((sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST)) == NULL) {
-        rc = SQLITE_NOMEM; 
-        goto cleanup;
-      }
-    }
   }
 
 #ifndef SQLCIPHER_OMIT_DEFAULT_LOGGING
@@ -451,6 +444,17 @@ int sqlcipher_extra_init(const char* arg) {
   }
 #endif
 
+  /* allocate static mutexe, and return error if any fail to allocate */
+  for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+    if(sqlcipher_static_mutex[i] == NULL) {
+      if((sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST)) == NULL) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate static mutex %i", __func__, i); 
+        rc = SQLITE_NOMEM; 
+        goto error;
+      }
+    }
+  }
+
   /* initialize the private heap for use in internal SQLCipher memory allocations */
   if(private_heap == NULL) {
     while(private_heap_sz >= SQLCIPHER_PRIVATE_HEAP_SIZE_STEP) {
@@ -470,7 +474,9 @@ int sqlcipher_extra_init(const char* arg) {
     }
   }
   if(!private_heap) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate private heap\n", __func__); 
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate private heap", __func__); 
+    rc = SQLITE_NOMEM; 
+    goto error;
   }
 
   /* check to see if there is a provider registered at this point
@@ -499,28 +505,68 @@ int sqlcipher_extra_init(const char* arg) {
 #else
 #error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
 #endif
-    sqlcipher_register_provider(p);
+    if((rc = sqlcipher_register_provider(p)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "%s: failed to register provider %p %d", __func__, p, rc); 
+      goto error;
+    }
   }
 
   /* required random data */
-  default_provider->ctx_init(&provider_ctx);
-  default_provider->random(provider_ctx, (void *)xoshiro_s, sizeof(xoshiro_s));
-  if(!sqlcipher_shield_mask) {
-    sqlcipher_shield_mask = sqlcipher_internal_malloc(sqlcipher_shield_mask_sz);
-    default_provider->random(provider_ctx, sqlcipher_shield_mask, sqlcipher_shield_mask_sz);
+  if((rc = default_provider->ctx_init(&provider_ctx)) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to initilize provider context %d", __func__, rc);
+    goto error; 
   }
+
+  if((rc = default_provider->random(provider_ctx, (void *)xoshiro_s, sizeof(xoshiro_s))) != SQLITE_OK) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to generate xoshiro seed %d", __func__, rc); 
+    goto error; 
+  }
+
+  if(!sqlcipher_shield_mask) {
+    if(!(sqlcipher_shield_mask = sqlcipher_internal_malloc(sqlcipher_shield_mask_sz))) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate shield mask", __func__); 
+      goto error; 
+    }
+    if((rc = default_provider->random(provider_ctx, sqlcipher_shield_mask, sqlcipher_shield_mask_sz)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to generate requisite random mask data %d", __func__, rc); 
+      goto error; 
+    }
+  }
+
   default_provider->ctx_free(provider_ctx);
 
   sqlcipher_init = 1;
   sqlcipher_shutdown = 0;
-   
-cleanup: 
+
+  /* leave the master mutex so we can proceed with auto extension registration */
   sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
-  if(rc == SQLITE_OK) {
-    /* extension registration occurs outside of the mutex because it is
-     * uses SQLITE_MUTEX_STATIC_MASTER internally */
-    sqlite3_auto_extension((void (*)(void))sqlcipher_export_init);
+
+  /* finally, extension registration occurs outside of the mutex because it is
+   * uses SQLITE_MUTEX_STATIC_MASTER itself */
+  sqlite3_auto_extension((void (*)(void))sqlcipher_export_init);
+
+  return SQLITE_OK;
+ 
+error:
+  /* if an error occurs during initialization, tear down everything that was setup */
+  if(private_heap) {
+    sqlcipher_internal_free(private_heap, private_heap_sz);
+    private_heap = NULL;
   }
+  if(sqlcipher_shield_mask) {
+    sqlcipher_internal_free(sqlcipher_shield_mask, sqlcipher_shield_mask_sz);
+    sqlcipher_shield_mask = NULL;
+  }
+  for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
+    if(sqlcipher_static_mutex[i]) {
+      sqlite3_mutex_free(sqlcipher_static_mutex[i]);
+      sqlcipher_static_mutex[i] = NULL;
+    }
+  }
+
+  /* post cleanup return the error code back up to sqlite3_init() */
+  sqlite3_mutex_leave(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
+  sqlcipher_init_error = rc;
   return rc;
 }
 
@@ -600,6 +646,7 @@ void sqlcipher_extra_shutdown(void) {
 
 cleanup: 
   sqlcipher_init = 0;
+  sqlcipher_init_error = SQLITE_ERROR;
   sqlcipher_shutdown = 1;
   if(mutex) {
     sqlite3_mutex_leave(mutex);
@@ -1038,8 +1085,10 @@ int sqlcipher_register_provider(sqlcipher_provider *p) {
   if(!preexisting && p->init) {
     rc = p->init();
   }
-  default_provider = p;   
-
+ 
+  if(rc == SQLITE_OK) {
+    default_provider = p;   
+  }
 cleanup:
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_PROVIDER", __func__);
   sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER));
@@ -3287,6 +3336,12 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
 
 int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_key_v2: db=%p zDb=%s", db, zDb);
+
+  if(!sqlcipher_init) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: sqlcipher not initialized %d",__func__, sqlcipher_init_error);
+    return sqlcipher_init_error;
+  }
+
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
@@ -3313,6 +3368,12 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: db=%p zDb=%s", db, zDb);
+
+  if(!sqlcipher_init) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: sqlcipher not initialized %d",__func__, sqlcipher_init_error);
+    return sqlcipher_init_error;
+  }
+
   if(db && pKey && nKey) {
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = &db->aDb[db_index];
