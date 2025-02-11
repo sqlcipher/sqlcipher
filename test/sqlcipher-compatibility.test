@@ -1465,6 +1465,29 @@ do_test default-compat-open-4.0-database {
   } 
 } {ok ok 78536}
 
+# create a database using a full keyspec consising of
+# 64 characters for the encryption key, 64 for the hmac key
+# and 32 for the salt
+do_test test-full-keyspec {
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = "x'0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'";
+        CREATE TABLE t1(a,b);
+        INSERT INTO t1(a,b) VALUES (1,2);
+    }
+    db close
+
+    sqlite_orig db test.db
+    execsql {
+        PRAGMA key = "x'0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'";
+        SELECT count(*) FROM t1;
+        PRAGMA cipher_salt;
+    }
+
+} {ok 1 00000000000000000000000000000000}
+db close
+file delete -force test.db
+
 sqlite3_test_control_pending_byte $old_pending_byte
 
 finish_test

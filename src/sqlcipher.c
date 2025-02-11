@@ -1242,14 +1242,24 @@ static int sqlcipher_cipher_ctx_copy(codec_ctx *ctx, cipher_ctx *target, cipher_
   */
 static int sqlcipher_cipher_ctx_get_keyspec(codec_ctx *ctx, cipher_ctx *c_ctx, char **keyspec_ptr, int *keyspec_sz) {
   int sz = 0;
-  char *keyspec;
+  char *keyspec = NULL, *out = NULL;
 
   if(keyspec_ptr == NULL) return SQLITE_NOMEM;
 
-  /* establish the size for a hex-formated key specification, containing the 
-     raw encryption key and the salt used to generate it format. will be x'hexkey...hexsalt'
-     so oversize by 3 bytes */
-  sz = ((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3;
+  /* establish the size for a hex-formated key specification, containing the
+   * raw encryption key, optional hmac key, and the salt used to generate it.
+   * The format will be either:
+   *   x'hex(key)...hex(hmac_key)...hex(salt)'
+   *     or
+   *   x'hex(key)...hex(salt)'
+   *. The contents are SQLite BLOB formatted, so oversize by 3 bytes for the leading
+   * x' and trailing ' characters required by the spec*/
+  if(ctx->flags & CIPHER_FLAG_HMAC) { /* if HMAC is enabled, encode key, hmac key, and salt */
+    sz = ((ctx->key_sz + ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3;
+  } else { /* otherwise encode key and salt */
+    sz = ((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3;
+  }
+
   *keyspec_ptr = sqlcipher_malloc(sz);
   keyspec = *keyspec_ptr;
 
@@ -1258,13 +1268,26 @@ static int sqlcipher_cipher_ctx_get_keyspec(codec_ctx *ctx, cipher_ctx *c_ctx, c
   keyspec[0] = 'x';
   keyspec[1] = '\'';
 
-  sqlcipher_shield(c_ctx->key, ctx->key_sz);
-  cipher_bin2hex(c_ctx->key, ctx->key_sz, keyspec + 2);
-  sqlcipher_shield(c_ctx->key, ctx->key_sz);
+  out = keyspec + 2;
 
-  cipher_bin2hex(ctx->kdf_salt, ctx->kdf_salt_sz, keyspec + (ctx->key_sz * 2) + 2);
+  /* start with the encryption key */
+  sqlcipher_shield(c_ctx->key, ctx->key_sz);
+  cipher_bin2hex(c_ctx->key, ctx->key_sz, out);
+  sqlcipher_shield(c_ctx->key, ctx->key_sz);
+  out += ctx->key_sz * 2;
+
+  if(ctx->flags & CIPHER_FLAG_HMAC) {
+    /* add the hmac key after the encryption key if HMAC is in use*/
+    sqlcipher_shield(c_ctx->hmac_key, ctx->key_sz);
+    cipher_bin2hex(c_ctx->hmac_key, ctx->key_sz, out);
+    sqlcipher_shield(c_ctx->hmac_key, ctx->key_sz);
+    out += ctx->key_sz * 2;
+  }
+
+  /* finally encode the salt last */
+  cipher_bin2hex(ctx->kdf_salt, ctx->kdf_salt_sz, out);
+
   keyspec[sz - 1] = '\'';
-
   *keyspec_sz = sz;
 
   return SQLITE_OK;
@@ -1729,7 +1752,8 @@ error:
   * returns SQLITE_ERROR if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
   */
 static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
-  int rc;
+  int rc, raw_key_sz = 0, raw_salt_sz = 0, blob_format = 0, derive_hmac_key = 1;
+
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: ctx->kdf_salt_sz=%d ctx->kdf_iter=%d ctx->fast_kdf_iter=%d ctx->key_sz=%d",
     __func__, ctx->kdf_salt_sz, ctx->kdf_iter, ctx->fast_kdf_iter, ctx->key_sz);
 
@@ -1747,16 +1771,42 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     }
   }
 
-  if (c_ctx->pass_sz == ((ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, ctx->key_sz * 2)) {
-    int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
+  /* raw hey hex encoded is 2x long */
+  raw_key_sz = ctx->key_sz * 2;
+  raw_salt_sz = ctx->kdf_salt_sz *2;
+
+  /* raw key must be BLOB formatted:
+   * 1. greater than or equal to 5 characters long
+   * 2. starting with x'
+   * 3. ending with '
+   * 4. length of contents between the x' and ' must be a power of 2
+   * 5. contents must be hex */
+  blob_format =
+    c_ctx->pass_sz >= 5
+    && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0
+    && c_ctx->pass[c_ctx->pass_sz - 1] == '\''
+    && (c_ctx->pass_sz - 3) % 2 == 0
+    && cipher_isHex(c_ctx->pass + 2, c_ctx->pass_sz - 3);
+
+  if(blob_format && c_ctx->pass_sz == raw_key_sz + 3) {
+    /* option 1 - raw key consisting of only the encryption key */
     const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key only", __func__);
-    cipher_hex2bin(z, n, c_ctx->key);
-  } else if (c_ctx->pass_sz == (((ctx->key_sz + ctx->kdf_salt_sz) * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0 && cipher_isHex(c_ctx->pass + 2, (ctx->key_sz + ctx->kdf_salt_sz) * 2)) {
-    const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key and salt from hex (full keyspec)", __func__);
-    cipher_hex2bin(z, (ctx->key_sz * 2), c_ctx->key);
-    cipher_hex2bin(z + (ctx->key_sz * 2), (ctx->kdf_salt_sz * 2), ctx->kdf_salt);
+    cipher_hex2bin(z, raw_key_sz, c_ctx->key);
+  } else if(blob_format && c_ctx->pass_sz == raw_key_sz + raw_salt_sz + 3) {
+    /* option 2 - raw key consisting of the encryption key and salt */
+    const unsigned char *z = c_ctx->pass + 2;
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key and salt", __func__);
+    cipher_hex2bin(z, raw_key_sz, c_ctx->key);
+    cipher_hex2bin(z + raw_key_sz, raw_salt_sz, ctx->kdf_salt);
+  } else if(blob_format && c_ctx->pass_sz == raw_key_sz + raw_key_sz + raw_salt_sz + 3) {
+    /* option 3 - raw key consisting of the encryption key, then hmac key, then salt */
+    const unsigned char *z = c_ctx->pass + 2;
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key, hmac key, and salt", __func__);
+    cipher_hex2bin(z, raw_key_sz, c_ctx->key);
+    cipher_hex2bin(z + raw_key_sz, raw_key_sz, c_ctx->hmac_key);
+    cipher_hex2bin(z + raw_key_sz + raw_key_sz, raw_salt_sz, ctx->kdf_salt);
+    derive_hmac_key = 0;
   } else {
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: deriving key using PBKDF2 with %d iterations", __func__, ctx->kdf_iter);
     if((rc = ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz,
@@ -1767,10 +1817,11 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
     }
   }
 
-  /* if this context is setup to use hmac checks, generate a seperate and different
-     key for HMAC. In this case, we use the output of the previous KDF as the input to
-     this KDF run. This ensures a distinct but predictable HMAC key. */
-  if(ctx->flags & CIPHER_FLAG_HMAC) {
+  /* if this context is setup to use hmac checks, and we didn't already get an hmac
+   * key inbound via keyspec / raw key, then generate a seperate
+   * key for HMAC. In this case, we use the output of the previous KDF as the input to
+   * this KDF run. This ensures a distinct but predictable HMAC key. */
+  if(ctx->flags & CIPHER_FLAG_HMAC && derive_hmac_key) {
     int i;
 
     /* start by copying the kdf key into the hmac salt slot
