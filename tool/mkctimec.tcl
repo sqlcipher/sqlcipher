@@ -283,6 +283,7 @@ set boolean_defnil_options {
   SQLITE_VDBE_COVERAGE
   SQLITE_WIN32_MALLOC
   SQLITE_ZERO_MALLOC
+  SQLITE_HAS_CODEC
 }
 
 # All compile time options for which the assigned value is other than boolean
