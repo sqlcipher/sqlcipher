@@ -114,11 +114,13 @@ proc proj-bold {str} {
 #
 # If the -notice flag it used then it emits using [user-notice], which
 # means its rendering will (A) go to stderr and (B) be delayed until
-# the next time autosetup goes to output a message. If -notice
-# is not used, it will send the message to stdout without delay.
+# the next time autosetup goes to output a message.
 #
 # If the -error flag is provided then it renders the message
 # immediately to stderr and then exits.
+#
+# If neither -notice nor -error are used, the message will be sent to
+# stdout without delay.
 proc proj-indented-notice {args} {
   set fErr ""
   set outFunc "puts"
@@ -126,6 +128,7 @@ proc proj-indented-notice {args} {
     switch -exact -- [lindex $args 0] {
       -error  {
         set args [lassign $args fErr]
+        set outFunc "user-notice"
       }
       -notice {
         set args [lassign $args -]
@@ -760,7 +763,7 @@ proc proj-exe-extension {} {
 # Trivia: for .dylib files, the linker needs the -dynamiclib flag
 # instead of -shared.
 proc proj-dll-extension {} {
-  proc inner {key} {
+  set inner {{key} {
     switch -glob -- [get-define $key] {
       *apple* {
         return ".dylib"
@@ -772,9 +775,9 @@ proc proj-dll-extension {} {
         return ".so"
       }
     }
-  }
-  define BUILD_DLLEXT [inner build]
-  define TARGET_DLLEXT [inner host]
+  }}
+  define BUILD_DLLEXT [apply $inner build]
+  define TARGET_DLLEXT [apply $inner host]
 }
 
 ########################################################################
@@ -784,18 +787,20 @@ proc proj-dll-extension {} {
 # BUILD_LIBEXT and TARGET_LIBEXT to the conventional static library
 # extension for the being-built-on resp. the target platform.
 proc proj-lib-extension {} {
-  proc inner {key} {
+  set inner {{key} {
     switch -glob -- [get-define $key] {
       *-*-ming* - *-*-cygwin - *-*-msys {
-        return ".lib"
+        return ".a"
+        # ^^^ this was ".lib" until 2025-02-07. See
+        # https://sqlite.org/forum/forumpost/02db2d4240
       }
       default {
         return ".a"
       }
     }
-  }
-  define BUILD_LIBEXT [inner build]
-  define TARGET_LIBEXT [inner host]
+  }}
+  define BUILD_LIBEXT [apply $inner build]
+  define TARGET_LIBEXT [apply $inner host]
 }
 
 ########################################################################
