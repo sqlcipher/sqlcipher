@@ -222,6 +222,7 @@ static void attachFunc(
   if( rc==SQLITE_OK ){
     extern int sqlcipherCodecAttach(sqlite3*, int, const void*, int);
     extern void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
+    extern void sqlcipher_free(void*, sqlite3_uint64);
     int nKey;
     char *zKey;
     int t = sqlite3_value_type(argv[2]);

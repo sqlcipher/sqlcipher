@@ -251,6 +251,7 @@ SQLITE_NOINLINE int sqlite3RunVacuum(
 #ifdef SQLITE_HAS_CODEC
   if( db->nextPagesize ){
     extern void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
+    extern void sqlcipher_free(void*, sqlite3_uint64);
     int nKey;
     char *zKey;
     sqlcipherCodecGetKey(db, iDb, (void**)&zKey, &nKey);

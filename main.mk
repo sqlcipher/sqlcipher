@@ -512,7 +512,7 @@ crypto_openssl.o:  $(TOP)/src/crypto_openssl.c $(DEPS_OBJ_COMMON)
 crypto_nss.o:  $(TOP)/src/crypto_nss.c $(DEPS_OBJ_COMMON)
 	$(T.cc.sqlite) $(CFLAGS.libsqlite3) -c $(TOP)/src/crypto_nss.c
 crypto_libtomcrypt.o:  $(TOP)/src/crypto_libtomcrypt.c $(DEPS_OBJ_COMMON)
-	$(T.cc.sqlite) $(CFLAGS.libsqlite3) -c $(TOP)/src/libtomcrypt.c
+	$(T.cc.sqlite) $(CFLAGS.libsqlite3) -c $(TOP)/src/crypto_libtomcrypt.c
 crypto_cc.o: $(TOP)/src/crypto_cc.c $(DEPS_OBJ_COMMON)
 	$(T.cc.sqlite) $(CFLAGS.libsqlite3) -c $(TOP)/src/crypto_cc.c
 
@@ -545,8 +545,8 @@ LIBOBJS0 = alter.o analyze.o attach.o auth.o \
          vdbe.o vdbeapi.o vdbeaux.o vdbeblob.o vdbemem.o vdbesort.o \
          vdbetrace.o vdbevtab.o vtab.o \
          wal.o walker.o where.o wherecode.o whereexpr.o \
-         window.o
-LIBOBJS = $(LIBOBJS0) $(SQLCIPHER_OBJ)
+         window.o $(SQLCIPHER_OBJ) 
+LIBOBJS = $(LIBOBJS0)
 
 #
 # Object files for the amalgamation.
