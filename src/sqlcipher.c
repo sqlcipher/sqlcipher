@@ -1377,15 +1377,19 @@ static int sqlcipher_codec_ctx_set_use_hmac(codec_ctx *ctx, int use) {
 /* the length of plaintext header size must be:
  * 1. greater than or equal to zero
  * 2. a multiple of the cipher block size
- * 3. less than the usable size of the first database page
+ * 3. less than or equal to the non-reserve size of the first database page
+ *
+ * Note: it is possible to leave the entire first page in plaintext. This is discouraged since it will
+ * likely leak some small amount of schema data, but it's required to support use of the recovery VFS.
+ * see comment in sqlcipher_page_cipher for more details.
  */
 static int sqlcipher_codec_ctx_set_plaintext_header_size(codec_ctx *ctx, int size) {
-  if(size >= 0 && ctx->block_sz > 0 && (size % ctx->block_sz) == 0 && size < (ctx->page_sz - ctx->reserve_sz)) {
+  if(size >= 0 && ctx->block_sz > 0 && (size % ctx->block_sz) == 0 && size <= (ctx->page_sz - ctx->reserve_sz)) {
     ctx->plaintext_header_sz = size;
     return SQLITE_OK;
   }
   ctx->plaintext_header_sz = -1;
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_set_plaintext_header_size: attempt to set invalid plantext_header_size %d", size);
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: attempt to set invalid plantext_header_size %d", __func__, size);
   return SQLITE_ERROR;
 } 
 
@@ -1664,18 +1668,28 @@ static int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mod
   iv_out = out + size;
   iv_in = in + size;
 
+  /* if the full amount of the first page (excluding reserve size), e.g. 4016 bytes for a 4096 byte page size with HMAC_SHA512,
+   * is used as a plaintext header, then the entire first page will be completely plaintext, and this function should just return early.
+   * This should almost never occur during normal usage, so we will log at WARN level, but it is required in the special case that
+   * a user wants to attempt recovery on an encrypted database. In that case, the database header must be completely plaintext so that
+   * the recovery VFS can be used with it's special 1st page logic */
+  if(pgno == 1 && size == 0) {
+    sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "%s: skipping encryption/decryption for fully  plaintext header", __func__);
+    return SQLITE_OK;
+  }
+
   /* hmac will be written immediately after the initialization vector. the remainder of the page reserve will contain
      random bytes. note, these pointers are only valid when using hmac */
   hmac_in = in + size + ctx->iv_sz; 
   hmac_out = out + size + ctx->iv_sz;
   out_start = out; /* note the original position of the output buffer pointer, as out will be rewritten during encryption */
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: pgno=%d, mode=%d, size=%d", pgno, mode, size);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: pgno=%d, mode=%d, size=%d", __func__, pgno, mode, size);
   CODEC_HEXDUMP("sqlcipher_page_cipher: input page data", in, page_sz);
 
   /* the key size should never be zero. If it is, error out. */
   if(ctx->key_sz == 0) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: error possible context corruption, key_sz is zero for pgno=%d", pgno);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error possible context corruption, key_sz is zero for pgno=%d", __func__, pgno);
     goto error;
   } 
 
@@ -1688,25 +1702,25 @@ static int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mod
 
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC) && (mode == CIPHER_DECRYPT)) {
     if(sqlcipher_page_hmac(ctx, c_ctx, pgno, in, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: hmac operation on decrypt failed for pgno=%d", pgno);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: hmac operation on decrypt failed for pgno=%d", __func__, pgno);
       goto error;
     }
 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: comparing hmac on in=%p out=%p hmac_sz=%d", hmac_in, hmac_out, ctx->hmac_sz);
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: comparing hmac on in=%p out=%p hmac_sz=%d", __func__, hmac_in, hmac_out, ctx->hmac_sz);
     if(sqlcipher_memcmp(hmac_in, hmac_out, ctx->hmac_sz) != 0) { /* the hmac check failed */ 
       if(sqlite3BtreeGetAutoVacuum(ctx->pBt) != BTREE_AUTOVACUUM_NONE && sqlcipher_ismemset(in, 0, page_sz) == 0) {
         /* first check if the entire contents of the page is zeros. If so, this page 
            resulted from a short read (i.e. sqlite attempted to pull a page after the end of the file. these 
            short read failures must be ignored for autovaccum mode to work so wipe the output buffer 
            and return SQLITE_OK to skip the decryption step. */
-        sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: zeroed page (short read) for pgno %d with autovacuum enabled", pgno);
+        sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: zeroed page (short read) for pgno %d with autovacuum enabled", __func__, pgno);
         sqlcipher_memset(out, 0, page_sz); 
         return SQLITE_OK;
       } else {
         /* if the page memory is not all zeros, it means the there was data and a hmac on the page. 
            since the check failed, the page was either tampered with or corrupted. wipe the output buffer,
            and return SQLITE_ERROR to the caller */
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: hmac check failed for pgno=%d", pgno);
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: hmac check failed for pgno=%d", __func__, pgno);
         goto error;
       }
     }
@@ -1717,13 +1731,13 @@ static int sqlcipher_page_cipher(codec_ctx *ctx, int for_ctx, Pgno pgno, int mod
   sqlcipher_shield(c_ctx->key, ctx->key_sz);
 
   if(rc != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: cipher operation mode=%d failed for pgno=%d", mode, pgno);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: cipher operation mode=%d failed for pgno=%d", __func__, mode, pgno);
     goto error;
   };
  
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC) && (mode == CIPHER_ENCRYPT)) {
     if(sqlcipher_page_hmac(ctx, c_ctx, pgno, out_start, size + ctx->iv_sz, hmac_out) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_page_cipher: hmac operation on encrypt failed for pgno=%d", pgno);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: hmac operation on encrypt failed for pgno=%d", __func__, pgno);
       goto error;
     }; 
   }
@@ -3235,10 +3249,16 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #endif
       if(rc != SQLITE_OK) {
         /* failure to decrypt a page is considered a permanent error and will render the pager unusable
-           in order to prevent inconsistent data being loaded into page cache */
+         * in order to prevent inconsistent data being loaded into page cache. The only exception here is when a database is being "recovered",
+         * which we consider to be the case if the plaintext header size is set to the full non-reserved size of a page. If that is the case we consider
+         * this to be operating in recovery mode, and will log the error but not permanently put the codec into an error state */
         sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error decrypting page %d data: %d", pgno, rc);
         sqlcipher_memset((unsigned char*) ctx->buffer+offset, 0, ctx->page_sz-offset);
-        sqlcipher_codec_ctx_set_error(ctx, rc);
+        if(ctx->plaintext_header_sz == ctx->page_sz - ctx->reserve_sz) {
+          sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: plaintext header size of %d indicates recovery mode, suppressing permanent error", __func__, ctx->plaintext_header_sz);
+        } else {
+          sqlcipher_codec_ctx_set_error(ctx, rc);
+        }
       } else {
         SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
       }
