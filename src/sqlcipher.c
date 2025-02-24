@@ -65,6 +65,15 @@
 #include <assert.h>
 #include "sqlcipher.h"
 
+#if !defined(SQLITE_EXTRA_INIT) || !defined(SQLITE_EXTRA_SHUTDOWN)
+#error "SQLCipher must be compiled with -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
+#endif
+
+#if !defined(SQLITE_THREADSAFE) || SQLITE_THREADSAFE != 1
+#error "SQLCipher must be compiled with -DSQLITE_THREADSAFE=1"
+#endif
+
+
 /* extensions defined in pager.c */ 
 void *sqlcipherPagerGetCodec(Pager*);
 void sqlcipherPagerSetCodec(Pager*, void *(*)(void*,void*,Pgno,int),  void (*)(void*,int,int),  void (*)(void*), void *);
@@ -356,11 +365,6 @@ sqlite3_mutex* sqlcipher_mutex(int mutex) {
   if(mutex < 0 || mutex >= SQLCIPHER_MUTEX_COUNT) return NULL;
   return sqlcipher_static_mutex[mutex];
 }
-
-
-#if !defined(SQLITE_EXTRA_INIT) || !defined(SQLITE_EXTRA_SHUTDOWN)
-#error "SQLCipher must be compiled with -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
-#endif
 
 static void sqlcipher_atexit(void) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()\n", __func__);
