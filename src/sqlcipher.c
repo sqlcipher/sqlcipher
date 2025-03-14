@@ -3318,72 +3318,84 @@ static void sqlite3FreeCodecArg(void *pCodecArg) {
 }
 
 int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
-  struct Db *pDb = &db->aDb[nDb];
+  struct Db *pDb = NULL;
+  sqlite3_file *fd = NULL;
+  codec_ctx *ctx = NULL;
+  Pager *pPager = NULL;
+  int rc = SQLITE_OK;
 
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: db=%p, nDb=%d", db, nDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: db=%p, nDb=%d", __func__, db, nDb);
 
-  if(nKey && zKey && pDb->pBt) {
-    int rc;
-    Pager *pPager = pDb->pBt->pBt->pPager;
-    sqlite3_file *fd;
-    codec_ctx *ctx;
-
-    ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
-
-    if(ctx != NULL && SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
-      /* there is already a codec attached to this database, so we should not proceed */
-      sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: disregarding attempt to set key on an previously keyed database connection handle");
-      return SQLITE_OK;
-    }
-
-    /* check if the sqlite3_file is open, and if not force handle to NULL */ 
-    if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL; 
-
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: entering database mutex %p", db->mutex);
-    sqlite3_mutex_enter(db->mutex);
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: entered database mutex %p", db->mutex);
-
-    /* point the internal codec argument against the contet to be prepared */
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlcipher_codec_ctx_init()");
-    rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, zKey, nKey);
-
-    if(rc != SQLITE_OK) {
-      /* initialization failed, do not attach potentially corrupted context */
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: context initialization failed, forcing error state with rc=%d", rc);
-      /* force an error at the pager level, such that even the upstream caller ignores the return code
-         the pager will be in an error state and will process no further operations */
-      sqlite3pager_error(pPager, rc);
-      pDb->pBt->pBt->db->errCode = rc;
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: leaving database mutex %p (early return on rc=%d)", db->mutex, rc);
-      sqlite3_mutex_leave(db->mutex);
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: left database mutex %p (early return on rc=%d)", db->mutex, rc);
-      return rc;
-    }
-
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlcipherPagerSetCodec()");
-    sqlcipherPagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
-
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling codec_set_btree_to_codec_pagesize()");
-    codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-
-    /* force secure delete. This has the benefit of wiping internal data when deleted
-       and also ensures that all pages are written to disk (i.e. not skipped by
-       sqlite3PagerDontWrite optimizations) */ 
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlite3BtreeSecureDelete()");
-    sqlite3BtreeSecureDelete(pDb->pBt, 1); 
-
-    /* if fd is null, then this is an in-memory database and
-       we dont' want to overwrite the AutoVacuum settings
-       if not null, then set to the default */
-    if(fd != NULL) { 
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecAttach: calling sqlite3BtreeSetAutoVacuum()");
-      sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
-    }
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: leaving database mutex %p", db->mutex);
-    sqlite3_mutex_leave(db->mutex);
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipherCodecAttach: left database mutex %p", db->mutex);
+  if(!sqlcipher_init) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: sqlcipher not initialized %d", __func__, sqlcipher_init_error);
+    return sqlcipher_init_error;
   }
-  return SQLITE_OK;
+
+  /* error pKey is not null and nKey is > 0 */
+  if(!(nKey && zKey)) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: no key", __func__);
+    return SQLITE_MISUSE;
+  }
+
+  if(!(db && (pDb = &db->aDb[nDb]))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: invalid database", __func__);
+    return SQLITE_MISUSE;
+  }
+
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering database mutex %p", __func__, db->mutex);
+  sqlite3_mutex_enter(db->mutex);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered database mutex %p", __func__, db->mutex);
+
+  pPager = pDb->pBt->pBt->pPager;
+  ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+
+  if(ctx != NULL && SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
+    /* there is already a codec attached to this database, so we should not proceed */
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: disregarding attempt to set key on an previously keyed database connection handle", __func__);
+    goto cleanup;
+  }
+
+  /* check if the sqlite3_file is open, and if not force handle to NULL */
+  if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL;
+
+  /* point the internal codec argument against the contet to be prepared */
+  rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, zKey, nKey);
+
+  if(rc != SQLITE_OK) {
+    /* initialization failed, do not attach potentially corrupted context */
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: context initialization failed, forcing error state with rc=%d", __func__, rc);
+    /* force an error at the pager level, such that even the upstream caller ignores the return code
+       the pager will be in an error state and will process no further operations */
+    sqlite3pager_error(pPager, rc);
+    pDb->pBt->pBt->db->errCode = rc;
+    goto cleanup;
+  }
+
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipherPagerSetCodec()", __func__);
+  sqlcipherPagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
+
+  codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+
+  /* force secure delete. This has the benefit of wiping internal data when deleted
+     and also ensures that all pages are written to disk (i.e. not skipped by
+     sqlite3PagerDontWrite optimizations) */
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlite3BtreeSecureDelete(), __func__");
+  sqlite3BtreeSecureDelete(pDb->pBt, 1);
+
+  /* if fd is null, then this is an in-memory database and
+     we dont' want to overwrite the AutoVacuum settings
+     if not null, then set to the default */
+  if(fd != NULL) {
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlite3BtreeSetAutoVacuum()", __func__);
+    sqlite3BtreeSetAutoVacuum(pDb->pBt, SQLITE_DEFAULT_AUTOVACUUM);
+  }
+
+cleanup:
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving database mutex %p", __func__, db->mutex);
+  sqlite3_mutex_leave(db->mutex);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left database mutex %p", __func__, db->mutex);
+
+  return rc;
 }
 
 int sqlcipher_find_db_index(sqlite3 *db, const char *zDb) {
@@ -3405,25 +3417,14 @@ void sqlite3_activate_see(const char* in) {
 }
 
 int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_key: db=%p", db);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: db=%p", __func__, db);
   return sqlite3_key_v2(db, "main", pKey, nKey);
 }
 
 int sqlite3_key_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_key_v2: db=%p zDb=%s", db, zDb);
-
-  if(!sqlcipher_init) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: sqlcipher not initialized %d",__func__, sqlcipher_init_error);
-    return sqlcipher_init_error;
-  }
-
-  /* attach key if db and pKey are not null and nKey is > 0 */
-  if(db && pKey && nKey) {
-    int db_index = sqlcipher_find_db_index(db, zDb);
-    return sqlcipherCodecAttach(db, db_index, pKey, nKey); 
-  }
-  sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3_key_v2: no key provided");
-  return SQLITE_ERROR;
+  int db_index = sqlcipher_find_db_index(db, zDb);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: db=%p zDb=%s db_index=%d", __func__, db, zDb, db_index);
+  return sqlcipherCodecAttach(db, db_index, pKey, nKey);
 }
 
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {

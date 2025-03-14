@@ -237,7 +237,14 @@ static void attachFunc(
       case SQLITE_BLOB:
         nKey = sqlite3_value_bytes(argv[2]);
         zKey = (char *)sqlite3_value_blob(argv[2]);
-        rc = sqlcipherCodecAttach(db, db->nDb-1, zKey, nKey);
+        /* SQLCipher allows a special case to attach a plaintext database
+         * to an encrypted database by passing key as an empty string, eg.
+         *    ATTACH DATABASE 'plain.db' AS plain KEY '';
+         * In this case, do not attempt to attach a codec to the attached
+         * database */
+        if(nKey && zKey) {
+          rc = sqlcipherCodecAttach(db, db->nDb-1, zKey, nKey);
+        }
         break;
 
       case SQLITE_NULL:
