@@ -1,7 +1,27 @@
 # SQLCipher Change Log
-All notable changes to this project will be documented in this file.
+Notable changes to this project are documented in this file.
 
-## [unreleased] - (? 2024 - [unreleased changes])
+## [unreleased] - (? 2025 - [unreleased changes])
+
+## [4.7.0] - (March 2025 - [4.7.0 changes])
+- Updates baseline to upstream SQLite 3.49.1, including complete upstream SQLite refactoring of build system to use autosetup
+- Significantly refactors and optimizes library initialization and cleanup
+- Allocates majority of requisite memory at startup to improve memory locking on constrained platforms (i.e. Android and Windows) and reduce fragmentation
+- Expands `sqlcipher_provider` interface to include `init` and `shutdown` functions
+- Adds support for `.recover` shell command on corrupt databases with a full plaintext first page
+- Performs fast random overwrite of freed memory segments for improved security
+- Adds basic obfuscation of context key material for improved security
+- Generates keyspecs dynamically on demand instead of storing them
+- Expands keyspec/raw key format to accept key, HMAC key, and salt
+- Improves error handling in `sqlcipher_export()` and `PRAGMA cipher_migrate`
+- Allows setting custom compile-time default cryptographic provider via the `SQLCIPHER_CRYPTO_CUSTOM` macro
+- Removes support for end-of-life OpenSSL versions older than 3.0
+__BREAKING CHANGE__: `SELECT` statements (now also including schema independent queries like `SELECT 1`) cannot be executed on encrypt ed databases prior to setting the database key (behavior inherited from upstream SQLite)
+- __BREAKING CHANGE__: Renames `configure` flag `--enable-tempstore=yes` to `--with-tempstore=yes` for alignment with SQLite (change required for upstream SQLite autosetup)
+- __BREAKING CHANGE__: Renames default executable and library build outputs from `sqlcipher` and `libsqlcipher` to `sqlite3` and `libsqlite3` (for alignment with SQLite)
+- __BREAKING CHANGE__: Removes `configure` flag `--with-crypto-lib` (replace with appropriate `-DSQLCIPHER_CRYPTO_*` CFLAG)
+- __BREAKING CHANGE__: Requires defining `SQLITE_EXTRA_INIT=sqlcipher_extra_init` and `SQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown` at compile time for optimized library initialization and cleanup
+- __BREAKING CHANGE__: Enforces thread safe mode (i.e. `SQLITE_THREADSAFE` of 1 or 2) and temporary storage (i.e. `SQLITE_TEMP_STORE` of 2 or 3) settings at compile time
 
 ## [4.6.1] - (August 2024 - [4.6.1 changes])
 - Updates baseline to upstream SQLite 3.46.1
@@ -260,7 +280,9 @@ All notable changes to this project will be documented in this file.
 - Change KDF iteration length from 4,000 to 64,000
 
 [unreleased]: https://github.com/sqlcipher/sqlcipher/tree/prerelease
-[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.1...prerelease
+[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.0...prerelease
+[4.7.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.7.0
+[4.7.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.1...v4.7.0
 [4.6.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.6.1
 [4.6.1 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.6.0
