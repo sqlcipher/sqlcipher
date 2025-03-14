@@ -69,8 +69,8 @@
 #error "SQLCipher must be compiled with -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
 #endif
 
-#if !defined(SQLITE_THREADSAFE) || SQLITE_THREADSAFE != 1
-#error "SQLCipher must be compiled with -DSQLITE_THREADSAFE=1"
+#if !defined(SQLITE_THREADSAFE) || !(SQLITE_THREADSAFE == 1 || SQLITE_THREADSAFE == 2)
+#error "SQLCipher must be compiled with -DSQLITE_THREADSAFE=<1 or 2>"
 #endif
 
 
