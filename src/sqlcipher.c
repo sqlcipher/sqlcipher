@@ -73,6 +73,9 @@
 #error "SQLCipher must be compiled with -DSQLITE_THREADSAFE=<1 or 2>"
 #endif
 
+#if !defined(SQLITE_TEMP_STORE) || SQLITE_TEMP_STORE == 0 || SQLITE_TEMP_STORE == 1
+#error "SQLCipher must be compiled with -DSQLITE_TEMP_STORE=<2 or 3>"
+#endif
 
 /* extensions defined in pager.c */ 
 void *sqlcipherPagerGetCodec(Pager*);
