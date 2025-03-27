@@ -3,6 +3,9 @@ Notable changes to this project are documented in this file.
 
 ## [unreleased] - (? 2025 - [unreleased changes])
 
+## [4.7.2] - (? 2025 - [4.7.2 changes])
+- 4.7.1 intentionally omitted
+
 ## [4.7.0] - (March 2025 - [4.7.0 changes])
 - Updates baseline to upstream SQLite 3.49.1, including complete upstream SQLite refactoring of build system to use autosetup
 - Significantly refactors and optimizes library initialization and cleanup
@@ -280,7 +283,9 @@ __BREAKING CHANGE__: `SELECT` statements (now also including schema independent 
 - Change KDF iteration length from 4,000 to 64,000
 
 [unreleased]: https://github.com/sqlcipher/sqlcipher/tree/prerelease
-[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.0...prerelease
+[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.2...prerelease
+[4.7.2]: https://github.com/sqlcipher/sqlcipher/tree/v4.7.2
+[4.7.2 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.0...v4.7.2
 [4.7.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.7.0
 [4.7.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.1...v4.7.0
 [4.6.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.6.1
