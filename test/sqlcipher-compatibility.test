@@ -1165,9 +1165,8 @@ do_test migrate-failure {
 db close
 file delete -force test.db 
 
-# leave database is a readable state after a 
-# a failed migration 
-do_test migrate-failure-readable {
+# if a migration failes the database should be in a permanent error state
+do_test migrate-failure-not-readable {
   file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
   sqlite_orig db test.db
 
@@ -1189,6 +1188,21 @@ do_test migrate-failure-readable {
     PRAGMA cipher_test;
   }]
 } {{ok 1} {1 {out of memory}} 0}
+db close
+file delete -force test.db 
+
+# if cipher_migrate is called on a current-version databse
+# is should do nothing and just report OK
+do_test migrate-current-format-noop {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_migrate;
+    SELECT count(*) FROM sqlite_schema;
+  }
+} {ok 0 1}
 db close
 file delete -force test.db 
 

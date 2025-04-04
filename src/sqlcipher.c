@@ -2217,7 +2217,6 @@ migrate:
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: reset pager");
 
 handle_error:
-cleanup:
   rc_cleanup = sqlite3_exec(db, "DETACH DATABASE migrate;", NULL, NULL, NULL);
   if(rc_cleanup != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: DETACH DATABASE migrate failed: %d", rc_cleanup);
@@ -2254,6 +2253,7 @@ cleanup:
     ctx->error = rc; /* set flag for deferred error */
   }
 
+cleanup:
   if(pass) sqlcipher_free(pass, pass_sz);
   if(keyspec) sqlcipher_free(keyspec, keyspec_sz);
   if(attach_command) sqlcipher_free(attach_command, sqlite3Strlen30(attach_command)); 

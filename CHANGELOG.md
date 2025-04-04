@@ -3,8 +3,8 @@ Notable changes to this project are documented in this file.
 
 ## [unreleased] - (? 2025 - [unreleased changes])
 
-## [4.7.2] - (? 2025 - [4.7.2 changes])
-- 4.7.1 intentionally omitted
+## [4.8.0] - (? 2025 - [4.8.0 changes])
+- Fixes regression in `PRAGMA cipher_migrate` where an error would be thrown when migrating a current-version database
 
 ## [4.7.0] - (March 2025 - [4.7.0 changes])
 - Updates baseline to upstream SQLite 3.49.1, including complete upstream SQLite refactoring of build system to use autosetup
