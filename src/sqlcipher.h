@@ -114,7 +114,8 @@ sqlcipher_provider* sqlcipher_get_provider(void);
 #define SQLCIPHER_MUTEX_RESERVED2         4
 #define SQLCIPHER_MUTEX_RESERVED3         5
 #define SQLCIPHER_MUTEX_MEM               6
-#define SQLCIPHER_MUTEX_COUNT             7
+#define SQLCIPHER_MUTEX_SHAREDCACHE       7
+#define SQLCIPHER_MUTEX_COUNT             8
 
 sqlite3_mutex* sqlcipher_mutex(int);
 

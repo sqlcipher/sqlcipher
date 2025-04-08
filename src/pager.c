@@ -7224,7 +7224,10 @@ const char *sqlite3PagerJournalname(Pager *pPager){
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
 /*
-** Set or retrieve the codec for this pager
+** Set (or overwrite) the codec for this pager. If there is
+** already a codec context (pCodec) attached, it WILL NOT be freed.
+** The caller is responsible for freeing the old codec context prior
+** setting a new one.
 */
 void sqlcipherPagerSetCodec(
   Pager *pPager,
@@ -7233,11 +7236,7 @@ void sqlcipherPagerSetCodec(
   void (*xCodecFree)(void*),
   void *pCodec
 ){
-  if( pPager->xCodecFree ){
-    pPager->xCodecFree(pPager->pCodec);
-  }else{
-    pager_reset(pPager);
-  }
+  pager_reset(pPager);
   pPager->xCodec = pPager->memDb ? 0 : xCodec;
   pPager->xCodecSizeChng = xCodecSizeChng;
   pPager->xCodecFree = xCodecFree;
@@ -7245,6 +7244,7 @@ void sqlcipherPagerSetCodec(
   setGetterMethod(pPager);
   pagerReportSize(pPager);
 }
+/* Retrieve the codec for this pager */
 void *sqlcipherPagerGetCodec(Pager *pPager){
   return pPager->pCodec;
 }

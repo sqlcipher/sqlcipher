@@ -455,7 +455,7 @@ int sqlcipher_extra_init(const char* arg) {
   for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
     if(sqlcipher_static_mutex[i] == NULL) {
       if((sqlcipher_static_mutex[i] = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST)) == NULL) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate static mutex %i", __func__, i); 
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate static mutex %d", __func__, i);
         rc = SQLITE_NOMEM; 
         goto error;
       }
@@ -3212,20 +3212,30 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   int offset = 0, rc = 0;
   unsigned char *pData = (unsigned char *) data;
   int cctx = CIPHER_READ_CTX;
+  void *out = NULL;
+  sqlite3_mutex *mutex = ctx->pBt->sharable ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
+
+  /* in shared cache mode, this needs to be mutexed to prevent a separate database handle from
+   * nuking the context on the shared Btree */
+  if(mutex) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering mutex %p", __func__, mutex);
+    sqlite3_mutex_enter(mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered mutex %p", __func__, mutex);
+  }
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3Codec: pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
 
   if(ctx->error != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d", __func__, rc);
     sqlcipher_codec_ctx_set_error(ctx, ctx->error);
-    return NULL;
+    goto cleanup;
   }
 
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_codec_key_derive(ctx)) != SQLITE_OK) {
-   sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error occurred during key derivation: %d", rc);
-   sqlcipher_codec_ctx_set_error(ctx, rc); 
-   return NULL;
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error occurred during key derivation: %d", rc);
+    sqlcipher_codec_ctx_set_error(ctx, rc);
+    goto cleanup;
   }
 
   /* if the plaintext_header_size is negative that means an invalid size was set via 
@@ -3234,7 +3244,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   if(ctx->plaintext_header_sz < 0) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error invalid ctx->plaintext_header_sz: %d", ctx->plaintext_header_sz);
     sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
-    return NULL;
+    goto cleanup;
   }
 
   if(pgno == 1) /* adjust starting pointers in data page for header offset on first page*/   
@@ -3270,7 +3280,8 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
       }
       memcpy(pData, ctx->buffer, ctx->page_sz); /* copy buffer data back to pData and return */
-      return pData;
+      out = pData;
+      goto cleanup;
       break;
 
     case CODEC_WRITE_OP: /* encrypt database page, operate on write context and fall through to case 7, so the write context is used*/
@@ -3283,7 +3294,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         if((rc = sqlcipher_codec_ctx_get_kdf_salt(ctx, &kdf_salt)) != SQLITE_OK) {
           sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error retrieving salt: %d", rc);
           sqlcipher_codec_ctx_set_error(ctx, rc); 
-          return NULL;
+          goto cleanup;
         }
         memcpy(ctx->buffer, ctx->plaintext_header_sz ? pData : kdf_salt, offset);
       }
@@ -3300,24 +3311,53 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error encrypting page %d data: %d", pgno, rc);
         sqlcipher_memset((unsigned char*)ctx->buffer+offset, 0, ctx->page_sz-offset);
         sqlcipher_codec_ctx_set_error(ctx, rc);
-        return NULL;
+        goto cleanup;
       }
       SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
-      return ctx->buffer; /* return persistent buffer data, pData remains intact */
+      out = ctx->buffer; /* return persistent buffer data, pData remains intact */
+      goto cleanup;
       break;
 
     default:
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3Codec: error unsupported codec mode %d", mode);
       sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR); /* unsupported mode, set error */
-      return pData;
+      out = pData;
+      goto cleanup;
       break;
   }
+
+cleanup:
+  if(mutex) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving mutex %p", __func__, mutex);
+    sqlite3_mutex_leave(mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left mutex %p", __func__, mutex);
+  }
+  return out;
 }
 
+/* This callback will be invoked when a database connection is closed. It is basically a light wrapper
+ * ariund sqlciher_codec_ctx_free that locks the shared cache mutex if necessary */
 static void sqlite3FreeCodecArg(void *pCodecArg) {
   codec_ctx *ctx = (codec_ctx *) pCodecArg;
+  sqlite3_mutex *mutex = ctx->pBt->sharable ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
+
   if(pCodecArg == NULL) return;
+
+  /* in shared cache mode, this needs to be mutexed to prevent a codec context from being deallocated when
+   * it is in use by the codec due to cross-database handle access to the shared Btree */
+  if(mutex) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering mutex %p", __func__, mutex);
+    sqlite3_mutex_enter(mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered mutex %p", __func__, mutex);
+  }
+
   sqlcipher_codec_ctx_free(&ctx); /* wipe and free allocated memory for the context */
+
+  if(mutex) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving mutex %p", __func__, mutex);
+    sqlite3_mutex_leave(mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left mutex %p", __func__, mutex);
+  }
 }
 
 int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
@@ -3326,6 +3366,7 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   codec_ctx *ctx = NULL;
   Pager *pPager = NULL;
   int rc = SQLITE_OK;
+  sqlite3_mutex *extra_mutex = NULL;
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: db=%p, nDb=%d", __func__, db, nDb);
 
@@ -3345,24 +3386,58 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     return SQLITE_MISUSE;
   }
 
+  /* After this point, early returns for API misuse are complete, lock on a mutex and ensure it is cleaned
+   * up later. If shared cache is enabled then enter a specially defined "global" recursive mutex specifically
+   * for isolating shared cache connections, otherwise use the built-in databse mutex */ 
+  extra_mutex = pDb->pBt->sharable ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
+
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering database mutex %p", __func__, db->mutex);
   sqlite3_mutex_enter(db->mutex);
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered database mutex %p", __func__, db->mutex);
 
-  pPager = pDb->pBt->pBt->pPager;
-  ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+  if(extra_mutex) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering mutex %p", __func__, extra_mutex);
+    sqlite3_mutex_enter(extra_mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered mutex %p", __func__, extra_mutex);
+  }
 
-  if(ctx != NULL && SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
-    /* there is already a codec attached to this database, so we should not proceed */
-    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: disregarding attempt to set key on an previously keyed database connection handle", __func__);
-    goto cleanup;
+  pPager = sqlite3BtreePager(pDb->pBt);
+  ctx = (codec_ctx*) sqlcipherPagerGetCodec(pPager);
+
+  if(ctx != NULL) {
+    /* There is already a codec attached to this database */
+    if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) {
+       /* The key was derived and used successfully, so return early */
+      sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: disregarding attempt to set key on an previously keyed database connection handle", __func__);
+      goto cleanup;
+#ifndef SQLITE_DEBUG
+    } else if (pDb->pBt->sharable) {
+      /* This Btree is participating in shared cache. It would be usafe to reset and reattach a new codec, so return early.
+       *
+       * When compiled with SQLITE_DEBUG, all database connections have shared cached enabled. This behavior of disallowing reset
+       * of the codec on a shared cache connection will break several tests that depend on the the ability to reset the codec,
+       * like migration tests, repeat-keying tests, etc. Asa result we will disable shared cache handling when compiled with
+       * SQLIE_DEBUG enabled.*/
+      sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: disregarding attempt to set key on an shared cache handle", __func__);
+      goto cleanup;
+#endif
+    } else {
+      /* To preseve legacy functionality where an incorrect key could be replaced by a correct key without closing the database,
+       * if the key has not been used, and shared cache is not enabled, reset the codec on this pager entirely.
+       * This will call sqlcipher_codec_ctx_free directly instead of through sqlite3FreeCodecArg because this function already
+       * holds the shared cache mutex if it is necessary, and that avoids requiring a more expensive recursive mutex */
+      sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: resetting existing codec on pager", __func__);
+      sqlcipher_codec_ctx_free(&ctx);
+      sqlcipherPagerSetCodec(pPager, NULL, NULL, NULL, NULL);
+      ctx = NULL;
+    }
   }
 
   /* check if the sqlite3_file is open, and if not force handle to NULL */
   if((fd = sqlite3PagerFile(pPager))->pMethods == 0) fd = NULL;
 
   /* point the internal codec argument against the contet to be prepared */
-  rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, zKey, nKey);
+  rc = sqlcipher_codec_ctx_init(&ctx, pDb, pPager, zKey, nKey);
 
   if(rc != SQLITE_OK) {
     /* initialization failed, do not attach potentially corrupted context */
@@ -3375,7 +3450,7 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   }
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipherPagerSetCodec()", __func__);
-  sqlcipherPagerSetCodec(sqlite3BtreePager(pDb->pBt), sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
+  sqlcipherPagerSetCodec(pPager, sqlite3Codec, NULL, sqlite3FreeCodecArg, (void *) ctx);
 
   codec_set_btree_to_codec_pagesize(db, pDb, ctx);
 
@@ -3394,6 +3469,13 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   }
 
 cleanup:
+
+  if(extra_mutex) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving mutex %p", __func__, extra_mutex);
+    sqlite3_mutex_leave(extra_mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left mutex %p", __func__, extra_mutex);
+  }
+
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving database mutex %p", __func__, db->mutex);
   sqlite3_mutex_leave(db->mutex);
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left database mutex %p", __func__, db->mutex);
