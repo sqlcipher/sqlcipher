@@ -3457,7 +3457,7 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   /* force secure delete. This has the benefit of wiping internal data when deleted
      and also ensures that all pages are written to disk (i.e. not skipped by
      sqlite3PagerDontWrite optimizations) */
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlite3BtreeSecureDelete(), __func__");
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlite3BtreeSecureDelete()", __func__);
   sqlite3BtreeSecureDelete(pDb->pBt, 1);
 
   /* if fd is null, then this is an in-memory database and
