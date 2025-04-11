@@ -288,17 +288,15 @@ static u8* sqlcipher_shield_mask = NULL;
 /* Establish the default size of the private heap. This can be overriden 
  * at compile time by setting -DSQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT=X */
 #ifndef SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT
-#ifdef __ANDROID__
-/* On android, the maximim amount of memory that can be memlocked in 64k.
- * The default heap size is chosen as 48K, which is either 4 (with 4k page size)
- * or 1 (with 16k age size) less than the max. We choose to allocate slightly
- * less than the max just in case the app has locked some other page(s) */
+/* On android, the maximim amount of memory that can be memlocked in 64k. This also
+ * seems to be a popular ulimit on linux distributions, containsers, etc. Therefore
+ * the default heap size is chosen as 48K, which is either 4 (with 4k page size)
+ * or 1 (with 16k page size) page less than the max. We choose to allocate slightly
+ * less than the max just in case the app has locked some other page(s). This
+ * initial allocation should be enough to support at least 10 concurrent
+ * sqlcipher-enabled database connections at the same time without requiring any
+ * overflow allocations */
 #define SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT 49152
-#else
-/* On non-android platforms we'll attempt to allocate and lock a larger private heap 
- * of around 128k instead. */
-#define SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT 131072
-#endif
 #endif
 /* if default allocation fails, we'll reduce the size by this amount
  * and try again. This is also the minimium of the private heap. The minimum
