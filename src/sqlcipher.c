@@ -1416,13 +1416,13 @@ static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) 
 
 static void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_set_error %d", error);
-  sqlite3pager_error(ctx->pBt->pBt->pPager, error);
+  sqlite3pager_error(sqlite3BtreePager(ctx->pBt), error);
   ctx->pBt->pBt->db->errCode = error;
   ctx->error = error;
 }
 
 static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
-  sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
+  sqlite3_file *fd = sqlite3PagerFile(sqlite3BtreePager(ctx->pBt));
 
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
     return SQLITE_OK; /* don't reload salt when not needed */
@@ -1971,7 +1971,7 @@ static int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, ch
   int rc = 0;
   char *result;
   unsigned char *hmac_out = NULL;
-  sqlite3_file *fd = sqlite3PagerFile(ctx->pBt->pBt->pPager);
+  sqlite3_file *fd = sqlite3PagerFile(sqlite3BtreePager(ctx->pBt));
   i64 file_sz;
 
   Vdbe *v = sqlite3GetVdbe(pParse);
@@ -2005,7 +2005,7 @@ static int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, ch
     int read_sz = ctx->page_sz;
 
     /* skip integrity check on PAGER_SJ_PGNO since it will have no valid content */
-    if(sqlite3pager_is_sj_pgno(ctx->pBt->pBt->pPager, page)) continue;
+    if(sqlite3pager_is_sj_pgno(sqlite3BtreePager(ctx->pBt), page)) continue;
 
     if(page==1) {
       int page1_offset = ctx->plaintext_header_sz ? ctx->plaintext_header_sz : FILE_HEADER_SZ;
@@ -2170,8 +2170,8 @@ migrate:
   SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_KEY_USED);
   sqlcipherCodecAttach(db, 0, keyspec, keyspec_sz);
   
-  srcfile = sqlite3PagerFile(pSrc->pBt->pPager);
-  destfile = sqlite3PagerFile(pDest->pBt->pPager);
+  srcfile = sqlite3PagerFile(sqlite3BtreePager(pSrc));
+  destfile = sqlite3PagerFile(sqlite3BtreePager(pDest));
 
   sqlite3OsClose(srcfile);
   sqlite3OsClose(destfile); 
@@ -2213,7 +2213,7 @@ migrate:
     goto handle_error;
   }
 
-  sqlite3pager_reset(pDest->pBt->pPager);
+  sqlite3pager_reset(sqlite3BtreePager(pDest));
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: reset pager");
 
 handle_error:
@@ -2249,7 +2249,7 @@ handle_error:
 
   if(rc != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: an error occurred attempting to migrate the database - last error %d", rc);
-    sqlite3pager_reset(ctx->pBt->pBt->pPager);
+    sqlite3pager_reset(sqlite3BtreePager(ctx->pBt));
     ctx->error = rc; /* set flag for deferred error */
   }
 
@@ -2551,7 +2551,7 @@ static int codec_set_pass_key(sqlite3* db, int nDb, const void *zKey, int nKey, 
   struct Db *pDb = &db->aDb[nDb];
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "codec_set_pass_key: db=%p nDb=%d for_ctx=%d", db, nDb, for_ctx);
   if(pDb->pBt) {
-    codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+    codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(sqlite3BtreePager(pDb->pBt));
 
     if(ctx) {
       return sqlcipher_codec_ctx_set_pass(ctx, zKey, nKey, for_ctx);
@@ -2570,7 +2570,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
   int rc;
 
   if(pDb->pBt) {
-    ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+    ctx = (codec_ctx*) sqlcipherPagerGetCodec(sqlite3BtreePager(pDb->pBt));
   }
 
   if(sqlite3_stricmp(zLeft, "key") !=0 && sqlite3_stricmp(zLeft, "rekey") != 0) {
@@ -3544,9 +3544,9 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       int rc, page_count;
       Pgno pgno;
       PgHdr *page;
-      Pager *pPager = pDb->pBt->pBt->pPager;
+      Pager *pPager = sqlite3BtreePager(pDb->pBt);
 
-      ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+      ctx = (codec_ctx*) sqlcipherPagerGetCodec(pPager);
      
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
@@ -3617,7 +3617,7 @@ void sqlcipherCodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
   struct Db *pDb = &db->aDb[nDb];
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipherCodecGetKey:db=%p, nDb=%d", db, nDb);
   if( pDb->pBt ) {
-    codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(pDb->pBt->pBt->pPager);
+    codec_ctx *ctx = (codec_ctx*) sqlcipherPagerGetCodec(sqlite3BtreePager(pDb->pBt));
     
     if(ctx) {
       /* if the key has not been derived yet, or the key is stored (vi PRAGMA cipher_store_pass)
