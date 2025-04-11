@@ -368,12 +368,12 @@ sqlite3_mutex* sqlcipher_mutex(int mutex) {
 }
 
 static void sqlcipher_atexit(void) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()\n", __func__);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()", __func__);
   sqlcipher_extra_shutdown();
 }
 
 static void sqlcipher_fini(void) {
-  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()\n", __func__);
+  sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()", __func__);
   sqlcipher_extra_shutdown();
 }
 
@@ -382,7 +382,7 @@ static void sqlcipher_fini(void) {
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   switch (fdwReason) {
     case DLL_PROCESS_DETACH:
-      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()\n", __func__);
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()", __func__);
       sqlcipher_extra_shutdown();
       break;
     default:
@@ -630,7 +630,7 @@ void sqlcipher_extra_shutdown(void) {
     if(used > 0) {
       /* don't free the heap so that sqlite treats this as unfreed memory */ 
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, 
-        "%s: SQLCipher private heap unfreed memory %u bytes in %d allocations\n", __func__, used, i);
+        "%s: SQLCipher private heap unfreed memory %u bytes in %d allocations", __func__, used, i);
     } else {
       sqlcipher_internal_free(private_heap, private_heap_sz);
       private_heap = NULL;
@@ -3210,7 +3210,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #ifdef SQLCIPHER_TEST
       if((cipher_test_flags & TEST_FAIL_DECRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
-        sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3Codec: simulating decryption failure for pgno=%d, mode=%d, ctx->page_sz=%d\n", pgno, mode, ctx->page_sz);
+        sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3Codec: simulating decryption failure for pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
       }
 #endif
       if(rc != SQLITE_OK) {
@@ -3251,7 +3251,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
 #ifdef SQLCIPHER_TEST
       if((cipher_test_flags & TEST_FAIL_ENCRYPT) > 0 && sqlcipher_get_test_fail()) {
         rc = SQLITE_ERROR;
-        sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3Codec: simulating encryption failure for pgno=%d, mode=%d, ctx->page_sz=%d\n", pgno, mode, ctx->page_sz);
+        sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3Codec: simulating encryption failure for pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
       }
 #endif
       if(rc != SQLITE_OK) {
