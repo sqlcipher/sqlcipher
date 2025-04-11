@@ -305,6 +305,12 @@ static u8* sqlcipher_shield_mask = NULL;
 
 static volatile size_t private_heap_sz = SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT;
 static u8* private_heap = NULL;
+static volatile size_t private_heap_used = 0; /* bytes currently used on private heap */
+static volatile size_t private_heap_hwm = 0; /* larged number of bytes used on the private heap at one time */
+static volatile size_t private_heap_alloc = 0; /* total bytes allocated on private heap over time */
+static volatile u32 private_heap_allocs = 0; /* total number of allocations on private heap over time */
+static volatile size_t private_heap_overflow = 0; /* total bytes overflowing private heap over time */
+static volatile u32 private_heap_overflows = 0; /* number of overlow allocations over time */
 
 /* to prevent excessive fragmentation blocks will
  * only be split if there are at least this many
@@ -639,6 +645,10 @@ void sqlcipher_extra_shutdown(void) {
     sqlcipher_internal_free(private_heap, private_heap_sz);
     private_heap = NULL;
 #endif
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY,
+        "%s: SQLCipher private heap stats: size=%u, hwm=%u, alloc=%u, allocs=%u, overflow=%u, overflows=%u", __func__,
+        private_heap_sz, private_heap_hwm, private_heap_alloc, private_heap_allocs, private_heap_overflow, private_heap_overflows
+    );
   }
 
   /* free all of sqlcipher's static mutexes */
@@ -675,7 +685,7 @@ void* sqlcipher_memset(void *v, unsigned char value, sqlite_uint64 len) {
 
   if (v == NULL) return v;
 
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_memset: setting %p[0-%llu]=%d)", a, len, value);
+  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_memset: setting %p[0-%u]=%d)", a, len, value);
   for(i = 0; i < len; i++) {
     a[i] = value;
   }
@@ -936,10 +946,19 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
   /* If we were unable to locate a free block large enough to service the request, the fallback
      behavior will simply attempt to allocate additional memory using malloc. */
   if(alloc == NULL) {
+    private_heap_overflow += size;
+    private_heap_overflows++;
     alloc = sqlcipher_internal_malloc(size);
-    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to allocate %llu bytes on private heap, allocated %p using sqlcipher_internal_malloc fallback", __func__, size, alloc);
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to allocate %u bytes on private heap, allocated %p using sqlcipher_internal_malloc fallback", __func__, size, alloc);
   } else {
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s allocated %llu bytes on private heap at %p", __func__, size, alloc);
+    private_heap_used += size;
+    if(private_heap_used > private_heap_hwm) {
+      /* if the current bytes allocated on the private heap are greater than the high water mark, set the HWM to the new amount */
+      private_heap_hwm = private_heap_used;
+    }
+    private_heap_alloc += size;
+    private_heap_allocs++;
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s allocated %u bytes on private heap at %p", __func__, size, alloc);
   }
 
   return alloc;
@@ -948,6 +967,7 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
 void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
   private_block *block = NULL, *prev = NULL;
   void *alloc = NULL;
+  u32 block_size = 0;
   block = (private_block *) private_heap;
 
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering SQLCIPHER_MUTEX_MEM", __func__);
@@ -962,6 +982,7 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
        on to the next block */
     if(mem == alloc) {
       block->is_used = 0;
+      block_size = block->size; /* retain the acual size of the block in use for stats adjustment */
       xoshiro_randomness(alloc, block->size);
 
       /* check whether the previous block is free, if so merge*/
@@ -995,10 +1016,11 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
      then it was allocated by the fallback mechanism and should
      be deallocated with free() */
   if(!block) {
-    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to find %p with %llu bytes on private heap, calling sqlcipher_internal_free fallback", __func__, mem, sz);
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to find %p with %u bytes on private heap, calling sqlcipher_internal_free fallback", __func__, mem, sz);
     sqlcipher_internal_free(mem, sz);
   } else {
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s freed %llu bytes on private heap at %p", __func__, sz, mem);
+    private_heap_used -= block_size;
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s freed %u bytes (%u total) on private heap at %p", __func__, sz, block_size, mem);
   }
 }
 
