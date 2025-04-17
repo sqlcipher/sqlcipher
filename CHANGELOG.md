@@ -3,9 +3,12 @@ Notable changes to this project are documented in this file.
 
 ## [unreleased] - (? 2025 - [unreleased changes])
 
-## [4.8.0] - (? 2025 - [4.8.0 changes])
+## [4.8.0] - (April 2025 - [4.8.0 changes])
 - Fixes regression in `PRAGMA cipher_migrate` where an error would be thrown when migrating a current-version database
 - Adds selective locking in critical sections of the library for shared cache connections (Note: use of shared cache is still strongly discouraged)
+- Standardizes initial private heap size to 48KB to ensure mlock under constrained limits
+- Removes changes to windows working set sizes
+- Improvements to logging of memory stats and other cleanup
 
 ## [4.7.0] - (March 2025 - [4.7.0 changes])
 - Updates baseline to upstream SQLite 3.49.1, including complete upstream SQLite refactoring of build system to use autosetup
@@ -284,9 +287,9 @@ __BREAKING CHANGE__: `SELECT` statements (now also including schema independent 
 - Change KDF iteration length from 4,000 to 64,000
 
 [unreleased]: https://github.com/sqlcipher/sqlcipher/tree/prerelease
-[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.2...prerelease
-[4.7.2]: https://github.com/sqlcipher/sqlcipher/tree/v4.7.2
-[4.7.2 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.0...v4.7.2
+[unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.8.0...prerelease
+[4.8.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.8.0
+[4.8.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.0...v4.8.0
 [4.7.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.7.0
 [4.7.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.6.1...v4.7.0
 [4.6.1]: https://github.com/sqlcipher/sqlcipher/tree/v4.6.1
