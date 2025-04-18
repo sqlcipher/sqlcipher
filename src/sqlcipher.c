@@ -208,15 +208,15 @@ struct private_block {
  * https://prng.di.unimi.it/ under the public domain via https://prng.di.unimi.it/xoshiro256plusplus.c
  * xoshiro is NEVER used for any cryptographic functions as CSPRNG. It is solely used for
  * generating random data for testing, debugging, and forensic purposes (overwriting memory segments) */
-static volatile uint64_t xoshiro_s[4];
+static volatile sqlite3_uint64 xoshiro_s[4];
 
-static inline uint64_t xoshiro_rotl(const uint64_t x, int k) {
+static inline sqlite3_uint64 xoshiro_rotl(const sqlite3_uint64 x, int k) {
   return (x << k) | (x >> (64 - k));
 }
 
-uint64_t xoshiro_next(void) {
-  volatile uint64_t result = xoshiro_rotl(xoshiro_s[0] + xoshiro_s[3], 23) + xoshiro_s[0];
-  volatile uint64_t t = xoshiro_s[1] << 17;
+sqlite3_uint64 xoshiro_next(void) {
+  volatile sqlite3_uint64 result = xoshiro_rotl(xoshiro_s[0] + xoshiro_s[3], 23) + xoshiro_s[0];
+  volatile sqlite3_uint64 t = xoshiro_s[1] << 17;
 
   xoshiro_s[2] ^= xoshiro_s[0];
   xoshiro_s[3] ^= xoshiro_s[1];
@@ -231,7 +231,7 @@ uint64_t xoshiro_next(void) {
 }
 
 static void xoshiro_randomness(unsigned char *ptr, int sz) {
-  volatile uint64_t val;
+  volatile sqlite3_uint64 val;
   volatile int to_copy;
   while (sz > 0) {
     val = xoshiro_next();
