@@ -3,6 +3,8 @@ Notable changes to this project are documented in this file.
 
 ## [unreleased] - (? 2025 - [unreleased changes])
 
+## [4.9.0] - (? 2025 - [4.9.0 changes])
+
 ## [4.8.0] - (April 2025 - [4.8.0 changes])
 - Fixes regression in `PRAGMA cipher_migrate` where an error would be thrown when migrating a current-version database
 - Adds selective locking in critical sections of the library for shared cache connections (Note: use of shared cache is still strongly discouraged)
@@ -288,6 +290,8 @@ __BREAKING CHANGE__: `SELECT` statements (now also including schema independent 
 
 [unreleased]: https://github.com/sqlcipher/sqlcipher/tree/prerelease
 [unreleased changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.8.0...prerelease
+[4.9.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.9.0
+[4.9.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.8.0...v4.9.0
 [4.8.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.8.0
 [4.8.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.7.0...v4.8.0
 [4.7.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.7.0
