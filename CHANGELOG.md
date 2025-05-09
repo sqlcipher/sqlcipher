@@ -3,8 +3,10 @@ Notable changes to this project are documented in this file.
 
 ## [unreleased] - (? 2025 - [unreleased changes])
 
-## [4.9.0] - (? 2025 - [4.9.0 changes])
-
+## [4.9.0] - (May 2025 - [4.9.0 changes])
+- Updates baseline to upstream SQLite 3.46.2
+- Removes use of static mutex in `sqlcipher_extra_shutdown()`
+ 
 ## [4.8.0] - (April 2025 - [4.8.0 changes])
 - Fixes regression in `PRAGMA cipher_migrate` where an error would be thrown when migrating a current-version database
 - Adds selective locking in critical sections of the library for shared cache connections (Note: use of shared cache is still strongly discouraged)
