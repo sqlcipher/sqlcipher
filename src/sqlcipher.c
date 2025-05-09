@@ -589,10 +589,6 @@ error:
 void sqlcipher_extra_shutdown(void) {
   int i = 0;
   sqlcipher_provider *provider = NULL;
-  sqlite3_mutex *mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER); 
-  if(mutex) {
-    sqlite3_mutex_enter(mutex);
-  }
 
   /* if sqlcipher hasn't been initialized or the shutdown already completed exit early */
   if(!sqlcipher_init || sqlcipher_shutdown) {
@@ -663,9 +659,6 @@ cleanup:
   sqlcipher_init = 0;
   sqlcipher_init_error = SQLITE_ERROR;
   sqlcipher_shutdown = 1;
-  if(mutex) {
-    sqlite3_mutex_leave(mutex);
-  }
 }
 
 static void sqlcipher_shield(unsigned char *in, int sz) {
