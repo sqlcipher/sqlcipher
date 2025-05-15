@@ -2566,7 +2566,7 @@ static int pager_playback_one_page(
 
     /* Decode the page just read from disk */
 /* BEGIN SQLCIPHER */
-#if SQLITE_HAS_CODEC
+#ifdef SQLITE_HAS_CODEC
     if( jrnlEnc ){ CODEC1(pPager, pData, pPg->pgno, 3, rc=SQLITE_NOMEM_BKPT); }
 #endif
 /* END SQLCIPHER */
@@ -4646,7 +4646,7 @@ static int subjournalPage(PgHdr *pPg){
       char *pData2;
 
 /* BEGIN SQLCIPHER */
-#if SQLITE_HAS_CODEC   
+#ifdef SQLITE_HAS_CODEC   
       if( !pPager->subjInMemory ){
         CODEC2(pPager, pData, pPg->pgno, 7, return SQLITE_NOMEM_BKPT, pData2);
       }else

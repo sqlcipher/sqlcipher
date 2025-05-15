@@ -383,7 +383,7 @@ static const char * const sqlite3azCompileOpt[] = {
   "FTS5_NO_WITHOUT_ROWID",
 #endif
 /* BEGIN SQLCIPHER */
-#if SQLITE_HAS_CODEC
+#ifdef SQLITE_HAS_CODEC
   "HAS_CODEC",
 #endif
 /* END SQLCIPHER */
