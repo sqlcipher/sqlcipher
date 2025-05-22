@@ -12,7 +12,8 @@
     "ios": "12.0",
     "osx": "10.13",
     "tvos": "12.0",
-    "watchos": "7.0"
+    "watchos": "7.0",
+    "visionos": "1.0"
   },
   "prepare_command": "./configure && make sqlite3.c",
   "requires_arc": false,
