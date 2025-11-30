@@ -43,7 +43,7 @@ Notable changes to this project are documented in this file.
 - Improves error handling in `sqlcipher_export()` and `PRAGMA cipher_migrate`
 - Allows setting custom compile-time default cryptographic provider via the `SQLCIPHER_CRYPTO_CUSTOM` macro
 - Removes support for end-of-life OpenSSL versions older than 3.0
-__BREAKING CHANGE__: `SELECT` statements (now also including schema independent queries like `SELECT 1`) cannot be executed on encrypt ed databases prior to setting the database key (behavior inherited from upstream SQLite)
+- __BREAKING CHANGE__: `SELECT` statements (now also including schema independent queries like `SELECT 1`) cannot be executed on encrypt ed databases prior to setting the database key (behavior inherited from upstream SQLite)
 - __BREAKING CHANGE__: Renames `configure` flag `--enable-tempstore=yes` to `--with-tempstore=yes` for alignment with SQLite (change required for upstream SQLite autosetup)
 - __BREAKING CHANGE__: Renames default executable and library build outputs from `sqlcipher` and `libsqlcipher` to `sqlite3` and `libsqlite3` (for alignment with SQLite)
 - __BREAKING CHANGE__: Removes `configure` flag `--with-crypto-lib` (replace with appropriate `-DSQLCIPHER_CRYPTO_*` CFLAG)
