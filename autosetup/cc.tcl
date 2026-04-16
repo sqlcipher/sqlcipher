@@ -692,6 +692,9 @@ proc cc-init {} {
 	} else {
 		# Try some reasonable options
 		set try [list [get-define cross]cc [get-define cross]gcc]
+		if {[get-define cross] ne ""} {
+			lappend try gcc cc
+		}
 	}
 	define CC [find-an-executable {*}$try]
 	if {[get-define CC] eq ""} {
