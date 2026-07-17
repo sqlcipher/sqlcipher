@@ -235,7 +235,10 @@ uint64_t xoshiro_next(void) {
   volatile uint64_t result, t;
   /* if the state has not been initialized (all zeros), seed */
   if(!(xoshiro_s[0] | xoshiro_s[1] | xoshiro_s[2] | xoshiro_s[3])) {
-    uint64_t a = (uint64_t)(uintptr_t) &xoshiro_s;
+    /* split assignment to a to avoid "relocation truncated to fit: R_X86_64_TPOFF32" error
+     * under GCC see issue #600 */
+    volatile uintptr_t a_addr = (uintptr_t) &xoshiro_s;
+    uint64_t a = (uint64_t) a_addr;
     xoshiro_s[0] = splitmix64(&a);
     xoshiro_s[1] = splitmix64(&a);
     xoshiro_s[2] = splitmix64(&a);
