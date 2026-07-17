@@ -40,6 +40,22 @@
 #include <openssl/hmac.h> /* amalgamator: dontcache */
 #include <openssl/err.h> /* amalgamator: dontcache */
 
+/*
+ * This is a reference implementation of the sqlcipher_provider interface
+ * for OpenSSL. It is intended to be absolutely minimal, i.e.  small,
+ * simple, easily auditable, and infrequently changed. This makes it a
+ * good starting place for anyone writing their own provider. Note that this
+ * implementation is intentionally non-optimized and raw performance
+ * is deliberately not a goal for this file. Please don't send patches/PRs or
+ * open issues proposing performance changes to this file.
+ *
+ * If your use case requires a faster or more heavily optimized provider
+ * you are welcome and encouraged to write one using this as a template and
+ * referring to the sqlcipher_provider definition in sqlcipher.h. At compile time,
+ * set it as the default provider with SQLCIPHER_CRYPTO_CUSTOM and supply
+ * the provider source using EXTRA_SRC.
+ */
+
 static unsigned int openssl_init_count = 0;
 
 static void sqlcipher_openssl_log_errors() {
