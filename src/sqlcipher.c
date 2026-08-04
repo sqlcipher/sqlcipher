@@ -2577,11 +2577,40 @@ static char *sqlcipher_get_log_sources_str(unsigned int source) {
 #define FILETIME_1970 116444736000000000ull /* seconds between 1/1/1601 and 1/1/1970 */
 #define HECTONANOSEC_PER_SEC 10000000ull
 #define MAX_LOG_LEN 8192
+
+#ifdef _WIN32
+#ifdef _MSC_VER
+#define SQLCIPHER_TLS __declspec(thread)
+#else
+#define SQLCIPHER_TLS __thread
+#endif
+/* Guards against unbounded same-thread reentrancy through the console log
+   sink. On Windows, sqlcipher_fprintf converts messages to UTF-16 by
+   allocating through sqlite3_vmprintf and sqlite3_malloc. When
+   cipher_memory_security is enabled those allocations go through the locked
+   allocator, whose VirtualLock call can fail once the process working-set
+   quota is exhausted (commonly observed as "VirtualLock() returned 0
+   LastError=1453"). That failure is itself logged, and writing the warning
+   allocates again, fails again, and logs again, recursing until the stack
+   overflows. Messages emitted while this thread is already inside
+   sqlcipher_log are therefore dropped. */
+static SQLCIPHER_TLS int sqlcipher_log_active = 0;
+#endif
+
 void sqlcipher_log(unsigned int level, unsigned int source, const char *message, ...) {
   va_list params;
-  va_start(params, message);
   char formatted[MAX_LOG_LEN];
   size_t len = 0;
+
+#ifdef _WIN32
+  if(sqlcipher_log_active) {
+    /* re-entered from within the log sink's own allocation path */
+    return;
+  }
+  sqlcipher_log_active = 1;
+#endif
+
+  va_start(params, message);
 
 #ifdef CODEC_DEBUG
 #if defined(SQLCIPHER_OMIT_LOG_DEVICE) || (!defined(__ANDROID__) && !defined(__APPLE__))
@@ -2653,6 +2682,9 @@ void sqlcipher_log(unsigned int level, unsigned int source, const char *message,
 
 end:
   va_end(params);
+#ifdef _WIN32
+  sqlcipher_log_active = 0;
+#endif
 }
 #endif
 
