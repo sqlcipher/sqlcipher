@@ -57,5 +57,29 @@ do_test verify-memory-security {
 db close
 file delete -force test.db
 
+# make sure the memory security log path does not
+# cause recursion on windows in a situation where
+# virtuallock fails and then calls the logger again
+# (this would crash on windows for unfixed versions of
+# SQLCipher)
+do_test verify-memory-security-log-path {
+    sqlite_orig db
+    execsql {
+      PRAGMA cipher_log_level = INFO;
+      PRAGMA cipher_log = stderr;
+      CREATE TEMP TABLE t1(a);
+      WITH RECURSIVE
+        cnt(x) AS (
+          VALUES(1) UNION ALL SELECT x+1 FROM cnt WHERE x<100
+        ), rows AS (
+          SELECT cnt.x, randomblob(2048) AS a FROM cnt
+      )
+      INSERT INTO t1(a) SELECT a FROM rows;
+      SELECT length(a) FROM t1 order by a limit 1;
+      PRAGMA cipher_log_level = WARN;
+    }
+} {INFO 0 2048 WARN}
+db close
+
 finish_test
 
