@@ -2692,7 +2692,7 @@ void sqlcipher_log(unsigned int level, unsigned int source, const char *message,
     struct timeval tv;
     gettimeofday(&tv, NULL);
     sec = tv.tv_sec;
-    s = tv.tv_usec/1000.0;
+    ms = tv.tv_usec/1000.0;
     localtime_r(&sec, &tt);
 #endif
     if(strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tt)) {
