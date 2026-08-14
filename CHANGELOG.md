@@ -1,7 +1,12 @@
 # SQLCipher Change Log
 Notable changes to this project are documented in this file.
 
-## [4.18.0] - (? 2026 - [4.18.0 changes])
+## [4.18.0] - (August 2026 - [4.18.0 changes])
+- Update baseline to SQLite 3.53.4
+- Add comment clarifying intent of `crypto_openssl.c`
+- Fix relocation truncated to fit error for optimized GCC builds
+- Avoid allocating memory on Windows during log writes which could cause a crash on Windows
+  under non-default log settings with `PRAGMA cipher_memory_security = ON`
 
 ## [4.17.0] - (July 2026 - [4.17.0 changes])
 - Update baseline to SQLite 3.53.3
