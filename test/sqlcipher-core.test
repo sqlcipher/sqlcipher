@@ -101,6 +101,12 @@ do_test will-open-with-correct-derived-hexkey {
 db close
 file delete -force test.db
 
+# verify an invalid hexkey query parameter will report an error
+file delete -force test.db
+do_test hexkey-uri-invalid-fails-to-open {
+  list [catch { sqlite_orig db "file:test.db?hexkey=zz" } msg] $msg
+} {1 {bad parameter or other API misuse}}
+file delete -force test.db
 
 # run test with sqlite3_key function directly
 setup test.db "'testkey'"

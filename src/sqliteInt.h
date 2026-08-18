@@ -5014,9 +5014,9 @@ int sqlite3ParseUri(const char*,const char*,unsigned int*,
                     sqlite3_vfs**,char**,char **);
 /* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
-  int sqlite3CodecQueryParameters(sqlite3*,const char*,const char*);
+  int sqlite3CodecQueryParameters(sqlite3*,const char*,const char*,int*);
 #else
-# define sqlite3CodecQueryParameters(A,B,C) 0
+# define sqlite3CodecQueryParameters(A,B,C,D) 0
 #endif
 /* END SQLCIPHER */
 Btree *sqlite3DbNameToBtree(sqlite3*,const char*);

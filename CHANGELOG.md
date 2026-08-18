@@ -2,6 +2,7 @@
 Notable changes to this project are documented in this file.
 
 ## [4.19.0] - (? 2026 - [4.19.0 changes])
+- Report an error if a database is opened with an invalid hexkey URI parameter 
 
 ## [4.18.0] - (August 2026 - [4.18.0 changes])
 - Update baseline to SQLite 3.53.4

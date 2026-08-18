@@ -233,6 +233,7 @@ static void attachFunc(
     extern void sqlcipherCodecGetKey(sqlite3*, int, void**, int*);
     extern void sqlcipher_free(void*, sqlite3_uint64);
     int nKey;
+    int seen;
     char *zKey;
     int t = sqlite3_value_type(argv[2]);
     switch( t ){
@@ -259,7 +260,8 @@ static void attachFunc(
       case SQLITE_NULL:
         /* No key specified.  Use the key from URI filename, or if none,
         ** use the key from the main database. */
-        if( sqlite3CodecQueryParameters(db, zName, zPath)==0 ){
+        rc = sqlite3CodecQueryParameters(db, zName, zPath, &seen);
+        if( rc==SQLITE_OK && seen==0 ){
           sqlcipherCodecGetKey(db, 0, (void**)&zKey, &nKey);
           if( nKey || sqlite3BtreeGetRequestedReserve(db->aDb[0].pBt)>0 ){
             rc = sqlcipherCodecAttach(db, db->nDb-1, zKey, nKey);
