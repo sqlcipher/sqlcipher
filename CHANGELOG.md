@@ -4,6 +4,10 @@ Notable changes to this project are documented in this file.
 ## [4.19.0] - (? 2026 - [4.19.0 changes])
 - Report an error if a database is opened with an invalid hexkey URI parameter 
 
+__IMPORTANT NOTE__: This release contains API, ABI, or library behavioral changes. 
+Library integrators that manage `SONAME` are advised to update the version at build time 
+using `-soname` or `./configure --soname` for this release.
+
 ## [4.18.0] - (August 2026 - [4.18.0 changes])
 - Update baseline to SQLite 3.53.4
 - Add comment clarifying intent of `crypto_openssl.c`
