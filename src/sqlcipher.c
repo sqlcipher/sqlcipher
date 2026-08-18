@@ -370,10 +370,16 @@ static void *sqlcipher_internal_malloc(sqlite_uint64);
 /*
 **  Simple shared routines for converting hex char strings to binary data
  */
-static int cipher_hex2int(char c) {
-  return (c>='0' && c<='9') ? (c)-'0' :
-         (c>='A' && c<='F') ? (c)-'A'+10 :
-         (c>='a' && c<='f') ? (c)-'a'+10 : 0;
+static int cipher_hex2int(unsigned char c) {
+  volatile int ch  = c;
+  volatile int ret = -1;
+  /* if (ch > '0'-1 && ch < '9'+1) ret += ch - '0' + 1; */
+  ret += (((('0'-1) - ch) & (ch - ('9'+1))) >> 8) & (ch + (1 - '0'));
+  /* case insensitive */
+  ch |= 0x20;
+  /* if (ch > 'a'-1 && ch < 'f'+1) ret += ch - 'a' + 10 + 1; */
+  ret += (((('a'-1) - ch) & (ch - ('f'+1))) >> 8) & (ch + (10 + 1 - 'a'));
+  return ret;
 }
 
 static void cipher_hex2bin(const unsigned char *hex, int sz, unsigned char *out){
@@ -383,24 +389,28 @@ static void cipher_hex2bin(const unsigned char *hex, int sz, unsigned char *out)
   }
 }
 
-static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
-    int i;
-    for(i=0; i < sz; i++) {
-      sqlite3_snprintf(3, out + (i*2), "%02x", in[i]);
-    } 
+static char cipher_int2hex(unsigned int src) {
+  volatile unsigned int ret = src + '0';
+  /* if (in > '9') in += 'a' - '9' - 1; */
+  ret += (('9' - ret) >> 8) & ('a' - '9' - 1);
+  return (char) ret;
 }
 
-static int cipher_isHex(const unsigned char *hex, int sz){
+static void cipher_bin2hex(const unsigned char* in, int sz, char *out) {
   int i;
   for(i = 0; i < sz; i++) {
-    unsigned char c = hex[i];
-    if ((c < '0' || c > '9') &&
-        (c < 'A' || c > 'F') &&
-        (c < 'a' || c > 'f')) {
-      return 0;
-    }
+    unsigned char ch = in[i];
+    out[i*2+0] = cipher_int2hex(ch >> 4);
+    out[i*2+1] = cipher_int2hex(ch & 0xf);
   }
-  return 1;
+}
+
+static int cipher_is_invalid_hex(const unsigned char *hex, int sz) {
+  volatile int i, ret = 0;
+  for(i = 0; i < sz; i++) {
+    ret |= cipher_hex2int(hex[i]);
+  }
+  return ret >> 8;
 }
 
 sqlite3_mutex* sqlcipher_mutex(int mutex) {
@@ -1822,7 +1832,8 @@ error:
   * returns SQLITE_ERROR if the key could't be derived (for instance if pass is NULL or pass_sz is 0)
   */
 static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
-  int rc, raw_key_sz = 0, raw_salt_sz = 0, blob_format = 0, derive_hmac_key = 1;
+  int rc, raw_key_sz = 0, raw_salt_sz = 0, derive_hmac_key = 1;
+  volatile int not_blob_format = 1;
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: ctx->kdf_salt_sz=%d ctx->kdf_iter=%d ctx->fast_kdf_iter=%d ctx->key_sz=%d",
     __func__, ctx->kdf_salt_sz, ctx->kdf_iter, ctx->fast_kdf_iter, ctx->key_sz);
@@ -1843,40 +1854,41 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 
   /* raw hey hex encoded is 2x long */
   raw_key_sz = ctx->key_sz * 2;
-  raw_salt_sz = ctx->kdf_salt_sz *2;
+  raw_salt_sz = ctx->kdf_salt_sz * 2;
 
   /* raw key must be BLOB formatted:
-   * 1. greater than or equal to 5 characters long
+   * 1. a valid size
    * 2. starting with x'
    * 3. ending with '
-   * 4. length of contents between the x' and ' must be a power of 2
-   * 5. contents must be hex */
-  blob_format =
-    c_ctx->pass_sz >= 5
-    && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0
-    && c_ctx->pass[c_ctx->pass_sz - 1] == '\''
-    && (c_ctx->pass_sz - 3) % 2 == 0
-    && cipher_isHex(c_ctx->pass + 2, c_ctx->pass_sz - 3);
+   * 4. contents must be hex */
+  if(c_ctx->pass_sz == raw_key_sz + 3 ||
+     c_ctx->pass_sz == raw_key_sz + raw_salt_sz + 3 ||
+     c_ctx->pass_sz == raw_key_sz + raw_key_sz + raw_salt_sz + 3) {
+    not_blob_format  = 'x' ^ (c_ctx->pass[0] | 0x20); /* case insensitive */
+    not_blob_format |= '\'' ^ c_ctx->pass[1];
+    not_blob_format |= cipher_is_invalid_hex(c_ctx->pass + 2, c_ctx->pass_sz - 3);
+    not_blob_format |= '\'' ^ c_ctx->pass[c_ctx->pass_sz - 1];
+  }
 
-  if(blob_format && c_ctx->pass_sz == raw_key_sz + 3) {
-    /* option 1 - raw key consisting of only the encryption key */
+  if(not_blob_format == 0) {
     const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key only", __func__);
-    cipher_hex2bin(z, raw_key_sz, c_ctx->key);
-  } else if(blob_format && c_ctx->pass_sz == raw_key_sz + raw_salt_sz + 3) {
-    /* option 2 - raw key consisting of the encryption key and salt */
-    const unsigned char *z = c_ctx->pass + 2;
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key and salt", __func__);
-    cipher_hex2bin(z, raw_key_sz, c_ctx->key);
-    cipher_hex2bin(z + raw_key_sz, raw_salt_sz, ctx->kdf_salt);
-  } else if(blob_format && c_ctx->pass_sz == raw_key_sz + raw_key_sz + raw_salt_sz + 3) {
-    /* option 3 - raw key consisting of the encryption key, then hmac key, then salt */
-    const unsigned char *z = c_ctx->pass + 2;
-    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key, hmac key, and salt", __func__);
-    cipher_hex2bin(z, raw_key_sz, c_ctx->key);
-    cipher_hex2bin(z + raw_key_sz, raw_key_sz, c_ctx->hmac_key);
-    cipher_hex2bin(z + raw_key_sz + raw_key_sz, raw_salt_sz, ctx->kdf_salt);
-    derive_hmac_key = 0;
+    if(c_ctx->pass_sz == raw_key_sz + 3) {
+      /* option 1 - raw key consisting of only the encryption key */
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key only", __func__);
+      cipher_hex2bin(z, raw_key_sz, c_ctx->key);
+    } else if(c_ctx->pass_sz == raw_key_sz + raw_salt_sz + 3) {
+      /* option 2 - raw key consisting of the encryption key and salt */
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key and salt", __func__);
+      cipher_hex2bin(z, raw_key_sz, c_ctx->key);
+      cipher_hex2bin(z + raw_key_sz, raw_salt_sz, ctx->kdf_salt);
+    } else {
+      /* option 3 - raw key consisting of the encryption key, then hmac key, then salt */
+      sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: using raw key, hmac key, and salt", __func__);
+      cipher_hex2bin(z, raw_key_sz, c_ctx->key);
+      cipher_hex2bin(z + raw_key_sz, raw_key_sz, c_ctx->hmac_key);
+      cipher_hex2bin(z + raw_key_sz + raw_key_sz, raw_salt_sz, ctx->kdf_salt);
+      derive_hmac_key = 0;
+    }
   } else {
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: deriving key using PBKDF2 with %d iterations", __func__, ctx->kdf_iter);
     if((rc = ctx->provider->kdf(ctx->provider_ctx, ctx->kdf_algorithm, c_ctx->pass, c_ctx->pass_sz,
