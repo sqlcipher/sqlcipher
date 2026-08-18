@@ -1,6 +1,8 @@
 # SQLCipher Change Log
 Notable changes to this project are documented in this file.
 
+## [4.19.0] - (? 2026 - [4.19.0 changes])
+
 ## [4.18.0] - (August 2026 - [4.18.0 changes])
 - Update baseline to SQLite 3.53.4
 - Add comment clarifying intent of `crypto_openssl.c`
@@ -355,6 +357,8 @@ Notable changes to this project are documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
+[4.19.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.19.0
+[4.19.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.18.0
 [4.18.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.17.0...v4.18.0
 [4.17.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.17.0
