@@ -2739,6 +2739,7 @@ static int sqlcipher_set_log(const char *destination){
 
 static void sqlcipher_vdbe_return_string(Parse *pParse, const char *zLabel, const char *value, int value_type){
   Vdbe *v = sqlite3GetVdbe(pParse);
+  if(!value) return;
   sqlite3VdbeSetNumCols(v, 1);
   sqlite3VdbeSetColName(v, 0, COLNAME_NAME, zLabel, SQLITE_STATIC);
   sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, value, value_type);
