@@ -7,6 +7,7 @@ Notable changes to this project are documented in this file.
 - Fix escaping of migration file names
 - Fix escaping of database aliases in `sqlcipher_export()`
 - Avoid returning NULL rows when from `cipher_settings` if allocation fails
+- Avoid leaking partially initialized context if an initialization error occurs
 
 __IMPORTANT NOTE__: This release contains API, ABI, or library behavioral changes. 
 Library integrators that manage `SONAME` are advised to update the version at build time 
