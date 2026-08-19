@@ -3,6 +3,7 @@ Notable changes to this project are documented in this file.
 
 ## [4.19.0] - (? 2026 - [4.19.0 changes])
 - Report an error if a database is opened with an invalid hexkey URI parameter 
+- Include provider error code in KDF error message
 
 __IMPORTANT NOTE__: This release contains API, ABI, or library behavioral changes. 
 Library integrators that manage `SONAME` are advised to update the version at build time 
