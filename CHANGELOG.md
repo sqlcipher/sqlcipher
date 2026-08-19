@@ -5,6 +5,7 @@ Notable changes to this project are documented in this file.
 - Report an error if a database is opened with an invalid hexkey URI parameter 
 - Include provider error code in KDF error message
 - Fix escaping of migration file names
+- Fix escaping of database aliases in `sqlcipher_export()`
 
 __IMPORTANT NOTE__: This release contains API, ABI, or library behavioral changes. 
 Library integrators that manage `SONAME` are advised to update the version at build time 

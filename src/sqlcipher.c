@@ -4051,7 +4051,7 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
   */
   zSql = sqlite3_mprintf(
     "SELECT sql "
-    "  FROM %s.sqlite_schema WHERE type='table' AND name!='sqlite_sequence'"
+    "  FROM \"%w\".sqlite_schema WHERE type='table' AND name!='sqlite_sequence'"
     "   AND rootpage>0"
   , sourceDb);
   rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
@@ -4060,7 +4060,7 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
 
   zSql = sqlite3_mprintf(
     "SELECT sql "
-    "  FROM %s.sqlite_schema WHERE sql LIKE 'CREATE INDEX %%' "
+    "  FROM \"%w\".sqlite_schema WHERE sql LIKE 'CREATE INDEX %%' "
   , sourceDb);
   rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
   if( rc!=SQLITE_OK ) goto end_of_export;
@@ -4068,7 +4068,7 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
 
   zSql = sqlite3_mprintf(
     "SELECT sql "
-    "  FROM %s.sqlite_schema WHERE sql LIKE 'CREATE UNIQUE INDEX %%'"
+    "  FROM \"%w\".sqlite_schema WHERE sql LIKE 'CREATE UNIQUE INDEX %%'"
   , sourceDb);
   rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
   if( rc!=SQLITE_OK ) goto end_of_export;
@@ -4078,10 +4078,18 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
   ** an "INSERT INTO rekey_db.xxx SELECT * FROM main.xxx;" to copy
   ** the contents to the temporary database.
   */
+  /* This block and the following one are modified from the standard escaping using
+   * \"%w\" to instead use quote() around the internal SQL statement that is generated
+   * for execution by execExecSql. this unfortunately relies on the non-standard
+   * behavior (albeit which is also used for the table name) where "SQLite will sometimes bend the
+   * quoting rules" such that "If a keyword in single quotes (ex: 'key' or 'glob') is used in a
+   * context where an identifier is allowed but where a string literal is not allowed, then
+   * the token is understood to be an identifier instead of a string literal."
+   * per https://www.sqlite.org/lang_keywords.html */
   zSql = sqlite3_mprintf(
-    "SELECT 'INSERT INTO %s.' || quote(name) "
-    "|| ' SELECT * FROM %s.' || quote(name) || ';'"
-    "FROM %s.sqlite_schema "
+    "SELECT 'INSERT INTO ' || quote(%Q) || '.' || quote(name) "
+    "|| ' SELECT * FROM ' || quote(%Q) || '.' || quote(name) || ';'"
+    "FROM \"%w\".sqlite_schema "
     "WHERE type = 'table' AND name!='sqlite_sequence' "
     "  AND rootpage>0"
   , targetDb, sourceDb, sourceDb);
@@ -4092,9 +4100,9 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
   /* Copy over the contents of the sequence table
   */
   zSql = sqlite3_mprintf(
-    "SELECT 'INSERT INTO %s.' || quote(name) "
-    "|| ' SELECT * FROM %s.' || quote(name) || ';' "
-    "FROM %s.sqlite_schema WHERE name=='sqlite_sequence';"
+    "SELECT 'INSERT INTO ' || quote(%Q) || '.' || quote(name) "
+    "|| ' SELECT * FROM ' || quote(%Q) || '.' || quote(name) || ';' "
+    "FROM \"%w\".sqlite_schema WHERE name=='sqlite_sequence';"
   , targetDb, sourceDb, targetDb);
   rc = (zSql == NULL) ? SQLITE_NOMEM : sqlcipher_execExecSql(db, &pzErrMsg, zSql); 
   if( rc!=SQLITE_OK ) goto end_of_export;
@@ -4106,9 +4114,9 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
   ** from the SQLITE_MASTER table.
   */
   zSql = sqlite3_mprintf(
-    "INSERT INTO %s.sqlite_schema "
+    "INSERT INTO \"%w\".sqlite_schema "
     "  SELECT type, name, tbl_name, rootpage, sql"
-    "    FROM %s.sqlite_schema"
+    "    FROM \"%w\".sqlite_schema"
     "   WHERE type='view' OR type='trigger'"
     "      OR (type='table' AND rootpage=0)"
   , targetDb, sourceDb);

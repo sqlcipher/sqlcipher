@@ -1526,6 +1526,34 @@ do_test migrate-quote-in-filename {
 db close
 file delete -force {"a test'ing--db".db} {"a test'ing--db".db-migrated}
 
+# verify escaping of database alias names in sqlcipher_export
+do_test export-alias-quoting-1 {
+  sqlite_orig db test.db
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES(1,2);
+    ATTACH DATABASE 'aux.db' AS "aux WHERE 1=1 --";
+    SELECT sqlcipher_export('aux WHERE 1=1 --');
+    SELECT count(*) FROM "aux WHERE 1=1 --".sqlite_master;
+    SELECT count(*) FROM "aux WHERE 1=1 --".t1;
+  }
+} {{} 1 1}
+db close
+file delete -force test.db aux.db
+
+do_test export-alias-quoting-2 {
+  sqlite_orig db test.db
+  execsql {
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES(1,2);
+    ATTACH DATABASE '"a test''ing--db".db' AS """a test'ing--db"".db";
+    SELECT sqlcipher_export('"a test''ing--db".db');
+    SELECT count(*) FROM """a test'ing--db"".db".sqlite_master;
+    SELECT count(*) FROM """a test'ing--db"".db".t1;
+  }
+} {{} 1 1}
+db close
+file delete -force test.db {"""a test'ing--db"".db".db}
 
 sqlite3_test_control_pending_byte $old_pending_byte
 
