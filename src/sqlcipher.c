@@ -2204,7 +2204,7 @@ migrate:
   sqlite3_free(temp);
   temp = NULL;
 
-  if(!(attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate;", migrated_db_filename))) {
+  if(!(attach_command = sqlite3_mprintf("ATTACH DATABASE %Q as migrate;", migrated_db_filename))) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate attach command", __func__);
     rc = SQLITE_NOMEM;
     goto handle_error;

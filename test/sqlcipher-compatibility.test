@@ -1514,6 +1514,19 @@ do_test test-full-keyspec {
 db close
 file delete -force test.db
 
+# verify that cipher migrate will escape a quote in a file name
+do_test migrate-quote-in-filename {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db {"a test'ing--db".db}
+  sqlite_orig db {"a test'ing--db".db}
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_migrate;
+  }
+} {ok 0}
+db close
+file delete -force {"a test'ing--db".db} {"a test'ing--db".db-migrated}
+
+
 sqlite3_test_control_pending_byte $old_pending_byte
 
 finish_test
