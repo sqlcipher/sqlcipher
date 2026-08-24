@@ -1465,8 +1465,12 @@ static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) 
 
 static void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_set_error %d", error);
-  sqlite3pager_error(sqlite3BtreePager(ctx->pBt), error);
+  sqlite3BtreeEnter(ctx->pBt);
+  if(ctx->pBt->pBt->inTransaction != TRANS_WRITE) {
+    ctx->pBt->pBt->btsFlags |= BTS_READ_ONLY;
+  }
   ctx->pBt->pBt->db->errCode = error;
+  sqlite3BtreeLeave(ctx->pBt);
   ctx->error = error;
 }
 
@@ -3481,7 +3485,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3Codec: pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
 
   if(ctx->error != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d", __func__, ctx->error);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d mode=%d", __func__, ctx->error, mode);
     sqlcipher_codec_ctx_set_error(ctx, ctx->error);
     /* if this is a read, we don't want to return NULL as it will be interpreted as a SQLITE_NOMEM condition,
      * so instead return a zeroed out buffer that will fail the magic header check */
@@ -3704,11 +3708,17 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
   if(rc != SQLITE_OK) {
     /* initialization failed, do not attach potentially corrupted context */
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: context initialization failed, forcing error state with rc=%d", __func__, rc);
-    /* force an error at the pager level, such that even the upstream caller ignores the return code
-       the pager will be in an error state and will process no further operations */
-    sqlite3pager_error(pPager, rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: context initialization failed, forcing error state with rc=%d inTransaction=%d", __func__, rc, pDb->pBt->pBt->inTransaction);
+    /* if an init failure occurs at this point try to make the database read only. if a 
+     * write transaction is already open, then we use the nuclear option of forcing the pager into a blocking error state */
+    sqlite3BtreeEnter(pDb->pBt);
+    if(pDb->pBt->pBt->inTransaction != TRANS_WRITE) {
+      pDb->pBt->pBt->btsFlags |= BTS_READ_ONLY;
+    } else {
+      sqlite3pager_error(pPager, rc); 
+    }
     pDb->pBt->pBt->db->errCode = rc;
+    sqlite3BtreeLeave(pDb->pBt);
     goto cleanup;
   }
 

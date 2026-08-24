@@ -1108,5 +1108,162 @@ do_test cipher-status-badkey {
 db close
 file delete -force test.db
 
+# test that an initialization failure which can't attach
+# the context will leave the database unusuable (at least
+# for writes) to prevent an unencrypted database from being
+# created
+do_test init-failure-blocks-db-use {
+  sqlite_orig db test.db
+  set rc {}
+
+  lappend rc [catchsql {
+    PRAGMA cipher_default_page_size = 123;
+    PRAGMA key = 'test';
+  }]
+
+  lappend rc [catchsql {
+    CREATE TABLE t1(a,b);
+  }]
+
+  lappend rc [execsql {
+    SELECT * FROM sqlite_master;
+  }]
+
+  db close
+
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA cipher_default_page_size = 4096;
+  }
+
+  set rc
+} {{1 {An error occurred with PRAGMA key or rekey. PRAGMA key requires a key of one or more characters. PRAGMA rekey can only be run on an existing encrypted database. Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.}} {1 {attempt to write a readonly database}} {}}
+db close
+file delete -force test.db
+
+foreach mode {delete wal} {
+  do_test init-failure-blocks-db-use-txn-$mode {
+    sqlite_orig db test.db
+    set rc {}
+
+    lappend rc [catchsql {
+      PRAGMA cipher_default_page_size = 123;
+      BEGIN IMMEDIATE;
+      PRAGMA key = 'test';
+    }]
+
+    lappend rc [catchsql {
+      CREATE TABLE t1(a,b);
+      COMMIT;
+    }]
+
+    lappend rc [catchsql {
+      SELECT * FROM sqlite_master;
+    }]
+
+    db close
+
+    sqlite_orig db :memory:
+    execsql {
+      PRAGMA cipher_default_page_size = 4096;
+    }
+    set rc
+  } {{1 {An error occurred with PRAGMA key or rekey. PRAGMA key requires a key of one or more characters. PRAGMA rekey can only be run on an existing encrypted database. Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.}} {1 {SQL logic error}} {1 {SQL logic error}}}
+  db close
+  file delete -force test.db
+}
+
+# test that an error condition that occurs later in the
+# lifecycle (after the context has been initialized,
+# attached and loaded) will render the handle unable
+# for writes
+do_test post-init-failure-blocks-db-use-autocommit {
+  sqlite_orig db test.db
+  set rc {}
+
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  }
+
+  lappend rc [catchsql {
+    PRAGMA cipher_hmac_algorithm = 'DNE';
+  }]
+
+  lappend rc [catchsql {
+    CREATE TABLE t2(a,b);
+  }]
+
+  lappend rc [execsql {
+    SELECT count(*) FROM t1;
+  }]
+
+  set rc
+} {{0 {}} {1 {attempt to write a readonly database}} 1}
+db close
+file delete -force test.db
+
+# test that an error condition that occurs later in the
+# lifecycle (after the context has been initialized,
+# attached and loaded) but inside a transacton
+# will render the handle unable
+# for writes and that reopening the database will
+# restore previous state correctly. This will be doe
+# by starting up a transaction inserting abunch of
+# data spilled to disk, then triggering an error and
+# attempting commit. This should trigger the codec's
+# deferred error logic. Verify that reopening
+# restors the database to the consistant state
+foreach mode {delete wal} {
+
+  set exp "{1 {cannot commit - no transaction is active}}"
+  if {$mode == "wal"} {
+    set exp "{1 {out of memory}}"
+  }
+  do_test post-init-failure-blocks-db-use-txn-$mode {
+    sqlite_orig db test.db
+    set rc {}
+
+    execsql "
+      PRAGMA key = 'test';
+      PRAGMA journal_mode = $mode;
+      PRAGMA cache_size = 0;
+      CREATE TABLE t1(a,b);
+      INSERT INTO t1(a,b) VALUES (1,2);
+      BEGIN IMMEDIATE;
+    "
+
+    for {set i 1} {$i<=100} {incr i} {
+      execsql "INSERT INTO t1 VALUES($i, zeroblob(5000))"
+    }
+
+    lappend rc [catchsql {
+      PRAGMA cipher_hmac_algorithm = 'DNE';
+    }]
+
+    lappend rc [catchsql {
+      CREATE TABLE t2(a,b);
+    }]
+
+    lappend rc [catchsql {
+      COMMIT;
+    }]
+
+    db close
+    sqlite_orig db test.db
+
+    lappend rc [ execsql {
+      PRAGMA key = 'test';
+      SELECT count(*) FROM t1;
+      PRAGMA integrity_check;
+    }]
+
+    set rc
+  } "{0 {}} {1 {out of memory}} $exp {ok 1 ok}"
+  db close
+  file delete -force test.db
+}
+
 finish_test
 

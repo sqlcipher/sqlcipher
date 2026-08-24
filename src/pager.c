@@ -2518,6 +2518,10 @@ static int pager_playback_one_page(
 #ifdef SQLITE_HAS_CODEC
     if( !jrnlEnc ){
       CODEC2(pPager, aData, pgno, 7, rc=SQLITE_NOMEM_BKPT, aData);
+      if(rc!=SQLITE_OK){
+        if(pPg) sqlite3PcacheRelease(pPg);
+        return rc;
+      }
       rc = sqlite3OsWrite(pPager->fd, (u8 *)aData, pPager->pageSize, ofst);
       CODEC1(pPager, aData, pgno, 3, rc=SQLITE_NOMEM_BKPT);
     }else
@@ -2535,6 +2539,10 @@ static int pager_playback_one_page(
         CODEC1(pPager, aData, pgno, 3, rc=SQLITE_NOMEM_BKPT);
         sqlite3BackupUpdate(pPager->pBackup, pgno, (u8*)aData);
         CODEC2(pPager, aData, pgno, 7, rc=SQLITE_NOMEM_BKPT,aData);
+        if(rc!=SQLITE_OK){
+          if(pPg) sqlite3PcacheRelease(pPg);
+          return rc;
+        }
       }else
 #endif
 /* END SQLCIPHER */
