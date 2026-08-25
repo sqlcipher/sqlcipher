@@ -2862,7 +2862,15 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       sqlcipher_vdbe_return_string(pParse, "cipher_test_rand", rand, P4_DYNAMIC);
     }
   } else
-#endif
+#ifndef SQLCIPHER_OMIT_MALLOC
+  if( sqlite3_stricmp(zLeft, "cipher_test_private_heap_used")== 0 && !zRight ){
+    /* exposes a pragma to get the amount of memory currently allocated on the private heap
+     * so that the test suite can check for memory leaks after failed operations */
+    char *used = sqlite3_mprintf("%u", private_heap_used);
+    sqlcipher_vdbe_return_string(pParse, "cipher_test_private_heap_used", used, P4_DYNAMIC);
+  } else
+#endif /* SQLCIPHER_OMIT_MALLOC */
+#endif /* SQLCIPHER_TEST */
   if( sqlite3_stricmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
     if(ctx) {
       char *fips_mode_status = sqlite3_mprintf("%d", ctx->provider->fips_status(ctx->provider_ctx));

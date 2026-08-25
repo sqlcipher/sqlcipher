@@ -1265,5 +1265,31 @@ foreach mode {delete wal} {
   file delete -force test.db
 }
 
+
+# test that a failure to initialize the context does not
+# leak private heap memory
+do_test init-failure-no-mem-leak {
+  sqlite_orig db test.db
+  set rc {}
+
+  set start_heap [execsql {PRAGMA cipher_test_private_heap_used;}]
+  lappend rc [catchsql {
+    PRAGMA cipher_default_page_size = 123;
+    PRAGMA key = 'test';
+  }]
+  set stop_heap [execsql {PRAGMA cipher_test_private_heap_used;}]
+
+  db close
+
+  sqlite_orig db :memory:
+  execsql {
+    PRAGMA cipher_default_page_size = 4096;
+  }
+
+  lappend rc [expr { $stop_heap - $start_heap }]
+} {{1 {An error occurred with PRAGMA key or rekey. PRAGMA key requires a key of one or more characters. PRAGMA rekey can only be run on an existing encrypted database. Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.}} 0}
+db close
+file delete -force test.db
+
 finish_test
 
