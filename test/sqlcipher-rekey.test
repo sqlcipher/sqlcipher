@@ -272,4 +272,97 @@ db close
 file delete -force test.db
 file delete -force new.db
 
+# create a new database, insert multiple pages of data
+# set the cache size to zero to make sure writes
+# are immediately written, set the error flag
+# and allow it to rollback. 
+foreach mode {delete wal} {
+  do_test rekey-error-$mode {
+    sqlite_orig db test.db
+
+    set rc {}
+
+    execsql "
+      PRAGMA key = 'test';
+      PRAGMA journal_mode = $mode;
+      CREATE TABLE t1(a,b);
+      BEGIN;
+    "
+
+    for {set i 1} {$i<=5000} {incr i} {
+      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));"
+    }
+    execsql {
+      COMMIT;
+      PRAGMA wal_checkpoint(TRUNCATE);
+    }
+
+    lappend rc [execsql {
+      SELECT count(*) FROM t1;
+    }]
+
+    execsql {
+      PRAGMA cipher_test_on = fail_rekey;
+    }
+    
+    lappend rc [catchsql {
+      PRAGMA cache_size = 0;
+      PRAGMA rekey = 'test123';
+    }]
+
+    db close
+    sqlite_orig db test.db
+
+    # the transaction should have been rolled back
+    # so the old key should work
+    lappend rc [execsql {
+      PRAGMA key = 'test';
+      SELECT count(*) FROM t1;
+      PRAGMA integrity_check;
+      PRAGMA cipher_integrity_check;
+      PRAGMA cipher_test_off = fail_rekey;
+    }]
+
+  } {5000 {1 {An error occurred with PRAGMA key or rekey. PRAGMA key requires a key of one or more characters. PRAGMA rekey can only be run on an existing encrypted database. Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.}} {ok 5000 ok}}
+  db close
+  file delete -force test.db
+}
+
+# explicitly verify that if a rekey fails at the onset due to
+# a read only database, that an error is reported and
+# the key is unchanged
+do_test rekey-readonly {
+  set rc {}
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'test';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1 VALUES(1, 2);
+  }
+  db close
+
+  sqlite_orig db file:test.db?mode=ro
+  lappend rc [ catchsql {
+    PRAGMA key = 'test';
+    PRAGMA rekey = 'test2';
+  }] 
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [ catchsql {
+    PRAGMA key = 'test2';
+    SELECT * FROM t1;
+  }]
+
+  lappend rc [ execsql {
+    PRAGMA key = 'test';
+    SELECT * FROM t1;
+  }]
+  set rc
+} {{1 {An error occurred with PRAGMA key or rekey. PRAGMA key requires a key of one or more characters. PRAGMA rekey can only be run on an existing encrypted database. Use sqlcipher_export() and ATTACH to convert encrypted/plaintext databases.}} {1 {file is not a database}} {ok 1 2}}
+
+db close
+file delete -force test.db
+
 finish_test

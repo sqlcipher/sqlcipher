@@ -276,6 +276,7 @@ static void xoshiro_randomness(unsigned char *ptr, int sz) {
 #define TEST_FAIL_ENCRYPT 0x01
 #define TEST_FAIL_DECRYPT 0x02
 #define TEST_FAIL_MIGRATE 0x04
+#define TEST_FAIL_REKEY          0x08
 
 static volatile unsigned int cipher_test_flags = 0;
 static volatile int cipher_test_rand = 0;
@@ -2833,6 +2834,9 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       } else
       if(sqlite3_stricmp(zRight, "fail_migrate")==0) {
         SQLCIPHER_FLAG_SET(cipher_test_flags,TEST_FAIL_MIGRATE);
+      } else
+      if(sqlite3_stricmp(zRight, "fail_rekey")==0) {
+        SQLCIPHER_FLAG_SET(cipher_test_flags,TEST_FAIL_REKEY);
       }
     }
   } else
@@ -2846,6 +2850,9 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       } else
       if(sqlite3_stricmp(zRight, "fail_migrate")==0) {
         SQLCIPHER_FLAG_UNSET(cipher_test_flags,TEST_FAIL_MIGRATE);
+      } else
+      if(sqlite3_stricmp(zRight, "fail_rekey")==0) {
+        SQLCIPHER_FLAG_UNSET(cipher_test_flags,TEST_FAIL_REKEY);
       }
     }
   } else
@@ -3818,6 +3825,7 @@ int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
 ** 3. If there is a key present, re-encrypt the database with the new key
 */
 int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
+  int rc = SQLITE_ERROR, page_count;
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: db=%p zDb=%s", db, zDb);
 
   if(pKey && nKey < 0) {
@@ -3830,12 +3838,16 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   }
 
   if(db && pKey && nKey > 0) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering database mutex %p", __func__, db->mutex);
+    sqlite3_mutex_enter(db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered database mutex %p", __func__, db->mutex);
     int db_index = sqlcipher_find_db_index(db, zDb);
     struct Db *pDb = NULL;
 
     if(!(db_index >= 0 && db_index < db->nDb)) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: invalid database zDb=%p", __func__, zDb);
-      return SQLITE_MISUSE;
+      rc = SQLITE_MISUSE;
+      goto cleanup;
     }
 
     pDb = &db->aDb[db_index];
@@ -3843,7 +3855,6 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 
     if(pDb->pBt) {
       codec_ctx *ctx;
-      int rc, page_count;
       Pgno pgno;
       PgHdr *page;
       Pager *pPager = sqlite3BtreePager(pDb->pBt);
@@ -3853,12 +3864,9 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       if(ctx == NULL) { 
         /* there was no codec attached to this database, so this should do nothing! */ 
         sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: no codec attached to db %s: rekey can't be used on an unencrypted database", zDb);
-        return SQLITE_MISUSE;
+        rc = SQLITE_MISUSE;
+        goto cleanup;
       }
-
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: entering database mutex %p", db->mutex);
-      sqlite3_mutex_enter(db->mutex);
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: entered database mutex %p", db->mutex);
 
       codec_set_pass_key(db, db_index, pKey, nKey, CIPHER_WRITE_CTX);
     
@@ -3868,7 +3876,10 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
       ** 3. If that goes ok then commit and put ctx->rekey into ctx->key
       **    note: don't deallocate rekey since it may be used in a subsequent iteration 
       */
-      rc = sqlite3BtreeBeginTrans(pDb->pBt, 1, 0); /* begin write transaction */
+      if((rc = sqlite3BtreeBeginTrans(pDb->pBt, 1, 0)) != SQLITE_OK) { /* begin write transaction */
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to begin write transaction %d", __func__, rc);
+        goto cleanup;
+      } 
       sqlite3PagerPagecount(pPager, &page_count);
       for(pgno = 1; rc == SQLITE_OK && pgno <= (unsigned int)page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
         if(!sqlite3pager_is_sj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
@@ -3880,6 +3891,13 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
             } else {
              sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: error %d occurred writing page %d", rc, pgno);  
             }
+#ifdef SQLCIPHER_TEST
+            /* if testing rekey failure, error out half way through the rekey */
+            if(SQLCIPHER_FLAG_GET(cipher_test_flags, TEST_FAIL_REKEY) && pgno > (unsigned int)(page_count / 2)) {
+              sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: simulated rekey failure, error code %d", SQLITE_ERROR);
+              rc = SQLITE_ERROR;
+            }
+#endif
           } else {
              sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: error %d occurred reading page %d", rc, pgno);  
           }
@@ -3896,14 +3914,21 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
         sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK, 0);
       }
 
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: leaving database mutex %p", db->mutex);
-      sqlite3_mutex_leave(db->mutex);
-      sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlite3_rekey_v2: left database mutex %p", db->mutex);
     }
-    return SQLITE_OK;
+
+    goto cleanup;
   }
+
+  rc = SQLITE_MISUSE;
   sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlite3_rekey_v2: no key provided for db %s: rekey can't be used to decrypt an encrypted database", zDb);
-  return SQLITE_MISUSE;
+
+cleanup:
+  if(db) {
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving database mutex %p", __func__, db->mutex);
+    sqlite3_mutex_leave(db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left database mutex %p", __func__, db->mutex);
+  }
+  return rc;
 }
 
 /*
