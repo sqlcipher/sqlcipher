@@ -973,6 +973,7 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
   if(alloc) sqlcipher_memset(alloc, 0, size);
 #else
   private_block *block = NULL, *split = NULL;
+  size_t alloc_sz = 0;
 
   if(size < 1 || size > SQLITE_MAX_LENGTH) return NULL;
 
@@ -1010,6 +1011,8 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
            of the block, which will actually be larger than the requested amount */
         block->size = size;
       } 
+
+      alloc_sz = block->size; /* store the actual allocation here, consistent regardless of whether or not a split occurred */
     }
     block = block->next;
   }
@@ -1022,14 +1025,14 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
     alloc = sqlcipher_internal_malloc(size);
     sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "%s: unable to allocate %u bytes on private heap, allocated %p using sqlcipher_internal_malloc fallback", __func__, size, alloc);
   } else {
-    private_heap_used += size;
+    private_heap_used += alloc_sz;
     if(private_heap_used > private_heap_hwm) {
       /* if the current bytes allocated on the private heap are greater than the high water mark, set the HWM to the new amount */
       private_heap_hwm = private_heap_used;
     }
-    private_heap_alloc += size;
+    private_heap_alloc += alloc_sz;
     private_heap_allocs++;
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s allocated %u bytes on private heap at %p", __func__, size, alloc);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s allocated %llu bytes (%zu used) on private heap at %p", __func__, size, alloc_sz, alloc);
   }
 
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_MEM", __func__);
@@ -2869,14 +2872,16 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
       sqlcipher_vdbe_return_string(pParse, "cipher_test_rand", rand, P4_DYNAMIC);
     }
   } else
-#ifndef SQLCIPHER_OMIT_MALLOC
   if( sqlite3_stricmp(zLeft, "cipher_test_private_heap_used")== 0 && !zRight ){
     /* exposes a pragma to get the amount of memory currently allocated on the private heap
      * so that the test suite can check for memory leaks after failed operations */
+#ifndef SQLCIPHER_OMIT_MALLOC
     char *used = sqlite3_mprintf("%u", private_heap_used);
     sqlcipher_vdbe_return_string(pParse, "cipher_test_private_heap_used", used, P4_DYNAMIC);
-  } else
+#else
+    sqlcipher_vdbe_return_string(pParse, "cipher_test_private_heap_used", "0", P4_TRANSIENT);
 #endif /* SQLCIPHER_OMIT_MALLOC */
+  } else
 #endif /* SQLCIPHER_TEST */
   if( sqlite3_stricmp(zLeft, "cipher_fips_status")== 0 && !zRight ){
     if(ctx) {
