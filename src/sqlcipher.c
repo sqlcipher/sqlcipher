@@ -1468,13 +1468,14 @@ static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) 
 } 
 
 static void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_set_error %d", error);
-  sqlite3BtreeEnter(ctx->pBt);
+  int lock = ctx->pBt->sharable && sqlite3BtreeConnectionCount(ctx->pBt) > 0; /* see btree.c:sqlite3BtreeClose for teardown where mutex is released */
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: %d lock=%d", __func__, error, lock);
+  if(lock) sqlite3BtreeEnter(ctx->pBt);
   if(ctx->pBt->pBt->inTransaction != TRANS_WRITE) {
     ctx->pBt->pBt->btsFlags |= BTS_READ_ONLY;
   }
   ctx->pBt->pBt->db->errCode = error;
-  sqlite3BtreeLeave(ctx->pBt);
+  if(lock) sqlite3BtreeLeave(ctx->pBt);
   ctx->error = error;
 }
 
