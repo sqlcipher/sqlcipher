@@ -10,10 +10,7 @@ Notable changes to this project are documented in this file.
 - Adjust behavior for permanent error states
 - Avoid leaking partially initialized context if an initialization error occurs
 - Fix error reporting for failed rekey operations
-
-__IMPORTANT NOTE__: This release contains API, ABI, or library behavioral changes. 
-Library integrators that manage `SONAME` are advised to update the version at build time 
-using `-soname` or `./configure --soname` for this release.
+- Improve consistency of internal memory utilization tracking
 
 ## [4.18.0] - (August 2026 - [4.18.0 changes])
 - Update baseline to SQLite 3.53.4
