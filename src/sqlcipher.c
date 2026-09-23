@@ -1238,7 +1238,7 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
     }
     private_heap_alloc += alloc_sz;
     private_heap_allocs++;
-    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s allocated %llu bytes (%zu used) on private heap at %p", __func__, size, alloc_sz, alloc);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "%s allocated %llu bytes (%u used) on private heap at %p", __func__, size, alloc_sz, alloc);
   }
 
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_MEM", __func__);
