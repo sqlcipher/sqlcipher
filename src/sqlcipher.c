@@ -1767,6 +1767,7 @@ static void sqlcipher_ctx_set_error(sqlcipher_ctx *ctx, int error) {
 
 static int sqlcipher_ctx_init_kdf_salt(sqlcipher_ctx *ctx) {
   sqlite3_file *fd = sqlite3PagerFile(sqlite3BtreePager(ctx->pBt));
+  int rc;
 
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
     return SQLITE_OK; /* don't reload salt when not needed */
@@ -1776,9 +1777,9 @@ static int sqlcipher_ctx_init_kdf_salt(sqlcipher_ctx *ctx) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: obtaining salt", __func__);
   if(fd == NULL || fd->pMethods == 0 || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: unable to read salt from file header, generating random", __func__);
-    if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error retrieving random bytes from provider", __func__);
-      return SQLITE_ERROR;
+    if((rc = ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d retrieving random bytes from provider", __func__, rc);
+      return rc;
     }
   }
   SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT);
@@ -2085,7 +2086,7 @@ static int sqlcipher_page_cipher(sqlcipher_ctx *ctx, int for_ctx, Pgno pgno, int
 
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC) && (mode == SQLCIPHER_DECRYPT)) {
     if((rc = sqlcipher_page_hmac(ctx, c_ctx, pgno, in, size + ctx->kbkdf_context_sz + ctx->iv_sz, tag_out)) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: hmac operation on decrypt failed for pgno=%d", __func__, pgno);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: hmac operation on decrypt failed with error %d for pgno=%d", __func__, rc, pgno);
       goto error;
     }
 
@@ -2173,8 +2174,8 @@ static int sqlcipher_page_cipher(sqlcipher_ctx *ctx, int for_ctx, Pgno pgno, int
 
   if(rc != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, 
-      "%s: %s operation mode=%d failed for pgno=%d", 
-      __func__, SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_AEAD) ? "cipher_aead" : "cipher",  mode, pgno);
+      "%s: %s operation mode=%d failed with error %d for pgno=%d", 
+      __func__, SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_AEAD) ? "cipher_aead" : "cipher",  mode, rc, pgno);
 
     /* if decryption fails the probably reason is an incorrect key or use of a non-encrypted database
      * so adjust the error code accordingly. Returns NOTADB for the first page, CORRUPT for higher
@@ -2188,7 +2189,7 @@ static int sqlcipher_page_cipher(sqlcipher_ctx *ctx, int for_ctx, Pgno pgno, int
  
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC) && (mode == SQLCIPHER_ENCRYPT)) {
     if((rc = sqlcipher_page_hmac(ctx, c_ctx, pgno, out_start, size + ctx->kbkdf_context_sz + ctx->iv_sz, tag_out)) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: hmac operation on encrypt failed for pgno=%d", __func__, pgno);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: hmac operation on encrypt failed with error %d for pgno=%d", __func__, rc, pgno);
       goto error;
     }; 
   }
@@ -2342,12 +2343,12 @@ static int sqlcipher_cipher_ctx_key_derive(sqlcipher_ctx *ctx, cipher_ctx *c_ctx
       (unsigned char *)"sqlitecksums", 12,
       c_ctx->cksum_key
     )) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error occurred deriving checksum key", __func__, rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d occurred deriving checksum key", __func__, rc);
       goto error;
     }
   } else {
     if((rc = ctx->provider->random(ctx->provider_ctx, c_ctx->cksum_key, ctx->key_sz)) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error occurred generating random checksum key", __func__, rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d occurred generating random checksum key", __func__, rc);
       goto error;
     }
   }
@@ -2364,15 +2365,17 @@ error:
   xoshiro_randomness(c_ctx->key, ctx->key_sz);
   xoshiro_randomness(c_ctx->hmac_key, ctx->key_sz);
   xoshiro_randomness(c_ctx->cksum_key, ctx->key_sz);
-  return SQLITE_ERROR;
+  return rc;
 }
 
 static int sqlcipher_ctx_key_derive(sqlcipher_ctx *ctx) {
+  int rc;
+
   /* derive key on first use if necessary */
   if(ctx->read_ctx->derive_key) {
-    if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->read_ctx) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error occurred deriving read_ctx key", __func__);
-      return SQLITE_ERROR;
+    if((rc = sqlcipher_cipher_ctx_key_derive(ctx, ctx->read_ctx)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d occurred deriving read_ctx key", __func__, rc);
+      return rc;
     }
   }
 
@@ -2380,14 +2383,14 @@ static int sqlcipher_ctx_key_derive(sqlcipher_ctx *ctx) {
     if(sqlcipher_cipher_ctx_pass_cmp(ctx->write_ctx, ctx->read_ctx) == 0) {
       /* the read and write key also needed to be derived, but the input key material matches on both contexts, 
        * so copy the read context over directly as an optimization to avoid repeated key derivation */
-      if(sqlcipher_cipher_ctx_copy(ctx, ctx->write_ctx, ctx->read_ctx) != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error occurred copying read_ctx to write_ctx", __func__);
-        return SQLITE_ERROR;
+      if((rc = sqlcipher_cipher_ctx_copy(ctx, ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d occurred copying read_ctx to write_ctx", __func__, rc);
+        return rc;
       }
     } else {
-      if(sqlcipher_cipher_ctx_key_derive(ctx, ctx->write_ctx) != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error occurred deriving write_ctx key", __func__);
-        return SQLITE_ERROR;
+      if((rc = sqlcipher_cipher_ctx_key_derive(ctx, ctx->write_ctx)) != SQLITE_OK) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d occurred deriving write_ctx key", __func__, rc);
+        return rc;
       }
     }
   }
@@ -4218,7 +4221,7 @@ int sqlcipher_db_attach(sqlite3* db, int nDb, const void *zKey, int nKey) {
    * Each of these cases would bypass the sqlciphervfs and database encryption. Raising an error at the time the key is set will alert the
    * user / developer to the problem early to avoid unexpected behavior */
   if((rc = sqlite3_file_control(db, db->aDb[nDb].zDbSName, SQLITE_FCNTL_VFS_POINTER, &vfs)) != SQLITE_OK || vfs == NULL) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error retrieving current VFS for %p %d (%s)", __func__, db, nDb, db->aDb[nDb].zDbSName);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d retrieving current VFS for %p %d (%s)", __func__, rc, db, nDb, db->aDb[nDb].zDbSName);
     return SQLITE_ERROR;
   }
   if(sqlite3_stricmp(vfs->zName, "sqlciphervfs") != 0) {
@@ -4742,7 +4745,7 @@ cleanup:
     }
 
     if(sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK, 0) != SQLITE_OK) { 
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to rollback transaction on rekey%d", __func__, rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to rollback transaction on rekey %d", __func__, rc);
     }
 
     /* after rollbak on the the plaintext-to-encrypted, free the context to switch back to unencrypted database */
@@ -5514,7 +5517,7 @@ static int sqlcipher_read_db(
 
   sqlcipher_process_page(ctx, buf, page, SQLCIPHER_READ_OP, &rc); /* decrypt page */
   if(rc != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error processing page %d", __func__, rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
     sqlcipher_memset(fd->eheader, 0, SQLCIPHER_DB_HDRSIZE);
     sqlcipher_memset(fd->header, 0, SQLCIPHER_DB_HDRSIZE);
     goto end;
@@ -5584,7 +5587,7 @@ static int sqlcipher_read_journal(
 
   sqlcipher_process_page(ctx, zBuf, page, SQLCIPHER_READ_OP, &rc);
   if(rc != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error processing page %d", __func__, rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
   }
 
   return rc;
@@ -5631,7 +5634,7 @@ static int sqlcipher_read_wal(
 
     sqlcipher_process_page(ctx, zBuf, page, SQLCIPHER_READ_OP, &rc);
     if(rc != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error processing page %d", __func__, rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
     }
 
     return rc;
@@ -5650,7 +5653,7 @@ static int sqlcipher_read_wal(
     sqlcipher_process_page(ctx, ((unsigned char*) zBuf) + SQLCIPHER_WAL_FRAME_HDRSIZE, page, SQLCIPHER_READ_OP, &rc); /* following bytes are page data itself, offset for header */
 
     if(rc != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error processing page %d", __func__, rc);
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
       return rc;
     }
 
@@ -5918,7 +5921,7 @@ static int sqlcipher_write_wal(
       }
       sqlcipher_process_page(ctx, temp_page, page, SQLCIPHER_READ_OP, &rc); /* decrypt existing data */
       if(rc != SQLITE_OK) {
-        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error processing page %d", __func__, rc);
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
         goto end;
       }
 
