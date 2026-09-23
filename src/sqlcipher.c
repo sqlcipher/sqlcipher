@@ -3322,6 +3322,15 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
       if(sqlite3_stricmp(zLeft,"hexkey")==0 || sqlite3_stricmp(zLeft,"hexrekey") == 0){
         u8 iByte;
         int i;
+
+        /* if hexkey or hexrekey are presented with any contents that contain invalid hex sequence,
+         * error and return immediately */
+        if(n % 2 != 0 || !cipher_isHex((const unsigned char *)zRight, n)) {
+          sqlite3ErrorMsg(pParse, SQLCIPHER_KEY_ERROR);
+          sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error provided with invalid hexkey", __func__);
+          return 1;
+        }
+
         for(i=0, iByte=0; i<sizeof(zBuf)*2 && sqlite3Isxdigit(zRight[i]); i++){
           iByte = (iByte<<4) + sqlite3HexToInt(zRight[i]);
           if( (i&1)!=0 ) zBuf[i/2] = iByte;
@@ -4386,7 +4395,14 @@ int sqlcipher_query_parameters (
     u8 iByte;
     int i;
     char zDecoded[40];
+    int n = sqlite3Strlen30(zKey);
     if(seen) *seen = 1;
+
+    /* check that hexkey is valid */
+    if(n % 2 != 0 || !cipher_isHex((const unsigned char *)zKey, n)) {
+      return SQLITE_MISUSE;
+    }
+
     for(i=0, iByte=0; i<sizeof(zDecoded)*2 && sqlite3Isxdigit(zKey[i]); i++){
       iByte = (iByte<<4) + sqlite3HexToInt(zKey[i]);
       if( (i&1)!=0 ) zDecoded[i/2] = iByte;

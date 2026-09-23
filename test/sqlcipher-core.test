@@ -105,8 +105,19 @@ file delete -force test.db
 # verify an invalid hexkey query parameter will report an error
 file delete -force test.db
 do_test hexkey-uri-invalid-fails-to-open {
-  list [catch { sqlite_orig db "file:test.db?hexkey=zz" } msg] $msg
+  list [catch { sqlite_orig db "file:test.db?hexkey=746573746b6579zz" } msg] $msg
 } {1 {bad parameter or other API misuse}}
+file delete -force test.db
+
+# invalid pragma hexkey
+do_test will-not-allow-invalid-hexkey {
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA hexkey = '746573746b6579ZZ';
+    CREATE table t1(a,b);
+  }
+} {1 {An error occurred with PRAGMA key or rekey.}}
+db close
 file delete -force test.db
 
 # set an encryption key (non-hex) and create
