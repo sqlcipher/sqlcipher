@@ -2601,6 +2601,7 @@ static int sqlcipher_ctx_migrate(sqlcipher_ctx *ctx) {
   for(i = 4; i > 0; i--) { /* attempt to detect versions 4, 3, 2, 1 */
     if(!(pragma_compat = sqlite3_mprintf("PRAGMA cipher_compatibility = %d;", i))) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format pragma_compat", __func__);
+      rc = SQLITE_NOMEM;
       goto handle_error;
     }
 
@@ -4549,7 +4550,11 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
  
   rc = sqlite3_step(stmt);
   if(rc == SQLITE_ROW) {
-    journal_mode = sqlite3_mprintf("%s", sqlite3_column_text(stmt, 0)); 
+    if(!(journal_mode = sqlite3_mprintf("%s", sqlite3_column_text(stmt, 0)))) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode SQL", __func__);
+      rc = SQLITE_NOMEM;
+      goto cleanup;
+    }
   } else {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed step for journal query %d", __func__, rc);
     goto cleanup; 
@@ -4586,11 +4591,13 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     /* prepare the SQL that will need to be executed to adjust page size and vacuum the database */
     if(!(page_size_sql = sqlite3_mprintf("PRAGMA %w.page_size = %d", db_name, default_page_size))) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format PRAGMA page_size SQL", __func__);
+      rc = SQLITE_NOMEM;
       goto cleanup;
     }
 
     if(!(vacuum_sql = sqlite3_mprintf("VACUUM %w", db_name))) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format VACUUM SQL", __func__);
+      rc = SQLITE_NOMEM;
       goto cleanup;
     }
 
