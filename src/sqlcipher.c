@@ -258,6 +258,11 @@ struct sqlcipher_file {
   unsigned char eheader[SQLCIPHER_DB_HDRSIZE];
 };
 
+#ifdef SQLCIPHER_TEST
+/* forward definition for the internal selftest function at the end of this file */
+void sqlcipher_selftest(sqlite3*, Parse*);
+#endif /* SQLCIPHER_TEST */
+
 /* implementation of simple, fast PSRNG function using xoshiro256++ (XOR/shift/rotate)
  * https://prng.di.unimi.it/ under the public domain via https://prng.di.unimi.it/xoshiro256plusplus.c
  * xoshiro is NEVER used for any cryptographic functions as CSPRNG. It is solely used for
@@ -3364,6 +3369,9 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: db=%p zDb=%s iDb=%d pParse=%p zLeft=%s zRight=%s ctx=%p", __func__, db, zDb, iDb, pParse, zLeft, zRight, ctx);
 
  #ifdef SQLCIPHER_TEST
+  if( sqlite3_stricmp(zLeft,"cipher_selftest")==0 && !zRight){
+    sqlcipher_selftest(db, pParse);
+  } else
   if( sqlite3_stricmp(zLeft,"cipher_test_on")==0 ){
     if( zRight ) {
       if(sqlite3_stricmp(zRight, "fail_encrypt")==0) {
@@ -6223,6 +6231,18 @@ static sqlite3_syscall_ptr sqlcipherGetSystemCall(
 static const char *sqlcipherNextSystemCall(sqlite3_vfs *pVfs, const char *zName){
   return ORIGVFS(pVfs)->xNextSystemCall(ORIGVFS(pVfs), zName);
 }
+
+#ifdef SQLCIPHER_TEST
+/* it is sometimes difficult to test sqlcipher internals from the TCL test suite, so this
+ * function will provide a minimal hook to execute some simple internal testing. It can execute
+ * any internal tests, for each that fails, it will output a row to the result set. Then the
+ * TCL test will be able to call it via PRAGMA cipher_selftest. The TCL test will call this
+ * as the last test. Note that ordering matters here, so its important that any tests define
+ * leave things in a sane state for further tests. */
+void sqlcipher_selftest(sqlite3* db, Parse *pParse) {
+ /* implementation left empty for future use */
+}
+#endif /* SQLCIPHER_TEST */
 
 #endif
 /* END SQLCIPHER */

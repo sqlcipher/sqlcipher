@@ -81,5 +81,14 @@ do_test verify-memory-security-log-path {
 } {INFO 0 2048 WARN}
 db close
 
+# run internal self test
+do_test verify-self-test {
+    sqlite_orig db
+    execsql {
+      PRAGMA cipher_selftest;
+    }
+} {}
+db close
+
 finish_test
 
