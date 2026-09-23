@@ -1327,6 +1327,20 @@ int sqlcipher_register_provider(sqlcipher_provider *p) {
     goto cleanup;
   }
 
+  /* check that the new provider implements the bare minimum provider interface, i.e. everything except
+   * init, shutdown, and the new AEAD functions */
+  if(
+    !(p->get_provider_name  && p->add_random && p->random
+    && p->hmac && p->kdf && p->cipher && p->get_cipher
+    && p->get_key_sz && p->get_iv_sz && p->get_block_sz
+    && p->get_hmac_sz && p->ctx_init && p->ctx_free
+    && p->fips_status && p->get_provider_version)
+  ) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: provider %p is missing one or more required function pointers", __func__, p);
+    rc = SQLITE_MISUSE;
+    goto cleanup;
+  }
+
   if(!default_provider) {
     /* initial provider registration, NULL out previous pointer*/
     p->next = NULL;
@@ -6240,7 +6254,29 @@ static const char *sqlcipherNextSystemCall(sqlite3_vfs *pVfs, const char *zName)
  * as the last test. Note that ordering matters here, so its important that any tests define
  * leave things in a sane state for further tests. */
 void sqlcipher_selftest(sqlite3* db, Parse *pParse) {
- /* implementation left empty for future use */
+  sqlcipher_provider *p = sqlcipher_get_provider();
+  sqlcipher_provider *newp;
+  sqlcipher_provider temp;
+
+  /* copy default provider, NULL out a required function pointer, and try to register it */
+  if(!p) {
+    sqlcipher_vdbe_return_string(pParse, "cipher_selftest", "FAILED: missing default provider", P4_TRANSIENT);
+    return;
+  }
+
+  memcpy(&temp, p, sizeof(sqlcipher_provider));
+  temp.ctx_init = NULL;
+
+  /* should get a misuse error */
+  if(sqlcipher_register_provider(&temp) != SQLITE_MISUSE) {
+    sqlcipher_vdbe_return_string(pParse, "cipher_selftest", "FAILED: provider required function test", P4_TRANSIENT);
+  }
+
+  /* default provider should not have changed */
+  newp = sqlcipher_get_provider();
+  if(p != newp) {
+    sqlcipher_vdbe_return_string(pParse, "cipher_selftest", "FAILED: provider registration incorrectly changed default", P4_TRANSIENT);
+  }
 }
 #endif /* SQLCIPHER_TEST */
 
