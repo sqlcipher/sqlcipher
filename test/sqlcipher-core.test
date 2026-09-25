@@ -1942,4 +1942,81 @@ foreach mode {delete persist wal} {
   }
 }
 
+foreach mode {delete persist wal} {
+  # open up a shared cache connection to a database, key it
+  # and create a schema. Then, open a second shared cache
+  # handle to the same databse. Close the first, and then
+  # try to query the second. Verify that all persistent
+  # pointers on the SQLCipher context are still valid
+  # for use after the original is closed.
+  do_test connection-shared-cache-$mode {
+    sqlite_orig db file:test.db?cache=shared
+    set rc {}
+
+    execsql "
+      PRAGMA key = 'testkey';
+      PRAGMA journal_mode = $mode;
+      CREATE TABLE t1(a,b);
+      INSERT INTO t1 VALUES(1,2);
+    "
+
+    sqlite_orig db2 file:test.db?cache=shared
+
+    lappend rc [ execsql {
+      PRAGMA key = 'testkey';
+      SELECT count(*) FROM t1;
+    } db2 ]
+
+    db close
+
+    lappend rc [ execsql {
+      PRAGMA cache_size = 0;
+      INSERT INTO t1 VALUES(1,2);
+      SELECT count(*) FROM t1;
+    } db2 ]
+
+    db2 close
+
+    set rc
+  } {{ok 1} 2}
+  file delete -force test.db
+
+  # open a shared connection from the same process. the original
+  # connectiona already keyed, so the second connection
+  # will skip keying. verify that works, and that nothing is allocated
+  # additionally for the second connection (i.e. that the same
+  # shared context is used
+  do_test connection-shared-cache-no-second-key-$mode {
+    sqlite_orig db file:test.db?cache=shared
+    set rc {}
+
+    execsql "
+      PRAGMA key = 'testkey';
+      PRAGMA journal_mode = $mode;
+      CREATE TABLE t1(a,b);
+      INSERT INTO t1 VALUES(1,2);
+    "
+
+    sqlite_orig db2 file:test.db?cache=shared
+
+    set start_heap [execsql {PRAGMA cipher_test_private_heap_used;}]
+    lappend rc [ execsql {
+      PRAGMA key = 'x';
+      INSERT INTO t1 VALUES(1,2);
+      SELECT count(*) FROM t1;
+    } db2 ]
+    set stop_heap [execsql {PRAGMA cipher_test_private_heap_used;}]
+
+    lappend rc [expr { $stop_heap - $start_heap }]
+
+    db close
+    db2 close
+
+    set rc 
+  } {{ok 2} 0}
+  file delete -force test.db
+
+}
+
+
 finish_test

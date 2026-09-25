@@ -1542,6 +1542,20 @@ do_test export-alias-quoting-2 {
 db close
 file delete -force test.db {"""a test'ing--db"".db".db}
 
+do_test shared-connection-cant-migrate {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  sqlite_orig db file:test.db?cache=shared
+  sqlite_orig db2 file:test.db?cache=shared
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_migrate;
+  }
+    
+} {ok 21}
+db close
+file delete -force test.db
+
 sqlite3_test_control_pending_byte $old_pending_byte
 
 finish_test

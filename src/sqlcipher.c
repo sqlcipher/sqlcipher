@@ -213,13 +213,15 @@ typedef struct {
   unsigned char *kdf_salt;
   unsigned char *hmac_kdf_salt;
   unsigned char *buffer;
-  Btree *pBt;
+  Pager *pPager;
+  BtShared *pBt;
   cipher_ctx *read_ctx;
   cipher_ctx *write_ctx;
   sqlcipher_provider *provider;
   void *provider_ctx;
   unsigned char *page_data;
   int kbkdf_context_sz;
+  int shared;
 } sqlcipher_ctx;
 
 #ifndef SQLCIPHER_OMIT_MALLOC
@@ -1772,20 +1774,45 @@ static int sqlcipher_ctx_set_kdf_algorithm(sqlcipher_ctx *ctx, int algorithm) {
   return SQLITE_OK;
 } 
 
-static void sqlcipher_ctx_set_error(sqlcipher_ctx *ctx, int error) {
-  int lock = ctx->pBt->sharable && sqlite3BtreeConnectionCount(ctx->pBt) > 0; /* see btree.c:sqlite3BtreeClose for teardown where mutex is released */
-  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: %d lock=%d", __func__, error, lock);
-  if(lock) sqlite3BtreeEnter(ctx->pBt);
-  if(ctx->pBt->pBt->inTransaction != TRANS_WRITE) {
-    ctx->pBt->pBt->btsFlags |= BTS_READ_ONLY;
+static void sqlcipher_ctx_set_error(sqlite3 *db, Db *pDb, sqlcipher_ctx *ctx, int error) {
+  sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: %d", __func__, error);
+
+  ctx->error = error; /* always set internal context error */
+
+  /* if a sqlite3 object is provided (i.e. this error occurred during a PRAGMA operation
+   * set the error info on the current database */
+  if(db) db->errCode = error;
+
+  if(pDb) {
+    /* special handling for potential shared cache connections here
+     * we have direct access to the Db handle, so check the shared state and perform
+     * locking if necessary before marking the BtShared as read only */
+    int lock = pDb->pBt->sharable && sqlite3BtreeConnectionCount(pDb->pBt) > 0;
+    if(lock) sqlite3BtreeEnter(pDb->pBt); /* see btree.c:sqlite3BtreeClose for teardown where mutex is released */
+    if(pDb->pBt->pBt->inTransaction != TRANS_WRITE) {
+      pDb->pBt->pBt->btsFlags |= BTS_READ_ONLY;
+    }
+    if(lock) sqlite3BtreeLeave(pDb->pBt);
+  } else {
+    /* we are relying on this only being called from code where a mutex is already held by the caller, 
+     * i.e. sqlcipher_process_page. This function is responsible only for updating
+     * the flag. Minimally, the caller must hold SQLCIPHER_MUTEX_SHAREDCACHE. If the BtShared is
+     * active, then the caller should also hold that mutex. It is possible for the BtShared to be unused
+     * (i.e. pBt->nRef < 1) if an error occurs during init that blocks setup. */
+    assert(
+      !ctx->shared || (
+        sqlite3_mutex_held(sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE))
+        && (ctx->pBt->nRef < 1 || sqlite3_mutex_held(ctx->pBt->mutex))
+      )
+    );
+    if(ctx->pBt->inTransaction != TRANS_WRITE) {
+        ctx->pBt->btsFlags |= BTS_READ_ONLY;
+    }
   }
-  ctx->pBt->pBt->db->errCode = error;
-  if(lock) sqlite3BtreeLeave(ctx->pBt);
-  ctx->error = error;
 }
 
 static int sqlcipher_ctx_init_kdf_salt(sqlcipher_ctx *ctx) {
-  sqlite3_file *fd = sqlite3PagerFile(sqlite3BtreePager(ctx->pBt));
+  sqlite3_file *fd = sqlite3PagerFile(ctx->pPager);
   int rc;
 
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
@@ -1892,7 +1919,15 @@ static int sqlcipher_ctx_init(sqlcipher_ctx **iCtx, Db *pDb, const void *zKey, i
 
   ctx = *iCtx;
 
-  ctx->pBt = pDb->pBt; /* assign pointer to database btree structure */
+  ctx->pPager = sqlite3BtreePager(pDb->pBt); /* assign pointer to Pager */
+  ctx->pBt = pDb->pBt->pBt; /* assign BtShared to context */
+
+  /* mirror the BtShared state on context so we can use it 
+   * to make decisions later related to locking during page processing.
+   * This will be stable for the life of the context */
+  if(pDb->pBt->sharable) {
+    ctx->shared = 1;
+  }
 
   /* allocate space for salt data. Then read the first 16 bytes 
        directly off the database file. This is the salt for the
@@ -2492,7 +2527,7 @@ static int sqlcipher_ctx_integrity_check(sqlcipher_ctx *ctx, Parse *pParse, char
     goto cleanup;
   }
 
-  fd = sqlite3PagerFile(sqlite3BtreePager(ctx->pBt));
+  fd = sqlite3PagerFile(ctx->pPager);
 
   if(fd == NULL || fd->pMethods == 0) {
     sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "database file is undefined", P4_TRANSIENT);
@@ -2531,7 +2566,7 @@ static int sqlcipher_ctx_integrity_check(sqlcipher_ctx *ctx, Parse *pParse, char
     int read_sz = ctx->page_sz;
 
     /* skip integrity check on PAGER_SJ_PGNO since it will have no valid content */
-    if(sqlite3pager_is_sj_pgno(sqlite3BtreePager(ctx->pBt), page)) continue;
+    if(sqlite3pager_is_sj_pgno(ctx->pPager, page)) continue;
 
     if(page==1) {
       int page1_offset = ctx->plaintext_header_sz ? ctx->plaintext_header_sz : FILE_HEADER_SZ;
@@ -2576,9 +2611,8 @@ cleanup:
   return SQLITE_OK;
 }
 
-static int sqlcipher_ctx_migrate(sqlcipher_ctx *ctx) {
+static int sqlcipher_ctx_migrate(sqlite3 *db, sqlcipher_ctx *ctx) {
   int i, pass_sz, keyspec_sz, nRes, user_version, rc, rc_cleanup, oflags, migrated_db_filename_sz, attached = 0;
-  sqlite3 *db = ctx->pBt->db;
   const char *db_filename = sqlite3_db_filename(db, "main");
   char *set_user_version = NULL, *pass = NULL, *attach_command = NULL, *migrated_db_filename = NULL, 
     *keyspec = NULL, *temp = NULL, *journal_mode = NULL, *set_journal_mode = NULL, *pragma_compat = NULL;
@@ -2598,6 +2632,14 @@ static int sqlcipher_ctx_migrate(sqlcipher_ctx *ctx) {
 
   if(pass_sz < 1 || !ctx->read_ctx->pass) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: underived key material is not available. PRAGMA cipher_migrate MUST be run as the first operation after keying", __func__);
+    rc = SQLITE_MISUSE;
+    goto handle_error;
+  }
+
+  /* if shared cache is enabled block migrate if there is more than 1 open connection because
+   * concurrent access is not safe. Similar to rekey, count is read without a lock, but that is low risk */
+  if(ctx->shared && ctx->pBt->nRef > 1) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: PRAGMA cipher_migrate may not be run on a shared cache connection", __func__);
     rc = SQLITE_MISUSE;
     goto handle_error;
   }
@@ -3460,7 +3502,7 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
   } else
   if( sqlite3_stricmp(zLeft, "cipher_migrate")==0 && !zRight ){
     if(ctx){
-      int status = sqlcipher_ctx_migrate(ctx); 
+      int status = sqlcipher_ctx_migrate(db, ctx);
       char *migrate_status = sqlite3_mprintf("%d", status);
       sqlcipher_vdbe_return_string(pParse, "cipher_migrate", migrate_status, P4_DYNAMIC);
       if(status != SQLITE_OK) {
@@ -3515,9 +3557,9 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
       if( zRight ) {
         int size = atoi(zRight);
         rc = sqlcipher_ctx_set_pagesize(ctx, size);
-        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, rc);
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
         rc = sqlcipher_set_btree_pagesize(db, pDb, ctx);
-        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, rc);
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
       } else {
         char * page_size = sqlite3_mprintf("%d", ctx->page_sz);
         sqlcipher_vdbe_return_string(pParse, "cipher_page_size", page_size, P4_DYNAMIC);
@@ -3546,10 +3588,10 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
     if(ctx) {
       if( zRight ) {
         rc = sqlcipher_ctx_set_aead(ctx, sqlite3GetBoolean(zRight,1));
-        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, rc);
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
         /* since aead has changed, the page size may also change */
         rc = sqlcipher_set_btree_pagesize(db, pDb, ctx);
-        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, rc);
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
       } else {
         char *aead_flag = sqlite3_mprintf("%d", SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_AEAD));
         sqlcipher_vdbe_return_string(pParse, "cipher_aead", aead_flag, P4_DYNAMIC);
@@ -3568,10 +3610,10 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
     if(ctx) {
       if( zRight ) {
         rc = sqlcipher_ctx_set_use_hmac(ctx, sqlite3GetBoolean(zRight,1));
-        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, rc);
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
         /* since the use of hmac has changed, the page size may also change */
         rc = sqlcipher_set_btree_pagesize(db, pDb, ctx);
-        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, rc);
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
       } else {
         char *hmac_flag = sqlite3_mprintf("%d", SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC));
         sqlcipher_vdbe_return_string(pParse, "cipher_use_hmac", hmac_flag, P4_DYNAMIC);
@@ -3590,7 +3632,7 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
     if(ctx) {
       if( zRight ) {
         rc = sqlcipher_ctx_set_hmac_fast_kdf(ctx, sqlite3GetBoolean(zRight,1));
-        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, rc);
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
       } else {
         char *flag = sqlite3_mprintf("%d", SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC_FAST_KDF));
         sqlcipher_vdbe_return_string(pParse, "cipher_hmac_fast_kdf", flag, P4_DYNAMIC);
@@ -3629,9 +3671,9 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
           const unsigned char *hex = (const unsigned char *)zRight+2;
            
           if(!cipher_isHex(hex, FILE_HEADER_SZ*2)) {
-            sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
           } else if(!(salt = (unsigned char*) sqlite3_malloc(FILE_HEADER_SZ))) {
-            sqlcipher_ctx_set_error(ctx, SQLITE_NOMEM);
+            sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_NOMEM);
           } else {
             cipher_hex2bin(hex,FILE_HEADER_SZ*2,salt);
             sqlcipher_ctx_set_kdf_salt(ctx, salt, FILE_HEADER_SZ);
@@ -3647,10 +3689,10 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
             sqlcipher_vdbe_return_string(pParse, "cipher_salt", hexsalt, P4_DYNAMIC);
           } else {
             sqlite3_free(hexsalt);
-            sqlcipher_ctx_set_error(ctx, rc);
+            sqlcipher_ctx_set_error(db, pDb, ctx, rc);
           }
         } else {
-          sqlcipher_ctx_set_error(ctx, SQLITE_NOMEM);
+          sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_NOMEM);
         }
       }
     }
@@ -3666,9 +3708,9 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
         } else if(sqlite3_stricmp(zRight, SQLCIPHER_HMAC_SHA512_LABEL) == 0) {
           rc = sqlcipher_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA512);
         }
-        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
         rc = sqlcipher_set_btree_pagesize(db, pDb, ctx);
-        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
       } else {
         int algorithm = ctx->hmac_algorithm;
         if(ctx->hmac_algorithm == SQLCIPHER_HMAC_SHA1) {
@@ -3711,7 +3753,7 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
         } else if(sqlite3_stricmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL) == 0) {
           rc = sqlcipher_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA512);
         }
-        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
       } else {
         if(ctx->kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA1) {
           sqlcipher_vdbe_return_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA1_LABEL, P4_TRANSIENT);
@@ -3750,92 +3792,92 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
         switch(version) {
           case 1: 
             rc = sqlcipher_ctx_set_pagesize(ctx, 1024);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_iter(ctx, 4000); 
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_aead(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_use_hmac(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_fast_kdf(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             break;
 
           case 2: 
             rc = sqlcipher_ctx_set_pagesize(ctx, 1024);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_iter(ctx, 4000); 
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_aead(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_use_hmac(ctx, 1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_fast_kdf(ctx, 1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             break;
 
           case 3:
             rc = sqlcipher_ctx_set_pagesize(ctx, 1024);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_iter(ctx, 64000); 
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_aead(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_use_hmac(ctx, 1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_fast_kdf(ctx, 1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             break;
 
           case 4:
             rc = sqlcipher_ctx_set_pagesize(ctx, 4096);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA512);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA512);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_iter(ctx, 256000); 
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_aead(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_use_hmac(ctx, 1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_fast_kdf(ctx, 1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             break;
 
           default:
             rc = sqlcipher_ctx_set_pagesize(ctx, 8192);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA512);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA512);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_iter(ctx, 512000); 
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_aead(ctx, 1);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_use_hmac(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_hmac_fast_kdf(ctx, 0);
-            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+            if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             break;
         }  
 
         rc = sqlcipher_set_btree_pagesize(db, pDb, ctx);
-        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+        if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
       } 
     }
   }else 
@@ -4060,7 +4102,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
   unsigned char *pData = (unsigned char *) data;
   int cctx = CIPHER_READ_CTX;
   void *out = NULL;
-  sqlite3_mutex *mutex = ctx->pBt->sharable ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
+  sqlite3_mutex *mutex = ctx->shared ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
   int plaintext_header_sz = ctx->plaintext_header_sz;
 
   /* in shared cache mode, this needs to be mutexed to prevent a separate database handle from
@@ -4075,7 +4117,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
 
   if(ctx->error != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d mode=%d", __func__, ctx->error, mode);
-    sqlcipher_ctx_set_error(ctx, ctx->error);
+    sqlcipher_ctx_set_error(NULL, NULL, ctx, ctx->error);
     /* if this is a read, we don't want to return NULL as it will be interpreted as a SQLITE_NOMEM condition,
      * so instead return a zeroed out buffer that will fail the magic header check */
     if(mode == SQLCIPHER_READ_OP) { 
@@ -4091,7 +4133,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
   /* call to derive keys if not present yet */
   if((rc = sqlcipher_ctx_key_derive(ctx)) != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error occurred during key derivation: %d", __func__, rc);
-    sqlcipher_ctx_set_error(ctx, rc);
+    sqlcipher_ctx_set_error(NULL, NULL, ctx, rc);
     goto cleanup;
   }
 
@@ -4100,7 +4142,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
      may not be open yet. However, this is a fatal error state, so abort */
   if(plaintext_header_sz < 0) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error invalid plaintext_header_sz: %d", __func__, plaintext_header_sz);
-    sqlcipher_ctx_set_error(ctx, SQLITE_ERROR);
+    sqlcipher_ctx_set_error(NULL, NULL, ctx, SQLITE_ERROR);
     rc = SQLITE_ERROR;
     goto cleanup;
   }
@@ -4145,7 +4187,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
         if(plaintext_header_sz == ctx->page_sz - ctx->reserve_sz) {
           sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: plaintext header size of %d indicates recovery mode, suppressing permanent error", __func__, plaintext_header_sz);
         } else {
-          sqlcipher_ctx_set_error(ctx, rc);
+          sqlcipher_ctx_set_error(NULL, NULL, ctx, rc);
         }
       } else {
         SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
@@ -4164,7 +4206,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
         /* retrieve the kdf salt */
         if((rc = sqlcipher_ctx_get_kdf_salt(ctx, &kdf_salt)) != SQLITE_OK) {
           sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error retrieving salt: %d", __func__, rc);
-          sqlcipher_ctx_set_error(ctx, rc); 
+          sqlcipher_ctx_set_error(NULL, NULL, ctx, rc); 
           goto cleanup;
         }
         memcpy(ctx->buffer, plaintext_header_sz ? pData : kdf_salt, offset);
@@ -4181,7 +4223,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
            in order to prevent corrupted pages from being written to the main databased when using WAL */
         sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error encrypting page %d data: %d", __func__, pgno, rc);
         sqlcipher_memset((unsigned char*)ctx->buffer+offset, 0, ctx->page_sz-offset);
-        sqlcipher_ctx_set_error(ctx, rc);
+        sqlcipher_ctx_set_error(NULL, NULL, ctx, rc);
         goto cleanup;
       }
       SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
@@ -4191,7 +4233,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
 
     default:
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error unsupported mode %d", __func__, mode);
-      sqlcipher_ctx_set_error(ctx, SQLITE_ERROR); /* unsupported mode, set error */
+      sqlcipher_ctx_set_error(NULL, NULL, ctx, SQLITE_ERROR); /* unsupported mode, set error */
       out = pData;
       goto cleanup;
       break;
@@ -4253,8 +4295,8 @@ int sqlcipher_db_attach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   }
 
   /* After this point, early returns for API misuse are complete, lock on a mutex and ensure it is cleaned
-   * up later. If shared cache is enabled then enter a specially defined "global" recursive mutex specifically
-   * for isolating shared cache connections, otherwise use the built-in databse mutex */ 
+   * up later. If shared cache is enabled then enter the mutex specifically used
+   * for isolating shared cache connections, otherwise use the built-in database mutex */ 
   extra_mutex = pDb->pBt->sharable ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
 
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering database mutex %p", __func__, db->mutex);
@@ -4286,6 +4328,10 @@ int sqlcipher_db_attach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     }
   }
 
+  if(pDb->pBt->sharable) {
+    sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: attach called on a shared cache database", __func__);
+  }
+
   ctx = (sqlcipher_ctx*) sqlcipher_pager_get_ctx(pPager);
 
   if(ctx != NULL) {
@@ -4300,8 +4346,8 @@ int sqlcipher_db_attach(sqlite3* db, int nDb, const void *zKey, int nKey) {
        *
        * When compiled with SQLITE_DEBUG, all database connections have shared cached enabled. This behavior of disallowing reset
        * of the sqlcipher_ctx on a shared cache connection will break several tests that depend on the the ability to reset the context,
-       * like migration tests, repeat-keying tests, etc. Asa result we will disable shared cache handling when compiled with
-       * SQLIE_DEBUG enabled.*/
+       * like migration tests, repeat-keying tests, etc. As a result we will disable shared cache handling when compiled with
+       * SQLITE_DEBUG enabled.*/
       sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: disregarding attempt to set key on an shared cache handle", __func__);
       goto cleanup;
 #endif
@@ -4309,7 +4355,7 @@ int sqlcipher_db_attach(sqlite3* db, int nDb, const void *zKey, int nKey) {
       /* To preseve legacy functionality where an incorrect key could be replaced by a correct key without closing the database,
        * if the key has not been used, and shared cache is not enabled, reset the sqlcipher_ctx on this pager entirely.
        * This will call sqlcipher_ctx_free directly because this function already
-       * holds the shared cache mutex if it is necessary, and that avoids requiring a more expensive recursive mutex */
+       * holds the shared cache mutex if it is necessary */
       sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: resetting existing sqlcipher_ctx on pager", __func__);
       sqlcipher_ctx_free(&ctx);
       ctx = NULL;
@@ -4319,22 +4365,22 @@ int sqlcipher_db_attach(sqlite3* db, int nDb, const void *zKey, int nKey) {
 
   if((rc = sqlcipher_ctx_init(&ctx, pDb, zKey, nKey)) != SQLITE_OK) {
     /* initialization failed, do not attach potentially corrupted context */
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: context initialization failed, forcing error state with rc=%d inTransaction=%d", __func__, rc, pDb->pBt->pBt->inTransaction);
     /* if an init failure occurs at this point try to make the database read only and mark the context for a permanent error state */
     sqlite3BtreeEnter(pDb->pBt);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: context initialization failed, forcing error state with rc=%d inTransaction=%d", __func__, rc, pDb->pBt->pBt->inTransaction);
     if(pDb->pBt->pBt->inTransaction != TRANS_WRITE) {
       pDb->pBt->pBt->btsFlags |= BTS_READ_ONLY;
     } 
-    sqlite3BtreeLeave(pDb->pBt);
     ((sqlcipher_file *) fd)->init_error = rc; /* flag the sqlcipher_file as being in a permanent error state */
-    pDb->pBt->pBt->db->errCode = rc;
+    db->errCode = rc;
+    sqlite3BtreeLeave(pDb->pBt);
     goto error;
   }
 
   if((rc = sqlcipher_set_btree_pagesize(db, pDb, ctx)) != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to set btree pagesize forcing fd error state with rc=%d", __func__, rc);
     ((sqlcipher_file *) fd)->init_error = rc; /* flag the sqlcipher_file as being in a permanent error state */
-    pDb->pBt->pBt->db->errCode = rc;
+    db->errCode = rc;
     goto error;
   }
 
@@ -4550,7 +4596,15 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 
   if(!ctx && (!pKey || !nKey)) {
     /* current database is not encrypted and there is no key provided for the target. This is a no-op */
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: rekey run on plaintext database with no key provided", __func__, pDb);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: rekey run on plaintext database with no key provided", __func__);
+    return SQLITE_MISUSE;
+  }
+
+  /* if shared cache is enabled and there are more than 1 connection referencing the BtShared object, block rekey because
+   * attempted concurrent access is not safe. Count read without a lock, so it is theoretically possible that a connection could
+   * be opened after this check but that is a low risk */
+  if(sqlite3BtreeConnectionCount(pDb->pBt) > 1) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: rekey may not be run with shared cache and open connections", __func__);
     return SQLITE_MISUSE;
   }
 
@@ -5154,7 +5208,7 @@ static int sqlcipherOpen(
   int rc;
 
 
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS,
+  sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_VFS,
     "%s: pVfs=%p,zName=%s,sqlite3_file=%p,flags=%d,pOutFlags=%p", __func__, pVfs, zName, pFile, flags, pOutFlags); 
 
   p = (sqlcipher_file*)pFile;
@@ -5214,7 +5268,9 @@ static int sqlcipherOpen(
 
     /* if this is a subjournal, we can't use sqlite3_database_file_object to lookup the main database file.
      * instead, loop through the list of open file handles and attempt to locate one where the pager
-     * statment journal file descriptor matches the current file */
+     * statment journal file descriptor matches the current file. Note that subjournals would only be created
+     * during an open transaction, so a lock is held and we guarateed that the key is derived and the
+     * context won't be reset while the search runs */
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, "%s: searching for main database for %p", __func__, p);
 
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering SQLCIPHER_MUTEX_VFS", __func__);
@@ -5223,7 +5279,7 @@ static int sqlcipherOpen(
 
     open = sqlcipher_files_open;
     while(open) {
-      if(open->ctx && (pPager = sqlite3BtreePager(open->ctx->pBt)) && sqlcipher_pager_sjfd(pPager) == pFile) {
+      if(open->ctx && (pPager = open->ctx->pPager) && sqlcipher_pager_sjfd(pPager) == pFile) {
         sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_VFS, "%s: this is a SUBJOURNAL for %p, assigning main", __func__, open);
         p->main = open;
         break;
@@ -5257,10 +5313,10 @@ static int sqlcipherClose(sqlite3_file *pFile){
   sqlcipher_file *p = (sqlcipher_file *)pFile;
   sqlcipher_file **ppf;
 
-  sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, "%s: pFile=%p, p->name=%s, p->type=%d, p->main=%p, p->ctx=%p",
+  sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_VFS, "%s: pFile=%p, p->name=%s, p->type=%d, p->main=%p, p->ctx=%p",
     __func__, pFile, p->name, p->type, p->main, p->ctx);
 
-  /* delete the current file from the open list */
+  /* delete the current file from the open list (must be done before the context is freed) */
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering SQLCIPHER_MUTEX_VFS", __func__);
   sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_VFS));
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered SQLCIPHER_MUTEX_VFS", __func__);
@@ -5278,7 +5334,6 @@ static int sqlcipherClose(sqlite3_file *pFile){
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_VFS", __func__);
   sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_VFS));
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left SQLCIPHER_MUTEX_VFS", __func__);
-
 
   /* only free ctx for main database file */
   if(p->ctx) {
@@ -5590,12 +5645,10 @@ static int sqlcipher_read_journal(
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, "%s: optimized JOURNAL read passthrough", __func__);
     rc = subfd->pMethods->xRead(subfd, zBuf, iAmt, iOfst);
     if(rc == SQLITE_OK && is_main_journal) {
-      Pager *pPager = sqlite3BtreePager(ctx->pBt); 
-     
       /* pPager->journalOff has already been advanced to the end of the record at the time
        * this read occurs, so back it off to the start of the page. see pager.c:pager_playback_one_page
        * and it's caller pager.c:pager_playback */
-      rc = sqlcipher_shield_journal_cksum(ctx, zBuf, iOfst, iAmt, sqlcipher_pager_journalOff(pPager) - 4 - ctx->page_sz - 4, sqlcipher_pager_cksumInit(pPager));
+      rc = sqlcipher_shield_journal_cksum(ctx, zBuf, iOfst, iAmt, sqlcipher_pager_journalOff(ctx->pPager) - 4 - ctx->page_sz - 4, sqlcipher_pager_cksumInit(ctx->pPager));
     }
     return rc; 
   }
@@ -5634,7 +5687,6 @@ static int sqlcipher_read_wal(
   sqlite3_file *subfd = ORIGFILE(pFile);
   unsigned char pgno_raw[4];
   Pgno page = 0;
-  Pager *pPager = sqlite3BtreePager(ctx->pBt); 
   
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, 
     "%s: fd=%p,zBuf=%p,iAmt=%d,iOfst=%lld,ctx=%p,ctx->page_size=%d",
@@ -5687,7 +5739,7 @@ static int sqlcipher_read_wal(
     }
 
     /* this read includes a frame header, decrypt the checksum */
-    return sqlcipher_shield_wal_cksum(ctx, zBuf, iOfst, iAmt, sqlcipher_pager_wal_salt(pPager, 0), sqlcipher_pager_wal_salt(pPager, 1));
+    return sqlcipher_shield_wal_cksum(ctx, zBuf, iOfst, iAmt, sqlcipher_pager_wal_salt(ctx->pPager, 0), sqlcipher_pager_wal_salt(ctx->pPager, 1));
   }
 
   rc = subfd->pMethods->xRead(subfd, zBuf, iAmt, iOfst);
@@ -5695,7 +5747,7 @@ static int sqlcipher_read_wal(
 
   /* short / passthrough read also may require checksum decrypt */
   if(rc == SQLITE_OK)
-    rc = sqlcipher_shield_wal_cksum(ctx, zBuf, iOfst, iAmt, sqlcipher_pager_wal_salt(pPager, 0), sqlcipher_pager_wal_salt(pPager, 1));
+    rc = sqlcipher_shield_wal_cksum(ctx, zBuf, iOfst, iAmt, sqlcipher_pager_wal_salt(ctx->pPager, 0), sqlcipher_pager_wal_salt(ctx->pPager, 1));
    
   return rc;
 }
@@ -5801,7 +5853,6 @@ static int sqlcipher_write_journal(
   sqlite3_file *subfd = ORIGFILE(pFile);
   unsigned char pgno_raw[4];
   Pgno page = 0;
-  Pager *pPager = sqlite3BtreePager(ctx->pBt);
 
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, 
     "%s: fd=%p,zBuf=%p,iAmt=%d,iOfst=%lld,ctx=%p,ctx->page_size=%d",
@@ -5811,7 +5862,7 @@ static int sqlcipher_write_journal(
   if(is_main_journal) {
     /* pPager->journalOff is the start of the current record when the write occurs
      * see pager.c:pagerAddPageToRollbackJournal */
-    if((rc = sqlcipher_shield_journal_cksum(ctx, b, iOfst, iAmt, sqlcipher_pager_journalOff(pPager), sqlcipher_pager_cksumInit(pPager))) != SQLITE_OK) {
+    if((rc = sqlcipher_shield_journal_cksum(ctx, b, iOfst, iAmt, sqlcipher_pager_journalOff(ctx->pPager), sqlcipher_pager_cksumInit(ctx->pPager))) != SQLITE_OK) {
       return rc;
     }
   }
@@ -5822,8 +5873,8 @@ static int sqlcipher_write_journal(
   } 
 
   if(is_main_journal) {
-    i64 header_ofst = sqlcipher_pager_journalHdr(pPager); /* current position of journalHeader */
-    u32 header_sz = sqlcipher_pager_sectorSize(pPager); /* journal header is always sector sized */ 
+    i64 header_ofst = sqlcipher_pager_journalHdr(ctx->pPager); /* current position of journalHeader */
+    u32 header_sz = sqlcipher_pager_sectorSize(ctx->pPager); /* journal header is always sector sized */
   
     /* any sector-aligned full-page write must occur inside the current header */
     assert((iOfst % header_sz != 0) || (iOfst >= header_ofst && iOfst < header_ofst + header_sz));
@@ -5872,7 +5923,6 @@ static int sqlcipher_write_wal(
   int sync = 0;
   sqlite_int64 rel_ofst, frame_start_ofst;
   int in_frame_ofst;
-  Pager *pPager = sqlite3BtreePager(ctx->pBt); 
  
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, 
     "%s: fd=%p,zBuf=%p,iAmt=%d,iOfst=%lld,ctx=%p,ctx->page_size=%d",
@@ -5888,7 +5938,7 @@ static int sqlcipher_write_wal(
   frame_start_ofst = SQLCIPHER_WAL_HDRSIZE + ((rel_ofst / (ctx->page_sz+SQLCIPHER_WAL_FRAME_HDRSIZE)) * (ctx->page_sz+SQLCIPHER_WAL_FRAME_HDRSIZE)); /* where the actual frame starts */
   in_frame_ofst = rel_ofst % (ctx->page_sz + SQLCIPHER_WAL_FRAME_HDRSIZE); /* offset of the current write into the frame */
 
-  if((rc = sqlcipher_shield_wal_cksum(ctx, b, iOfst, iAmt, sqlcipher_pager_wal_salt(pPager, 0), sqlcipher_pager_wal_salt(pPager, 1))) != SQLITE_OK) { 
+  if((rc = sqlcipher_shield_wal_cksum(ctx, b, iOfst, iAmt, sqlcipher_pager_wal_salt(ctx->pPager, 0), sqlcipher_pager_wal_salt(ctx->pPager, 1))) != SQLITE_OK) { 
     return rc;
   }
 
