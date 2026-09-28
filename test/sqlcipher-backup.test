@@ -76,15 +76,15 @@ file delete -force backup.db
 do_test sqlcipher-backup-encrypted-encrypted {
   sqlite_orig db test.db
   set rc {}
-  execsql {
-   PRAGMA key = 'testkey';
+  execsql "
+   PRAGMA key = $hexkey;
    CREATE TABLE t1(a,b);
    INSERT INTO t1 VALUES(1, randstr(16384,16384));
-  }
+  "
   set md5a [execsql {SELECT md5sum(a,b) FROM t1}]
 
   sqlite_orig db2 backup.db
-  execsql { PRAGMA key = 'testkey' } db2;
+  execsql "PRAGMA key = $hexkey;"  db2;
 
   sqlite3_backup B db2 main db main
   lappend rc [B step -1]
@@ -94,7 +94,7 @@ do_test sqlcipher-backup-encrypted-encrypted {
   db2 close
 
   sqlite_orig db backup.db
-  execsql { PRAGMA key = 'testkey' };
+  execsql "PRAGMA key = $hexkey;";
 
   set md5b [execsql {SELECT md5sum(a,b) FROM t1}]
  
@@ -121,7 +121,7 @@ do_test sqlcipher-backup-plain-encrypted {
   }
 
   sqlite_orig db2 backup.db
-  execsql { PRAGMA key = 'testkey' } db2;
+  execsql "PRAGMA key = $hexkey;" db2;
 
   lappend rc [catch {sqlite3_backup B db2 main db main}]
   lappend rc [sqlite3_errcode db2]
@@ -137,11 +137,11 @@ file delete -force backup.db
 do_test sqlcipher-backup-encrypted-plain {
   sqlite_orig db test.db
   set rc {}
-  execsql {
-   PRAGMA key = 'testkey';
+  execsql "
+   PRAGMA key = $hexkey;
    CREATE TABLE t1(a,b);
    INSERT INTO t1 VALUES(1, randstr(16384,16384));
-  }
+  "
 
   sqlite_orig db2 backup.db
 

@@ -123,16 +123,16 @@ file delete -force test.db
 # set an encryption key (non-hex) and create
 # temp tables, verify you can read from
 # sqlite_temp_master
-setup test.db "'testkey'"
+setup test.db "$hexkey"
 do_test test-temp-master {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TEMPORARY TABLE temp_t1(a,b);
     INSERT INTO temp_t1(a,b) VALUES ('test1', 'test2');
     SELECT name FROM sqlite_temp_master WHERE type='table';
     SELECT * from temp_t1;
-  }
+  "
 } {ok temp_t1 test1 test2}
 db close
 file delete -force test.db
@@ -141,10 +141,10 @@ file delete -force test.db
 # 16 bytes are not "SQLite format 3\0" 
 do_test test-sqlcipher-header-overwrite {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
-  }
+  "
   db close
   set header [hexio_read test.db 0 16]
   string equal $header "53514C69746520666F726D6174203300"
@@ -195,29 +195,25 @@ file delete -force test.db
 # test a large number of inserts in a transaction to a memory database 
 do_test memory-database {
   sqlite_orig db :memory:
-  catchsql {
-    PRAGMA key = 'testkey3';
-  }
+  catchsql "
+    PRAGMA key = $hexkey;
+  "
 } {1 {An error occurred with PRAGMA key or rekey.}}
 db close
 
 # test a large number of inserts in a transaction for multiple pages
 do_test multi-page-database {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey; 
     CREATE TABLE t2(a,b);
-    BEGIN;
-  }
-  for {set i 1} {$i<=25000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t2 VALUES($i,$r);" 
-  }
-  execsql {
-    COMMIT;
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 2500)
+      INSERT INTO t2(a,b) SELECT x, random() % 50000 FROM counter;
+  "
+  list [expr { [file size test.db] >= 49152 }]  [execsql {
     SELECT count(*) FROM t2;
-  } 
-} {25000}
+  }] 
+} {1 2500}
 db close
 file delete -force test.db
 
@@ -369,21 +365,21 @@ file delete -force test.db
 file delete -force test2.db
 
 # test locking across multiple handles
-setup test.db "'testkey'"
+setup test.db "$hexkey"
 do_test locking-across-multiple-handles-start {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     BEGIN EXCLUSIVE;
     INSERT INTO t1 VALUES(1,2);
-  } 
+  "
   
   sqlite_orig dba test.db
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
       SELECT count(*) FROM t1;
-  } dba
+  " dba
 
  } {1 {database is locked}} 
 
@@ -401,33 +397,33 @@ dba close
 file delete -force test.db
 
 # alter schema
-setup test.db "'testkey'"
+setup test.db "$hexkey"
 do_test alter-schema {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     ALTER TABLE t1 ADD COLUMN c;
     INSERT INTO t1 VALUES (1,2,3);
     INSERT INTO t1 VALUES (1,2,4);
     CREATE TABLE t1a (a);
     INSERT INTO t1a VALUES ('teststring');
-  }
+  "
   db close
 
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1 WHERE a IS NOT NULL;
     SELECT count(*) FROM t1 WHERE c IS NOT NULL;
     SELECT * FROM t1a;
-  } 
+  "
 
 } {ok 3 2 teststring}
 db close
 file delete -force test.db
 
 # 1. create a database with a custom page size, 
-# 2. create table and insert operations should work
+# 2. create table and insert operations should work (for at least 3 pages)
 # 3. close database, open it again with the same
 #    key and page size
 # 4. verify that the table is readable
@@ -435,32 +431,24 @@ file delete -force test.db
 do_test custom-pagesize-pragma-cipher-page-size {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_page_size = 16384;
     CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
-  }
-
-  execsql {
-    COMMIT;
-  } 
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 2500)
+      INSERT INTO t1(a,b) SELECT x, random() % 50000 FROM counter;
+  "
 
   db close
   sqlite_orig db test.db
-
-  execsql {
-    PRAGMA key = 'testkey';
+ 
+  list [expr { [file size test.db] >= 49152 }]  [execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_page_size = 16384;
     SELECT count(*) FROM t1;
-  }
+  "]
 
-} {ok 1000}
+} {1 {ok 2500}}
 db close
 file delete -force test.db
 
@@ -469,32 +457,24 @@ file delete -force test.db
 do_test custom-pagesize-pragma-pagesize {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA page_size = 16384;
     CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');"
-  }
-
-  execsql {
-    COMMIT;
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 2500)
+      INSERT INTO t1(a,b) SELECT x, random() % 50000 FROM counter;
+  "
 
   db close
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA page_size = 16384;
     SELECT count(*) FROM t1;
-  }
+  "
 
-} {ok 1000}
+} {ok 2500}
 db close
 file delete -force test.db
 
@@ -502,19 +482,19 @@ file delete -force test.db
 ## and verfiy that it is not readable 
 do_test custom-pagesize-must-match {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_page_size = 16384;
     CREATE table t1(a,b);
-  }
+  "
 
   db close
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
     SELECT name FROM sqlite_schema WHERE type='table';
-  }
+  "
 } {1 {file is not a database}}
 db close
 file delete -force test.db
@@ -528,32 +508,24 @@ file delete -force test.db
 do_test journal-mode-wal {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA journal_mode = WAL;
     CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
-  }
-
-  execsql {
-    COMMIT;
-  } 
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 20)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(4000) FROM counter;
+  "
 
   db close
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
     PRAGMA journal_mode;
-  }
+  "
 
-} {ok 1000 wal}
+} {ok 20 wal}
 db close
 file delete -force test.db
 
@@ -635,16 +607,8 @@ do_test custom-hmac-kdf-iter {
     PRAGMA key = 'testkey';
     PRAGMA kdf_iter = 10;
     CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
-  }
-
-  execsql {
-    COMMIT;
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 100)
+      INSERT INTO t1(a,b) SELECT x, random() % 50000 FROM counter;
   } 
 
   db close
@@ -656,7 +620,7 @@ do_test custom-hmac-kdf-iter {
     SELECT count(*) FROM t1;
   }
 
-} {ok 1000}
+} {ok 100}
 db close
 
 # open the database with the default hmac
@@ -681,20 +645,15 @@ do_test auto-vacuum {
   sqlite_orig db test.db
   set rc {}
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA auto_vacuum=FULL;
     CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=10000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,'value $r');" 
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 1000)
+      INSERT INTO t1(a,b) SELECT x, random() % 50000 FROM counter;
+  "
 
   lappend rc [execsql {
-    COMMIT;
     SELECT count(*) FROM t1;
   }]
 
@@ -704,7 +663,7 @@ do_test auto-vacuum {
   # delete some records, and verify
   # autovacuum removes them
   execsql {
-    DELETE FROM t1 WHERE rowid > 5000;
+    DELETE FROM t1 WHERE rowid > 500;
   } 
 
   db close
@@ -719,12 +678,12 @@ do_test auto-vacuum {
 
   sqlite_orig db test.db
 
-  lappend rc [execsql {
-    PRAGMA key = 'testkey';
+  lappend rc [execsql "
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
-  }]
+  "]
 
-} {10000 true {ok 5000}}
+} {1000 true {ok 500}}
 db close
 file delete -force test.db
 
@@ -917,63 +876,79 @@ file delete -force test.db
 
 # when powersafe overwrite is disabled, the 
 # sector size will be different. on modern drives the sector size will
-# be 4096, the same size as a normal page. Test that journal header writes
+# be 4096, the same size as a normal page for a version 4 database.
+# Test that journal header writes
 # will still work in this scenario
+# Do this by forcing page size to 4096, same as sector size. Then write 10 pages out
+# and update the primary key in place. This should result in multiple
+# headers written to the journal when cache_size = 0
+set rows 10
 do_test journal-mode-delete-header-no-psow {
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  set rc {}
+
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA cipher_page_size = 4096;
     PRAGMA cache_size = 0;
     CREATE table t1(a INTEGER PRIMARY KEY AUTOINCREMENT,b);
-    BEGIN;
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < $rows)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(4000) FROM counter;
+  "
 
-  for {set tx 1} {$tx <= 100} {incr tx} {
-    execsql "INSERT INTO t1(b) VALUES(zeroblob(4096));"
-  }
+  sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1
 
   execsql {
-    COMMIT;
-
     BEGIN;
     UPDATE t1 SET a = a+100;
+  }
+
+  set jfs [file size test.db-journal] 
+  set pages [expr {[file size test.db] / 4096}]
+  set spills [lindex [sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1] 1]
+
+  # there should at least two headers in the file
+  lappend rc [expr {(($jfs - (4096*$rows)) / 4096) > 2 }]
+
+  # more spills than pages (due to rewrites)
+  lappend rc [expr { $spills > $pages }]
+
+  execsql {
     COMMIT;
   }
    
   db close
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  lappend rc [execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA cipher_page_size = 4096;
     SELECT count(*) FROM t1;
     PRAGMA integrity_check;
     PRAGMA cipher_integrity_check;
-  }
+  "]
 
-} {ok 100 ok}
+} {1 1 {ok 10 ok}}
 db close
 file delete -force test.db
+
 
 # when powersafe overwrite is disabled, verify a transaction can
 # be rolled back successfully
 do_test journal-mode-delete-rollback-no-psow {
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA cipher_page_size = 4096;
     PRAGMA cache_size = 0;
     CREATE table t1(a INTEGER PRIMARY KEY AUTOINCREMENT,b);
-    BEGIN;
-  }
-
-  for {set tx 1} {$tx <= 100} {incr tx} {
-    execsql "INSERT INTO t1(b) VALUES(zeroblob(4096));"
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < $rows)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(4000) FROM counter;
+  "
 
   execsql {
-    COMMIT;
-
     BEGIN;
     UPDATE t1 SET a = a+100;
     ROLLBACK;
@@ -982,12 +957,13 @@ do_test journal-mode-delete-rollback-no-psow {
   db close
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA cipher_page_size = 4096;
     SELECT count(*) FROM t1 WHERE a > 100;
     PRAGMA integrity_check;
     PRAGMA cipher_integrity_check;
-  }
+  "
 
 } {ok 0 ok}
 db close
@@ -1000,27 +976,21 @@ file delete -force test.db
 do_test journal-mode-delete-padding-no-psow {
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA cipher_page_size = 4096;
     PRAGMA cache_size = 0;
     CREATE table t1(a INTEGER PRIMARY KEY AUTOINCREMENT,b);
-    BEGIN;
-  }
-
-  # insert 50,000 new records
-  for {set i 0} {$i < 50000} {incr i} {
-    execsql "INSERT INTO t1(b) VALUES('value $i');"
-  }
-  execsql {
-    COMMIT;
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 5000)
+      INSERT INTO t1(a,b) SELECT x, 'value ' || x FROM counter;
+  "
 
   # update a random number of rows in a transaction between
   # and half the table size. this will generate some random
   # number of page entries in the journal
-  for {set tx 0} {$tx < 100} {incr tx} {
+  for {set tx 0} {$tx < 50} {incr tx} {
     execsql {BEGIN;}
-    set n [expr {int(rand() * 25000) + 1}]
+    set n [expr {int(rand() * 2500) + 1}]
     execsql "UPDATE t1 SET b = 'value $n' WHERE a < $n;"
     execsql {COMMIT;}
   }
@@ -1028,34 +998,35 @@ do_test journal-mode-delete-padding-no-psow {
   db close
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA cipher_page_size = 4096;
     SELECT count(*) FROM t1;
     PRAGMA journal_mode;
     PRAGMA integrity_check;
     PRAGMA cipher_integrity_check;
-  }
+  "
 
-} {ok 50000 delete ok}
+} {ok 5000 delete ok}
 db close
 file delete -force test.db
 
 # test sector-padded WAL mode with
 # synchronous = FULL and 
 # SQLITE_IOCAP_POWERSAFE_OVERWRITE = 0
-# run 10K transactions in a loop
+# run 100 transactions in a loop
 do_test journal-mode-wal-no-psow {
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cache_size = 0;
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous=FULL;
     CREATE table t1(a INTEGER PRIMARY KEY AUTOINCREMENT,b);
-  }
+  "
 
-  for {set tx 1} {$tx <= 1000} {incr tx} {
+  for {set tx 1} {$tx <= 100} {incr tx} {
     execsql {BEGIN;}
     set nrows [expr {int(rand() * 100) + 1}]
 
@@ -1075,13 +1046,13 @@ do_test journal-mode-wal-no-psow {
   db close
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     SELECT count(*) > 10 FROM t1;
     PRAGMA journal_mode;
     PRAGMA integrity_check;
     PRAGMA cipher_integrity_check;
-  }
+  "
 
 } {ok 1 wal ok}
 db close
@@ -1092,8 +1063,8 @@ file delete -force test.db
 do_test statement-journal {
   sqlite_orig db file:test.db?psow=0
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cache_size = 0;
     PRAGMA temp_store = file;
 
@@ -1104,7 +1075,7 @@ do_test statement-journal {
     BEGIN;
 
     UPDATE t1 SET b = a + 1;
-  }
+  "
   catchsql {
     UPDATE t1 SET a = CASE WHEN a IN (4) THEN 1 ELSE a END;
   }
@@ -1117,10 +1088,10 @@ file delete -force test.db
 do_test cipher-status-encrypted {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_status;
-  }
+  "
 
 } {ok 1}
 db close
@@ -1144,12 +1115,12 @@ file delete -force test.db
 do_test cipher-status-attached-encrypted {
   sqlite_orig db test.db
 
-  execsql {
+  execsql "
     PRAGMA cipher_status;
-    ATTACH DATABASE 'test2.db' AS test2 KEY 'test';
+    ATTACH DATABASE 'test2.db' AS test2 KEY $hexkey;
     PRAGMA test2.cipher_status;
     DETACH DATABASE test2;
-  }
+  "
 
 } {0 1}
 db close
@@ -1161,13 +1132,13 @@ file delete -force test2.db
 do_test cipher-status-attached-plaintext {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA KEY = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_status;
     ATTACH DATABASE 'test2.db' AS test2 KEY '';
     PRAGMA test2.cipher_status;
     DETACH DATABASE test2;
-  }
+  "
 
 } {ok 1 0}
 db close
@@ -1197,16 +1168,16 @@ file delete -force test.db
 do_test schema-mod-after-bad-key {
   set rc {}
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
-  }
+  "
   db close
 
   sqlite_orig db test.db
   catchsql {
-    PRAGMA key = 'wrong';
+    PRAGMA key = "x'000000000000000000000000000000000000000000000000000000000000000001010101010101010101010101010101'";
     CREATE TABLE t1(a,b);
   }
 } {1 {file is not a database}}
@@ -1221,10 +1192,10 @@ do_test init-failure-blocks-db-use {
   sqlite_orig db test.db
   set rc {}
 
-  lappend rc [catchsql {
+  lappend rc [catchsql "
     PRAGMA cipher_default_page_size = 123;
-    PRAGMA key = 'test';
-  }]
+    PRAGMA key = $hexkey;
+  "]
 
   lappend rc [catchsql {
     CREATE TABLE t1(a,b);
@@ -1251,11 +1222,11 @@ foreach mode {delete wal} {
     sqlite_orig db test.db
     set rc {}
 
-    lappend rc [catchsql {
+    lappend rc [catchsql "
       PRAGMA cipher_default_page_size = 123;
       BEGIN IMMEDIATE;
-      PRAGMA key = 'test';
-    }]
+      PRAGMA key = $hexkey;
+    "]
 
     lappend rc [catchsql {
       CREATE TABLE t1(a,b);
@@ -1286,11 +1257,11 @@ do_test post-init-failure-blocks-db-use-autocommit {
   sqlite_orig db test.db
   set rc {}
 
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
-  }
+  "
 
   lappend rc [catchsql {
     PRAGMA cipher_hmac_algorithm = 'DNE';
@@ -1327,17 +1298,15 @@ foreach mode {delete wal} {
     set rc {}
 
     execsql "
-      PRAGMA key = 'test';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       PRAGMA cache_size = 0;
       CREATE TABLE t1(a,b);
       INSERT INTO t1(a,b) VALUES (1,2);
       BEGIN IMMEDIATE;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 20)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(4000) FROM counter;
     "
-
-    for {set i 1} {$i<=100} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i, zeroblob(5000))"
-    }
 
     lappend rc [catchsql {
       PRAGMA cipher_hmac_algorithm = 'DNE';
@@ -1354,11 +1323,11 @@ foreach mode {delete wal} {
     db close
     sqlite_orig db test.db
 
-    lappend rc [ execsql {
-      PRAGMA key = 'test';
+    lappend rc [ execsql "
+      PRAGMA key = $hexkey;
       SELECT count(*) FROM t1;
       PRAGMA integrity_check;
-    }]
+    "]
 
     set rc
   } "{0 {}} {1 {disk I/O error}} {1 {cannot commit - no transaction is active}} {ok 1 ok}"
@@ -1374,10 +1343,10 @@ do_test init-failure-no-mem-leak {
   set rc {}
 
   set start_heap [execsql {PRAGMA cipher_test_private_heap_used;}]
-  lappend rc [catchsql {
+  lappend rc [catchsql "
     PRAGMA cipher_default_page_size = 123;
-    PRAGMA key = 'test';
-  }]
+    PRAGMA key = $hexkey;
+  "]
   set stop_heap [execsql {PRAGMA cipher_test_private_heap_used;}]
 
   db close
@@ -1410,10 +1379,10 @@ file delete -force test.db
 do_test cipher-status-encrypted {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_fips_status;
-  }
+  "
 
 } {ok 0}
 db close
@@ -1447,9 +1416,9 @@ file delete -force test.db
 do_test non-sqlcipher-vfs {
   sqlite_orig db file:test.db?vfs=unix
 
-  catchsql {
-    PRAGMA key = 'testkey';
-  }
+  catchsql "
+    PRAGMA key = $hexkey;
+  "
 
 } {1 {An error occurred with PRAGMA key or rekey.}}
 db close
@@ -1459,27 +1428,21 @@ file delete -force test.db
 # because the vfs disables it to prevent direct reads
 do_test will-open-with-mmap {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
-    BEGIN;
-  }
-  for {set i 1} {$i<=25000} {incr i} {
-    set r [expr {int(rand()*500000)}]
-    execsql "INSERT INTO t1 VALUES($i,$r);" 
-  }
-  execsql {
-    COMMIT;
-  } 
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 1000)
+      INSERT INTO t1(a,b) SELECT x, random() % 50000 FROM counter;
+  "
   db close
 
   sqlite_orig db test.db
-  execsql {
+  execsql "
     PRAGMA mmap_size = 67108864;
-    PRAGMA key = 'testkey';
+    PRAGMA key = $hexkey;
     SELECT count(*) from t1;
-  }
-} {67108864 ok 25000}
+  "
+} {67108864 ok 1000}
 db close
 file delete -force test.db
 
@@ -1490,40 +1453,47 @@ foreach mode {delete wal truncate persist} {
   # rewrite pages / frames. In Wal mode this will cause checksume rewrite as well
   do_test inplace-overwrite-$mode {
     sqlite_orig db test.db
+    set rc {}
+    sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1
 
     execsql "
-      PRAGMA key = 'test123';
-      PRAGMA journal_mode = $mode;
+      PRAGMA key = $hexkey;
       PRAGMA cache_size = 0;
+      PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a, b);
       BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
     "
 
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i, zeroblob(5000))"
-    }
+    # verify at least 50% of the pages spilled to cache. In practice cache_size = 0 so everything
+    # shoudl spill, but this is dependent on the combination of row size, blob size, default
+    # page size, etc, so we make it explicit for this test.
+    lappend rc [expr {[lindex [sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1] 1] > 250}]
 
-    execsql "UPDATE t1 SET b=zeroblob(4999) WHERE a<2500"
+    execsql "UPDATE t1 SET b=zeroblob(4999) WHERE a<250"
+
+    lappend rc [expr {[lindex [sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1] 1] > 175}]
 
     execsql { 
       COMMIT;
       PRAGMA wal_checkpoint(FULL);
     }
 
-    execsql {
+    lappend rc [execsql {
       SELECT count(*) FROM t1;
-    }
-  } {5000}
+    }]
+  } {1 1 500}
   db close
 
   # run integrity check
   do_test inplace-overwrite-reopen-$mode {
     sqlite_orig db test.db
 
-    execsql {
-      PRAGMA key = 'test123';
+    execsql "
+      PRAGMA key = $hexkey;
       PRAGMA integrity_check;
-    }
+    "
   } {ok ok}
   db close
   file delete -force test.db
@@ -1531,50 +1501,49 @@ foreach mode {delete wal truncate persist} {
   # similar test to above, but execute a rollback instead of a commit
   do_test rollback-after-spill-$mode {
     sqlite_orig db test.db
+    set rc {}
+    sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1
 
     execsql "
-      PRAGMA key = 'test123';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       PRAGMA cache_size = 0;
       CREATE TABLE t1(a, b);
       BEGIN;
-    "
-
-    for {set i 1} {$i<=1000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i, zeroblob(5000))"
-    }
-
-    execsql {
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
       COMMIT;
-    }
+    "
 
     # new transaction writes and spills, but then rolls back
     execsql {
       BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 2000)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
     }
 
-    for {set i 1001} {$i<=4000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i, zeroblob(5000))"
-    }
+    lappend rc [expr {[lindex [sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1] 1] > 1000}]
 
-    execsql "UPDATE t1 SET b=zeroblob(4999) WHERE a<2500"
+    execsql "UPDATE t1 SET b=zeroblob(4999) WHERE a<250"
+
+    lappend rc [expr {[lindex [sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1] 1] > 175}]
 
     execsql {
       ROLLBACK;
     }
 
-    execsql {
+    lappend rc [execsql {
       SELECT count(*) FROM t1;
-    }
-  } {1000}
+    }]
+  } {1 1 500}
   db close
 
   do_test rollback-after-spill-reopen-$mode {
     sqlite_orig db test.db
-    execsql {
-      PRAGMA key = 'test123';
+    execsql "
+      PRAGMA key = $hexkey;
       PRAGMA integrity_check;
-    }
+    "
   } {ok ok}
   db close
   file delete -force test.db
@@ -1588,7 +1557,7 @@ foreach mode {delete wal truncate persist} {
 # With PSOW enabled the default sector size would be set to 512 which is  too small to support SQLCipher's
 # reserve size requirement (reserve on a 512 db is limited to 32 bytes). As a result, psow is disable for
 # these tests. Then page size is set to 4096 to match the sector size. Then we write a bunch of data out to the journal
-# file, and make sure that at least a couple journal headers are written. Then we process a commit, and do
+# file, and make sure that journal headers are written. Then we process a commit, and do
 # the same with a rollback to ensure that they both work and the page accounting works.
 
 foreach mode {delete truncate persist} {
@@ -1598,29 +1567,40 @@ foreach mode {delete truncate persist} {
   do_test journal-header-prepare-$mode {
     sqlite_orig db file:test.db?psow=0
 
+    set rc {}
+    sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1
+
     execsql "
-      PRAGMA key = 'test123';
+      PRAGMA key = $hexkey;
       PRAGMA cipher_page_size = 4096;
       PRAGMA journal_mode = $mode;
       PRAGMA cache_size = 0;
       CREATE TABLE t1(a, b);
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(4000) FROM counter;
       BEGIN;
+      UPDATE t1 SET b = zeroblob(4001);
     "
 
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i, zeroblob(5000))"
-    }
+    set jfs [file size test.db-journal] 
+    set pages [expr {[file size test.db] / 4096}]
+    set spills [lindex [sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1] 1]
+
+    # there should at least two headers in the file
+    lappend rc [expr {(($jfs - (4096*500)) / 4096) > 2 }]
+    # more spills than pages (due to rewrites)
+    lappend rc [expr { $spills > $pages }]
 
     execsql { 
       COMMIT;
       PRAGMA wal_checkpoint(FULL);
     }
 
-    execsql {
+    lappend rc [execsql {
       SELECT count(*) FROM t1;
-      SELECT count(*) FROM t1 WHERE a > 5000
-    }
-  } {5000 0}
+      SELECT count(*) FROM t1 WHERE a > 500
+    }]
+  } {1 1 {500 0}}
   db close
 
   # open previous file, insert less data but still spill, then rollback
@@ -1630,28 +1610,41 @@ foreach mode {delete truncate persist} {
   do_test journal-header-rollback-$mode {
     sqlite_orig db file:test.db?psow=0
 
+    set rc {}
+    sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1
+
+    if { $mode == "persist" } {
+      # verify that the journal is still on disk and reused
+      lappend rc [expr { [file size test.db-journal] > 4096*500 }]
+    } else {
+      lappend rc 1
+    }
+
     execsql "
-      PRAGMA key = 'test123';
+      PRAGMA key = $hexkey;
       PRAGMA cipher_page_size = 4096;
       PRAGMA journal_mode = $mode;
       PRAGMA cache_size = 0;
       BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (501) UNION SELECT x+1 FROM counter WHERE x < 700)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(4000) FROM counter;
+      UPDATE t1 SET b = zeroblob(4002);
     "
 
-    for {set i 5001} {$i<=7000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i, zeroblob(5000))"
-    }
+    set spills [lindex [sqlite3_db_status db SQLITE_DBSTATUS_CACHE_SPILL 1] 1]
+    # more spills than pages (due to rewrites)
+    lappend rc [expr { $spills > 200 }]
 
     execsql {
       ROLLBACK;
     }
 
-    execsql {
+    lappend rc [execsql {
       SELECT count(*) FROM t1;
-      SELECT count(*) FROM t1 WHERE a > 5000;
+      SELECT count(*) FROM t1 WHERE a > 500;
       PRAGMA integrity_check;
-    }
-  } {5000 0 ok}
+    }]
+  } {1 1 {500 0 ok}}
   db close
 
   file delete -force test.db
@@ -1676,18 +1669,22 @@ foreach mode {delete truncate persist} {
 # - wal_autocheckpoint prevents non-deterministic checkpointing
 # - synchronous set to FULL when psow is 0 to force split writes
 
-set rows 200
-
 foreach mode {delete persist wal} {
   foreach page_sz {1024 4096 8192} {
     foreach {psow sync} {0 FULL 1 NORMAL} {
+
+      set rows 50
+      # PSOW=0 tests cover split writes and will use 10x volume
+      if { $psow == 0 } {
+        set rows 500
+      } 
 
       # verify that commits can be successfully rolled back
       # on an open transaction
       do_test rollback-$mode-$page_sz-$psow {
         sqlite_orig db file:test.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA journal_mode = $mode;
           PRAGMA synchronous = $sync;
@@ -1710,12 +1707,14 @@ foreach mode {delete persist wal} {
       forcedelete test.db test.db-journal test.db-wal test.db-shm
 
       # make many small commits to stress split write wal frames
-      # splits will occur when PSOW=0 and synchronous=FULL on the
-      # 4096 sector size every 1024 pages written to log
+      # splits that will occur when PSOW=0 and synchronous=FULL.
+      # A split write occurs whenver a frame write will straddle a sector 
+      # boundary. In practice, this will happen every ~4 pages with a 1024
+      # page size, and for almost every page with 4096 or 8192.
       do_test split-writes-$mode-$page_sz-$psow {
         sqlite_orig db file:test.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA journal_mode = $mode;
           PRAGMA synchronous = $sync;
@@ -1724,7 +1723,7 @@ foreach mode {delete persist wal} {
           CREATE TABLE t1(a INTEGER PRIMARY KEY, b);
           INSERT INTO t1 VALUES(1, zeroblob(64));
         "
-        for {set i 2} {$i <= 3000} {incr i} {
+        for {set i 2} {$i <= $rows} {incr i} {
           execsql "INSERT INTO t1 VALUES($i, zeroblob(64))"
         }
 
@@ -1740,12 +1739,12 @@ foreach mode {delete persist wal} {
 
         sqlite_orig db file:test2.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA integrity_check;
           SELECT count(*) FROM t1;
         "
-      } "ok ok 3000"
+      } "ok ok $rows"
       db close
       forcedelete test.db test.db-journal test.db-wal test.db-shm
       forcedelete test2.db test2.db-journal test2.db-wal test2.db-shm
@@ -1756,7 +1755,7 @@ foreach mode {delete persist wal} {
       do_test recover-committed-$mode-$page_sz-$psow {
         sqlite_orig db file:test.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA journal_mode = $mode;
           PRAGMA synchronous = $sync;
@@ -1784,7 +1783,7 @@ foreach mode {delete persist wal} {
 
         sqlite_orig db file:test2.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA integrity_check;
           SELECT count(*) FROM t1;
@@ -1799,7 +1798,7 @@ foreach mode {delete persist wal} {
       do_test recover-uncommitted-$mode-$page_sz-$psow {
         sqlite_orig db file:test.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA journal_mode = $mode;
           PRAGMA synchronous = $sync;
@@ -1827,7 +1826,7 @@ foreach mode {delete persist wal} {
 
         sqlite_orig db file:test2.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA integrity_check;
           SELECT count(*) FROM t1;
@@ -1841,7 +1840,7 @@ foreach mode {delete persist wal} {
       do_test recover-bad-key-$mode-$page_sz-$psow {
         sqlite_orig db file:test.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA journal_mode = $mode;
           PRAGMA synchronous = $sync;
@@ -1877,7 +1876,7 @@ foreach mode {delete persist wal} {
         "] 0]
 
         set success [execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           SELECT count(*) FROM t1;
         "]
@@ -1893,7 +1892,7 @@ foreach mode {delete persist wal} {
       do_test recover-reuse-$mode-$page_sz-$psow {
         sqlite_orig db file:test.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA journal_mode = $mode;
           PRAGMA synchronous = $sync;
@@ -1927,7 +1926,7 @@ foreach mode {delete persist wal} {
 
         sqlite_orig db file:test2.db?psow=$psow
         execsql "
-          PRAGMA key = 'test123';
+          PRAGMA key = $hexkey;
           PRAGMA cipher_page_size = $page_sz;
           PRAGMA integrity_check;
           SELECT count(*), min(length(b)) FROM t1;
@@ -1954,7 +1953,7 @@ foreach mode {delete persist wal} {
     set rc {}
 
     execsql "
-      PRAGMA key = 'testkey';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
       INSERT INTO t1 VALUES(1,2);
@@ -1962,10 +1961,10 @@ foreach mode {delete persist wal} {
 
     sqlite_orig db2 file:test.db?cache=shared
 
-    lappend rc [ execsql {
-      PRAGMA key = 'testkey';
+    lappend rc [ execsql "
+      PRAGMA key = $hexkey;
       SELECT count(*) FROM t1;
-    } db2 ]
+    " db2 ]
 
     db close
 
@@ -1991,7 +1990,7 @@ foreach mode {delete persist wal} {
     set rc {}
 
     execsql "
-      PRAGMA key = 'testkey';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
       INSERT INTO t1 VALUES(1,2);

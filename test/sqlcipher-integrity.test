@@ -44,11 +44,11 @@ source $testdir/sqlcipher.tcl
 do_test hmac-tamper-resistence-first-page {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE table t1(a,b);
     BEGIN;
-  }
+  "
 
   for {set i 1} {$i<=1000} {incr i} {
     set r [expr {int(rand()*500000)}]
@@ -67,10 +67,10 @@ do_test hmac-tamper-resistence-first-page {
 
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
-  }
+  "
 
 } {1 {file is not a database}}
 db close
@@ -82,14 +82,14 @@ file delete -force test.db
 do_test nohmac-not-tamper-resistent {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_use_hmac = OFF;
     PRAGMA cipher_aead = OFF;
     PRAGMA cipher_page_size = 1024;
     CREATE table t1(a,b);
     BEGIN;
-  }
+  "
 
   for {set i 1} {$i<=1000} {incr i} {
     set r [expr {int(rand()*500000)}]
@@ -107,13 +107,13 @@ do_test nohmac-not-tamper-resistent {
 
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_use_hmac = OFF;
     PRAGMA cipher_aead = OFF;
     PRAGMA cipher_page_size = 1024;
     SELECT count(*) FROM t1;
-  }
+  "
 
 } {ok 1000}
 db close
@@ -125,11 +125,11 @@ file delete -force test.db
 do_test hmac-tamper-resistence {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE table t1(a,b);
     BEGIN;
-  }
+  "
 
   for {set i 1} {$i<=1000} {incr i} {
     set r [expr {int(rand()*500000)}]
@@ -148,10 +148,10 @@ do_test hmac-tamper-resistence {
 
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
-  }
+  "
 } {1 {database disk image is malformed}}
 db close
 file delete -force test.db
@@ -161,31 +161,24 @@ file delete -force test.db
 do_test integrity-check-clean-database {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE table t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=10000} {incr i} {
-    execsql "INSERT INTO t1 VALUES($i,'value $i');"
-  }
-
-  execsql {
-    COMMIT;
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 1000)
+      INSERT INTO t1(a,b) SELECT x, 'value ' || x FROM counter;
+  "
 
   db close
 
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
-  }
+  "
 
-} {ok ok 10000}
+} {ok ok 1000}
 db close
 file delete -force test.db
 
@@ -356,40 +349,38 @@ db close
 file delete -force test.db
 
 # test that changing the key in the middle of database operations does
-# not cause a corruption
+# not cause a corruption. Write out 3-4 pages of content, attempt to
+# change the key, write another 2-3 pages, and verify everything
+# is encrypted under the original key
 do_test change-key-middle {
   sqlite_orig db test.db
 
   set rc {}
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE table t1(a,b);
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    execsql "INSERT INTO t1 VALUES($i,'value $i');"
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 100)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(256) FROM counter;
+  "
 
   execsql {
     PRAGMA key = 'diffkey';
-  }
-
-  for {set i 1} {$i<=1000} {incr i} {
-    execsql "INSERT INTO t1 VALUES($i,'value $i');"
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 100)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(256) FROM counter;
   }
 
   db close
 
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     SELECT name FROM sqlite_schema;
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
     SELECT count(*) FROM t1;
-  }
-} {ok t1 ok 2000}
+  "
+} {ok t1 ok 200}
 db close
 file delete -force test.db
 

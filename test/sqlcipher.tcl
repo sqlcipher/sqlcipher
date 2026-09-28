@@ -33,6 +33,9 @@
 # should explicitly close and open db with sqlite_orig in order
 # to bypass default key assignment.
 
+# default hex key to use for SQLCipher databases when key derivation is not strictly necessary
+set hexkey  {"x'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01010101010101010101010101010101'"}
+set hexkey2 {"x'fedcba9876543210fedcba9876543210fedcba9876543210fedcba987654321010101010101010101010101010101010'"}
 
 set testdir [file dirname $argv0]
 set sampleDir [file normalize [file dirname [file dirname $argv0]]]/sqlcipher-resources

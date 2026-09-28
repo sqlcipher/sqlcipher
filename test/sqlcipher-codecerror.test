@@ -39,21 +39,16 @@ source $testdir/tester.tcl
 source $testdir/sqlcipher.tcl
 
 proc codec-test-setup {} {
+  global hexkey
+
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE table t1(a INTEGER PRIMARY KEY,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=10000} {incr i} {
-    execsql "INSERT INTO t1(a,b) VALUES($i,'value $i');"
-  }
-
-  execsql {
-    COMMIT;
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 1000)
+      INSERT INTO t1(a,b) SELECT x, 'value ' || x FROM counter;
+  "
 
   db close
 }
@@ -64,24 +59,24 @@ do_test codec-error-journal-delete {
 
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_test_on = fail_encrypt;
-    UPDATE t1 SET b = 'fail' WHERE a = 5000;
-  }
+    UPDATE t1 SET b = 'fail' WHERE a = 1000;
+  "
 
   db close
   sqlite_orig db test.db
 
-  execsql {
+  execsql "
     PRAGMA cipher_test_off = fail_encrypt;
-    PRAGMA key = 'testkey';
+    PRAGMA key = $hexkey;
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
-    SELECT b FROM t1 where a = 5000;
-  }
+    SELECT b FROM t1 where a = 1000;
+  "
 
-} {ok ok {value 5000}}
+} {ok ok {value 1000}}
 db close
 file delete -force test.db
 
@@ -90,24 +85,25 @@ do_test codec-error-journal-wal {
 
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
+    PRAGMA journal_mode = WAL;
     PRAGMA cipher_test_on = fail_encrypt;
-    UPDATE t1 SET b = 'fail' WHERE a = 5000;
-  }
+    UPDATE t1 SET b = 'fail' WHERE a = 1000;
+  "
 
   db close
   sqlite_orig db test.db
 
-  execsql {
+  execsql "
     PRAGMA cipher_test_off = fail_encrypt;
-    PRAGMA key = 'testkey';
+    PRAGMA key = $hexkey;
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
-    SELECT b FROM t1 where a = 5000;
-  }
+    SELECT b FROM t1 where a = 1000;
+  "
 
-} {ok ok {value 5000}}
+} {ok ok {value 1000}}
 db close
 file delete -force test.db
 
@@ -116,28 +112,29 @@ do_test codec-error-journal-wal-transaction {
 
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
+    PRAGMA journal_mode = WAL;
     BEGIN;
     UPDATE t1 SET b = 'success' WHERE a = 1;
     PRAGMA cipher_test_on = fail_encrypt;
-    UPDATE t1 SET b = 'fail' WHERE a = 5000;
+    UPDATE t1 SET b = 'fail' WHERE a = 1000;
     COMMIT;
-  }
+  "
 
   db close
   sqlite_orig db test.db
 
-  execsql {
+  execsql "
     PRAGMA cipher_test_off = fail_encrypt;
-    PRAGMA key = 'testkey';
+    PRAGMA key = $hexkey;
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
     SELECT b FROM t1 where a = 1;
-    SELECT b FROM t1 where a = 5000;
-  }
+    SELECT b FROM t1 where a = 1000;
+  "
 
-} {ok ok {value 1} {value 5000}}
+} {ok ok {value 1} {value 1000}}
 db close
 file delete -force test.db
 
@@ -146,25 +143,26 @@ do_test codec-error-journal-wal-read {
 
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA key = 'testkey';
+  catchsql "
+    PRAGMA key = $hexkey;
+    PRAGMA journal_mode = WAL;
     SELECT count(*) FROM sqlite_schema;
     PRAGMA cipher_test_on = fail_decrypt;
-    UPDATE t1 SET b = 'fail' WHERE a = 5000;
-  }
+    UPDATE t1 SET b = 'fail' WHERE a = 1000;
+  "
 
   db close
   sqlite_orig db test.db
 
-  execsql {
+  execsql "
     PRAGMA cipher_test_off = fail_decrypt;
-    PRAGMA key = 'testkey';
+    PRAGMA key = $hexkey;
     PRAGMA cipher_integrity_check;
     PRAGMA integrity_check;
-    SELECT b FROM t1 where a = 5000;
-  }
+    SELECT b FROM t1 where a = 1000;
+  "
 
-} {ok ok {value 5000}}
+} {ok ok {value 1000}}
 db close
 file delete -force test.db
 

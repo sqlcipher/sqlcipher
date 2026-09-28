@@ -60,11 +60,11 @@ do_test sqlcipher-thread-prep {
 
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     BEGIN;
-  }
+  "
   for {set i 1} {$i<=2500} {incr i} {
     execsql "INSERT INTO t1 VALUES($i,randomblob(2000));" 
   }
@@ -88,7 +88,7 @@ do_test sqlcipher-thread-run {
       while {[clock_seconds] < $iEnd} {
         set ::DB [sqlthread open %s]
         execsql {
-          PRAGMA key = 'testkey';
+          PRAGMA key = %s;
           PRAGMA cache_size = 0;
         }
         set iQuery [expr {int(rand()*2500)}]
@@ -97,7 +97,7 @@ do_test sqlcipher-thread-run {
       }
 
       expr 1
-    } $nSecond test.db]
+    } $nSecond test.db $hexkey]
 
     unset -nocomplain finished($i)
     thread_spawn finished($i) $thread_procs $SCRIPT

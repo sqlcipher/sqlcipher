@@ -43,9 +43,9 @@ source $testdir/sqlcipher.tcl
 do_test rekey-as-first-op-on-empty {
   sqlite_orig db test.db
 
-  catchsql {
-    PRAGMA rekey = 'testkey';
-  }
+  catchsql "
+    PRAGMA rekey = $hexkey;
+  "
 
 } {1 {An error occurred with PRAGMA key or rekey.}}
 db close
@@ -54,13 +54,13 @@ file delete -force test.db
 # test a rekey operation as the first op on an existing database
 # then test that now the new key opens the database
 # now close database re-open with new key
-setup test.db "'testkey'"
+setup test.db "$hexkey"
 do_test rekey-as-first-operation {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA rekey = 'testkeynew';
-  }
+  "
   db close
 
   sqlite_orig db test.db
@@ -73,13 +73,13 @@ db close
 file delete -force test.db
 
 # same as previous, use hexrekey
-setup test.db "'testkey'"
+setup test.db "$hexkey"
 do_test hexrekey-as-first-operation {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA hexrekey = '746573746b65796e6577';
-  }
+  "
   db close
 
   sqlite_orig db test.db
@@ -92,13 +92,13 @@ db close
 file delete -force test.db
 
 # same as previous, use textrekey
-setup test.db "'testkey'"
+setup test.db "$hexkey"
 do_test textrekey-as-first-operation {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA textrekey = 'testkeynew';
-  }
+  "
   db close
 
   sqlite_orig db test.db
@@ -115,23 +115,19 @@ file delete -force test.db
 do_test rekey-same-passkey {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'test123';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=5000} {incr i} {
-    execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));"
-  }
-
-  execsql {
-    COMMIT;
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
+  "
+  execsql "
     SELECT count(*) FROM t1;
-    PRAGMA rekey = 'test123';
+    PRAGMA cache_size = 0;
+    PRAGMA rekey = $hexkey;
     SELECT count(*) FROM t1;
-  }
-} {5000 ok 5000}
+  "
+} {500 ok 500}
 db close
 file delete -force test.db
 
@@ -142,33 +138,30 @@ file delete -force test.db
 do_test rekey-and-query-1 {
   sqlite_orig db test.db
 
-  execsql {
-    PRAGMA key = 'test123';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
-    BEGIN;
-  }
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
+  "
 
-  for {set i 1} {$i<=5000} {incr i} {
-    execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));"
-  }
-
-  execsql {
-    COMMIT;
+  execsql "
     SELECT count(*) FROM t1;
-    PRAGMA rekey = 'test321';
+    PRAGMA cache_size = 0;
+    PRAGMA rekey = $hexkey2;
     SELECT count(*) FROM t1;
-  }
-} {5000 ok 5000}
+  "
+} {500 ok 500}
 
 db close
 
 do_test rekey-and-query-2 {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'test321';
+  execsql "
+    PRAGMA key = $hexkey2;
     SELECT count(*) FROM t1;
-  }
-} {ok 5000}
+  "
+} {ok 500}
 db close
 file delete -force test.db
 
@@ -186,23 +179,21 @@ foreach mode {delete wal} {
     sqlite_orig db test.db
 
     execsql "
-      PRAGMA key = 'test123';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
       CREATE INDEX ta_a ON t1(a);
       BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
     "
 
-    for {set i 1} {$i<5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));"
-    }
-
-    execsql "DELETE FROM t1 WHERE a < 2500;"
+    execsql "DELETE FROM t1 WHERE a < 250;"
 
     set r1 [expr {int(rand()*32767)}]
-    execsql "UPDATE t1 SET b = $r1 WHERE a < 3750;"
+    execsql "UPDATE t1 SET b = $r1 WHERE a < 375;"
 
-    execsql "DELETE FROM t1 WHERE a > 3750;"
+    execsql "DELETE FROM t1 WHERE a > 375;"
 
     execsql {
       COMMIT;
@@ -213,20 +204,20 @@ foreach mode {delete wal} {
 
   do_test rekey-delete-and-query-2-$mode {
     sqlite_orig db test.db
-    execsql {
-      PRAGMA key = 'test123';
+    execsql "
+      PRAGMA key = $hexkey;
       PRAGMA cache_size = 0;
-      PRAGMA rekey = 'test321';
+      PRAGMA rekey = $hexkey2;
       SELECT count(*) > 1 FROM t1;
       PRAGMA integrity_check;
-    }
+    "
   } {ok ok 1 ok}
   db close
 
   do_test rekey-delete-and-query-3-$mode {
     sqlite_orig db test.db
     execsql "
-      PRAGMA key = 'test321';
+      PRAGMA key = $hexkey2;
       SELECT count(*) > 1 FROM t1;
       PRAGMA journal_mode;
     " 
@@ -268,20 +259,13 @@ foreach mode {delete wal} {
     set rc {}
 
     execsql "
-      PRAGMA key = 'test';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
-      BEGIN;
-    "
-
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));"
-    }
-
-    execsql {
-      COMMIT;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
       PRAGMA wal_checkpoint(TRUNCATE);
-    }
+    "
 
     lappend rc [execsql {
       SELECT count(*) FROM t1;
@@ -291,25 +275,25 @@ foreach mode {delete wal} {
       PRAGMA cipher_test_on = fail_rekey;
     }
     
-    lappend rc [catchsql {
+    lappend rc [catchsql "
       PRAGMA cache_size = 0;
-      PRAGMA rekey = 'test123';
-    }]
+      PRAGMA rekey = $hexkey2;
+    "]
 
     db close
     sqlite_orig db test.db
 
     # the transaction should have been rolled back
     # so the old key should work
-    lappend rc [execsql {
-      PRAGMA key = 'test';
+    lappend rc [execsql "
+      PRAGMA key = $hexkey;
       SELECT count(*) FROM t1;
       PRAGMA integrity_check;
       PRAGMA cipher_integrity_check;
       PRAGMA cipher_test_off = fail_rekey;
-    }]
+    "]
 
-  } {5000 {1 {An error occurred with PRAGMA key or rekey.}} {ok 5000 ok}}
+  } {500 {1 {An error occurred with PRAGMA key or rekey.}} {ok 500 ok}}
   db close
   file delete -force test.db
 }
@@ -321,18 +305,18 @@ do_test rekey-readonly {
   set rc {}
 
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     INSERT INTO t1 VALUES(1, 2);
-  }
+  "
   db close
 
   sqlite_orig db file:test.db?mode=ro
-  lappend rc [ catchsql {
-    PRAGMA key = 'test';
+  lappend rc [ catchsql "
+    PRAGMA key = $hexkey;
     PRAGMA rekey = 'test2';
-  }] 
+  "] 
   db close
 
   sqlite_orig db test.db
@@ -341,10 +325,10 @@ do_test rekey-readonly {
     SELECT * FROM t1;
   }]
 
-  lappend rc [ execsql {
-    PRAGMA key = 'test';
+  lappend rc [ execsql "
+    PRAGMA key = $hexkey;
     SELECT * FROM t1;
-  }]
+  "]
   set rc
 } {{1 {An error occurred with PRAGMA key or rekey.}} {1 {file is not a database}} {ok 1 2}}
 db close
@@ -371,18 +355,14 @@ foreach mode {delete wal} {
     sqlite_orig db test.db
 
     execsql " 
-      PRAGMA key = 'testkey';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
-      BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
     "
 
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));" 
-    }
-
     execsql {
-      COMMIT;
       PRAGMA cache_size = 0;
       PRAGMA rekey = '';
     } 
@@ -393,7 +373,7 @@ foreach mode {delete wal} {
       SELECT count(*) FROM t1;
       PRAGMA journal_mode;
     } 
-  } "5000 $mode"
+  } "500 $mode"
   db close
   file delete -force test.db
 }
@@ -408,18 +388,14 @@ foreach mode {delete wal} {
     set rc {}
 
     execsql "
-      PRAGMA key = 'testkey';
+      PRAGMA key = $hexkey;
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
-      BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
     " 
 
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));" 
-    }
-
     lappend rc [catchsql {
-      COMMIT;
       PRAGMA cache_size = 0;
       PRAGMA cipher_test_on = fail_rekey;
       PRAGMA rekey = '';
@@ -433,13 +409,13 @@ foreach mode {delete wal} {
     db close
 
     sqlite_orig db test.db
-    lappend rc [execsql {
-      PRAGMA key = 'testkey';
+    lappend rc [execsql "
+      PRAGMA key = $hexkey;
       SELECT count(*) FROM t1;
       PRAGMA cipher_test_off = fail_rekey;
-    }]
+    "]
    
-  } {{1 {An error occurred with PRAGMA key or rekey.}} {1 {file is not a database}} {ok 5000}}
+  } {{1 {An error occurred with PRAGMA key or rekey.}} {1 {file is not a database}} {ok 500}}
   db close
   file delete -force test.db
 }
@@ -454,27 +430,20 @@ foreach mode {delete wal} {
     execsql " 
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
-      BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
+      PRAGMA rekey = $hexkey;
     " 
-
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));" 
-    }
-
-    execsql {
-      COMMIT;
-      PRAGMA rekey = 'testkey';
-    } 
     db close
 
     sqlite_orig db test.db
-    execsql {
-      PRAGMA key = 'testkey';
+    execsql "
+      PRAGMA key = $hexkey;
       SELECT count(*) FROM t1;
       PRAGMA page_size;
       PRAGMA journal_mode;
-    } 
-  } "ok 5000 8192 $mode"
+    "
+  } "ok 500 8192 $mode"
   db close
   file delete -force test.db
 }
@@ -490,19 +459,14 @@ foreach mode {delete wal} {
     execsql "
       PRAGMA journal_mode = $mode;
       CREATE TABLE t1(a,b);
-      BEGIN;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
     " 
-
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));" 
-    }
-
-    lappend rc [catchsql {
-      COMMIT;
+    lappend rc [catchsql "
       PRAGMA cache_size = 0;
       PRAGMA cipher_test_on = fail_rekey;
-      PRAGMA rekey = 'testkey';
-    }]
+      PRAGMA rekey = $hexkey;
+    "]
     db close
 
     sqlite_orig db test.db
@@ -511,7 +475,7 @@ foreach mode {delete wal} {
       PRAGMA page_size;
       PRAGMA cipher_test_off = fail_rekey;
     }] 
-  } {{1 {An error occurred with PRAGMA key or rekey.}} {5000 8192}}
+  } {{1 {An error occurred with PRAGMA key or rekey.}} {500 8192}}
   db close
   file delete -force test.db
 }
@@ -523,29 +487,22 @@ foreach mode {delete wal} {
 do_test rekey-plaintext-to-encrypted-sqlcipher-default-page-size {
   sqlite_orig db test.db
 
-  execsql {
+  execsql "
     PRAGMA page_size = 8192;
     CREATE TABLE t1(a,b);
-    BEGIN;
-  }
-
-  for {set i 1} {$i<=5000} {incr i} {
-    execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));" 
-  }
-
-  execsql {
-    COMMIT;
-    PRAGMA rekey = 'testkey';
-  } 
+    WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+      INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
+    PRAGMA rekey = $hexkey;
+  "
   db close
 
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'testkey';
+  execsql "
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
     PRAGMA page_size;
-  } 
-} {ok 5000 8192}
+  "
+} {ok 500 8192}
 db close
 file delete -force test.db
 
@@ -564,17 +521,10 @@ foreach version {1 2 3 4 5} {
   do_test rekey-plaintext-to-encrypted-compatibility-$version {
     sqlite_orig db test.db
 
-    execsql {
-      CREATE TABLE t1(a,b);
-      BEGIN;
-    }
-
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));"
-    }
-
     execsql "
-      COMMIT;
+      CREATE TABLE t1(a,b);
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
       PRAGMA cipher_default_compatibility = $version;
       PRAGMA cache_size = 0;
       PRAGMA rekey = 'testkey';
@@ -589,7 +539,7 @@ foreach version {1 2 3 4 5} {
       SELECT count(*) FROM t1;
       PRAGMA integrity_check;
     "
-  } {ok 5000 ok}
+  } {ok 500 ok}
   db close
   file delete -force test.db
 
@@ -602,18 +552,11 @@ foreach version {1 2 3 4 5} {
       PRAGMA key = 'testkey';
       PRAGMA cipher_compatibility = $version;
       CREATE TABLE t1(a,b);
-      BEGIN;
-    "
-
-    for {set i 1} {$i<=5000} {incr i} {
-      execsql "INSERT INTO t1 VALUES($i,zeroblob(5000));"
-    }
-
-    execsql {
-      COMMIT;
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 500)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
       PRAGMA cache_size = 0;
       PRAGMA rekey = '';
-    }
+    "
     db close
 
     sqlite_orig db test.db
@@ -621,7 +564,7 @@ foreach version {1 2 3 4 5} {
       SELECT count(*) FROM t1;
       PRAGMA integrity_check;
     }
-  } {5000 ok}
+  } {500 ok}
   db close
   file delete -force test.db
 }

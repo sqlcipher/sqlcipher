@@ -38,8 +38,6 @@ set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 source $testdir/sqlcipher.tcl
 
-set hexkeyspec "\"x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648101010101010101010101010101010101'\""
-
 # verify default plaintext header size is 0
 do_test test-default-plaintext-header-size {
   sqlite_orig db :memory:
@@ -97,7 +95,7 @@ do_test test-raw-key-with-salt-spec {
   set rc {}
   sqlite_orig db test.db
   execsql " 
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
   " 
@@ -107,7 +105,7 @@ do_test test-raw-key-with-salt-spec {
 
   sqlite_orig db test.db
   lappend rc [execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
     PRAGMA cipher_salt;
   "]
@@ -121,7 +119,7 @@ file delete -force test.db
 do_test test-raw-key-with-invalid-salt-spec-fast-kdf {
   sqlite_orig db test.db
   execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_compatibility = 4;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
@@ -130,7 +128,7 @@ do_test test-raw-key-with-invalid-salt-spec-fast-kdf {
 
   sqlite_orig db test.db
   catchsql {
-    PRAGMA key="x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648100000000000000000000000000000001'";
+    PRAGMA key="x'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef00000000000000000000000000000001'";
     PRAGMA cipher_compatibility = 4;
     SELECT count(*) FROM t1;
   } 
@@ -144,7 +142,7 @@ file delete -force test.db
 do_test test-raw-key-with-invalid-salt-spec-aead {
   sqlite_orig db test.db
   execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
   "
@@ -152,7 +150,7 @@ do_test test-raw-key-with-invalid-salt-spec-aead {
 
   sqlite_orig db test.db
   catchsql {
-    PRAGMA key="x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648100000000000000000000000000000001'";
+    PRAGMA key="x'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef00000000000000000000000000000001'";
     SELECT count(*) FROM t1;
   } 
 } {0 {ok 1}}
@@ -165,7 +163,7 @@ file delete -force test.db
 do_test test-raw-key-with-invalid-salt-spec-no-hmac {
   sqlite_orig db test.db
   execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_compatibility = 4;
     PRAGMA cipher_use_hmac = OFF;
     CREATE TABLE t1(a,b);
@@ -175,7 +173,7 @@ do_test test-raw-key-with-invalid-salt-spec-no-hmac {
 
   sqlite_orig db test.db
   execsql {
-    PRAGMA key="x'98483C6EB40B6C31A448C22A66DED3B5E5E8D5119CAC8327B655C8B5C483648100000000000000000000000000000001'";
+    PRAGMA key="x'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef00000000000000000000000000000001'";
     PRAGMA cipher_compatibility = 4;
     PRAGMA cipher_use_hmac = OFF;
     SELECT count(*) FROM t1;
@@ -192,21 +190,21 @@ do_test test-invalid-plaintext-header-sizes {
   set rc {}
   sqlite_orig db test.db
   lappend rc [catchsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = -1;
     CREATE TABLE t1(a,b);
   "]
   db close
   sqlite_orig db test.db
   lappend rc [catchsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 8192;
     CREATE TABLE t1(a,b);
   "]
   db close
   sqlite_orig db test.db
   lappend rc [catchsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 24; 
     CREATE TABLE t1(a,b);
   "]
@@ -220,7 +218,7 @@ do_test test-valid-plaintext-header-size {
   set rc {}
   sqlite_orig db test.db
   execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 16;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
@@ -231,7 +229,7 @@ do_test test-valid-plaintext-header-size {
 
   sqlite_orig db test.db
   lappend rc [execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 16;
     SELECT count(*) FROM t1;
     PRAGMA cipher_plaintext_header_size;
@@ -246,12 +244,12 @@ file delete -force test.db
 # are readable and equal to 1024, 1, 1, and 48 respectively
 do_test test-plaintext-header-journal-delete-mode-readable {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 32;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
-  }
+  "
   db close
   string equal [hexio_read test.db 16 5] "2000010130"
 } {1}
@@ -264,13 +262,13 @@ file delete -force test.db
 # are readable and equal to 1024, 2, 2 and 48 respectively
 do_test test-plaintext-header-journal-wal-mode-readable {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 32;
     PRAGMA journal_mode = WAL;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
-  }
+  "
   db close
   string equal [hexio_read test.db 16 5] "2000020230"
 } {1}
@@ -282,10 +280,10 @@ file delete -force test.db
 do_test test-valid-default-plaintext-header-size {
   set rc {}
   sqlite_orig db test.db
-  execsql {
+  execsql "
     PRAGMA cipher_default_plaintext_header_size = 16;
     PRAGMA key = 'test';
-  }
+  "
 
   set salt [execsql {
     CREATE TABLE t1(a,b);
@@ -358,7 +356,7 @@ do_test test-plaintext-header-migrate-journal-delete {
   set rc {}
   sqlite_orig db test.db
   execsql " 
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
   " 
@@ -368,7 +366,7 @@ do_test test-plaintext-header-migrate-journal-delete {
 
   sqlite_orig db test.db
   execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
     PRAGMA cipher_plaintext_header_size = 32;
     PRAGMA user_version = 1;
@@ -378,7 +376,7 @@ do_test test-plaintext-header-migrate-journal-delete {
 
   sqlite_orig db test.db
   lappend rc [execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 32;
     SELECT count(*) FROM t1;
   "]
@@ -394,7 +392,7 @@ do_test test-plaintext-header-migrate-journal-wal {
   set rc {}
   sqlite_orig db test.db
   execsql " 
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA journal_mode = WAL;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
@@ -405,7 +403,7 @@ do_test test-plaintext-header-migrate-journal-wal {
 
   sqlite_orig db test.db
   lappend rc [execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
     PRAGMA journal_mode;
     PRAGMA cipher_plaintext_header_size = 32;
@@ -417,7 +415,7 @@ do_test test-plaintext-header-migrate-journal-wal {
 
   sqlite_orig db test.db
   lappend rc [execsql "
-    PRAGMA key = $hexkeyspec;
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 32;
     SELECT count(*) FROM t1;
     PRAGMA journal_mode;
