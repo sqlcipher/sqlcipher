@@ -241,6 +241,8 @@ struct private_block {
 
 #define SQLCIPHER_FILE_PASSTHROUGH_READ          (1 << 0)
 #define SQLCIPHER_FILE_PASSTHROUGH_WRITE         (1 << 1)
+#define SQLCIPHER_FILE_JOURNAL_WROTE             (1 << 2)
+#define SQLCIPHER_FILE_JOURNAL_BAD               (1 << 3)
 
 #define SQLCIPHER_WAL_FRAME_HDRSIZE 24 /* Size of header before each frame in wal (from wal.c)*/
 #define SQLCIPHER_WAL_HDRSIZE 32 /* Size of write ahead log header, including checksum. (from wal.c) */
@@ -3309,7 +3311,8 @@ void *sqlcipher_pager_get_ctx(Pager *pPager){
   sqlite3_file *f = sqlite3PagerFile(pPager);
   sqlcipher_file *sf = (sqlcipher_file *)f;
 
-  if(f != NULL && f->pMethods != NULL && sf->ctx != NULL) {
+  /* verify f->pMethods is the &sqlcipher_io_methods otherwise its a non-SQLCipher vfs */
+  if(f != NULL && f->pMethods != NULL && f->pMethods == &sqlcipher_io_methods && sf->ctx != NULL) {
     return sf->ctx;
   }
   return NULL;
@@ -4085,9 +4088,10 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
    of a rekey operations, where the journal must be written using the original key 
    material (to allow a transactional rollback), while the new database pages are being
    written with the new key material*/
-#define SQLCIPHER_READ_OP 3
-#define SQLCIPHER_WRITE_OP 6
-#define SQLCIPHER_JOURNAL_OP 7
+#define SQLCIPHER_READ_OP     3 /* standard page read & decrypt operation */
+#define SQLCIPHER_WRITE_OP    6 /* standard page write & encrypt operation */
+#define SQLCIPHER_JOURNAL_OP  7 /* special journal write & encrypt but using read key to allow rollback */
+#define SQLCIPHER_RECOVERY_OP 8 /* special read & decrypt during a database recovery */
 
 /*
  * sqlcipher_process_page can be called in multiple modes.
@@ -4118,10 +4122,9 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
   if(ctx->error != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d mode=%d", __func__, ctx->error, mode);
     sqlcipher_ctx_set_error(NULL, NULL, ctx, ctx->error);
-    /* if this is a read, we don't want to return NULL as it will be interpreted as a SQLITE_NOMEM condition,
-     * so instead return a zeroed out buffer that will fail the magic header check */
-    if(mode == SQLCIPHER_READ_OP) { 
-      sqlcipher_memset(pData, 0, ctx->page_sz);
+    if(mode == SQLCIPHER_READ_OP || mode == SQLCIPHER_RECOVERY_OP) { 
+      if(mode == SQLCIPHER_RECOVERY_OP) rc = ctx->error; /* return error up to VFS if this is recovery operation */
+      sqlcipher_memset(pData, 0, ctx->page_sz); /* zero buffer */
       out = pData;
     } else {
       /* deferred errors must bubble-up from the VFS as I/O error to ensure that a rollback / pager cleanup can proceed cleanly */
@@ -4152,7 +4155,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
      a migration is being attempted. The data on disk does not actually have a plaintext header, and it will not
      until the next write. Thefore we will temporarily defer the use of the plaintext header value */
   if(
-    pgno == 1 && plaintext_header_sz && mode == SQLCIPHER_READ_OP 
+    pgno == 1 && plaintext_header_sz && (mode == SQLCIPHER_READ_OP  || mode == SQLCIPHER_RECOVERY_OP)
     && memcmp(pData, (void*) SQLITE_FILE_HEADER, FILE_HEADER_SZ) != 0
   ) {
     sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, 
@@ -4166,6 +4169,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: switch mode=%d offset=%d", __func__,  mode, offset);
   switch(mode) {
+    case SQLCIPHER_RECOVERY_OP: 
     case SQLCIPHER_READ_OP: /* decrypt */
       if(pgno == 1) /* copy initial part of file header or SQLite magic to buffer */ 
         memcpy(ctx->buffer, plaintext_header_sz ? pData : (void *) SQLITE_FILE_HEADER, offset); 
@@ -4179,14 +4183,22 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
 #endif
       if(rc != SQLITE_OK) {
         /* failure to decrypt a page is considered a permanent error and will render the pager unusable
-         * in order to prevent inconsistent data being loaded into page cache. The only exception here is when a database is being "recovered",
-         * which we consider to be the case if the plaintext header size is set to the full non-reserved size of a page. If that is the case we consider
-         * this to be operating in recovery mode, and will log the error but not permanently put the context into an error state */
+         * in order to prevent inconsistent data being loaded into page cache. The only exceptions are 
+         * when an automatic database recovery from WAL or rollback journal is ocurring under a known good key, or the
+         * database itself is being recovered manually using the recovery API */
         sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error decrypting page %d data: %d", __func__, pgno, rc);
         sqlcipher_memset((unsigned char*) ctx->buffer+offset, 0, ctx->page_sz-offset);
         if(plaintext_header_sz == ctx->page_sz - ctx->reserve_sz) {
-          sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: plaintext header size of %d indicates recovery mode, suppressing permanent error", __func__, plaintext_header_sz);
+          /* if the plaintext header size is set to the full non-reserved size of a page this is
+           * a manual recovery. log the error but don't permanently put the context into an error state */
+          sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "%s: plaintext header size of %d indicates recovery mode, suppressing permanent error", __func__, plaintext_header_sz);
+        } else if(mode == SQLCIPHER_RECOVERY_OP) {
+          /* if this in automatic recovery we need to let the VFS decide if this is corrupt data */
+          sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "%s: potentially corrupt recovery data for page %d", __func__, pgno);
         } else {
+          /* permanent error. if we're in recovery mode, force error to SQLITE_NOTADB because the key is wrong 
+           * see sqlcipher_page_cipher for similar logic */
+          if(mode == SQLCIPHER_RECOVERY_OP) rc = SQLITE_NOTADB;
           sqlcipher_ctx_set_error(NULL, NULL, ctx, rc);
         }
       } else {
@@ -4547,6 +4559,8 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   i64 file_sz = 0;
   int reserve_sz;
   const char *db_name = zDb ? zDb : "main";
+  int frames = 0, checkpointed = 0;
+  u32 data_version = 0;
 
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: db=%p zDb=%s", __func__, db, zDb);
   
@@ -4561,6 +4575,11 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
 
   if(!db) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: invalid database handle", __func__);
+    return SQLITE_MISUSE;
+  }
+
+  if(!db->autoCommit) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: rekey can't be run inside a transaction", __func__);
     return SQLITE_MISUSE;
   }
 
@@ -4612,47 +4631,64 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   sqlite3_mutex_enter(db->mutex);
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered database mutex %p", __func__, db->mutex);
 
-  /* grab existing journal mode, then set journal mode to delete. resizing and encrypted coversion will not work with WAL */
-  if(!(get_journal_sql = sqlite3_mprintf("PRAGMA %w.journal_mode;", db_name))) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode query SQL", __func__);
-    rc = SQLITE_NOMEM;
-    goto cleanup;
+  /* determine what mode to operate in */
+  if(!ctx) {
+    /* no attached sqlcipher context means plaintext database conversion to encrypted */
+    rekey_mode = REKEY_P2E;
+  } else if(!(pKey && nKey)) {
+    /* attached sqlcipher context but no target key means encrypted to plaintext */
+    rekey_mode = REKEY_E2P;
+  } else {
+    /* encrypted to encrypted */
+    rekey_mode = REKEY_E2E;
   }
 
-  if((rc = sqlite3_prepare(db, get_journal_sql, -1, &stmt, NULL)) != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: %s failed to prepare journal mode query for database %d", __func__, set_journal_delete_sql, rc);
-    goto cleanup;
-  }
- 
-  rc = sqlite3_step(stmt);
-  if(rc == SQLITE_ROW) {
-    if(!(journal_mode = sqlite3_mprintf("%s", sqlite3_column_text(stmt, 0)))) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode SQL", __func__);
+  /* 1. if we are operating in plaintext-to-encrypted mode, we need to adjust the reserve size and potentially page size of
+   *    the database before enabling encryption by vacuuming. But vacuum cant change the reserve size of a WAL mode database. 
+   * 2. If we are operating in encrypt-to-plaintext mode, we must be absolutely sure that all clear text pages are
+   *    in the main database. This is troublesome in WAL mode
+   * So, in either case we convert to DELETE mode first and then switch back at the end of the process*/
+  if(rekey_mode == REKEY_P2E || rekey_mode == REKEY_E2P) {
+    /* grab existing journal mode, then set journal mode to delete. resizing and encrypted coversion will not work with WAL */
+    if(!(get_journal_sql = sqlite3_mprintf("PRAGMA %w.journal_mode;", db_name))) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode query SQL", __func__);
       rc = SQLITE_NOMEM;
       goto cleanup;
     }
-  } else {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed step for journal query %d", __func__, rc);
-    goto cleanup; 
-  }
-  sqlite3_finalize(stmt);
-  stmt = NULL;
-  
-  if(!(set_journal_delete_sql = sqlite3_mprintf("PRAGMA %w.journal_mode = delete;", db_name))) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode=delete SQL", __func__);
-    rc = SQLITE_NOMEM;
-    goto cleanup;
+
+    if((rc = sqlite3_prepare(db, get_journal_sql, -1, &stmt, NULL)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: %s failed to prepare journal mode query for database %d", __func__, set_journal_delete_sql, rc);
+      goto cleanup;
+    }
+
+    rc = sqlite3_step(stmt);
+    if(rc == SQLITE_ROW) {
+      if(!(journal_mode = sqlite3_mprintf("%s", sqlite3_column_text(stmt, 0)))) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode SQL", __func__);
+        rc = SQLITE_NOMEM;
+        goto cleanup;
+      }
+    } else {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed step for journal query %d", __func__, rc);
+      goto cleanup; 
+    }
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    if(!(set_journal_delete_sql = sqlite3_mprintf("PRAGMA %w.journal_mode = delete;", db_name))) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode=delete SQL", __func__);
+      rc = SQLITE_NOMEM;
+      goto cleanup;
+    }
+
+    if((rc = sqlite3_exec(db, set_journal_delete_sql, 0, 0, 0)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: %s failed to set journal mode for database %d", __func__, set_journal_delete_sql, rc);
+      goto cleanup;
+    }
   }
 
-  if((rc = sqlite3_exec(db, set_journal_delete_sql, 0, 0, 0)) != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: %s failed to set journal mode for database %d", __func__, set_journal_delete_sql, rc);
-    goto cleanup;
-  } 
-
-  if(!ctx) { 
+  if(rekey_mode == REKEY_P2E) {
     sqlcipher_ctx *temp_ctx = NULL;
-    /* plaintext database conversion to encrypted */
-    rekey_mode = REKEY_P2E;
 
     /* initialize a temporary sqlcipher_ctx object with all default settings. The context is detatched,
      * but will allow us to query what reserve size should be based on all the relevant default settings
@@ -4730,31 +4766,71 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     }
     SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT);
 
-  } else if(!(pKey && nKey)) {
-    /* encrypted database conversion to plaintext */
-    rekey_mode = REKEY_E2P;
+  } else if(rekey_mode == REKEY_E2P) {
     SQLCIPHER_FLAG_SET(fd->flags, SQLCIPHER_FILE_PASSTHROUGH_WRITE);
-  } else {
-    /* encrypted database to encryped database with different key */
-    rekey_mode = REKEY_E2E;
+  } else if(rekey_mode == REKEY_E2E) {
+    
+    /* capture the current pager data version, refreshed via a read txn. we can then check that after we start a
+     * transaction later to make sure the data hasn't changed out from under us */
+    if((rc = sqlite3BtreeBeginTrans(pDb->pBt, 0, 0)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to begin read transaction %d", __func__, rc);
+      goto cleanup;
+    }
+    data_version = sqlite3PagerDataVersion(pPager);
+    if((rc = sqlite3BtreeCommit(pDb->pBt)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to end read transaction %d", __func__, rc);
+      goto cleanup;
+    }
+
+    /* we can't mix two keys in the same WAL, so checkpoint immediately. sqlite3_wal_checkpoint will set frames and checkpointed to
+     * -1 if the database is not in WAL mode, but will not return an error. after the checkpoint check the
+     * number of frames equals the number checkpointed to ensure all frames were moved to main database and there are no other readers
+     * on the WAL. Once that is complete it is safe to proceed with the rekey */
+    if(
+      (rc = sqlite3_wal_checkpoint_v2(db, db_name, SQLITE_CHECKPOINT_TRUNCATE, &frames, &checkpointed)) != SQLITE_OK
+      || frames != checkpointed
+    ) {
+      if(rc == SQLITE_OK) rc = SQLITE_BUSY; /* if the checkpoint succeeded but the counts dont match the checkpoint couldn't run to completion. Return busy */
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: unable to complete checkpoint on %s %d", __func__, db_name, rc);
+      goto cleanup;
+    }
+
     if((rc = sqlcipher_db_set_pass(db, db_index, pKey, nKey, CIPHER_WRITE_CTX)) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to set key on write cipher_ctx %d", __func__, rc);
       goto cleanup;
     }
-  } 
+    if((rc = sqlcipher_ctx_key_derive(ctx)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to derive key on write cipher_ctx %d", __func__, rc);
+      goto cleanup;
+    }
+
+  } else {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: indeterminate rekey mode %d", __func__, rekey_mode);
+    rc = SQLITE_MISUSE;
+    goto cleanup;
+  }
 
   sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: starting rekey on %s", __func__, zDb);
 
   /* Rewrite the database 
   ** 1. Create a transaction on the database
-  ** 2. Iterate through each page, reading it and then writing it.
-  ** 3. If that goes ok then commit and ensure write key is synced up with read key
+  ** 2. Check that the data version hasn't changed
+  ** 3. Iterate through each page, reading it and then writing it.
+  ** 4. If that goes ok then commit and ensure write key is synced up with read key
   **    note: don't deallocate rekey since it may be used in a subsequent iteration 
   */
   if((rc = sqlite3BtreeBeginTrans(pDb->pBt, 1, 0)) != SQLITE_OK) { /* begin write transaction */
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to begin write transaction %d", __func__, rc);
     goto cleanup;
   } 
+
+  if(rekey_mode == REKEY_E2E && frames != -1 && sqlite3PagerDataVersion(pPager) != data_version) { 
+    /* another connection committed, and we're in WAL mode (frames has a non -1 count from earlier checkpoint) so the WAL may hold frames under an old key, abort */
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: aborting, DB changed after rekey checkpoint", __func__);
+    rc = SQLITE_BUSY;
+    goto cleanup;
+  }
+
   sqlite3PagerPagecount(pPager, &page_count);
   for(pgno = 1; rc == SQLITE_OK && pgno <= (unsigned int)page_count; pgno++) { /* pgno's start at 1 see pager.c:pagerAcquire */
     if(!sqlite3pager_is_sj_pgno(pPager, pgno)) { /* skip this page (see pager.c:pagerAcquire for reasoning) */
@@ -4797,7 +4873,14 @@ cleanup:
         break;
       case REKEY_E2E:
         /* copy write key back to read key */
-        rc = sqlcipher_ctx_key_copy(ctx, CIPHER_WRITE_CTX);
+        if((rc = sqlcipher_ctx_key_copy(ctx, CIPHER_WRITE_CTX)) == SQLITE_OK) {
+          /* rekey completed successfully and key copied back. make an effort to checkpoint the WAL to remove any pages written under the old key from the main database
+           * for security and forensic reasons (otherwise all the same data could be left on disk under a compromised key. This "best effort only", 
+           * the rekey is complete at this point so if the checkpoint can't complete, so be it, just log a warning and move along. */
+          if(sqlite3_wal_checkpoint_v2(db, db_name, SQLITE_CHECKPOINT_RESTART, NULL, NULL) != SQLITE_OK) {
+            sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "%s: unable to complete final rekey checkpoint on %s", __func__, db_name);
+          }
+        }
         break; 
       case REKEY_NONE:
         /* do nothing */
@@ -5491,17 +5574,16 @@ static int sqlcipher_shield_wal_cksum(sqlcipher_ctx *ctx, void *zBuf, sqlite_int
     sqlite3Put4byte(&context[4], salt1);
     sqlite3Put4byte(&context[8], frame_idx);
 
-    /* The read and write keys are the same in all cases except for rekey, which forces the journal mode
-     * to DELETE on the database before re-encrypting. This means that the read and write key are identical
-     * and we just use the former for consistency with the journal code above. */
-    sqlcipher_shield(ctx->read_ctx->cksum_key, ctx->key_sz);
+    /* The read and write keys are the same in all cases except for rekey. In that case we want
+     * to shield with the write key, which is the key the frame will be encrypted with */
+    sqlcipher_shield(ctx->write_ctx->cksum_key, ctx->key_sz);
     rc = ctx->provider->aead_kbkdf(
       ctx->provider_ctx,
-      ctx->read_ctx->cksum_key, ctx->key_sz,
+      ctx->write_ctx->cksum_key, ctx->key_sz,
       context, sizeof(context),
       k
     );
-    sqlcipher_shield(ctx->read_ctx->cksum_key, ctx->key_sz);
+    sqlcipher_shield(ctx->write_ctx->cksum_key, ctx->key_sz);
 
     if(rc != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: aead_kbkdf failed for frame at %lld %d", __func__, frame_start_ofst, rc);
@@ -5516,6 +5598,45 @@ static int sqlcipher_shield_wal_cksum(sqlcipher_ctx *ctx, void *zBuf, sqlite_int
   return SQLITE_OK;
 }
 
+/* during recovery, check whether the key works against the first page of the
+ * main database, to cover the situation where the first record in a journal or
+ * WAL during recovery is corrupted. return 1 if key is good, 0 if bad */
+static int sqlcipher_recovery_key_check(sqlcipher_file *fd, sqlcipher_ctx *ctx) {
+  sqlite3_file *mainsubfd = NULL;
+  unsigned char *in = NULL;
+  unsigned char *out = NULL;
+  int rc = 0;
+
+  /* quick checks can return immediately */
+  if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return 1; /* key was already used and known good */ 
+  if(fd->main == NULL) return 0; /* need main database to run check */
+
+  mainsubfd = ORIGFILE(fd->main);
+
+  if(!(in = sqlcipher_malloc(ctx->page_sz))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: failed to allocate input page buffer", __func__);
+    goto cleanup;
+  }
+
+  if(!(out = sqlcipher_malloc(ctx->page_sz))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: failed to allocate output page buffer", __func__);
+    goto cleanup;
+  }
+
+  if( mainsubfd->pMethods->xRead(mainsubfd, in, ctx->page_sz, 0) == SQLITE_OK) { 
+    /* check whether page in the main database predated a plaintext header migration like sqlcipher_process-page */
+    int offset = ctx->plaintext_header_sz && memcmp(in, SQLITE_FILE_HEADER, FILE_HEADER_SZ) == 0 ? ctx->plaintext_header_sz : FILE_HEADER_SZ;
+    if(sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, 1, SQLCIPHER_DECRYPT, ctx->page_sz - offset, in + offset, out + offset) == SQLITE_OK) {
+      rc = 1;
+      SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_KEY_USED);
+    }
+  }
+
+cleanup:
+  if(in) sqlcipher_free(in, ctx->page_sz);
+  if(out) sqlcipher_free(out, ctx->page_sz);
+  return rc;
+}
 
 static int sqlcipher_read_db(
   sqlite3_file *pFile, 
@@ -5634,7 +5755,7 @@ static int sqlcipher_read_journal(
   sqlite3_file *subfd = ORIGFILE(pFile);
   unsigned char pgno_raw[4];
   Pgno page = 0;
-
+  int mode = SQLCIPHER_READ_OP;
 
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, 
     "%s: fd=%p,zBuf=%p,iAmt=%d,iOfst=%lld,ctx=%p,ctx->page_size=%d",
@@ -5648,9 +5769,26 @@ static int sqlcipher_read_journal(
       /* pPager->journalOff has already been advanced to the end of the record at the time
        * this read occurs, so back it off to the start of the page. see pager.c:pager_playback_one_page
        * and it's caller pager.c:pager_playback */
-      rc = sqlcipher_shield_journal_cksum(ctx, zBuf, iOfst, iAmt, sqlcipher_pager_journalOff(ctx->pPager) - 4 - ctx->page_sz - 4, sqlcipher_pager_cksumInit(ctx->pPager));
+      i64 rec_ofst = sqlcipher_pager_journalOff(ctx->pPager) - 4 - ctx->page_sz - 4;
+      u32 cksum_init = sqlcipher_pager_cksumInit(ctx->pPager);
+      rc = sqlcipher_shield_journal_cksum(ctx, zBuf, iOfst, iAmt, rec_ofst, cksum_init);
+      if(
+        rc == SQLITE_OK && iAmt == 4 && iOfst - rec_ofst == 4 + ctx->page_sz 
+        && SQLCIPHER_FLAG_GET(fd->flags, SQLCIPHER_FILE_JOURNAL_BAD)
+      ) {
+        /* this page failed to decrypt and was zeroed, so the simple arithmatic sum is equal
+         * to cksum_init. force it to mismatch to discard */
+        sqlite3Put4byte(zBuf, ~cksum_init);
+        SQLCIPHER_FLAG_UNSET(fd->flags, SQLCIPHER_FILE_JOURNAL_BAD);
+      }
     }
     return rc; 
+  }
+
+  SQLCIPHER_FLAG_UNSET(fd->flags, SQLCIPHER_FILE_JOURNAL_BAD); /* reset state */
+  if(is_main_journal && !SQLCIPHER_FLAG_GET(fd->flags, SQLCIPHER_FILE_JOURNAL_WROTE)) {
+    /* reading from a journal file we didn't write to indicates a recovery operation */
+    mode = SQLCIPHER_RECOVERY_OP;
   }
 
   /* this is a full page read, first read the page number directly */ 
@@ -5667,11 +5805,37 @@ static int sqlcipher_read_journal(
     return rc;
   }
 
-  sqlcipher_process_page(ctx, zBuf, page, SQLCIPHER_READ_OP, &rc);
+  sqlcipher_process_page(ctx, zBuf, page, mode, &rc);
   if(rc != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
-  }
+    /* mirror logic in read_wal for hard vs soft errors */
+    if(ctx->error == SQLITE_OK && mode == SQLCIPHER_RECOVERY_OP) {
+      /* recovery error */
+      sqlite3_mutex *mutex = ctx->shared ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL; 
+      if(mutex) {
+        sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering mutex %p", __func__, mutex);
+        sqlite3_mutex_enter(mutex);
+        sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered mutex %p", __func__, mutex);
+      }
 
+      if(sqlcipher_recovery_key_check(fd, ctx)) {
+        /* soft error, corrupted journal record with good key, checksum so it will be rejcted */
+        SQLCIPHER_FLAG_SET(fd->flags, SQLCIPHER_FILE_JOURNAL_BAD);
+        rc = SQLITE_OK;
+      } else {
+        rc = SQLITE_NOTADB; /* bad key for main db, upgrade to a persistent error */
+        sqlcipher_ctx_set_error(NULL, NULL, ctx, rc);
+      }
+
+      if(mutex) {
+        sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving mutex %p", __func__, mutex);
+        sqlite3_mutex_leave(mutex);
+        sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left mutex %p", __func__, mutex);
+      }
+    } else {
+      /* hard error, bad key, encryption failure, deferred */
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
+    }
+  }
   return rc;
 }
 
@@ -5694,7 +5858,7 @@ static int sqlcipher_read_wal(
 
   /* only intercept reads of full wal frames or wal header+wal frame */
   if(iAmt == ctx->page_sz) {
-    /* direct read for a page data from a wal frame */
+    /* direct read for a page data from a wal frame, i.e. during checkpoint */
 
     /* each WAL frame has a 24 byte header before the actual page data which is written
      * to the WAL file prior to the WAL frame data. Extract the first 4 bytes of the frame header to determine
@@ -5721,7 +5885,7 @@ static int sqlcipher_read_wal(
     return rc;
 
   } else if (iAmt == ctx->page_sz + SQLCIPHER_WAL_FRAME_HDRSIZE) {
-    /* full read of a wal frame including the frame header */
+    /* full read of a wal frame including the frame header, i.e. during recovery */
     if((rc = subfd->pMethods->xRead(subfd, zBuf, iAmt, iOfst)) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: WAL full frame xRead returned error: %d", __func__, rc);
       return rc;
@@ -5731,10 +5895,41 @@ static int sqlcipher_read_wal(
 
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, "%s: WAL full-frame read for page %d", __func__, page);
 
-    sqlcipher_process_page(ctx, ((unsigned char*) zBuf) + SQLCIPHER_WAL_FRAME_HDRSIZE, page, SQLCIPHER_READ_OP, &rc); /* following bytes are page data itself, offset for header */
+    sqlcipher_process_page(ctx, ((unsigned char*) zBuf) + SQLCIPHER_WAL_FRAME_HDRSIZE, page, SQLCIPHER_RECOVERY_OP, &rc); /* following bytes are page data itself, offset for header */
 
     if(rc != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
+      if(ctx->error == SQLITE_OK) {
+        /* this is a possible recovery error */
+        sqlite3_mutex *mutex = ctx->shared ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL; 
+        if(mutex) {
+          sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering mutex %p", __func__, mutex);
+          sqlite3_mutex_enter(mutex);
+          sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered mutex %p", __func__, mutex);
+        }
+
+        if(sqlcipher_recovery_key_check(fd, ctx)) {
+          /* soft error with known good key, corrupted frame, invert salt to force walDecodFrame to stop 
+           * and don't bother with the cksum shielding */
+          int i = 0;
+          for(i = 0; i < 8; i++) {
+            unsigned char *x = ((unsigned char *) zBuf) + 8 + i;
+            *x = ~*x;
+          }
+          rc = SQLITE_OK;
+        } else {
+          rc = SQLITE_NOTADB; /* bad key for main db, upgrade to a persistent error */
+          sqlcipher_ctx_set_error(NULL, NULL, ctx, rc);
+        }
+
+        if(mutex) {
+          sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving mutex %p", __func__, mutex);
+          sqlite3_mutex_leave(mutex);
+          sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left mutex %p", __func__, mutex);
+        }
+      } else {
+        /* hard error, bad key, encryption failure, deferred */
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_VFS, "%s: error %d processing page %d", __func__, rc, page);
+      }
       return rc;
     }
 
@@ -5858,6 +6053,8 @@ static int sqlcipher_write_journal(
     "%s: fd=%p,zBuf=%p,iAmt=%d,iOfst=%lld,ctx=%p,ctx->page_size=%d",
     __func__, fd, zBuf, iAmt, iOfst, ctx, ctx->page_sz);
 
+  /* track that this context started a journal i.e. this is not a recovery from crash */
+  SQLCIPHER_FLAG_SET(fd->flags, SQLCIPHER_FILE_JOURNAL_WROTE);
 
   if(is_main_journal) {
     /* pPager->journalOff is the start of the current record when the write occurs
@@ -5867,6 +6064,7 @@ static int sqlcipher_write_journal(
     }
   }
  
+  
   if (iOfst == 0 || iAmt != ctx->page_sz) { /* either the initial journal header, or not a full page */
     sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_VFS, "%s: optimized JOURNAL write passthrough", __func__);
     return subfd->pMethods->xWrite(subfd, zBuf, iAmt, iOfst);

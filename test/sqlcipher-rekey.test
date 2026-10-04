@@ -594,5 +594,279 @@ db close
 db2 close
 file delete -force test.db
 
+foreach mode {delete wal} {
+  # create an encrypted database, rekey it, and verify results. The
+  # zero cache size spills pages to disk before the rekey commits
+  do_test rekey-encrypted-to-encrypted-$mode {
+    sqlite_orig db test.db
+
+    execsql "
+      PRAGMA key = $hexkey;
+      PRAGMA journal_mode = $mode;
+      CREATE TABLE t1(a,b);
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 10)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
+      PRAGMA cache_size = 0;
+      PRAGMA rekey = $hexkey2;
+    "
+    db close
+
+    sqlite_orig db test.db
+    execsql "
+      PRAGMA key = $hexkey2;
+      SELECT count(*) FROM t1;
+      PRAGMA page_size;
+      PRAGMA journal_mode;
+    "
+  } "ok 10 8192 $mode"
+  db close
+  file delete -force test.db
+
+  # create an encrypted database. Open a second connection to that database
+  # attempt to rekey it. Because it is encrypted-to-encrypted
+  # SQLCipher will not attempt to change the journal mode during the
+  # rekey, and this will work. The second connection will be left in an
+  # unusable state however. A third connection opened after the rekey
+  # should work properly.
+  do_test rekey-encrypted-to-encrypted-multi-conn-$mode {
+    set rc {}
+
+    # first connection creates data and schema
+    sqlite_orig db test.db
+    execsql "
+      PRAGMA key = $hexkey;
+      PRAGMA journal_mode = $mode;
+      CREATE TABLE t1(a,b);
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 10)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
+    "
+
+    # second connection keys and reads schema
+    sqlite_orig db2 test.db
+    lappend rc [execsql "
+      PRAGMA key = $hexkey;
+      SELECT count(*) FROM sqlite_master;
+    " db2]
+
+    # first connection rekeys
+    lappend rc [execsql "
+      PRAGMA rekey = $hexkey2;
+    "]
+
+    # second connection has the wrong key, can't read
+    lappend rc [catchsql "
+      SELECT count(*) FROM t1;
+    " db2]
+
+    # third connection comes in with new key, can read
+    sqlite_orig db3 test.db
+    lappend rc [execsql "
+      PRAGMA key = $hexkey2;
+      SELECT count(*) FROM t1;
+    " db3]
+
+    db close
+    db2 close
+    db3 close
+
+    # reopen and verify clean state
+    sqlite_orig db test.db
+    lappend rc [execsql "
+      PRAGMA key = $hexkey2;
+      SELECT count(*) FROM t1;
+      PRAGMA page_size;
+      PRAGMA journal_mode;
+    "]
+  } "{ok 1} ok {1 {file is not a database}} {ok 10} {ok 10 8192 $mode}"
+  db close
+  file delete -force test.db
+
+  # create an encrypted database. Open a second connection to that database and then
+  # attempt to rekey it. Close the rekey connection first, then close the second connection (which is in an unusable state)
+  # causing it close the WAL last. When the connection closes it will attempt a checkpoint
+  # which will fail. Then the reopen should detect the wal, recover and the database should be readable.
+  do_test rekey-encrypted-to-encrypted-multi-conn-close-order-$mode {
+    set rc {}
+
+    # first connection creates data and schema. Write a small amount of data
+    # that falls under the autocheckpoint threshold, and disable autocheckpoint
+    # for safety
+    sqlite_orig db test.db
+    execsql "
+      PRAGMA key = $hexkey;
+      PRAGMA journal_mode = $mode;
+      PRAGMA wal_autocheckpoint = 0;
+      CREATE TABLE t1(a,b);
+      WITH RECURSIVE counter(x) AS (VALUES (1) UNION SELECT x+1 FROM counter WHERE x < 10)
+        INSERT INTO t1(a,b) SELECT x, zeroblob(5000) FROM counter;
+    "
+
+    # second connection keys and reads schema
+    sqlite_orig db2 test.db
+    lappend rc [execsql "
+      PRAGMA key = $hexkey;
+      SELECT count(*) FROM sqlite_master;
+    " db2]
+
+    # first connection rekeys
+    lappend rc [execsql "
+      PRAGMA rekey = $hexkey2;
+    "]
+
+    # ordering is important, the bad connection must close last
+    db close
+
+    # checkpoint with bad key fails
+    db2 close
+
+    # reopen and verify clean state
+    sqlite_orig db test.db
+    lappend rc [execsql "
+      PRAGMA key = $hexkey2;
+      SELECT count(*) FROM t1;
+      PRAGMA page_size;
+      PRAGMA journal_mode;
+    "]
+  } "{ok 1} ok {ok 10 8192 $mode}"
+  db close
+  file delete -force test.db
+}
+
+# create an encrypted WAL database and hold a read transaction open on another connection. This will block
+# the rekey from checkpointing the WAL and the rekey will fail.
+do_test rekey-encrypted-to-encrypted-wal-busy {
+  set rc {}
+
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA journal_mode = wal;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  "
+
+  sqlite_orig db2 test.db
+  execsql "
+    PRAGMA key = $hexkey;
+    BEGIN;
+    SELECT count(*) FROM t1;
+  " db2
+
+  lappend rc [catchsql "
+    PRAGMA rekey = $hexkey2;
+  "]
+
+  execsql {
+    COMMIT;
+  } db2
+  db2 close
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [execsql "
+    PRAGMA key = $hexkey;
+    SELECT count(*) FROM t1;
+  "]
+} {{1 {An error occurred with PRAGMA key or rekey.}} {ok 1}}
+db close
+file delete -force test.db
+
+# create an encrypted WAL database and write more frames than there are pages in the
+# main database. Rekey will start off with a truncate, and then write only
+# one frame per database page, so the count at the end should be equal
+# to page count.
+do_test rekey-encrypted-to-encrypted-wal-truncate {
+  set rc {}
+
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA journal_mode = wal;
+    PRAGMA wal_autocheckpoint = 0;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+    UPDATE t1 SET b = 3;
+    UPDATE t1 SET b = 4;
+    UPDATE t1 SET b = 5;
+    PRAGMA rekey = $hexkey2;
+  "
+
+  lappend rc [execsql {
+    PRAGMA page_count;
+  }]
+
+  # 32 byte WAL header, 24 byte frame headers
+  lappend rc [expr {([file size test.db-wal] - 32) / (8192 + 24)}]
+} {2 2}
+db close
+file delete -force test.db
+
+# a second connection holds a write transaction open. register a busy
+# handler so we can slide in a commit after the rekey started. That
+# should be permitted in DELETE but fail in WAL. 
+foreach {mode result} {
+  delete {0 ok}
+  wal {1 {An error occurred with PRAGMA key or rekey.}}
+} {
+  do_test rekey-encrypted-to-encrypted-data-version-$mode {
+    set rc {}
+
+    sqlite_orig db test.db
+    execsql "
+      PRAGMA key = $hexkey;
+      PRAGMA journal_mode = $mode;
+      CREATE TABLE t1(a,b);
+      INSERT INTO t1(a,b) VALUES (1,2);
+    "
+
+    sqlite_orig db2 test.db
+    execsql "
+      PRAGMA key = $hexkey;
+      BEGIN IMMEDIATE;
+      INSERT INTO t1(a,b) VALUES (3,4);
+    " db2
+
+    # Use Tcl hack to turn the retry count appended by the handler into a comment
+    # this will commit the transaction on db2 while db is waiting effectively
+    # interleaving the commit in between when rekey gets the pager data version first
+    # and the later check before starting the rekey.
+    db busy {db2 eval COMMIT ;#}
+    lappend rc [catchsql "
+      PRAGMA rekey = $hexkey2;
+    "]
+
+    lappend rc [execsql {
+      SELECT count(*) FROM t1;
+    }]
+  } [list $result 2]
+  db close
+  db2 close
+  file delete -force test.db
+}
+
+# rekey can't run inside a transaction
+do_test rekey-fail-in-transaction {
+  set rc {}
+
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkey;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  "
+
+  lappend rc [catchsql "
+    BEGIN;
+    INSERT INTO t1(a,b) VALUES (3,4);
+    PRAGMA rekey = $hexkey2;
+  "]
+
+  lappend rc [execsql {
+    ROLLBACK;
+    SELECT count(*) FROM t1;
+  }]
+} {{1 {An error occurred with PRAGMA key or rekey.}} 1}
+db close
+file delete -force test.db
 
 finish_test

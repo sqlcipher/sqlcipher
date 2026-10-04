@@ -52,6 +52,7 @@ test_suite "sqlcipher" -prefix "" -description {
 } -files [
   test_set $pretests \
            sqlcipher-core.test \
+           sqlcipher-recovery.test \
            sqlcipher-compatibility.test \
            sqlcipher-rekey.test \
            sqlcipher-plaintext-header.test \
