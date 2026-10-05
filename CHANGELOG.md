@@ -40,7 +40,9 @@ production releases.
 Library integrators that manage `SONAME` are advised to update the version at build time
 using `-soname` or `./configure --soname` for this release.
 
-## [4.19.0] - (? 2026 - [4.19.0 changes])
+## [4.20.0] - (? 2026 - [4.20.0 changes])
+
+## [4.19.0] - (September 2026 - [4.19.0 changes])
 - Report an error if a database is opened with an invalid hexkey URI parameter 
 - Include provider error code in KDF error message
 - Fix escaping of migration file names
@@ -407,6 +409,8 @@ using `-soname` or `./configure --soname` for this release.
 
 [5.0.0-beta]: https://github.com/sqlcipher/sqlcipher/tree/v5.0.0-beta
 [5.0.0-beta changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.19.0...v5.0.0-beta
+[4.20.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.20.0
+[4.20.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.19.0
 [4.19.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.18.0
