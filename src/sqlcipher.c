@@ -93,6 +93,18 @@
 #error "SQLCipher must be compiled with -DSQLITE_DIRECT_OVERFLOW_READ=0"
 #endif
 
+/* Don't allow compilation of SQLCipher with SQLITE_ENABLE_ATOMIC_WRITE or SQLITE_ENABLE_BATCH_ATOMIC_WRITE which could permit
+ * journal spill to disk in non-page sized chunks.
+ * ATOMIC_WRITE and BATCH_ATOMIC_WRITE are problematic because they enable a "hybrid" journal mode where the
+ * main journal starts off in a memjrnl, similar to journal_mode = memory, but unlike journal_mode = memory, the data can
+ * actually be written to disk as raw data, bypassing the pager write functions, by memjrnlCreateFile. When those are
+ * undefined, the main journal is never stored in a memjrnl (with the caveat that page cache does store pages in memory,
+ * just not a memory journal). Since memjrnl is not used, everything is written by the pager write functions,
+ * through the VFS which is expecting them. */
+#if defined(SQLITE_ENABLE_ATOMIC_WRITE) || defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
+#error "SQLCipher may NOT be compiled with -DSQLITE_ENABLE_ATOMIC_WRITE or -DSQLITE_ENABLE_BATCH_ATOMIC_WRITE"
+#endif
+
 /* extensions defined in pager.c */ 
 int sqlite3pager_is_sj_pgno(Pager*, Pgno);
 void sqlite3pager_error(Pager*, int);
@@ -668,6 +680,12 @@ int sqlcipher_extra_init(const char* arg) {
 
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   mutex_held = 1;
+
+  /* block buffered statement journal spills. only allow 0 (open file immediately so records go through
+   * the VFS and are encrypted) or -1 (don't spill). Having a positive nStmtSpill is dangerous
+   * because the subjournal starts off stored in a memjrnl (see ATOMIC comments above) but can
+   * be written out to disk outside of the pager write functions. */
+  if(sqlite3GlobalConfig.nStmtSpill > 0) sqlite3GlobalConfig.nStmtSpill = 0;
 
   if(sqlcipher_init) {
     /* if this init routine already completed successfully return immediately */
@@ -6279,6 +6297,21 @@ static int sqlcipherDeviceCharacteristics(sqlite3_file *pFile){
      reads from pages, for example when fetching content from an
      overflow page. */
   SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_SUBPAGE_READ);
+
+  /* unset SQLITE_IOCAP_BATCH_ATOMIC and SQLITE_IOCAP_ATOMIC* as
+   * an additional preventative measure in addition to the build
+   * guards. This also provides protection in case those
+   * defined options are someday made default in SQLite  */
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_BATCH_ATOMIC);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC512);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC1K);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC2K);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC4K);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC8K);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC16K);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC32K);
+  SQLCIPHER_FLAG_UNSET(ch, SQLITE_IOCAP_ATOMIC64K);
+
   return ch;
 }
 

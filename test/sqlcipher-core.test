@@ -1058,10 +1058,11 @@ do_test journal-mode-wal-no-psow {
 db close
 file delete -force test.db
 
-# test statement journal
-# note: requires -DSQLITE_STMTJRNL_SPILL=1
+# test statement journal rollback. SQLCipher forces statement journals
+# with temp_store = file to open as files, so the records go through the VFS
 do_test statement-journal {
   sqlite_orig db file:test.db?psow=0
+  set rc {}
 
   execsql "
     PRAGMA key = $hexkey;
@@ -1076,11 +1077,43 @@ do_test statement-journal {
 
     UPDATE t1 SET b = a + 1;
   "
-  catchsql {
+  lappend rc [catchsql {
     UPDATE t1 SET a = CASE WHEN a IN (4) THEN 1 ELSE a END;
-  }
+  }]
+  lappend rc [execsql {
+    SELECT a, b FROM t1 ORDER BY a;
+    PRAGMA integrity_check;
+  }]
 
-} {1 {UNIQUE constraint failed: t1.a}}
+  set rc
+} {{1 {UNIQUE constraint failed: t1.a}} {1 2 2 3 3 4 4 5 5 6 ok}}
+db close
+file delete -force test.db
+
+# with temp_store = file a statement journal larger than the default 64k
+# spill size would be written to disk in chunks that could bypass the
+# VFS. Check that the sqlcipher_init change to nStmtSpill prevents that
+do_test statement-journal-savepoint-temp-store-file {
+  sqlite_orig db test.db
+
+  execsql "
+    PRAGMA key = $hexkey;
+    PRAGMA temp_store = file;
+    CREATE TABLE t1(a INTEGER PRIMARY KEY, b);
+    WITH RECURSIVE c(x) AS (VALUES (1) UNION SELECT x+1 FROM c WHERE x < 200)
+      INSERT INTO t1 SELECT x, zeroblob(2000) FROM c;
+    BEGIN;
+    UPDATE t1 SET b = zeroblob(2001);
+    SAVEPOINT s1;
+    UPDATE t1 SET b = zeroblob(2002);
+    ROLLBACK TO s1;
+    COMMIT;
+  "
+  execsql {
+    PRAGMA integrity_check;
+    SELECT DISTINCT length(b) FROM t1; 
+  }
+} {ok 2001}
 db close
 file delete -force test.db
 
