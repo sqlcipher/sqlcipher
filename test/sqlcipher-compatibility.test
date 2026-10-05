@@ -1057,7 +1057,8 @@ do_test migrate-failure-closed {
 db close
 file delete -force test.db 
 
-# if a migration failes the database should be in a permanent error state
+# if a cipher_migrate that fails after the database migration has started
+# should place the connection in a permanent error state
 do_test migrate-failure-not-readable {
   file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
   sqlite_orig db test.db
@@ -1138,7 +1139,7 @@ file delete -force test.db
 
 # a migrate that fails before touching the database must leave the connection readable
 do_test migrate-fail-after-key-derivation-connection-readable {
-  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  file copy -force $sampleDir/sqlcipher-5.0-testkey.db test.db
   sqlite_orig db test.db
 
   execsql {
@@ -1169,7 +1170,7 @@ do_test migrate-unknown-format-connection-readable {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_page_size = 8192;
+    PRAGMA kdf_iter = 2000;
     CREATE TABLE t1(a, b);
     INSERT INTO t1(a, b) VALUES ('foo', 'bar');
   }
@@ -1178,7 +1179,7 @@ do_test migrate-unknown-format-connection-readable {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_page_size = 8192;
+    PRAGMA kdf_iter = 2000;
     PRAGMA cipher_migrate;
     SELECT a, b FROM t1;
   }

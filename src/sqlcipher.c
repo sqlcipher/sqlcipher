@@ -2666,7 +2666,7 @@ static int sqlcipher_ctx_migrate(sqlite3 *db, sqlcipher_ctx *ctx) {
   if(ctx->shared && ctx->pBt->nRef > 1) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: PRAGMA cipher_migrate may not be run on a shared cache connection", __func__);
     rc = SQLITE_MISUSE;
-    goto handle_error;
+    goto cleanup;
   }
 
   if(!(pass = sqlcipher_malloc(pass_sz+1))) {
