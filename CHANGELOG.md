@@ -1,7 +1,9 @@
 # SQLCipher Change Log
 Notable changes to this project are documented in this file.
 
-## [4.19.0] - (? 2026 - [4.19.0 changes])
+## [4.20.0] - (? 2026 - [4.20.0 changes])
+
+## [4.19.0] - (September 2026 - [4.19.0 changes])
 - Report an error if a database is opened with an invalid hexkey URI parameter 
 - Include provider error code in KDF error message
 - Fix escaping of migration file names
@@ -366,6 +368,8 @@ Notable changes to this project are documented in this file.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
+[4.20.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.20.0
+[4.20.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.19.0
 [4.19.0 changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.18.0
