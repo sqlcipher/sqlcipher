@@ -1251,6 +1251,56 @@ do_test migrate-fail-after-key-derivation {
 db close
 file delete -force test.db 
 
+# a migrate that fails before touching the database must leave the connection readable
+do_test migrate-fail-after-key-derivation-connection-readable {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT count(*) FROM sqlite_schema;
+    PRAGMA cipher_migrate;
+    SELECT count(*) FROM sqlite_schema;
+  }
+} {ok 1 21 1}
+db close
+file delete -force test.db
+
+do_test migrate-fail-after-key-derivation-raw-key-connection-readable {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = "x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'";
+    CREATE TABLE t1(a, b);
+    INSERT INTO t1(a, b) VALUES ('foo', 'bar');
+    PRAGMA cipher_migrate;
+    SELECT a, b FROM t1;
+  }
+} {ok 21 foo bar}
+db close
+file delete -force test.db
+
+do_test migrate-unknown-format-connection-readable {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 8192;
+    CREATE TABLE t1(a, b);
+    INSERT INTO t1(a, b) VALUES ('foo', 'bar');
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 8192;
+    PRAGMA cipher_migrate;
+    SELECT a, b FROM t1;
+  }
+} {ok 26 foo bar}
+db close
+file delete -force test.db
+
 do_test key-database-by-name {
     sqlite_orig db test.db
     execsql {
