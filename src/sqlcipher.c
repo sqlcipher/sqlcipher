@@ -414,10 +414,12 @@ static void sqlcipher_atexit(void) {
   sqlcipher_extra_shutdown();
 }
 
+#if !defined(__wasm__)
 static void sqlcipher_fini(void) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()", __func__);
   sqlcipher_extra_shutdown();
 }
+#endif
 
 #if defined(_WIN32)
   #ifndef SQLCIPHER_OMIT_DLLMAIN
@@ -444,6 +446,9 @@ static void sqlcipher_fini(void) {
   #else
     static void (*const sqlcipher_fini_func)(void) __attribute__((used, section("__DATA,__mod_term_func"))) = sqlcipher_fini;
   #endif
+#elif defined(__wasm__)
+  /* WebAssembly objects cannot hold a .fini_array section. The atexit() handler
+     registered in sqlcipher_extra_init covers the WebAssembly targets that exit. */
 #else
 static void (*const sqlcipher_fini_func)(void) __attribute__((used, section(".fini_array"))) = sqlcipher_fini;
 #endif
