@@ -1457,6 +1457,39 @@ do_test non-sqlcipher-vfs {
 db close
 file delete -force test.db
 
+# WAL is refused and writes succeed when the VFS under sqlciphervfs has no shared memory
+# (unix-dotfile has version 1 io methods, unix-none has a NULL xShmMap)
+sqlite_orig db :memory:
+set base_vfs [execsql {PRAGMA cipher_test_vfs;}]
+db close
+foreach vfs {unix-dotfile unix-none} {
+  foreach {name key expected} {
+    plaintext {} {delete 1 0}
+    encrypted {PRAGMA key = 'testkey';} {ok delete 1 0}
+  } {
+    do_test wal-refused-without-shm-$vfs-$name {
+      sqlite_orig db :memory:
+      execsql "PRAGMA cipher_test_vfs = '$vfs';"
+      db close
+
+      sqlite_orig db test.db
+      set rc [execsql "
+        $key
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE t1(a,b);
+        INSERT INTO t1 VALUES (1,2);
+        SELECT count(*) FROM t1;
+      "]
+      db close
+      lappend rc [file exists test.db-wal]
+    } $expected
+    file delete -force test.db test.db-wal
+  }
+}
+sqlite_orig db :memory:
+execsql "PRAGMA cipher_test_vfs = '$base_vfs';"
+db close
+
 # verify data is readable even if mmap is enabled
 # because the vfs disables it to prevent direct reads
 do_test will-open-with-mmap {

@@ -541,6 +541,29 @@ static const sqlite3_io_methods sqlcipher_io_methods = {
   sqlcipherUnfetch
 };
 
+/* SQLite enables WAL from the presence of xShmMap, so files whose underlying VFS lacks shared memory get this table */
+static const sqlite3_io_methods sqlcipher_io_methods_noshm = {
+  3, /* iVersion */
+  sqlcipherClose,
+  sqlcipherRead,
+  sqlcipherWrite,
+  sqlcipherTruncate,
+  sqlcipherSync,
+  sqlcipherFileSize,
+  sqlcipherLock,
+  sqlcipherUnlock,
+  sqlcipherCheckReservedLock,
+  sqlcipherFileControl,
+  sqlcipherSectorSize,
+  sqlcipherDeviceCharacteristics,
+  0, /* xShmMap */
+  0, /* xShmLock */
+  0, /* xShmBarrier */
+  0, /* xShmUnmap */
+  sqlcipherFetch,
+  sqlcipherUnfetch
+};
+
 /*
 **  Simple shared routines for converting hex char strings to binary data
  */
@@ -3516,6 +3539,17 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
     sqlcipher_vdbe_return_string(pParse, "cipher_test_private_heap_used", "0", P4_TRANSIENT);
 #endif /* SQLCIPHER_OMIT_MALLOC */
   } else
+  if( sqlite3_stricmp(zLeft, "cipher_test_vfs")==0 ){
+    /* re-wraps sqlciphervfs over the named VFS, so it is only safe while no file is open through sqlciphervfs */
+    if( zRight ) {
+      sqlite3_vfs *pVfs = sqlite3_vfs_find(zRight);
+      if( !pVfs || sqlite3_vfs_register(pVfs, 1)!=SQLITE_OK || sqlcipher_register_vfs()!=SQLITE_OK ){
+        sqlite3ErrorMsg(pParse, "unable to register sqlciphervfs over %s", zRight);
+      }
+    } else {
+      sqlcipher_vdbe_return_string(pParse, "cipher_test_vfs", ORIGVFS(&sqlcipher_vfs)->zName, P4_TRANSIENT);
+    }
+  } else
 #endif /* SQLCIPHER_TEST */
   if( sqlite3_stricmp(zLeft, "cipher_profile")== 0 && zRight ){
       char *profile_status = sqlite3_mprintf("%d", sqlcipher_cipher_profile(db, zRight));
@@ -5324,9 +5358,10 @@ static int sqlcipherOpen(
 
   pSubVfs = ORIGVFS(pVfs);
   pSubFile = ORIGFILE(pFile);
-  pFile->pMethods = &sqlcipher_io_methods;
   rc = pSubVfs->xOpen(pSubVfs, zName, pSubFile, flags, pOutFlags);
   if( rc ) goto sqlcipher_open_done;
+  pFile->pMethods = pSubFile->pMethods->iVersion>=2 && pSubFile->pMethods->xShmMap
+    ? &sqlcipher_io_methods : &sqlcipher_io_methods_noshm;
 
   if (flags & SQLITE_OPEN_MAIN_DB) {
     p->type = SQLCIPHER_DB;
@@ -6389,9 +6424,7 @@ static int sqlcipherSectorSize(sqlite3_file *pFile){
   return pFile->pMethods->xSectorSize(pFile);
 }
 
-/* x*Shm* VFS functions are only supported in VFS version 2+. SQLCipher will always
- * report as a V3 VFS, so these methods check if the underlying VFS is of a lower
- * version than necessary and if so will error out (https://www.sqlite.org/c3ref/io_methods.html) */
+/* sqlcipherOpen installs these only when the underlying file has shared memory */
 static int sqlcipherShmMap(
   sqlite3_file *pFile,
   int iPg,
@@ -6400,25 +6433,21 @@ static int sqlcipherShmMap(
   void volatile **pp
 ){
   pFile = ORIGFILE(pFile);
-  if( pFile->pMethods->iVersion<2 || !pFile->pMethods->xShmMap ) return SQLITE_IOERR_SHMMAP;
   return pFile->pMethods->xShmMap(pFile,iPg,pgsz,bExtend,pp);
 }
 
 static int sqlcipherShmLock(sqlite3_file *pFile, int offset, int n, int flags){
   pFile = ORIGFILE(pFile);
-  if( pFile->pMethods->iVersion<2 || !pFile->pMethods->xShmLock ) return SQLITE_IOERR_SHMLOCK;
   return pFile->pMethods->xShmLock(pFile,offset,n,flags);
 }
 
 static void sqlcipherShmBarrier(sqlite3_file *pFile){
   pFile = ORIGFILE(pFile);
-  if( pFile->pMethods->iVersion<2 || !pFile->pMethods->xShmBarrier ) return;
   pFile->pMethods->xShmBarrier(pFile);
 }
 
 static int sqlcipherShmUnmap(sqlite3_file *pFile, int deleteFlag){
   pFile = ORIGFILE(pFile);
-  if( pFile->pMethods->iVersion<2 || !pFile->pMethods->xShmUnmap ) return SQLITE_IOERR_SHMMAP;
   return pFile->pMethods->xShmUnmap(pFile,deleteFlag);
 }
 
