@@ -177,31 +177,31 @@ file delete -force test.db
 # cipher_hmac_fast_kdf alone recomputes the reserve, round-trip without corruption
 do_test verify-pragma-hmac-fast-kdf-only-roundtrip {
     sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
+    execsql "
+        PRAGMA key = $hexkey;
         PRAGMA cipher_hmac_fast_kdf = ON;
         CREATE TABLE t1(a,b);
         INSERT INTO t1 VALUES('test1', 'test2');
-    }
+    "
     db close
     sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
+    execsql "
+        PRAGMA key = $hexkey;
         PRAGMA cipher_hmac_fast_kdf = ON;
         SELECT * FROM t1;
-    }
+    "
 } {ok test1 test2}
 db close
 file delete -force test.db
 
 # cipher_hmac_fast_kdf alone also resizes the btree, so an AEAD database rejects as not-a-database
-setup test.db "'test'"
+setup test.db "$hexkey"
 do_test verify-pragma-hmac-fast-kdf-only-rejects-aead-database {
     sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
+    execsql "
+        PRAGMA key = $hexkey;
         PRAGMA cipher_hmac_fast_kdf = ON;
-    }
+    "
     catchsql {
         SELECT * FROM t1;
     }
@@ -212,21 +212,21 @@ file delete -force test.db
 # the same fix holds under compatibility 4, whose narrower page leaves less margin
 do_test verify-pragma-hmac-fast-kdf-only-compatibility-4-roundtrip {
     sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
+    execsql "
+        PRAGMA key = $hexkey;
         PRAGMA cipher_compatibility = 4;
         PRAGMA cipher_use_hmac = OFF;
         PRAGMA cipher_hmac_fast_kdf = ON;
         CREATE TABLE t1(a,b);
         INSERT INTO t1 VALUES('test1', 'test2');
-    }
+    "
     db close
     sqlite_orig db test.db
-    execsql {
-        PRAGMA key = 'test';
+    execsql "
+        PRAGMA key = $hexkey;
         PRAGMA cipher_compatibility = 4;
         SELECT * FROM t1;
-    }
+    "
 } {ok test1 test2}
 db close
 file delete -force test.db
