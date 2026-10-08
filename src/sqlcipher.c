@@ -3358,8 +3358,8 @@ void *sqlcipher_pager_get_ctx(Pager *pPager){
   sqlite3_file *f = sqlite3PagerFile(pPager);
   sqlcipher_file *sf = (sqlcipher_file *)f;
 
-  /* verify f->pMethods is the &sqlcipher_io_methods otherwise its a non-SQLCipher vfs */
-  if(f != NULL && f->pMethods != NULL && f->pMethods == &sqlcipher_io_methods && sf->ctx != NULL) {
+  /* verify f->pMethods is the &sqlcipher_io_methods or &sqlcipher_io_methods_noshm otherwise its a non-SQLCipher vfs */
+  if(f != NULL && f->pMethods != NULL && (f->pMethods == &sqlcipher_io_methods || f->pMethods == &sqlcipher_io_methods_noshm) && sf->ctx != NULL) {
     return sf->ctx;
   }
   return NULL;

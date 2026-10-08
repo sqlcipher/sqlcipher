@@ -1463,10 +1463,10 @@ sqlite_orig db :memory:
 set base_vfs [execsql {PRAGMA cipher_test_vfs;}]
 db close
 foreach vfs {unix-dotfile unix-none} {
-  foreach {name key expected} {
-    plaintext {} {delete 1 0}
-    encrypted {PRAGMA key = 'testkey';} {ok delete 1 0}
-  } {
+  foreach {name key expected} [list \
+    plaintext {} {delete 1 0} \
+    encrypted "PRAGMA key = $hexkey;" {ok delete 1 0} \
+  ] {
     do_test wal-refused-without-shm-$vfs-$name {
       sqlite_orig db :memory:
       execsql "PRAGMA cipher_test_vfs = '$vfs';"
