@@ -1780,8 +1780,9 @@ static int sqlcipher_ctx_set_hmac_fast_kdf(sqlcipher_ctx *ctx, int use) {
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
 
   if(use) {
-    /* HMAC is a prerequisite for HMAC_FAST_KDF */
-    SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HMAC); 
+    /* clears AEAD and resizes the reserve */
+    int rc = sqlcipher_ctx_set_use_hmac(ctx, 1);
+    if(rc != SQLITE_OK) return rc;
     SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_HMAC_FAST_KDF); 
   } else SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_HMAC_FAST_KDF);
 
@@ -3693,6 +3694,9 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
     if(ctx) {
       if( zRight ) {
         rc = sqlcipher_ctx_set_hmac_fast_kdf(ctx, sqlite3GetBoolean(zRight,1));
+        if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
+        /* resync page size after a possible hmac change */
+        rc = sqlcipher_set_btree_pagesize(db, pDb, ctx);
         if(rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, rc);
       } else {
         char *flag = sqlite3_mprintf("%d", SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HMAC_FAST_KDF));
