@@ -497,78 +497,78 @@ file delete -force test.db
 do_test test-plaintext-header-larger-than-later-page-size {
   set rc {}
   sqlite_orig db test.db
-  lappend rc [catchsql {
-    PRAGMA key = 'test';
+  lappend rc [catchsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 4016;
     PRAGMA cipher_compatibility = 3;
     CREATE TABLE t1(a,b);
-  }]
+  "]
   db close
   file delete -force test.db
 
   sqlite_orig db test.db
-  lappend rc [catchsql {
-    PRAGMA key = 'test';
+  lappend rc [catchsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 4016;
     PRAGMA cipher_page_size = 1024;
     CREATE TABLE t1(a,b);
-  }]
+  "]
   db close
   file delete -force test.db
 
   sqlite_orig db test.db
-  lappend rc [catchsql {
-    PRAGMA key = 'test';
+  lappend rc [catchsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_page_size = 8192;
     PRAGMA cipher_plaintext_header_size = 4096;
     PRAGMA cipher_compatibility = 4;
     CREATE TABLE t1(a,b);
-  }]
+  "]
   db close
   file delete -force test.db
 
   # a header exactly equal to the usable page size is the documented recovery-mode setup and must still work
   sqlite_orig db test.db
-  lappend rc [catchsql {
-    PRAGMA key = 'test';
+  lappend rc [execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_page_size = 4096;
     PRAGMA cipher_plaintext_header_size = 4016;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
-  }]
+  "]
   db close
   file delete -force test.db
 
   sqlite_orig db test.db
-  lappend rc [catchsql {
-    PRAGMA key = 'test';
+  lappend rc [execsql "
+    PRAGMA key = $hexkey;
     PRAGMA cipher_plaintext_header_size = 32;
     PRAGMA cipher_page_size = 1024;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
-  }]
-} {{1 {SQL logic error}} {1 {SQL logic error}} {1 {SQL logic error}} {0 ok} {0 ok}}
+  "]
+} {{1 {SQL logic error}} {1 {SQL logic error}} {1 {SQL logic error}} ok ok}
 db close
 file delete -force test.db
 
 # cipher_integrity_check reads page 1 independently of the codec, so it needs its own guard
 do_test test-integrity-check-rejects-oversized-header {
   sqlite_orig db test.db
-  execsql {
-    PRAGMA key = 'test';
+  execsql "
+    PRAGMA key = $hexkey;
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
-  }
+  "
   db close
 
   sqlite_orig db test.db
-  execsql {
+  execsql "
     PRAGMA key = 'test';
     PRAGMA cipher_plaintext_header_size = 4016;
     PRAGMA cipher_compatibility = 3;
     PRAGMA cipher_integrity_check;
-  }
-} {{invalid plaintext header size}}
+  "
+} {ok {invalid plaintext header size}}
 db close
 file delete -force test.db
 
