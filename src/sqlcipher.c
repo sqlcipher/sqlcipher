@@ -2604,7 +2604,7 @@ static int sqlcipher_ctx_integrity_check(sqlcipher_ctx *ctx, Parse *pParse, char
     goto cleanup;
   }
 
-  if(ctx->plaintext_header_sz < 0) {
+  if(ctx->plaintext_header_sz < 0 || ctx->plaintext_header_sz > ctx->page_sz - ctx->reserve_sz) {
     sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "invalid plaintext header size", P4_TRANSIENT);
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     goto cleanup;
@@ -4205,7 +4205,7 @@ static void* sqlcipher_process_page(void *iCtx, void *data, Pgno pgno, int mode,
   /* if the plaintext_header_size is negative that means an invalid size was set via 
      PRAGMA. We can't set the error state on the pager at that point because the pager
      may not be open yet. However, this is a fatal error state, so abort */
-  if(plaintext_header_sz < 0) {
+  if(plaintext_header_sz < 0 || plaintext_header_sz > ctx->page_sz - ctx->reserve_sz) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error invalid plaintext_header_sz: %d", __func__, plaintext_header_sz);
     sqlcipher_ctx_set_error(NULL, NULL, ctx, SQLITE_ERROR);
     rc = SQLITE_ERROR;
