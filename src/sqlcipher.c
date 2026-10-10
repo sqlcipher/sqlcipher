@@ -6395,9 +6395,14 @@ static int sqlcipherFileControl(sqlite3_file *pFile, int op, void *pArg){
   sqlcipher_file *fd = (sqlcipher_file *)pFile;
   sqlite3_file *subfd = ORIGFILE(pFile);
   sqlcipher_ctx *ctx = fd->main ? fd->main->ctx : fd->ctx;
+  char **args = (char**)pArg;
 
+  if(op == SQLITE_FCNTL_VFSNAME){
+    /* report sqlciphervfs, not the subvfs */
+    args[0] = sqlite3_mprintf("%s", sqlcipher_vfs.zName); 
+    return SQLITE_OK;
+  } else
   if (op == SQLITE_FCNTL_PRAGMA) {
-    char **args = (char**)pArg;
     const char *name = args[1];
     const char *val  = args[2];
 
