@@ -6810,6 +6810,9 @@ int sqlite3_key_v2(
    This routine will ONLY work on an already encrypted database in order
    to change the key.
 
+   This routine returns SQLITE_MISUSE inside a transaction or while a
+   statement on the database is still running.
+
    Conversion from plaintext-to-encrypted or encrypted-to-plaintext should
    use an ATTACHed database and the sqlcipher_export() convenience function
    as per the SQLCipher Documentation.

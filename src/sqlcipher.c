@@ -4516,6 +4516,15 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   sqlite3_mutex_enter(db->mutex);
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered database mutex %p", __func__, db->mutex);
 
+  /* rekey commits its own btree transaction, so none may already be open */
+  if(!db->autoCommit || sqlite3BtreeTxnState(pDb->pBt) != SQLITE_TXN_NONE) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: cannot rekey from within a transaction", __func__);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving database mutex %p", __func__, db->mutex);
+    sqlite3_mutex_leave(db->mutex);
+    sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left database mutex %p", __func__, db->mutex);
+    return SQLITE_MISUSE;
+  }
+
   /* grab existing journal mode, then set journal mode to delete. resizing and encrypted coversion will not work with WAL */
   if(!(get_journal_sql = sqlite3_mprintf("PRAGMA %w.journal_mode;", db_name))) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format journal_mode query SQL", __func__);
