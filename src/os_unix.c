@@ -5589,7 +5589,6 @@ static void unixRemapfile(
   const char *zErr = "mmap";
   int h = pFd->h;                      /* File descriptor open on db file */
   u8 *pOrig = (u8 *)pFd->pMapRegion;   /* Pointer to current file mapping */
-  i64 nOrig = pFd->mmapSizeActual;     /* Size of pOrig region in bytes */
   u8 *pNew = 0;                        /* Location of new mapping */
   int flags = PROT_READ;               /* Flags to pass to mmap() */
 
@@ -5605,37 +5604,35 @@ static void unixRemapfile(
 #endif
 
   if( pOrig ){
-#if HAVE_MREMAP
-    i64 nReuse = pFd->mmapSize;
-#else
-    const int szSyspage = osGetpagesize();
-    i64 nReuse = (pFd->mmapSize & ~(szSyspage-1));
-#endif
-    u8 *pReq = &pOrig[nReuse];
+    i64 nReuse = pFd->mmapSize & ~((int)osGetpagesize()-1);
 
-    /* Unmap any pages of the existing mapping that cannot be reused. */
-    if( nReuse!=nOrig ){
-      osMunmap(pReq, nOrig-nReuse);
+    /* Unmap any part of the current mapping that will not be reused */
+    if( nReuse<pFd->mmapSizeActual ){
+      osMunmap(&pOrig[nReuse], pFd->mmapSizeActual - nReuse);
     }
 
+    /* If nReuse is now zero, then the entire mapping was unmapped by the
+    ** call above. In this case do not attempt to extend pOrig. */
+    if( nReuse>0 ){
 #if HAVE_MREMAP
-    pNew = osMremap(pOrig, nReuse, nNew, MREMAP_MAYMOVE);
-    zErr = "mremap";
+      pNew = osMremap(pOrig, nReuse, nNew, MREMAP_MAYMOVE);
+      zErr = "mremap";
 #else
-    pNew = osMmap(pReq, nNew-nReuse, flags, MAP_SHARED, h, nReuse);
-    if( pNew!=MAP_FAILED ){
-      if( pNew!=pReq ){
-        osMunmap(pNew, nNew - nReuse);
-        pNew = 0;
-      }else{
-        pNew = pOrig;
+      pNew = osMmap(&pOrig[nReuse], nNew-nReuse, flags, MAP_SHARED, h, nReuse);
+      if( pNew!=MAP_FAILED ){
+        if( pNew!=&pOrig[nReuse] ){
+          osMunmap(pNew, nNew - nReuse);
+          pNew = 0;
+        }else{
+          pNew = pOrig;
+        }
       }
-    }
 #endif
 
-    /* The attempt to extend the existing mapping failed. Free it. */
-    if( pNew==MAP_FAILED || pNew==0 ){
-      osMunmap(pOrig, nReuse);
+      /* The attempt to extend the existing mapping failed. Free it. */
+      if( pNew==MAP_FAILED || pNew==0 ){
+        osMunmap(pOrig, nReuse);
+      }
     }
   }
 
@@ -6257,35 +6254,28 @@ static int fillInUnixFile(
 }
 
 /*
-** Directories to consider for temp files.
-*/
-static const char *azTempDirs[] = {
-  0,
-  0,
-  "/var/tmp",
-  "/usr/tmp",
-  "/tmp",
-  "."
-};
-
-/*
-** Initialize first two members of azTempDirs[] array.
-*/
-static void unixTempFileInit(void){
-  azTempDirs[0] = getenv("SQLITE_TMPDIR");
-  azTempDirs[1] = getenv("TMPDIR");
-}
-
-/*
 ** Return the name of a directory in which to put temporary files.
 ** If no suitable temporary file directory can be found, return NULL.
+**
+** The return value might be a string obtained from getenv() and so
+** the return value should not be used after any call to setenv() or
+** putenv() as that value might have been freed.
 */
 static const char *unixTempFileDir(void){
-  unsigned int i = 0;
+  unsigned int i;
   struct stat buf;
-  const char *zDir = sqlite3_temp_directory;
+  const char *zDir;
 
-  while(1){
+  for(i=0; i<7; i++){
+    switch( i ){
+      case 0:  zDir = sqlite3_temp_directory;   break;
+      case 1:  zDir = getenv("SQLITE_TMPDIR");  break;
+      case 2:  zDir = getenv("TMPDIR");         break;
+      case 3:  zDir = "/var/tmp";               break;
+      case 4:  zDir = "/usr/tmp";               break;
+      case 5:  zDir = "/tmp";                   break;
+      default: zDir = ".";                      break;
+    }
     if( zDir!=0
 #if OS_VXWORKS
      && zDir[0]=='/'
@@ -6296,8 +6286,6 @@ static const char *unixTempFileDir(void){
     ){
       return zDir;
     }
-    if( i>=sizeof(azTempDirs)/sizeof(azTempDirs[0]) ) break;
-    zDir = azTempDirs[i++];
   }
   return 0;
 }
@@ -6646,7 +6634,22 @@ static int unixOpen(
 
   }else if( !zName ){
     /* If zName is NULL, the upper layer is requesting a temp file. */
-    assert(isDelete && !isNewJrnl);
+    assert( isDelete );
+    assert( !isNewJrnl );
+    assert( isExclusive );
+    assert( isReadWrite );
+#if defined(__linux__) && defined(O_TMPFILE)
+    /* On systems that support O_TMPFILE, use that flag to create a more
+    ** secure temporary file that cannot be accessed by other processes
+    */
+    zName = unixTempFileDir();
+    if( zName
+     && (fd = robust_open(zName, O_RDWR|O_EXCL|O_TMPFILE, 0600))>=0
+    ){
+      rc = fillInUnixFile(pVfs, fd, pFile, zPath, ctrlFlags|UNIXFILE_NOLOCK);
+      goto open_finished;
+    }
+#endif
     rc = unixGetTempname(pVfs->mxPathname, zTmpname);
     if( rc!=SQLITE_OK ){
       return rc;
@@ -8564,9 +8567,6 @@ int sqlite3_os_init(void){
   */
   assert( UNIX_SHM_DMS==128   );  /* Byte offset of the deadman-switch */
 #endif
-
-  /* Initialize temp file dir array. */
-  unixTempFileInit();
 
   return SQLITE_OK;
 }

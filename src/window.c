@@ -347,6 +347,7 @@ static void percent_rankInvFunc(
   UNUSED_PARAMETER(nArg); assert( nArg==0 );
   UNUSED_PARAMETER(apArg);
   p = (struct CallCount*)sqlite3_aggregate_context(pCtx, sizeof(*p));
+  assert( p!=0 );
   p->nStep++;
 }
 static void percent_rankValueFunc(sqlite3_context *pCtx){
@@ -392,6 +393,7 @@ static void cume_distInvFunc(
   UNUSED_PARAMETER(nArg); assert( nArg==0 );
   UNUSED_PARAMETER(apArg);
   p = (struct CallCount*)sqlite3_aggregate_context(pCtx, sizeof(*p));
+  assert( p!=0 );
   p->nStep++;
 }
 static void cume_distValueFunc(sqlite3_context *pCtx){
@@ -448,6 +450,7 @@ static void ntileInvFunc(
   assert( nArg==1 ); UNUSED_PARAMETER(nArg);
   UNUSED_PARAMETER(apArg);
   p = (struct NtileCtx*)sqlite3_aggregate_context(pCtx, sizeof(*p));
+  assert( p!=0 );
   p->iRow++;
 }
 static void ntileValueFunc(sqlite3_context *pCtx){
@@ -805,7 +808,9 @@ static int selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr){
         p->pSub = sqlite3ExprListAppend(pParse, p->pSub, pDup);
       }
       if( p->pSub ){
-        int f = pExpr->flags & EP_Collate;
+        int f = pExpr->flags & (EP_Collate|EP_OuterON|EP_InnerON);
+        int iJoin = pExpr->w.iJoin;
+
         assert( ExprHasProperty(pExpr, EP_Static)==0 );
         ExprSetProperty(pExpr, EP_Static);
         sqlite3ExprDelete(pParse->db, pExpr);
@@ -817,6 +822,7 @@ static int selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr){
         pExpr->iTable = p->pWin->iEphCsr;
         pExpr->y.pTab = p->pTab;
         pExpr->flags = f;
+        if( (f & (EP_OuterON|EP_InnerON)) ) pExpr->w.iJoin = iJoin;
       }
       if( pParse->db->mallocFailed ) return WRC_Abort;
       break;
@@ -909,7 +915,7 @@ static ExprList *exprListAppendList(
         int iDummy;
         Expr *pSub;
         pSub = sqlite3ExprSkipCollateAndLikely(pDup);
-        if( sqlite3ExprIsInteger(pSub, &iDummy, 0) ){
+        if( sqlite3ExprIsInteger(pSub, &iDummy, 0, 0) ){
           pSub->op = TK_NULL;
           pSub->flags &= ~(EP_IntValue|EP_IsTrue|EP_IsFalse);
           pSub->u.zToken = 0;

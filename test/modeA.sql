@@ -103,7 +103,7 @@ END
 .testcase 140
 .mode -v
 .check <<END
-.mode qbox --align "" --border on --blob-quote auto --colsep "" --escape auto --limits on --multiinsert 3000 --null "NULL" --quote relaxed --rowsep "" --sw auto --tablename "" --textjsonb on --titles on --widths "" --wordwrap off --wrap 10
+.mode qbox --align "" --border on --blob-quote auto --colsep "" --escape auto --fpfmt auto --ifmt auto --limits on --multiinsert 3000 --null "NULL" --quote relaxed --rowcount off --rowsep "" --sw auto --tablename "" --textjsonb on --titles always --widths "" --wordwrap off --wrap 10
 END
 .testcase 150 --error-prefix "Error:"
 .mode foo
@@ -162,7 +162,7 @@ END
 .mode --limits 0,0,0
 .mode -v
 .check <<END
-.mode box --align "" --border on --blob-quote auto --colsep "" --escape auto --limits off --multiinsert 0 --null "" --quote off --rowsep "" --sw 0 --tablename "" --textjsonb off --titles on --widths "" --wordwrap off
+.mode box --align "" --border on --blob-quote auto --colsep "" --escape auto --fpfmt auto --ifmt auto --limits off --multiinsert 0 --null "" --quote off --rowcount off --rowsep "" --sw 0 --tablename "" --textjsonb off --titles always --widths "" --wordwrap off
 END
 
 .testcase 400
@@ -279,6 +279,10 @@ INSERT INTO t1 VALUES(1,2,3);
 SELECT * FROM t1;
 .check --glob a,b,c*
 
+.testcase 601
+SELECT 'abc',char(0x05,0x18,0x33),'xyz';
+.check --glob abc,"*3",xyz
+
 .testcase 610
 .mode csv -reset
 SELECT * FROM t1;
@@ -301,6 +305,11 @@ SELECT * FROM t1;
 .mode csv --title off
 SELECT * FROM t1;
 .check 1,2,3
+
+.testcase 640
+.mode csv --reset --colsep "^" --rowsep "::"
+SELECT 1, 2, 3 UNION ALL SELECT 'a','b','c';
+.check 1^2^3::a^b^c::
 
 # Verification of claims about .insert mode in the climode.html
 # documentation.
@@ -327,6 +336,27 @@ SELECT * FROM tbl1;
 INSERT INTO new_table VALUES('hello!',10);
 INSERT INTO new_table VALUES('goodbye',20);
 END
+.testcase 730
+.mode insert new_table --titles always --rowcount on
+SELECT * FROM tbl1;
+.check <<END
+INSERT INTO new_table(one,two) VALUES('hello!',10);
+INSERT INTO new_table(one,two) VALUES('goodbye',20);
+/* 2 rows inserted */
+END
+.testcase 740
+.mode insert new_table --titles always --rowcount on
+SELECT * FROM tbl1 WHERE two<0;
+.check <<END
+/* 0 rows inserted */
+END
+.testcase 750
+.mode insert new_table --titles always --rowcount on
+SELECT * FROM tbl1 WHERE two<15;
+.check <<END
+INSERT INTO new_table(one,two) VALUES('hello!',10);
+/* 1 row inserted */
+END
 
 # QRF reports an error if the string is too big.
 #
@@ -337,3 +367,293 @@ WITH c(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM c WHERE n<100)
 SELECT hex(randomblob(100)) c;
 .check -glob "*: string or blob too big"
 .limit length 10000000
+
+# "psql" mode.
+#
+.testcase 900
+.mode --reset psql -v
+.check <<END
+.mode psql --align "" --border off --blob-quote auto --colsep "" --escape auto --fpfmt auto --ifmt auto --limits off --multiinsert 0 --null "" --quote off --rowcount on --rowsep "" --sw 0 --tablename "" --textjsonb off --titles always --widths "" --wordwrap off
+END
+.testcase 901
+.mode
+.check <<END
+.mode psql
+END
+.testcase 902
+.mode --rowcount off
+.mode
+.check <<END
+.mode psql --rowcount off
+END
+.testcase 910
+.mode psql --reset
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(ab INT, text_column TEXT, int_col INT);
+SELECT * FROM t1;
+.check <<END
+ ab | text_column | int_col
+----+-------------+---------
+(0 rows)
+END
+.testcase 911
+INSERT INTO t1 VALUES(31415926,'Hello',99);
+SELECT * FROM t1;
+.check <<END
+    ab    | text_column | int_col
+----------+-------------+---------
+ 31415926 | Hello       |      99
+(1 row)
+END
+.testcase 912
+INSERT INTO t1 VALUES(2,NULL,2);
+SELECT * FROM t1;
+.check <<END
+    ab    | text_column | int_col
+----------+-------------+---------
+ 31415926 | Hello       |      99
+        2 |             |       2
+(2 rows)
+END
+
+# Variations on ".mode -title"
+#
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1("a b", "c'""<""'d", "xyz", "123");
+.testcase 1000
+.mode box -reset -title off -title plain
+SELECT * FROM t1;
+.check <<END
+╭─────┬─────────┬─────┬─────╮
+│ a b │ c'"<"'d │ xyz │ 123 │
+╘═════╧═════════╧═════╧═════╛
+END
+.testcase 1001
+.mode -title off -title sql
+SELECT * FROM t1;
+.check <<END
+╭───────┬─────────────┬───────┬───────╮
+│ 'a b' │ 'c''"<"''d' │ 'xyz' │ '123' │
+╘═══════╧═════════════╧═══════╧═══════╛
+END
+.testcase 1002
+.mode -title off -title csv
+SELECT * FROM t1;
+.check <<END
+╭───────┬─────────────┬─────┬─────╮
+│ "a b" │ "c'""<""'d" │ xyz │ 123 │
+╘═══════╧═════════════╧═════╧═════╛
+END
+.testcase 1003
+.mode -title off -title html
+SELECT * FROM t1;
+.check <<END
+╭─────┬──────────────────────────────┬─────┬─────╮
+│ a b │ c&#39;&quot;&lt;&quot;&#39;d │ xyz │ 123 │
+╘═════╧══════════════════════════════╧═════╧═════╛
+END
+.testcase 1003b
+.mode -title off -title html -title off --title always
+SELECT * FROM t1;
+.check <<END
+╭─────┬──────────────────────────────┬─────┬─────╮
+│ a b │ c&#39;&quot;&lt;&quot;&#39;d │ xyz │ 123 │
+╘═════╧══════════════════════════════╧═════╧═════╛
+END
+.testcase 1003c
+.show
+.check --glob "*headers: always*"
+.testcase 1004
+.mode -title off -title tcl
+SELECT * FROM t1;
+.check <<END
+╭───────┬─────────────┬───────┬───────╮
+│ "a b" │ "c'\"<\"'d" │ "xyz" │ "123" │
+╘═══════╧═════════════╧═══════╧═══════╛
+END
+.testcase 1005
+.mode -title off -title json
+SELECT * FROM t1;
+.check <<END
+╭───────┬─────────────┬───────┬───────╮
+│ "a b" │ "c'\"<\"'d" │ "xyz" │ "123" │
+╘═══════╧═════════════╧═══════╧═══════╛
+END
+.testcase 1006
+.mode -title on -title json
+SELECT * FROM t1;
+.check ""
+.testcase 1007
+.mode -title on -title json -title auto
+SELECT * FROM t1;
+.check <<END
+╭─────┬─────────┬─────┬─────╮
+│ a b │ c'"<"'d │ xyz │ 123 │
+╘═════╧═════════╧═════╧═════╛
+END
+.testcase 1008
+.mode -title off -title json
+.headers always
+SELECT * FROM t1;
+.check <<END
+╭─────┬─────────┬─────┬─────╮
+│ a b │ c'"<"'d │ xyz │ 123 │
+╘═════╧═════════╧═════╧═════╛
+END
+.testcase 1100
+.mode -reset -fpfmt %.2f -ifmt %,d
+WITH RECURSIVE c(n) AS (VALUES(0.01) UNION ALL SELECT n*10 FROM c WHERE n<1e8)
+SELECT pi()*n, CAST(pi()*n AS INT) FROM c;
+.check <<END
+╭──────────────┬─────────────────────╮
+│    pi()*n    │ CAST(pi()*n AS INT) │
+╞══════════════╪═════════════════════╡
+│         0.03 │                   0 │
+│         0.31 │                   0 │
+│         3.14 │                   3 │
+│        31.42 │                  31 │
+│       314.16 │                 314 │
+│      3141.59 │               3,141 │
+│     31415.93 │              31,415 │
+│    314159.27 │             314,159 │
+│   3141592.65 │           3,141,592 │
+│  31415926.54 │          31,415,926 │
+│ 314159265.36 │         314,159,265 │
+╰──────────────┴─────────────────────╯
+END
+.testcase 1101
+.mode -fpfmt %+,0.2f -ifmt %04x
+WITH RECURSIVE c(n) AS (VALUES(0.01) UNION ALL SELECT n*10 FROM c WHERE n<1e8)
+SELECT pi()*n, CAST(pi()*n AS INT) FROM c;
+.check <<END
+╭─────────────────┬─────────────────────╮
+│     pi()*n      │ CAST(pi()*n AS INT) │
+╞═════════════════╪═════════════════════╡
+│           +0.03 │                0000 │
+│           +0.31 │                0000 │
+│           +3.14 │                0003 │
+│          +31.42 │                001f │
+│         +314.16 │                013a │
+│       +3,141.59 │                0c45 │
+│      +31,415.93 │                7ab7 │
+│     +314,159.27 │               4cb2f │
+│   +3,141,592.65 │              2fefd8 │
+│  +31,415,926.54 │             1df5e76 │
+│ +314,159,265.36 │            12b9b0a1 │
+╰─────────────────┴─────────────────────╯
+END
+.testcase 1102
+.mode -fpfmt %.6e -ifmt %#+o
+WITH RECURSIVE c(n) AS (VALUES(0.01) UNION ALL SELECT n*10 FROM c WHERE n<1e8)
+SELECT pi()*n, CAST(pi()*n AS INT) FROM c;
+.check <<END
+╭──────────────┬─────────────────────╮
+│    pi()*n    │ CAST(pi()*n AS INT) │
+╞══════════════╪═════════════════════╡
+│ 3.141593e-02 │                   0 │
+│ 3.141593e-01 │                   0 │
+│ 3.141593e+00 │                  03 │
+│ 3.141593e+01 │                 037 │
+│ 3.141593e+02 │                0472 │
+│ 3.141593e+03 │               06105 │
+│ 3.141593e+04 │              075267 │
+│ 3.141593e+05 │            01145457 │
+│ 3.141593e+06 │           013767730 │
+│ 3.141593e+07 │          0167657166 │
+│ 3.141593e+08 │         02256330241 │
+╰──────────────┴─────────────────────╯
+END
+.testcase 1103
+.mode -fpfmt auto -ifmt auto
+WITH RECURSIVE c(n) AS (VALUES(1) UNION ALL SELECT n*10 FROM c WHERE n<1e4)
+SELECT pi()*n, CAST(pi()*n AS INT) FROM c;
+.check <<END
+╭────────────────────┬─────────────────────╮
+│       pi()*n       │ CAST(pi()*n AS INT) │
+╞════════════════════╪═════════════════════╡
+│ 3.1415926535897931 │                   3 │
+│ 31.415926535897931 │                  31 │
+│ 314.15926535897933 │                 314 │
+│ 3141.5926535897929 │                3141 │
+│ 31415.926535897932 │               31415 │
+╰────────────────────┴─────────────────────╯
+END
+.testcase 1104
+.mode -fpfmt %d
+.check <<END
+Error: .mode -fpfmt %d
+Error:              ^--- not a valid floating-point format
+END
+.testcase 1105
+.mode -fpfmt xyz
+.check <<END
+Error: .mode -fpfmt xyz
+Error:              ^--- not a valid floating-point format
+END
+.testcase 1106
+.mode -fpfmt %1234f
+.check <<END
+Error: .mode -fpfmt %1234f
+Error:              ^--- not a valid floating-point format
+END
+.testcase 1107
+.mode -fpfmt %.1234f
+.check <<END
+Error: .mode -fpfmt %.1234f
+Error:              ^--- not a valid floating-point format
+END
+.testcase 1108
+.mode -fpfmt %?.2f
+.check <<END
+Error: .mode -fpfmt %?.2f
+Error:              ^--- not a valid floating-point format
+END
+.testcase 1109
+.mode -ifmt %.2f
+.check <<END
+Error: .mode -ifmt %.2f
+Error:             ^--- not a valid integer format
+END
+.testcase 1110
+.mode list -ifmt %x
+SELECT 123;
+.check 7b
+.testcase 1111
+.mode list -ifmt %X
+SELECT 123;
+.check 7B
+.testcase 1112
+.mode list -fpfmt %g
+SELECT 1.23456789e+12;
+.check 1.23457e+12
+.testcase 1113
+.mode list -fpfmt %G
+SELECT 1.23456789e+12;
+.check 1.23457E+12
+.testcase 1114
+.mode list -fpfmt "" -ifmt ""
+SELECT 1.25e+12, 0x1234;
+.check 1250000000000.0|4660
+
+# Bug 2026-10-04T05:35:43Z
+#
+.testcase 1200
+.mode jobject --fpfmt auto
+SELECT 1 AS a, +9.0e+999 AS b, -9.0e+999 AS c, 0.0 AS d;
+.check {"a":1,"b":9e+999,"c":-9e+999,"d":0}
+.open :memory:
+.testcase 1210
+CREATE TABLE t1(a);
+INSERT INTO t1 VALUES(123),(9e999),('hello'),(-9e999),(x'313233');
+.dump
+.check <<END
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+CREATE TABLE t1(a);
+INSERT INTO t1 VALUES(123);
+INSERT INTO t1 VALUES(9e+999);
+INSERT INTO t1 VALUES('hello');
+INSERT INTO t1 VALUES(-9e+999);
+INSERT INTO t1 VALUES(x'313233');
+COMMIT;
+END

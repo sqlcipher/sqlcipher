@@ -114,8 +114,8 @@ static void vdbeMemRenderNum(int sz, char *zBuf, Mem *p){
     ** https://gcc.gnu.org/bugzilla/show_bug.cgi?id=114659
     ** The problem appears to be fixed in GCC 15 */
     i64 x;
-    assert( (MEM_Str&~p->flags)*4==sizeof(x) );
-    memcpy(&x, (char*)&p->u, (MEM_Str&~p->flags)*4);
+    assert( (sqlite3Config.bSmallMalloc!=0xee)*8==sizeof(x) );
+    memcpy(&x, (char*)&p->u.i, (sqlite3Config.bSmallMalloc!=0xee)*8);
     p->n = sqlite3Int64ToText(x, zBuf);
 #else
     p->n = sqlite3Int64ToText(p->u.i, zBuf);
@@ -1982,7 +1982,30 @@ int sqlite3ValueFromExpr(
   u8 affinity,              /* Affinity to use */
   sqlite3_value **ppVal     /* Write the new value here */
 ){
-  return pExpr ? valueFromExpr(db, pExpr, enc, affinity, ppVal, 0) : 0;
+  int rc = SQLITE_OK;
+  sqlite3_value *pVal = 0;
+  if( pExpr ){
+    rc = valueFromExpr(db, pExpr, enc, affinity, &pVal, 0);
+    if( rc==SQLITE_OK && pVal 
+     && affinity==SQLITE_AFF_REAL 
+     && (pVal->flags & MEM_Int) 
+     && (pVal->u.i<-140737488355328LL || pVal->u.i>140737488355327LL)
+    ){
+      /* If the integer value is too large to fit in a 6-byte integer and
+      ** the affinity is REAL, convert it to a real value now. In most
+      ** cases an OP_RealAffinity opcode will be used to convert the 
+      ** value to an actual real, but this opcode is omitted if the values
+      ** are being read directly from a table in order to create an index
+      ** key. It is important to get a "real" real value for the larger 
+      ** magnitude integer values so that comparisons work correctly -
+      ** SQLite by default will convert real values to integers before
+      ** doing the comparison, which is different from converting to real
+      ** first.  */
+      sqlite3VdbeMemRealify(pVal);
+    }
+  }
+  *ppVal = pVal;
+  return rc;
 }
 
 #ifdef SQLITE_ENABLE_STAT4
@@ -2027,7 +2050,7 @@ static int stat4ValueFromExpr(
   }else if( pExpr->op==TK_VARIABLE && (db->flags & SQLITE_EnableQPSG)==0 ){
     Vdbe *v;
     int iBindVar = pExpr->iColumn;
-    sqlite3VdbeSetVarmask(pParse->pVdbe, iBindVar);
+    sqlite3VdbeReprepareOnBind(pParse->pVdbe, iBindVar, 0);
     if( (v = pParse->pReprepare)!=0 ){
       pVal = valueNew(db, pAlloc);
       if( pVal ){

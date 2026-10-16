@@ -159,17 +159,29 @@ char *sqlite3_data_directory = 0;
 /*
 ** Initialize SQLite. 
 **
-** This routine must be called to initialize the memory allocation,
-** VFS, and mutex subsystems prior to doing any serious work with
-** SQLite.  But as long as you do not compile with SQLITE_OMIT_AUTOINIT
+** The sqlite3_initialize() routine must be called to initialize the
+** memory allocation, VFS, and mutex subsystems prior to doing any
+** serious work.  As long as you do not compile with SQLITE_OMIT_AUTOINIT
 ** this routine will be called automatically by key routines such as
 ** sqlite3_open(). 
 **
 ** This routine is a no-op except on its very first call for the process,
-** or for the first call after a call to sqlite3_shutdown.
+** or for the first call after a call to sqlite3_shutdown.  Most calls
+** to sqlite3_initialize() are, in fact, no-ops.  For that reason, the
+** routine is broken into two pieces:
 **
-** The first thread to call this routine runs the initialization to
-** completion.  If subsequent threads call this routine before the first
+**     sqlite3Initialize()     Does the actual work of initialization
+**
+**     sqlite3_initialize()    Checks to see if initialization is needed
+**                             and invokes sqlite3Initialize() if it is.
+**
+** The sqlite3_initialize() interface is called frequently, but
+** sqlite3Initialize() runs rarely.  The function is broken up this way
+** to avoid wasting CPU cycles with unnecessary stack setup for local
+** variables in cases where it is not needed.
+**
+** The first thread to call sqlite3_initialize() runs the initialization to
+** completion. If subsequent threads call sqlite3_initialize() before the first
 ** thread has finished the initialization process, then the subsequent
 ** threads must block until the first thread finishes with the initialization.
 **
@@ -177,44 +189,29 @@ char *sqlite3_data_directory = 0;
 ** calls to this routine should not block, of course.  Otherwise the
 ** initialization process would never complete.
 **
-** Let X be the first thread to enter this routine.  Let Y be some other
-** thread.  Then while the initial invocation of this routine by X is
-** incomplete, it is required that:
+** Let X be the first thread to enter sqlite3_initialize().  Let Y be some
+** other thread.  While the initial invocation of sqlite3_initialize() by X
+** is incomplete, it is required that:
 **
-**    *  Calls to this routine from Y must block until the outer-most
+**    *  Calls to sqlite3_initialize() from Y must block until the outer-most
 **       call by X completes.
 **
-**    *  Recursive calls to this routine from thread X return immediately
-**       without blocking.
+**    *  Recursive calls to sqlite3_initialize() from thread X return
+**       immediately without blocking.
 */
-int sqlite3_initialize(void){
-  MUTEX_LOGIC( sqlite3_mutex *pMainMtx; )      /* The main static mutex */
-  int rc;                                      /* Result code */
+static SQLITE_NOINLINE int sqlite3Initialize(void){
+  MUTEX_LOGIC( sqlite3_mutex *pMainMtx; )   /* The main static mutex */
+  int rc;                                   /* Result code */
 #ifdef SQLITE_EXTRA_INIT
-  int bRunExtraInit = 0;                       /* Extra initialization needed */
-#endif
-
-#ifdef SQLITE_OMIT_WSD
-  rc = sqlite3_wsd_init(4096, 24);
-  if( rc!=SQLITE_OK ){
-    return rc;
-  }
+  int bRunExtraInit = 0;                    /* Extra initialization needed */
 #endif
 
   /* If the following assert() fails on some obscure processor/compiler
-  ** combination, the work-around is to set the correct pointer
-  ** size at compile-time using -DSQLITE_PTRSIZE=n compile-time option */
-  assert( SQLITE_PTRSIZE==sizeof(char*) );
-
-  /* If SQLite is already completely initialized, then this call
-  ** to sqlite3_initialize() should be a no-op.  But the initialization
-  ** must be complete.  So isInit must not be set until the very end
-  ** of this routine.
+  ** combination to warn that SQLite has been mis-compiled.  If you hit
+  ** this assert(), that means you need to recompile with the
+  ** -DSQLITE_PTRSIZE=n compile-time option to set the correct pointer size.
   */
-  if( sqlite3GlobalConfig.isInit ){
-    sqlite3MemoryBarrier();
-    return SQLITE_OK;
-  }
+  assert( SQLITE_PTRSIZE==sizeof(char*) );
 
   /* Make sure the mutex subsystem is initialized.  If unable to
   ** initialize the mutex subsystem, return early with the error.
@@ -359,6 +356,26 @@ int sqlite3_initialize(void){
   }
 #endif
   return rc;
+}
+SQLITE_API int sqlite3_initialize(void){
+  /* If this build does not support writable static data (WSD) natively
+  ** then we have to invoke the (application-supplied) WSD initialization
+  ** routine before doing anything else. */
+#ifdef SQLITE_OMIT_WSD
+  int rc = sqlite3_wsd_init(4096, 24);
+  if( rc!=SQLITE_OK ){
+    return rc;
+  }
+#endif
+
+  if( sqlite3GlobalConfig.isInit ){
+    /* SQLite has already been initialized.  Fast early-out. */
+    sqlite3MemoryBarrier();
+    return SQLITE_OK;
+  }else{
+    /* Invoke sqlite3Initialize() to do the actual work. */
+    return sqlite3Initialize();
+  }
 }
 
 /*
@@ -518,7 +535,7 @@ int sqlite3_config(int op, ...){
       break;
     }
     case SQLITE_CONFIG_SMALL_MALLOC: {
-      sqlite3GlobalConfig.bSmallMalloc = va_arg(ap, int);
+      sqlite3GlobalConfig.bSmallMalloc = va_arg(ap, int)!=0;
       break;
     }
     case SQLITE_CONFIG_PAGECACHE: {
@@ -1041,7 +1058,7 @@ int sqlite3_db_config(sqlite3 *db, int op, ...){
 ** This is the default collating function named "BINARY" which is always
 ** available.
 */
-static int binCollFunc(
+int sqlite3BinaryCompare(
   void *NotUsed,
   int nKey1, const void *pKey1,
   int nKey2, const void *pKey2
@@ -1073,16 +1090,19 @@ static int rtrimCollFunc(
   const u8 *pK2 = (const u8*)pKey2;
   while( nKey1 && pK1[nKey1-1]==' ' ) nKey1--;
   while( nKey2 && pK2[nKey2-1]==' ' ) nKey2--;
-  return binCollFunc(pUser, nKey1, pKey1, nKey2, pKey2);
+  return sqlite3BinaryCompare(pUser, nKey1, pKey1, nKey2, pKey2);
 }
 
 /*
 ** Return true if CollSeq is the default built-in BINARY.
 */
+#if !SQLITE_USES_INLINE
 int sqlite3IsBinary(const CollSeq *p){
-  assert( p==0 || p->xCmp!=binCollFunc || strcmp(p->zName,"BINARY")==0 );
-  return p==0 || p->xCmp==binCollFunc;
+  assert( p==0 || p->xCmp!=sqlite3BinaryCompare
+       || strcmp(p->zName,"BINARY")==0 );
+  return p==0 || p->xCmp==sqlite3BinaryCompare;
 }
+#endif
 
 /*
 ** Another built-in collating sequence: NOCASE.
@@ -1140,7 +1160,8 @@ void sqlite3_set_last_insert_rowid(sqlite3 *db, sqlite3_int64 iRowid){
 }
 
 /*
-** Return the number of changes in the most recent call to sqlite3_exec().
+** Return the number of changes in the most recently executed DML
+** statement.
 */
 sqlite3_int64 sqlite3_changes64(sqlite3 *db){
   i64 iRet;
@@ -2033,7 +2054,7 @@ int sqlite3CreateFunc(
     if( db->nVdbeActive ){
       sqlite3ErrorWithMsg(db, SQLITE_BUSY,
         "unable to delete/modify user-function due to active statements");
-      assert( !db->mallocFailed );
+      assert( !db->mallocFailed || db->nVdbeExec>0 );
       return SQLITE_BUSY;
     }else{
       sqlite3ExpirePreparedStatements(db, 0);
@@ -2974,6 +2995,8 @@ static const int aHardLimit[] = {
   SQLITE_MAX_TRIGGER_DEPTH,
   SQLITE_MAX_WORKER_THREADS,
   SQLITE_MAX_PARSER_DEPTH,
+  SQLITE_MAX_SCHEMA,
+  SQLITE_MAX_TRIGGER_STEPS,
 };
 
 /*
@@ -3014,6 +3037,9 @@ static const int aHardLimit[] = {
 #endif
 #if SQLITE_MAX_WORKER_THREADS<0 || SQLITE_MAX_WORKER_THREADS>50
 # error SQLITE_MAX_WORKER_THREADS must be between 0 and 50
+#endif
+#if SQLITE_MAX_TRIGGER_STEPS<0 || SQLITE_MAX_TRIGGER_STEPS>65535
+# error SQLITE_MAX_TRIGGER_STEPS must be between 0 and 65535
 #endif
 
 
@@ -3056,7 +3082,9 @@ int sqlite3_limit(sqlite3 *db, int limitId, int newLimit){
   assert( aHardLimit[SQLITE_LIMIT_VARIABLE_NUMBER]==SQLITE_MAX_VARIABLE_NUMBER);
   assert( aHardLimit[SQLITE_LIMIT_TRIGGER_DEPTH]==SQLITE_MAX_TRIGGER_DEPTH );
   assert( aHardLimit[SQLITE_LIMIT_WORKER_THREADS]==SQLITE_MAX_WORKER_THREADS );
-  assert( SQLITE_LIMIT_PARSER_DEPTH==(SQLITE_N_LIMIT-1) );
+  assert( aHardLimit[SQLITE_LIMIT_SCHEMA]==SQLITE_MAX_SCHEMA );
+  assert( aHardLimit[SQLITE_LIMIT_TRIGGER_STEPS]==SQLITE_MAX_TRIGGER_STEPS );
+  assert( SQLITE_LIMIT_TRIGGER_STEPS==(SQLITE_N_LIMIT-1) );
 
 
   if( limitId<0 || limitId>=SQLITE_N_LIMIT ){
@@ -3548,9 +3576,12 @@ static int openDatabase(
   ** EVIDENCE-OF: R-52786-44878 SQLite defines three built-in collating
   ** functions:
   */
-  createCollation(db, sqlite3StrBINARY, SQLITE_UTF8, 0, binCollFunc, 0);
-  createCollation(db, sqlite3StrBINARY, SQLITE_UTF16BE, 0, binCollFunc, 0);
-  createCollation(db, sqlite3StrBINARY, SQLITE_UTF16LE, 0, binCollFunc, 0);
+  createCollation(db, sqlite3StrBINARY, SQLITE_UTF8, 0,
+                  sqlite3BinaryCompare, 0);
+  createCollation(db, sqlite3StrBINARY, SQLITE_UTF16BE, 0,
+                  sqlite3BinaryCompare, 0);
+  createCollation(db, sqlite3StrBINARY, SQLITE_UTF16LE, 0,
+                  sqlite3BinaryCompare, 0);
   createCollation(db, "NOCASE", SQLITE_UTF8, 0, nocaseCollatingFunc, 0);
   createCollation(db, "RTRIM", SQLITE_UTF8, 0, rtrimCollFunc, 0);
   if( db->mallocFailed ){

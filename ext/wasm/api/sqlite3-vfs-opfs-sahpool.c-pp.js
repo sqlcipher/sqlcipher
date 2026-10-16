@@ -1,4 +1,4 @@
-//#if not target:node
+//#if not target:node and not omit-opfs-sahpool
 /*
   2023-07-14
 
@@ -43,6 +43,9 @@
 
   - Also because of that, it does not require the SharedArrayBuffer,
   so can function without the COOP/COEP HTTP response headers.
+
+  - Also because of that, this one is much faster and the performance
+  gap increases as the job sizes increase.
 
   - It can hypothetically support Safari 16.4+, whereas the "opfs" VFS
   requires v17 due to a subworker/storage bug in 16.x which makes it
@@ -148,7 +151,8 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     /* Logging verbosity 3+ == everything, 2 == warnings+errors, 1 ==
        errors only. */
     verbosity: 2,
-    forceReinitIfPreviouslyFailed: false
+    forceReinitIfPreviouslyFailed: false,
+    preserveOnInitFailure: false
   });
 
   /** Logging routines, from most to least serious. */
@@ -185,7 +189,17 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       const pool = getPoolForPFile(pFile);
       pool.log('xCheckReservedLock');
       pool.storeErr();
-      wasm.poke32(pOut, 1);
+      const file = pool.getOFileForS3File(pFile);
+      wasm.poke32(
+        pOut,
+        pool.hasReservedLock(file.path) ? 1 : 0
+        /* As forum:b2fbb61642 elaborates on why we cannot simply
+           check file.lockType>=capi.SQLITE_LOCK_RESERVED
+           here. Summary: xOpen() has long allowed multiple handles to
+           the same filename and we need to check if any of them have
+           a lock to avoid a specific corruption case which that forum
+           thread demonstrates. */
+      );
       return 0;
     },
     xClose: function(pFile){
@@ -195,6 +209,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       if(file) {
         try{
           pool.log(`xClose ${file.path}`);
+          pool.unlockFile(file, capi.SQLITE_LOCK_NONE);
           pool.mapS3FileToOFile(pFile, false);
           file.sah.flush();
           if(file.flags & capi.SQLITE_OPEN_DELETEONCLOSE){
@@ -226,8 +241,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       pool.log(`xLock ${lockType}`);
       pool.storeErr();
       const file = pool.getOFileForS3File(pFile);
-      file.lockType = lockType;
-      return 0;
+      return pool.lockFile(file, lockType);
     },
     xRead: function(pFile,pDest,n,offset64){
       const pool = getPoolForPFile(pFile);
@@ -281,7 +295,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       const pool = getPoolForPFile(pFile);
       pool.log('xUnlock');
       const file = pool.getOFileForS3File(pFile);
-      file.lockType = lockType;
+      pool.unlockFile(file, lockType);
       return 0;
     },
     xWrite: function(pFile,pSrc,n,offset64){
@@ -382,6 +396,10 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
               ? pool.getPath(zName)
               : getRandomName();
         let sah = pool.getSAHForPath(path);
+        if(sah && (flags & capi.SQLITE_OPEN_CREATE)
+           && (flags & capi.SQLITE_OPEN_EXCLUSIVE)){
+          toss('file already exists:', path);
+        }
         if(!sah && (flags & capi.SQLITE_OPEN_CREATE)) {
           // File not found so try to create it.
           if(pool.getFileCount() < pool.getCapacity()) {
@@ -448,7 +466,6 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       /* Inherit certain VFS members from the default VFS,
          if available. */
       opfsVfs.$xRandomness = dVfs.$xRandomness;
-      opfsVfs.$xSleep = dVfs.$xSleep;
       dVfs.dispose();
     }
     if(!opfsVfs.$xRandomness && !vfsMethods.xRandomness){
@@ -461,9 +478,14 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
         return i;
       };
     }
-    if(!opfsVfs.$xSleep && !vfsMethods.xSleep){
-      vfsMethods.xSleep = (pVfs,ms)=>0;
-    }
+    /**
+       This VFS's xSleep() must be a no-op. In this environment,
+       only db handles within the same thread can ever come into
+       contention, and that contention cannot be resolved if
+       one of the handles sleeps in that same thread.
+       See also: forum:3f0794c5d8
+    */
+    vfsMethods.xSleep = (pVfs,ms)=>0;
     sqlite3.vfs.installVfs({
       vfs: {struct: opfsVfs, methods: vfsMethods}
     });
@@ -471,8 +493,10 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
   };
 
   /**
-     Class for managing OPFS-related state for the
-     OPFS SharedAccessHandle Pool sqlite3_vfs.
+     Class for managing OPFS-related state for the OPFS
+     SharedAccessHandle Pool sqlite3_vfs. This class is
+     internal-use-only, never exposed to the client. OpfsSAHPoolUtil
+     is the public-facing part.
   */
   class OpfsSAHPool {
     /* OPFS dir in which VFS metadata is stored. */
@@ -494,7 +518,11 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     /* Set of currently-unused SAHs. */
     #availableSAH = new Set();
     /* Maps (sqlite3_file*) to xOpen's file objects. */
-    #mapS3FileToOFile_ = new Map();
+    #mapS3FileToOFile  = new Map();
+    /* Maps client-side file names to the lock state of the files
+       opened via this pool: {nShared, lockType}, modelled after
+       os_unix.c:unixInodeInfo. */
+    #mapPathToLock = new Map();
 
     /* Maps SAH to an abstract File Object which contains
        various metadata about that handle. */
@@ -510,6 +538,9 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     // Logging verbosity. See optionDefaults.verbosity.
     #verbosity;
 
+    /**
+       Options are documented in installOpfsSAHPoolVfs().
+    */
     constructor(options = Object.create(null)){
       this.#verbosity = options.verbosity ?? optionDefaults.verbosity;
       this.vfsName = options.name || optionDefaults.name;
@@ -536,6 +567,8 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     warn(...args){this.#logImpl(1, ...args)};
     error(...args){this.#logImpl(0, ...args)};
 
+    /* Design note: at the time this method was added, the developer
+       was unaware that getter syntax was an option: get vfs(){...} */
     getVfs(){return this.#cVfs}
 
     /* Current pool capacity. */
@@ -570,22 +603,59 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     }
 
     /**
-       Reduce capacity by n, but can only reduce up to the limit
-       of currently-available SAHs. Returns a Promise which resolves
-       to the number of slots really removed.
+       Reduce capacity by n, but can only reduce up to the limit of
+       currently-available SAHs. Returns a Promise which resolves to
+       the number of slots really removed. Throws if removal of an
+       OPFS filesystem entry fails for any reason, in which case the
+       VFS itself is left in a well-defined state, possibly partially
+       reduced in capacity compared to before this call, but the file
+       which was unable to be removed is in an undefined state. It may
+       be orphaned and/or later recycled.
+
+       As of 3.54, throws if n is an invalid value. Prior to that
+       an invalid value could cause it to remove all entries.
     */
     async reduceCapacity(n){
+      if(!Number.isSafeInteger(n) || n < 0){
+        toss('Invalid capacity reduction:', n);
+      }
       let nRm = 0;
       for(const ah of Array.from(this.#availableSAH)){
         if(nRm === n || this.getFileCount() === this.getCapacity()){
           break;
         }
         const name = this.#mapSAHToName.get(ah);
-        //this.#unmapFileObject(ah);
         ah.close();
-        await this.#dhOpaque.removeEntry(name);
         this.#mapSAHToName.delete(ah);
         this.#availableSAH.delete(ah);
+        await this.#dhOpaque.removeEntry(name);
+        //#if 0
+        /* removeEntry() may throw, in which case the storage is in an
+           undefined state and that particular file name might or
+           might not work ever again. One suggestion contributed
+           off-list is that when removeEntry() throws, we re-animate
+           the entry:
+
+           ah.close();
+           try {
+             await this.#dhOpaque.removeEntry(name);
+           } catch (e) {
+             this.#mapSAHToName.delete(ah);
+             this.#availableSAH.delete(ah);
+             const h = await this.#dhOpaque.getFileHandle(name);
+             const restored = await h.createSyncAccessHandle();
+             this.#mapSAHToName.set(restored, name);
+             this.#availableSAH.add(restored);
+             throw e;
+           }
+           this.#mapSAHToName.delete(ah);
+           this.#availableSAH.delete(ah);
+
+           But that feels like a bigger minefield than the current
+           approach, in particular given the very, very niche use
+           cases for this function.
+        */
+        //#/if
         ++nRm;
       }
       return nRm;
@@ -601,6 +671,8 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       this.#mapSAHToName.clear();
       this.#mapFilenameToSAH.clear();
       this.#availableSAH.clear();
+      this.#mapS3FileToOFile.clear();
+      this.#mapPathToLock.clear();
     }
 
     /**
@@ -610,8 +682,8 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
        throws, this.$error will contain the corresponding Error
        object.
 
-       If it throws, it releases any SAHs which it may have
-       acquired before the exception was thrown, leaving the VFS in a
+       If it throws, it waits for every pending acquisition to settle,
+       then releases all SAHs it acquired, leaving the VFS in a
        well-defined but unusable state.
 
        If clearFiles is true, the client-stored state of each file is
@@ -625,27 +697,31 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
           files.push([name,h]);
         }
       }
-      return Promise.all(files.map(async([name,h])=>{
-        try{
-          const ah = await h.createSyncAccessHandle()
-          this.#mapSAHToName.set(ah, name);
-          if(clearFiles){
-            ah.truncate(HEADER_OFFSET_DATA);
-            this.setAssociatedPath(ah, '', 0);
+      const results = await Promise.allSettled(files.map(async([name,h])=>{
+        const ah = await h.createSyncAccessHandle()
+        this.#mapSAHToName.set(ah, name);
+        if(clearFiles){
+          ah.truncate(HEADER_OFFSET_DATA);
+          this.setAssociatedPath(ah, '', 0);
+        }else{
+          const path = this.getAssociatedPath(ah);
+          if(path){
+            this.#mapFilenameToSAH.set(path, ah);
           }else{
-            const path = this.getAssociatedPath(ah);
-            if(path){
-              this.#mapFilenameToSAH.set(path, ah);
-            }else{
-              this.#availableSAH.add(ah);
-            }
+            this.#availableSAH.add(ah);
           }
-        }catch(e){
-          this.storeErr(e);
-          this.releaseAccessHandles();
-          throw e;
         }
       }));
+      const failure = results.find((r)=>'rejected'===r.status)
+      /* If any failures are found then clean up and re-throw the
+         first one. We "could" record them all but we can only throw
+         one of them (or an exception wrapping all of them, which
+         seems unnecessary). */;
+      if( failure ){
+        this.storeErr(failure.reason);
+        this.releaseAccessHandles();
+        throw failure.reason;
+      }
     }
 
     /**
@@ -698,8 +774,12 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
        into the given SAH. If path is an empty string then the file is
        disassociated from the pool but its previous name is preserved
        in the metadata.
+
+       If nameToRemove is truthy then it must be the "old" name when path
+       is falsy. This function removes the mapping of that name to an
+       SAH.
     */
-    setAssociatedPath(sah, path, flags){
+    setAssociatedPath(sah, path, flags, nameToRemove){
       const enc = textEncoder.encodeInto(path, this.#apBody);
       if(HEADER_MAX_PATH_SIZE <= enc.written + 1/*NUL byte*/){
         toss("Path too long:",path);
@@ -716,6 +796,17 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       const digest = this.computeDigest(this.#apBody, flags);
       //console.warn("setAssociatedPath(",path,") digest",digest);
       sah.write(this.#apBody, {at: 0});
+      if(nameToRemove){
+        /* The placement of this is very specific: between the above
+           write and the digest. If the above write fails,
+           nameToRemove remains in the mapping pool. If it succeeds,
+           nameToRemove is no longer available and needs to be removed
+           from the SAH mapping. If the write() _below_ fails, that
+           leaves us with a consistent world view.
+
+           Discussion: bugs:432f260aa787a53 */
+        this.#mapFilenameToSAH.delete(nameToRemove);
+      }
       sah.write(digest, {at: HEADER_OFFSET_DIGEST});
       sah.flush();
 
@@ -805,9 +896,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     deletePath(path) {
       const sah = this.#mapFilenameToSAH.get(path);
       if(sah) {
-        // Un-associate the name from the SAH.
-        this.#mapFilenameToSAH.delete(path);
-        this.setAssociatedPath(sah, '', 0);
+        this.setAssociatedPath(sah, '', 0, path);
       }
       return !!sah;
     }
@@ -852,7 +941,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
        xOpen file object.
     */
     getOFileForS3File(pFile){
-      return this.#mapS3FileToOFile_.get(pFile);
+      return this.#mapS3FileToOFile.get(pFile);
     }
     /**
        Maps or unmaps (if file is falsy) the given (sqlite3_file*)
@@ -860,10 +949,10 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     */
     mapS3FileToOFile(pFile,file){
       if(file){
-        this.#mapS3FileToOFile_.set(pFile, file);
+        this.#mapS3FileToOFile.set(pFile, file);
         setPoolForPFile(pFile, this);
       }else{
-        this.#mapS3FileToOFile_.delete(pFile);
+        this.#mapS3FileToOFile.delete(pFile);
         setPoolForPFile(pFile, false);
       }
     }
@@ -921,7 +1010,6 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       return true;
     }
 
-
     /**
        "Pauses" this VFS by unregistering it from SQLite and
        relinquishing all open SAHs, leaving the associated files
@@ -943,7 +1031,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
        @see unpauseVfs()
     */
     pauseVfs(){
-      if(this.#mapS3FileToOFile_.size>0){
+      if(this.#mapS3FileToOFile.size>0){
         sqlite3.SQLite3Error.toss(
           capi.SQLITE_MISUSE, "Cannot pause VFS",
           this.vfsName,"because it has opened files."
@@ -1014,7 +1102,11 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
             util.affirmDbHeader(chunk);
             checkedHeader = true;
           }
-          sah.write(chunk, {at:  HEADER_OFFSET_DATA + nWrote});
+          const n = sah.write(chunk, {at: HEADER_OFFSET_DATA + nWrote});
+          if( n!==chunk.byteLength ){
+            toss("Expected to write "+chunk.byteLength+
+                 "bytes but wrote"+n+".");
+          }
           nWrote += chunk.byteLength;
         }
         if( nWrote < 512 || 0!==nWrote % 512 ){
@@ -1022,7 +1114,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
         }
         if( !checkedHeader ){
           const header = new Uint8Array(20);
-          sah.read( header, {at: 0} );
+          sah.read( header, {at: HEADER_OFFSET_DATA} );
           util.affirmDbHeader( header );
         }
         sah.write(new Uint8Array([1,1]), {
@@ -1040,24 +1132,19 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     importDb(name, bytes){
       if( bytes instanceof ArrayBuffer ) bytes = new Uint8Array(bytes);
       else if( bytes instanceof Function ) return this.importDbChunked(name, bytes);
+      util.affirmIsDb(bytes);
       const sah = this.#mapFilenameToSAH.get(name)
             || this.nextAvailableSAH()
             || toss("No available handles to import to.");
       const n = bytes.byteLength;
-      if(n<512 || n%512!=0){
-        toss("Byte array size is invalid for an SQLite db.");
-      }
-      const header = "SQLite format 3";
-      for(let i = 0; i < header.length; ++i){
-        if( header.charCodeAt(i) !== bytes[i] ){
-          toss("Input does not contain an SQLite database header.");
-        }
-      }
       const nWrote = sah.write(bytes, {at: HEADER_OFFSET_DATA});
       if(nWrote != n){
         this.setAssociatedPath(sah, '', 0);
         toss("Expected to write "+n+" bytes but wrote "+nWrote+".");
       }else{
+        sah.truncate(HEADER_OFFSET_DATA + n
+                     /* Ensure no trailing junk when overwriting an
+                        existing file with a shorter one. */);
         sah.write(new Uint8Array([1,1]), {at: HEADER_OFFSET_DATA+18}
                    /* force db out of WAL mode */);
         this.setAssociatedPath(sah, name, capi.SQLITE_OPEN_MAIN_DB);
@@ -1065,8 +1152,72 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
       return nWrote;
     }
 
-  }/*class OpfsSAHPool*/;
+    /**
+       Returns true if any (sqlite3_file*) currently opened by this
+       pool using the given client-provided file name (as distinct from
+       its opaque name) holds a RESERVED or greater lock, else false.
+    */
+    hasReservedLock(filename){
+      const lk = this.#mapPathToLock.get(filename);
+      return !!lk && lk.lockType>capi.SQLITE_LOCK_SHARED;
+    }
 
+    /**
+       Implements xLock() for the given xOpen-generated file object.
+       This pool holds its SAHs exclusively, so its xOpen() represent
+       the only connections to a given file. The locks are held
+       separately from their file object in the same thread the same
+       way in which os_unix.c:unixLock() distinguishes multiple
+       connections of a single process which share an inode: a lock
+       which conflicts with another connection's lock fails with
+       SQLITE_BUSY, and a failed attempt to get from RESERVED to
+       EXCLUSIVE leaves a PENDING lock, which admits no new SHARED
+       locks.
+    */
+    lockFile(file, lockType){
+      if(file.lockType>=lockType) return 0;
+      let lk = this.#mapPathToLock.get(file.path);
+      if(!lk){
+        lk = Object.assign(Object.create(null),{
+          nShared: 0, lockType: capi.SQLITE_LOCK_NONE
+        });
+        this.#mapPathToLock.set(file.path, lk);
+      }
+      if(file.lockType!==lk.lockType
+         && (lk.lockType>=capi.SQLITE_LOCK_PENDING
+             || lockType>capi.SQLITE_LOCK_SHARED)){
+        return capi.SQLITE_BUSY;
+      }
+      if(lockType===capi.SQLITE_LOCK_SHARED){
+        ++lk.nShared;
+        if(lk.lockType===capi.SQLITE_LOCK_NONE) lk.lockType = lockType;
+      }else if(lockType===capi.SQLITE_LOCK_EXCLUSIVE && lk.nShared>1){
+        if(file.lockType===capi.SQLITE_LOCK_RESERVED){
+          file.lockType = lk.lockType = capi.SQLITE_LOCK_PENDING;
+        }
+        return capi.SQLITE_BUSY;
+      }else{
+        lk.lockType = lockType;
+      }
+      file.lockType = lockType;
+      return 0;
+    }
+
+    /** Implements xUnlock() for the given xOpen file object. */
+    unlockFile(file, lockType){
+      if(file.lockType<=lockType) return;
+      const lk = this.#mapPathToLock.get(file.path);
+      if(file.lockType>capi.SQLITE_LOCK_SHARED){
+        lk.lockType = capi.SQLITE_LOCK_SHARED;
+      }
+      if(lockType===capi.SQLITE_LOCK_NONE && 0===--lk.nShared
+         /* Maintenance reminder: the && ordering is significant */){
+        this.#mapPathToLock.delete(file.path);
+      }
+      file.lockType = lockType;
+    }
+
+  }/*class OpfsSAHPool*/;
 
   /**
      A OpfsSAHPoolUtil instance is exposed to clients in order to
@@ -1220,8 +1371,18 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
      option is truthy _and_ the previous attempt to initialize this
      VFS with the same `name` failed, the VFS will attempt to
      initialize a second time instead of returning the cached
-     failure. See discussion at:
+     failure. See discussion at
      <https://github.com/sqlite/sqlite-wasm/issues/79>
+
+     - `preserveOnInitFailure`: (default=`false`) If truthy,
+     initialization failure unregisters and disposes of the VFS and
+     releases acquired handles without also deleting its storage. This
+     does not undo changes already made during initialization,
+     including `clearOnInit`. Otherwise, initialization failure
+     invokes this.removeVfs(), which attempts to delete the
+     pool. Retrying a cached initialization failure requires
+     `forceReinitIfPreviouslyFailed`. See discussion at
+     <https://sqlite.org/forum/forumpost/5664cd4baee50236>.
 
 
      Peculiarities of this VFS vis a vis other SQLite VFSes:
@@ -1259,16 +1420,17 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
 
      - byteArray exportFile(name)
 
-     Synchronously reads the contents of the given file into a Uint8Array
-     and returns it. This will throw if the given name is not currently
-     in active use or on I/O error. Note that the given name is _not_
-     visible directly in OPFS (or, if it is, it's not from this VFS).
+     Synchronously reads the contents of the given file into a
+     Uint8Array and returns it. This will throw if the given name is
+     not currently in active use or on I/O error. Because of how this
+     VFS maps names to storage, the given name is _not_ visible
+     directly in OPFS (or, if it is, it's not from this VFS).
 
      - number getCapacity()
 
-     Returns the number of files currently contained
-     in the SAH pool. The default capacity is only large enough for one
-     or two databases and their associated temp files.
+     Returns the number of files currently contained in the SAH
+     pool. The default capacity is only large enough for one or two
+     databases and their associated temp files.
 
      - number getFileCount()
 
@@ -1285,11 +1447,14 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
      Imports the contents of an SQLite database, provided as a byte
      array or ArrayBuffer, under the given name, overwriting any
      existing content. Throws if the pool has no available file slots,
-     on I/O error, or if the input does not appear to be a
-     database. In the latter case, only a cursory examination is made.
+     on I/O error, or if the input does not appear to be a database.
+     In the latter case, only a cursory examination is made to
+     determine whether the input is a db (and only in non-SEE builds,
+     as we cannot distinguish encrypted DBs from garbage input).
+
      Results are undefined if the given db name refers to an opened
-     db.  Note that this routine is _only_ for importing database
-     files, not arbitrary files, the reason being that this VFS will
+     db.  This routine is _only_ for importing database files, not
+     arbitrary files, the reason being that this VFS will
      automatically clean up any non-database files so importing them
      is pointless.
 
@@ -1304,7 +1469,10 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
      called this way is the size of the resulting database.
 
      On success this routine rewrites the database header bytes in the
-     output file (not the input array) to force disabling of WAL mode.
+     output file (not the input array) to force disabling of WAL mode,
+     (A) for historical reasons and (B) getting WAL to work in this
+     build requires doing a (pragma locking_mode=exclusive) on the db
+     before using it.
 
      On a write error, the handle is removed from the pool and made
      available for re-use.
@@ -1421,6 +1589,24 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     }
 
     /**
+       An interal detail of OpfsSAHPool, called only by initPromises().
+
+       Unregisters and disposes of OpfsSAHPool thePool, releasing all
+       of its SAHs without deleting its files. Used when
+       initialization fails and the preserveOnInitFailure option is
+       set. This is a no-op if thePool.getVfs().pointer is falsy. Returns the
+       undefined value.
+    */
+    const unregisterVfs = (thePool)=>{
+      const cVfs = thePool.getVfs();
+      if( cVfs?.pointer ){
+        capi.sqlite3_vfs_unregister(cVfs.pointer);
+        cVfs.dispose();
+        thePool.releaseAccessHandles();
+      }
+    };
+
+    /**
        Maintenance reminder: the order of ASYNC ops in this function
        is significant. We need to have them all chained at the very
        end in order to be able to catch a race condition where
@@ -1457,7 +1643,11 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
         thePool.log("VFS initialized.");
         return poolUtil;
       }).catch(async (e)=>{
-        await thePool.removeVfs().catch(()=>{});
+        if( options.preserveOnInitFailure ){
+          unregisterVfs(thePool);
+        }else{
+          await thePool.removeVfs().catch(()=>{});
+        }
         throw e;
       });
     }).catch((err)=>{
@@ -1471,4 +1661,4 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
   The OPFS SAH Pool VFS parts are elided from builds targeting
   node.js.
 */
-//#/if target:node
+//#/if global snip

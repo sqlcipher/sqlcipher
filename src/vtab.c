@@ -722,6 +722,8 @@ int sqlite3VtabCallConnect(Parse *pParse, Table *pTab){
     if( rc!=SQLITE_OK ){
       sqlite3ErrorMsg(pParse, "%s", zErr);
       pParse->rc = rc;
+    }else{
+      sqlite3MarkAllShadowTablesOf(db, pTab);
     }
     sqlite3DbFree(db, zErr);
   }
@@ -1306,6 +1308,17 @@ void sqlite3VtabEponymousTableClear(sqlite3 *db, Module *pMod){
     pTab->tabFlags |= TF_Ephemeral;
     sqlite3DeleteTable(db, pTab);
     pMod->pEpoTab = 0;
+  }
+}
+
+/*
+** Erase all eponymous virtual table instances associated with database
+** handle db.  
+*/
+void sqlite3VtabEponymousTableClearAll(sqlite3 *db){
+  HashElem *pElem;
+  for(pElem=sqliteHashFirst(&db->aModule); pElem; pElem=sqliteHashNext(pElem)){
+    sqlite3VtabEponymousTableClear(db, (Module*)sqliteHashData(pElem));
   }
 }
 

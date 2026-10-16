@@ -1360,6 +1360,7 @@ static int resolve_conflict(
     }
   }else{
     assert(
+      apx->type==ERROR ||
       apx->type==SH_RESOLVED ||
       apx->type==RD_RESOLVED ||
       apx->type==SSCONFLICT ||
@@ -1741,18 +1742,15 @@ int main(int argc, char **argv){
   static int version = 0;
   static int rpflag = 0;
   static int basisflag = 0;
-  static int compress = 0;
   static int quiet = 0;
   static int statistics = 0;
   static int mhflag = 0;
   static int nolinenosflag = 0;
-  static int noResort = 0;
   static int sqlFlag = 0;
   static int printPP = 0;
   
   static struct s_options options[] = {
     {OPT_FLAG, "b", (char*)&basisflag, "Print only the basis in report."},
-    {OPT_FLAG, "c", (char*)&compress, "Don't compress the action table."},
     {OPT_FSTR, "d", (char*)&handle_d_option, "Output directory.  Default '.'"},
     {OPT_FSTR, "D", (char*)handle_D_option, "Define an %ifdef macro."},
     {OPT_FLAG, "E", (char*)&printPP, "Print input file after preprocessing."},
@@ -1765,7 +1763,6 @@ int main(int argc, char **argv){
     {OPT_FLAG, "p", (char*)&showPrecedenceConflict,
                     "Show conflicts resolved by precedence rules"},
     {OPT_FLAG, "q", (char*)&quiet, "(Quiet) Don't print the report file."},
-    {OPT_FLAG, "r", (char*)&noResort, "Do not sort or renumber states"},
     {OPT_FLAG, "s", (char*)&statistics,
                                    "Print parser stats to standard output."},
     {OPT_FLAG, "S", (char*)&sqlFlag,
@@ -1792,7 +1789,9 @@ int main(int argc, char **argv){
   }
   memset(&lem, 0, sizeof(lem));
   lem.errorcnt = 0;
-  qsort(azDefine, nDefine, sizeof(azDefine[0]), defineCmp);
+  if( nDefine && azDefine ){
+    qsort(azDefine, nDefine, sizeof(azDefine[0]), defineCmp);
+  }
 
   /* Initialize the machine */
   Strsafe_init();
@@ -1872,12 +1871,12 @@ int main(int argc, char **argv){
     FindActions(&lem);
 
     /* Compress the action tables */
-    if( compress==0 ) CompressTables(&lem);
+    CompressTables(&lem);
 
     /* Reorder and renumber the states so that states with fewer choices
     ** occur at the end.  This is an optimization that helps make the
     ** generated parser tables smaller. */
-    if( noResort==0 ) ResortStates(&lem);
+    ResortStates(&lem);
 
     /* Generate a report of the parser generated.  (the "y.output" file) */
     if( !quiet ) ReportOutput(&lem);

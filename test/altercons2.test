@@ -172,7 +172,10 @@ do_execsql_test 8.0 {
 }
 do_catchsql_test 8.1 {
   ALTER TABLE abc DROP CONSTRAINT one
-} {1 {constraint may not be dropped: one}}
+} {0 {}}
+do_execsql_test 8.2 {
+  SELECT sql FROM sqlite_schema
+} {{CREATE TABLE abc(a, b, c)}}
 
 #-------------------------------------------------------------------------
 reset_db

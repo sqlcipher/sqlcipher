@@ -77,7 +77,7 @@ namespace eval trd {
     persistent_journal_error no_journal no_journal_error
     autovacuum_ioerr no_mutex_try fullmutex journaltest
     inmemory_journal pcache0 pcache10 pcache50 pcache90
-    pcache100 prepare mmap
+    pcache100 prepare mmap session_eec session_strm
   }
 
   #-----------------------------------------------------------------------
@@ -137,12 +137,14 @@ namespace eval trd {
     -DHAVE_STRCHRNUL=0
     -DHAVE_USLEEP=0
     -DHAVE_UTIME=0
+    -DHAVE_MREMAP=0
   }
   set build(Unlock-Notify) {
     -O2
     -DSQLITE_ENABLE_UNLOCK_NOTIFY
     -DSQLITE_THREADSAFE
     -DSQLITE_TCL_DEFAULT_FULLMUTEX=1
+    -DSQLITE_OMIT_AUTOINIT=1
   }
   set build(Secure-Delete) {
     -O2
@@ -424,7 +426,7 @@ proc trd_extras {platform bld} {
 
 # Usage: 
 #
-#     trd_fuzztest_data $buildname
+#     trd_fuzztest_data $buildname $bNoSan
 #
 # This returns data used by testrunner.tcl to run commands equivalent 
 # to [make fuzztest]. The returned value is a list, which should be
@@ -444,17 +446,17 @@ proc trd_extras {platform bld} {
 # directory containing this file). "fuzzcheck" and "sessionfuzz" have .exe
 # extensions on windows.
 #
-proc trd_fuzztest_data {buildname} {
+proc trd_fuzztest_data {buildname bNoSan} {
   set EXE ""
   set lFuzzDb    [glob [file join $::testdir fuzzdata*.db]] 
   set lSessionDb [glob [file join $::testdir sessionfuzz-data*.db]]
   set sanBuilds {All-Debug Apple Have-Not Update-Delete-Limit}
 
-  if {$::tcl_platform(platform) eq "windows"} {
+  if {$::tcl_platform(os) eq "Windows NT"} {
     return [list fuzzcheck.exe $lFuzzDb]
   } else {
     set lRet [list [trd_get_bin_name fuzzcheck] $lFuzzDb]
-    if {[lsearch $sanBuilds $buildname]>=0} {
+    if {$bNoSan==0 && [lsearch $sanBuilds $buildname]>=0} {
       lappend lRet [trd_get_bin_name fuzzcheck-asan] $lFuzzDb 
       if {$::tcl_platform(os) ne "OpenBSD"} {
         lappend lRet [trd_get_bin_name fuzzcheck-ubsan] $lFuzzDb 
@@ -472,10 +474,12 @@ proc trd_all_configs {} {
 }
 
 proc trimscript {text} {
-  set text [string map {"\n    " "\n"} [string trim $text]]
+  set text [string map {"\n      " "\n"} [string trim $text]]
+  set text [string map {"\n\n" "\n"} $text]
+  return $text
 }
 
-proc make_sh_script {srcdir opts cflags makeOpts configOpts} {
+proc make_sh_script {srcdir opts cflags makeOpts configOpts {targets {}}} {
 
   set tcldir [::tcl::pkgconfig get libdir,install]
   set myopts ""
@@ -487,43 +491,54 @@ proc make_sh_script {srcdir opts cflags makeOpts configOpts} {
     append myopts "OPTS=\"\$OPTS $o\"\n"
   }
 
-  return [trimscript [subst -nocommands {
-    set -e
-    if [ "\$#" -ne 1 ] ; then
-      echo "Usage: \$0 <target>"
-      exit -1
-    fi
-    
-    SRCDIR="$srcdir"
-    TCLDIR="$tcldir"
-    
-    if [ ! -f Makefile ] ; then
-      \$SRCDIR/configure --with-tcl=\$TCLDIR $configOpts 
-    fi
-    
-    $myopts
-    CFLAGS="$cflags"
-    
-    make \$1 "CFLAGS=\$CFLAGS" "OPTS=\$OPTS" $makeOpts
+  set out "set -e\n"
+  if {[llength $targets]==0} {
+    set out [trimscript {
+      if [ "$#" -lt 1 ] ; then
+        echo "Usage: $0 <target>"
+        exit -1
+      fi
+    }]\n
+  }
+  append out [trimscript [subst -nocommands {
+      SRCDIR="$srcdir"
+      TCLDIR="$tcldir"
+      if [ ! -f Makefile ] ; then
+        \$SRCDIR/configure --with-tcl=\$TCLDIR $configOpts 
+      fi
+      $myopts
+      CFLAGS="$cflags"
+  }]]\n
+  if {[llength $targets]==0} {set targets {$*}}
+  append out [trimscript [subst -nocommands {
+      make $targets "CFLAGS=\$CFLAGS" "OPTS=\$OPTS" $makeOpts
   }]]
+  return $out
 }
 
 # Generate the text of a *.bat script.
 #
-proc make_bat_file {srcdir opts cflags makeOpts} {
+proc make_bat_file {srcdir opts cflags makeOpts {targets {}}} {
   set srcdir [file nativename [file normalize $srcdir]]
-
-  return [trimscript [subst -nocommands {
-    set TARGET=%1
-    set TMP=%CD%
-    nmake /f $srcdir\\Makefile.msc TOP="$srcdir" %TARGET% "CCOPTS=$cflags" "OPTS=$opts" $makeOpts
-  }]]
+  set makefile $srcdir\\Makefile.msc
+  if {[llength $targets]==0} {
+    return [trimscript [subst -nocommands {
+      set TARGET=%1
+      set TMP=%CD%
+      nmake /f $makefile TOP="$srcdir" %TARGET% "CCOPTS=$cflags" "OPTS=$opts" $makeOpts
+    }]]
+  } else {
+    return [trimscript [subst -nocommands {
+      set TMP=%CD%
+      nmake /f $makefile TOP="$srcdir" $targets "CCOPTS=$cflags" "OPTS=$opts" $makeOpts
+    }]]
+  }
 }
 
 
 # Generate the text of a shell script.
 #
-proc make_script {cfg srcdir bMsvc} {
+proc make_script {cfg srcdir bMsvc {targets {}}} {
   set opts       [list]                         ;# OPTS value
   set cflags     [expr {$bMsvc ? "-Zi" : "-g"}] ;# CFLAGS value
   set makeOpts   [list]                         ;# Extra args for [make]
@@ -623,9 +638,9 @@ proc make_script {cfg srcdir bMsvc} {
   }
 
   if {$bMsvc==0} {
-    set zRet [make_sh_script $srcdir $opts $cflags $makeOpts $configOpts]
+    return [make_sh_script $srcdir $opts $cflags $makeOpts $configOpts $targets]
   } else {
-    set zRet [make_bat_file $srcdir $opts $cflags $makeOpts]
+    return [make_bat_file $srcdir $opts $cflags $makeOpts $targets]
   }
 }
 
@@ -642,7 +657,7 @@ proc make_script {cfg srcdir bMsvc} {
 # directory of that containing this script). MSVC is a boolean - true to
 # use the MSVC compiler, false otherwise.
 #
-proc trd_buildscript {config srcdir bMsvc} {
+proc trd_buildscript {config srcdir bMsvc {targets {}}} {
   trd_import
 
   # Ensure that the named configuration exists.
@@ -656,7 +671,7 @@ proc trd_buildscript {config srcdir bMsvc} {
   }
 
   # Generate and return the script.
-  return [make_script $build($config) $srcdir $bMsvc]
+  return [make_script $build($config) $srcdir $bMsvc $targets]
 }
 
 # Usage:
