@@ -561,6 +561,22 @@ do_test 4.3 {
   }]
 } {64}
 
+# The 6th argument to snippet() is the approximate number of tokens to
+# use in the returned snippet. Test that this still works as expected
+# (the absolute value is silently capped at 64) if the value passed in
+# is too large to be represented as a 32-bit integer.
+do_test 4.4 {
+  llength [db one {
+    SELECT snippet(t4, '', '', '', 0, 4294967297) FROM t4 WHERE t4 MATCH 'E'
+  }]
+} {64}
+
+do_test 4.5 {
+  llength [db one {
+    SELECT snippet(t4, '', '', '', 0, -4294967297) FROM t4 WHERE t4 MATCH 'E'
+  }]
+} {64}
+
 #-------------------------------------------------------------------------
 # Request a snippet from a query with more than 64 phrases.
 #
@@ -590,6 +606,34 @@ do_execsql_test 5.1 {
 do_execsql_test 5.2 {
   SELECT snippet(t5, '[', ']', -1, 0) FROM t5 WHERE t5 MATCH 'a5'
 } {{a4 [a5] a6}}
+
+#-------------------------------------------------------------------------
+do_execsql_test 6.0 {
+  CREATE VIRTUAL TABLE t6 USING fts3(a, b, c, d);
+  INSERT INTO t6 VALUES(
+      'one two three A', 'one two three B', 'one two three C', 'one two three D'
+  );
+}
+
+proc do_snip_test {name query iCol nTok lRes} {
+  set q "'[string map {' ''} $query]'"
+  set    SQL "SELECT snippet(t6, '{', '}', '...', $iCol, $nTok) "
+  append SQL " FROM t6 WHERE t6 MATCH $q"
+  uplevel [list do_execsql_test $name $SQL [list $lRes]]
+}
+
+do_snip_test 6.1 two 0 5  {one {two} three A}
+do_snip_test 6.2 two -1 5 {one {two} three A}
+do_snip_test 6.3 two 3 5  {one {two} three D}
+do_snip_test 6.4 two 4 5  {}
+
+# The 5th argument to snippet() is a column index. A negative value means
+# any column may be used, and a value greater than or equal to the number
+# of columns in the table means there is no such column and the result is
+# an empty string. Test that this is still true if the value passed in is
+# too large to be represented as a 32-bit integer.
+do_snip_test 6.5 two -4294967293 5 {one {two} three A}
+do_snip_test 6.6 two 4294967299  5 {}
 
 set sqlite_fts3_enable_parentheses 0
 finish_test

@@ -31,7 +31,7 @@ char *zResult = 0;      /* Formatted output written here */
 int rc;                 /* Result code */
 
 memset(&spec, 0, sizeof(spec));       /* Initialize the spec */
-spec.iVersion = 1;                    /* Version number must be 1 */
+spec.iVersion = 2;                    /* Latest version number */
 spec.pzOutput = &zResult;             /* Write results in variable zResult */
 /* Optionally fill in other settings in spec here, as needed */
 zErrMsg = 0;                          /* Not required; just being pedantic */
@@ -66,7 +66,7 @@ sqlite3_stmt *pStmt;    /* Next prepared statement */
 int rc;                 /* Result code */
 
 memset(&spec, 0, sizeof(spec));       /* Initialize the spec */
-spec.iVersion = 1;                    /* Version number must be 1 */
+spec.iVersion = 2;                    /* Latest version number */
 spec.pzOutput = &zResult;             /* Write results in variable zResult */
 /* Optionally fill in other settings in spec here, as needed */
 zErrMsg = 0;                          /* Not required; just being pedantic */
@@ -130,6 +130,10 @@ struct sqlite3_qrf_spec {
   void *pRenderArg;           /* First argument to the xRender callback */
   void *pWriteArg;            /* First argument to the xWrite callback */
   char **pzOutput;            /* Storage location for output string */
+  /* The following are available in iVersion 2 and later */
+  unsigned char bRowCount;    /* Show the number of rows at end of each query */
+  char *zIFmt;                /* Format string for integers */
+  char *zFpFmt;               /* Format string for floating point */
   /* Additional fields may be added in the future */
 };
 ~~~
@@ -150,10 +154,10 @@ Further detail on the meanings of each of the fields in the
 
 ### 2.1 Structure Version Number
 
-The sqlite3_qrf_spec.iVersion field must be 1.  Future enhancements to 
+The sqlite3_qrf_spec.iVersion field must be 1 or 2.  Future enhancements to 
 the QRF might add new fields to the bottom of the sqlite3_qrf_spec
 object. Those new fields will only be accessible if the iVersion is greater
-than 1. Thus the iVersion field is used to support upgradability.
+than 2. Thus the iVersion field is used to support upgradability.
 
 ### 2.2 Output Deposition (xWrite and pzOutput)
 
@@ -187,10 +191,9 @@ ignored, depending on the value of eStyle.
 
 ### 2.4 Show Column Names (bTitles)
 
-The sqlite3_qrf_spec.bTitles field can be either QRF_SW_Auto,
-QRF_SW_On, or QRF_SW_Off.  Those three constants also have shorter
-alternative spellings: QRF_Auto, QRF_No, and
-QRF_Yes.
+The sqlite3_qrf_spec.bTitles field can be one of QRF_SW_Auto,
+QRF_SW_On, QRF_SW_Off, or QRF_Always.  The first three constants also
+have shorter alternative spellings: QRF_Auto, QRF_No, and QRF_Yes.
 
 > ~~~
 #define QRF_SW_Auto     0 /* Let QRF choose the best value */
@@ -199,11 +202,16 @@ QRF_Yes.
 #define QRF_Auto        0 /* Alternate spelling for QRF_SW_Auto and others */
 #define QRF_No          1 /* Alternate spelling for QRF_SW_Off */
 #define QRF_Yes         2 /* Alternate spelling for QRF_SW_On */
+#define QRF_Always      3 /* Always try to show column names */
 ~~~
 
-If the value is QRF_Yes, then column names appear in the output.
+If the value is QRF_Yes, then column names appear in the output when
+there are one or more rows of output.
 If the value is QRF_No, column names are omitted.  If the
 value is QRF_Auto, then an appropriate default is chosen.
+The value QRF_Always is like QRF_Yes except that the output might
+still show column headers even if the number of result rows is zero,
+depending on eStyle.
 
 ### 2.5 Control Character Escapes (eEsc)
 
@@ -594,6 +602,22 @@ not applicable to xRender because title values come from the
 sqlite3_column_name() interface not from sqlite3_column_value(),
 and so that names of columns are never processed by xRender.
 
+### 2.18 Show Row Counts On Query Output (bRowCount)
+
+If the value of bRowCount is QRF_Yes, then an extra line of text
+of the form "(N rows)" might be appended to the end of query output,
+depending on eStyle.
+
+### 2.19 Number Formatting (zIFmt and zFpFmt)
+
+If the zIFmt and zFpFmt fields are a short printf-style format
+string, than that formatting string is used to render integer and
+floating-point values, respectively.  The width and precision fields
+of the format string (if present) must not exceed three decimal digits.
+An invalid or unsupported format string causes the formatting to
+revert to its default.  The sqlite3_qrf_ckformat() API function can
+be used to validate format strings.
+
 ## 3.0 The `sqlite3_format_query_result()` Interface
 
 Invoke the `sqlite3_format_query_result(P,S,E)` interface to run
@@ -623,7 +647,7 @@ The following output modes are currently defined:
 #define QRF_STYLE_Csv       4 /* Comma-separated-value */
 #define QRF_STYLE_Eqp       5 /* Format EXPLAIN QUERY PLAN output */
 #define QRF_STYLE_Explain   6 /* EXPLAIN output */
-#define QRF_STYLE_Html      7 /* Generate an XHTML table */
+#define QRF_STYLE_Html      7 /* Generate HTML-style <tr><td> output */
 #define QRF_STYLE_Insert    8 /* Generate SQL "insert" statements */
 #define QRF_STYLE_Json      9 /* Output is a list of JSON objects */
 #define QRF_STYLE_JObject  10 /* Independent JSON objects for each row */
@@ -714,7 +738,7 @@ with hard-coded values for some of the sqlite3_qrf_spec settings:
 </table>
 
 The **Html** style generates HTML table content, just without
-the `<TABLE>..</TABLE>` around the outside.
+the `<table>..</table>` around the outside.
 
 The **Insert** style generates a series of SQL "INSERT" statements
 that will inserts the data that is output into a table whose name is defined

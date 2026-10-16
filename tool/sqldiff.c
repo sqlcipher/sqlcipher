@@ -40,6 +40,7 @@ struct GlobalVars {
   int bSchemaPK;            /* Use the schema-defined PK, not the true PK */
   int bHandleVtab;          /* Handle fts3, fts4, fts5 and rtree vtabs */
   unsigned fDebug;          /* Debug flags */
+  int bUnsafe;              /* Try to work through corrupt databases */
   int bSchemaCompare;       /* Doing single-table sqlite_schema compare */
   sqlite3 *db;              /* The database connection */
 } g;
@@ -211,6 +212,7 @@ static char **columnNames(
   int truePk = 0;          /* PRAGMA table_info identifies the PK to use */
   i64 nPK = 0;             /* Number of PRIMARY KEY columns */
   i64 i, j;                /* Loop counters */
+  int iPKey = 0;           /* Primary key index */
 
   if( g.bSchemaPK==0 ){
     /* Normal case:  Figure out what the true primary key is for the table.
@@ -283,9 +285,9 @@ static char **columnNames(
   }
   while( SQLITE_ROW==sqlite3_step(pStmt) ){
     char * sid = safeId((char*)sqlite3_column_text(pStmt,1));
-    int iPKey;
-    if( truePk && (iPKey = sqlite3_column_int(pStmt,5))>0 ){
-      az[iPKey-1] = sid;
+    if( truePk && sqlite3_column_int(pStmt,5)>0 ){
+      assert( iPKey<naz );
+      az[iPKey++] = sid;
     }else{
       if( !g.bSchemaCompare
           || !(strcmp(sid,"rootpage")==0
@@ -417,7 +419,8 @@ static void dump_table(const char *zTab, FILE *out){
   const char *zSep;         /* Separator string */
   sqlite3_str *pIns;        /* Beginning of the INSERT statement */
 
-  pStmt = db_prepare("SELECT sql FROM aux.sqlite_schema WHERE name=%Q", zTab);
+  pStmt = db_prepare("SELECT shell_complete_sql(sql) FROM aux.sqlite_schema"
+                     " WHERE name=%Q COLLATE nocase", zTab);
   if( SQLITE_ROW==sqlite3_step(pStmt) ){
     sqlite3_fprintf(out, "%s;\n", sqlite3_column_text(pStmt,0));
   }
@@ -466,8 +469,9 @@ static void dump_table(const char *zTab, FILE *out){
     sqlite3_finalize(pStmt);
     strFree(pIns);
   } /* endif !g.bSchemaOnly */
-  pStmt = db_prepare("SELECT sql FROM aux.sqlite_schema"
-                     " WHERE type='index' AND tbl_name=%Q AND sql IS NOT NULL",
+  pStmt = db_prepare("SELECT shell_complete_sql(sql) FROM aux.sqlite_schema"
+                     " WHERE type='index' AND tbl_name=%Q COLLATE nocase"
+                     "   AND sql IS NOT NULL",
                      zTab);
   while( SQLITE_ROW==sqlite3_step(pStmt) ){
     sqlite3_fprintf(out, "%s;\n", sqlite3_column_text(pStmt,0));
@@ -652,10 +656,10 @@ static void diff_one_table(const char *zTab, FILE *out){
   /* Drop indexes that are missing in the destination */
   pStmt = db_prepare(
     "SELECT name FROM main.sqlite_schema"
-    " WHERE type='index' AND tbl_name=%Q"
+    " WHERE type='index' AND tbl_name=%Q COLLATE nocase"
     "   AND sql IS NOT NULL"
     "   AND sql NOT IN (SELECT sql FROM aux.sqlite_schema"
-    "                    WHERE type='index' AND tbl_name=%Q"
+    "                    WHERE type='index' AND tbl_name=%Q COLLATE nocase"
     "                      AND sql IS NOT NULL)",
     zTab, zTab);
   while( SQLITE_ROW==sqlite3_step(pStmt) ){
@@ -712,11 +716,11 @@ static void diff_one_table(const char *zTab, FILE *out){
 
   /* Create indexes that are missing in the source */
   pStmt = db_prepare(
-    "SELECT sql FROM aux.sqlite_schema"
-    " WHERE type='index' AND tbl_name=%Q"
+    "SELECT shell_complete_sql(sql) FROM aux.sqlite_schema"
+    " WHERE type='index' AND tbl_name=%Q COLLATE nocase"
     "   AND sql IS NOT NULL"
     "   AND sql NOT IN (SELECT sql FROM main.sqlite_schema"
-    "                    WHERE type='index' AND tbl_name=%Q"
+    "                    WHERE type='index' AND tbl_name=%Q COLLATE nocase"
     "                      AND sql IS NOT NULL)",
     zTab, zTab);
   while( SQLITE_ROW==sqlite3_step(pStmt) ){
@@ -741,7 +745,8 @@ end_diff_one_table:
 static void checkSchemasMatch(const char *zTab){
   sqlite3_stmt *pStmt = db_prepare(
       "SELECT A.sql=B.sql FROM main.sqlite_schema A, aux.sqlite_schema B"
-      " WHERE A.name=%Q AND B.name=%Q", zTab, zTab
+      " WHERE A.name=%Q COLLATE nocase"
+      "   AND B.name=%Q COLLATE nocase", zTab, zTab
   );
   if( SQLITE_ROW==sqlite3_step(pStmt) ){
     if( sqlite3_column_int(pStmt,0)==0 ){
@@ -1820,6 +1825,88 @@ static void module_name_func(
 }
 
 /*
+** Append text on pOut that is sufficient to complete the statement zBase
+** (according to sqlite3_complete()).  eFlags:
+**
+**    0x01     Include the final ";" if needed
+**    0x04     Assume zBase ends with '\n'
+*/
+static void appendCompletion(
+  sqlite3_str *pOut,      /* Append the completion here */
+  const char *zBase,      /* Existing SQL text */
+  int eFlags              /* 0x01:  Include ";",   0x04: Assume '\n' */
+){
+  sqlite3_int64 R = zBase ? sqlite3_incomplete(zBase) : 0;
+  int cc = (R>>16)&0xff;
+  int nParen = R>>32;
+  int eSemi = (R>>8)&0xff;
+  int eStat = R&0xff;
+  int bSemi = (eFlags & 0x01)!=0;
+  if( cc==0 ){
+    /* no-op */
+  }else if( cc=='-' ){
+    if( (eFlags & 0x04)==0 ) sqlite3_str_appendchar(pOut, 1, '\n');
+  }else if( cc=='/' ){
+    sqlite3_str_append(pOut,"*/",2);
+  }else{
+    sqlite3_str_appendchar(pOut, 1, cc);
+  }
+  if( nParen>0 ){
+    sqlite3_str_appendf(pOut, "%.*c",nParen,')');
+  }
+  if( eStat==SQLITE_OK || eStat==SQLITE_EMPTY ){
+    /* Nothing to add */
+  }else if( eSemi==1 ){
+    if( bSemi ) sqlite3_str_append(pOut, ";", 1);
+  }else if( eSemi==2 ){
+    sqlite3_str_append(pOut, "END;", 3+(bSemi!=0));
+  }else if( eSemi==3 ){
+    sqlite3_str_append(pOut, ";END;", 4+(bSemi!=0));
+  }
+}
+
+/*
+** SQL function:  shell_complete_sql(SQL)
+**                shell_complete_sql(SQL, FLAGS)
+**
+** NOTE:  Only the first one-argument form is registered in this application.
+**
+** If the SQL input is a string, return a new string which is the same
+** text with all pending quotes and comments finish, so that the
+** SQL is ready to receive its final semicolon.  The optional FLAGS
+** parameter can be an integer where bits mean:
+**
+**   0x01        Include the final semicolon
+**   0x02        Only return the completion text.  Omit the original SQL.
+**   0x04        Assume that SQL has a \n at the end.
+**
+** The /C substitution in the CLI prompt is computed using the
+** equivalent of shell_complete_sql(SQL,3);
+*/
+static void shell_complete_sql(
+  sqlite3_context *pCtx,
+  int nVal,
+  sqlite3_value **apVal
+){
+  const char *zSql;      /* Input SQL text */
+  sqlite3_str *pOut;     /* Completed SQL */
+  int flags;
+
+  if( nVal!=1 && nVal!=2 ) return;
+  if( nVal==2 ){
+    flags = 0x7 & sqlite3_value_int64(apVal[1]);
+  }else{
+    flags = 0;
+  }
+  zSql = (const char*)sqlite3_value_text(apVal[0]);
+  if( zSql==0 ) return;
+  pOut = sqlite3_str_new(sqlite3_context_db_handle(pCtx));
+  if( (flags & 0x02)==0 ) sqlite3_str_appendall(pOut, zSql);
+  appendCompletion(pOut, zSql, flags & 0x05);
+  sqlite3_result_str(pCtx, pOut, SQLITE_FINISH);
+}
+
+/*
 ** Return the text of an SQL statement that itself returns the list of
 ** tables to process within the database.
 */
@@ -1976,6 +2063,9 @@ int main(int argc, char **argv){
       if( strcmp(z,"transaction")==0 ){
         useTransaction = 1;
       }else
+      if( strcmp(z,"unsafe")==0 ){
+        g.bUnsafe = 1;
+      }else
       if( strcmp(z,"vtab")==0 ){
         g.bHandleVtab = 1;
       }else
@@ -2000,11 +2090,18 @@ int main(int argc, char **argv){
   if( rc ){
     cmdlineError("cannot open database file \"%s\"", zDb1);
   }
+  if( g.bUnsafe ){
+    sqlite3_db_config(g.db, SQLITE_DBCONFIG_WRITABLE_SCHEMA, 1, 0);
+  }else{
+    sqlite3_db_config(g.db, SQLITE_DBCONFIG_DEFENSIVE, 1, 0);
+    sqlite3_db_config(g.db, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, 0);
+  }
+  sqlite3_create_function(g.db, "shell_complete_sql", 1, SQLITE_UTF8, 0,
+                          shell_complete_sql, 0, 0);
   rc = sqlite3_exec(g.db, "SELECT * FROM sqlite_schema", 0, 0, &zErrMsg);
   if( rc || zErrMsg ){
     cmdlineError("\"%s\" does not appear to be a valid SQLite database", zDb1);
-  }
-  {
+  }else{
     sqlite3 *db2 = 0;
     if( sqlite3_open_v2(zDb2, &db2, SQLITE_OPEN_READONLY, 0) ){
       cmdlineError("cannot open database file \"%s\"", zDb2);

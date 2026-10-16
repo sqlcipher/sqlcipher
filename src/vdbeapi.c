@@ -380,15 +380,18 @@ void sqlite3_value_free(sqlite3_value *pOld){
  
 
 /**************************** sqlite3_result_  *******************************
-** The following routines are used by user-defined functions to specify
-** the function result.
+** The following routines are used by application-defined SQL functions to
+** specify the function return value.  There are many variations on
+** sqlite3_result_xxxx() for different types of return values.
 **
-** The setStrOrError() function calls sqlite3VdbeMemSetStr() to store the
-** result as a string or blob.  Appropriate errors are set if the string/blob
-** is too big or if an OOM occurs.
+** The setStrOrError() function is a helper function that invokes
+** sqlite3VdbeMemSetStr() to store the result as a string or blob.
+** Appropriate errors are set if the string/blob is too big or if
+** an OOM occurs.
 **
-** The invokeValueDestructor(P,X) routine invokes destructor function X()
-** on value P if P is not going to be used and need to be destroyed.
+** The invokeValueDestructor(P,X) helper function invokes the destructor
+** function X() on value P if P is not going to be used and need to
+** be destroyed.
 */
 static void setResultStrOrError(
   sqlite3_context *pCtx,  /* Function context */
@@ -701,7 +704,7 @@ void sqlite3_result_error_code(sqlite3_context *pCtx, int errCode){
   }
 }
 
-/* Force an SQLITE_TOOBIG error. */
+/* Cause the SQL function to raise an SQLITE_TOOBIG error. */
 void sqlite3_result_error_toobig(sqlite3_context *pCtx){
 #ifdef SQLITE_ENABLE_API_ARMOR
   if( pCtx==0 ) return;
@@ -712,7 +715,7 @@ void sqlite3_result_error_toobig(sqlite3_context *pCtx){
                        SQLITE_UTF8, SQLITE_STATIC);
 }
 
-/* An SQLITE_NOMEM error. */
+/* Cause the SQL function to raise an SQLITE_NOMEM error. */
 void sqlite3_result_error_nomem(sqlite3_context *pCtx){
 #ifdef SQLITE_ENABLE_API_ARMOR
   if( pCtx==0 ) return;
@@ -721,6 +724,64 @@ void sqlite3_result_error_nomem(sqlite3_context *pCtx){
   sqlite3VdbeMemSetNull(pCtx->pOut);
   pCtx->isError = SQLITE_NOMEM_BKPT;
   sqlite3OomFault(pCtx->pOut->db);
+}
+
+/* Make the return value of the SQL function or virtual table pCtx
+** be the content of the sqlite3_str object pStr.  The eOwn flag
+** determines ownership of the sqlite3_str object and its content.
+**
+**    eOwn             Ownership transfer
+**    -------------    ------------------------------------------------
+**
+**    SQLITE_COPY      The SQL function returns a copy the sqlite3_str
+**                     content and leaves the sqlite3_str object itself
+**                     unchanged.
+**
+**    SQLITE_XFER      The content of the sqlite3_str is transferred to
+**                     the SQL function and the SQL function takes
+**                     responsibility for freeing that content when it is
+**                     no longer needed.  The sqlite3_str object is reset
+**                     to an empty string.
+**
+**    SQLITE_FINISH    Like SQLITE_XFER except that the pStr is also
+**                     freed using sqlite3_str_free().
+*/
+void sqlite3_result_str(sqlite3_context *pCtx, sqlite3_str *pStr, int eOwn){
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( pCtx==0 ) return;
+  if( pStr==0 ) return;
+#endif
+  testcase( pStr==(sqlite3_str*)&sqlite3OomStr );
+  if( pStr->accError==0 ){
+    if( pStr->nChar==0 ){
+      setResultStrOrError(pCtx, "", 0, SQLITE_UTF8_ZT, SQLITE_STATIC);
+      sqlite3_str_reset(pStr);
+    }else{
+      const char *zText = sqlite3_str_value(pStr);
+      /* Only internal code has the ability to capture a pointer to
+      ** an sqlite3_str object that uses static buffer.  And none of
+      ** those internal use cases every invoke the sqlite3_result_str()
+      ** interface on a static-buffer sqlite3_str.  Should this change
+      ** in the future, the following assert() will let us know. */
+      assert( isMalloced(pStr) );
+      if( eOwn==SQLITE_COPY ){
+        setResultStrOrError(pCtx, zText, pStr->nChar, 
+                            SQLITE_UTF8, SQLITE_TRANSIENT);
+      }else{
+        setResultStrOrError(pCtx, zText, pStr->nChar,
+                            SQLITE_UTF8_ZT, SQLITE_DYNAMIC);
+        sqlite3StrAccumInit(pStr, pStr->db, 0, 0, pStr->mxAlloc);
+      }
+    }
+  }else if( pStr->accError==SQLITE_NOMEM ){
+    sqlite3_result_error_nomem(pCtx);
+  }else{
+    assert( pStr->accError==SQLITE_TOOBIG );
+    sqlite3_result_error_toobig(pCtx);
+  }
+  if( eOwn==SQLITE_FINISH ){
+    sqlite3_str_free(pStr);
+  }
 }
 
 #ifndef SQLITE_UNTESTABLE
@@ -1675,10 +1736,8 @@ static int vdbeUnbind(Vdbe *p, unsigned int i){
     sqlite3_mutex_leave(p->db->mutex);
     return SQLITE_RANGE;
   }
+
   pVar = &p->aVar[i];
-  sqlite3VdbeMemRelease(pVar);
-  pVar->flags = MEM_Null;
-  p->db->errCode = SQLITE_OK;
 
   /* If the bit corresponding to this variable in Vdbe.expmask is set, then
   ** binding a new value to this variable invalidates the current query plan.
@@ -1690,9 +1749,22 @@ static int vdbeUnbind(Vdbe *p, unsigned int i){
   ** following any change to the bindings of that parameter.
   */
   assert( (p->prepFlags & SQLITE_PREPARE_SAVESQL)!=0 || p->expmask==0 );
+  assert( (p->expmask & p->smimask)==p->smimask );
   if( p->expmask!=0 && (p->expmask & (i>=31 ? 0x80000000 : (u32)1<<i))!=0 ){
-    p->expired = 1;
+    /* If the p->smimask bit is also set, then only expire the statement if
+    ** the value being clobbered was integer value 0 or 1. */
+    if( (p->smimask==0) 
+     || (p->smimask & (i>=31 ? 0x80000000 : (u32)1<<i))==0 
+     || ((pVar->flags & MEM_Int)!=0 && pVar->u.i>=0 && pVar->u.i<=1)
+    ){
+      p->expired = 1;
+    }
   }
+
+  sqlite3VdbeMemRelease(pVar);
+  pVar->flags = MEM_Null;
+  p->db->errCode = SQLITE_OK;
+
   return SQLITE_OK;
 }
 
@@ -1789,15 +1861,46 @@ int sqlite3_bind_int(sqlite3_stmt *p, int i, int iValue){
   return sqlite3_bind_int64(p, i, (i64)iValue);
 }
 int sqlite3_bind_int64(sqlite3_stmt *pStmt, int i, sqlite_int64 iValue){
-  int rc;
-  Vdbe *p = (Vdbe *)pStmt;
-  rc = vdbeUnbind(p, (u32)(i-1));
-  if( rc==SQLITE_OK ){
-    assert( p!=0 && p->aVar!=0 && i>0 && i<=p->nVar ); /* tag-20240917-01 */
-    sqlite3VdbeMemSetInt64(&p->aVar[i-1], iValue);
-    sqlite3_mutex_leave(p->db->mutex);
+  Mem *pVar;
+  Vdbe *p = (Vdbe*)pStmt;
+  if( vdbeSafetyNotNull(p) ){
+    return SQLITE_MISUSE_BKPT;
   }
-  return rc;
+  sqlite3_mutex_enter(p->db->mutex);
+  if( p->eVdbeState!=VDBE_READY_STATE ){
+    sqlite3Error(p->db, SQLITE_MISUSE_BKPT);
+    sqlite3_mutex_leave(p->db->mutex);
+    sqlite3_log(SQLITE_MISUSE,
+        "bind on a busy prepared statement: [%s]", p->zSql);
+    return SQLITE_MISUSE_BKPT;
+  }
+  if( i<=0 || (--i)>=p->nVar ){
+    sqlite3Error(p->db, SQLITE_RANGE);
+    sqlite3_mutex_leave(p->db->mutex);
+    return SQLITE_RANGE;
+  }
+  pVar = &p->aVar[i];
+  if( p->expmask!=0 ){
+    u32 expireMask = i>=32 ? 0x80000000 : (u32)1 << i;
+    assert( (p->expmask & p->smimask)==p->smimask );
+    if( (p->expmask & expireMask)!=0 ){
+      if( (p->smimask & expireMask)!=0 ){
+        /* If the smimask bit is set, only expire the prepared statement
+        ** if the value is changing to or from (0,1) and something else */
+        int sm1 = (pVar->flags & MEM_Int)!=0 && pVar->u.i>=0 && pVar->u.i<=1;
+        int sm2 = iValue>=0 && iValue<=1;
+        if( sm1!=sm2 ){
+          p->expired = 1;
+        }
+      }else if( (pVar->flags & MEM_Int)==0 || iValue!=pVar->u.i ){
+        /* Always expire if the smimask bit is clear */
+        p->expired = 1;
+      }
+    }
+  }
+  sqlite3VdbeMemSetInt64(pVar, iValue);
+  sqlite3_mutex_leave(p->db->mutex);
+  return SQLITE_OK;
 }
 int sqlite3_bind_null(sqlite3_stmt *pStmt, int i){
   int rc;
@@ -2421,6 +2524,11 @@ int sqlite3_preupdate_new(sqlite3 *db, int iIdx, sqlite3_value **ppValue){
       sqlite3VdbeMemSetInt64(pMem, p->iKey2);
     }else if( iStore>=pUnpack->nField ){
       pMem = (sqlite3_value *)columnNullValue();
+    }else if( (p->pTab->aCol)
+           && (p->pTab->aCol[iIdx].affinity==SQLITE_AFF_REAL)
+           && (pMem->flags & (MEM_Int|MEM_IntReal))
+    ){
+      sqlite3VdbeMemRealify(pMem);
     }
   }else{
     /* For an UPDATE, memory cell (p->iNewReg+1+iStore) contains the required

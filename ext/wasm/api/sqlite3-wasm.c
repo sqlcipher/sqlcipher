@@ -316,7 +316,9 @@ SQLITE_WASM_EXPORT void sqlite3__wasm_pstack_restore(unsigned char * p){
 ** doing so).
 */
 SQLITE_WASM_EXPORT2(void *,sqlite3__wasm_pstack_alloc,(int n)){
-  if( n<=0 ) return 0;
+  if( n<=0 || n>(1024 * 1024/*https://sqlite.org/bugs/forumpost/4dbd096fe3*/) ){
+      return 0;
+    }
   n = (n + 7) & ~7 /* align to 8-byte boundary */;
   if( PStack.pBegin + n > PStack.pPos /*not enough space left*/
       || PStack.pBegin + n <= PStack.pBegin /*overflow*/ ) return 0;
@@ -1557,7 +1559,7 @@ SQLITE_WASM_EXPORT2(int,sqlite3__wasm_posix_create_file,
 SQLITE_WASM_EXPORT2(const char *,sqlite3__wasm_kvvfsMakeKey,
                     (const char *zClass, const char *zKeyIn)){
   static char buf[SQLITE_KVOS_SZ+1] = {0};
-  assert(sqlite3KvvfsMethods.nKeySize>24);
+  assert(sqlite3KvvfsMethods.nKeySize>32);
   if( zClass && *zClass ){
     kvrecordMakeKey(zClass, zKeyIn, buf);
     return buf;

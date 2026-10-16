@@ -19,5 +19,5 @@
 SELECT parse_create_index('CREATE IDEX i ON t("x',0);
 .check NULL
 .testcase 110
-SELECT parse_create_index('',0);
+SELECT parse_create_index(strdup(''),0);
 .check NULL

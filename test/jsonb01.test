@@ -56,5 +56,9 @@ do_catchsql_test jsonb01-2.0 {
 do_catchsql_test jsonb01-3.0 {
   SELECT json(x'6B37616263162d');
 } {1 {malformed JSON}}
+load_static_extension db strdup
+do_catchsql_test jsonb01-3.1 {
+  SELECT json(strdup(x'6B37616263162d'));
+} {1 {malformed JSON}}
 
 finish_test

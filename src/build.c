@@ -70,6 +70,7 @@ static SQLITE_NOINLINE void lockTable(
 
   assert( pToplevel->nTableLock < 0x7fff0000 );
   nBytes = sizeof(TableLock) * (pToplevel->nTableLock+1);
+  if( pToplevel->nTableLock==0 ) pToplevel->aTableLock = 0;
   pToplevel->aTableLock =
       sqlite3DbReallocOrFree(pToplevel->db, pToplevel->aTableLock, nBytes);
   if( pToplevel->aTableLock ){
@@ -236,7 +237,7 @@ void sqlite3FinishCoding(Parse *pParse){
 
     /* Initialize any AUTOINCREMENT data structures required.
     */
-    if( pParse->pAinc ) sqlite3AutoincrementBegin(pParse);
+    if( pParse->usesAinc ) sqlite3AutoincrementBegin(pParse);
 
     /* Code constant expressions that were factored out of inner loops. 
     */
@@ -269,7 +270,7 @@ void sqlite3FinishCoding(Parse *pParse){
   if( pParse->nErr==0 ){
     /* A minimum of one cursor is required if autoincrement is used
     *  See ticket [a696379c1f08866] */
-    assert( pParse->pAinc==0 || pParse->nTab>0 );
+    assert( pParse->usesAinc==0 || pParse->nTab>0 );
     sqlite3VdbeMakeReady(v, pParse);
     pParse->rc = SQLITE_DONE;
   }else{
@@ -638,6 +639,7 @@ void sqlite3ResetOneSchema(sqlite3 *db, int iDb){
     for(i=0; i<db->nDb; i++){
       if( DbHasProperty(db, i, DB_ResetWanted) ){
         sqlite3SchemaClear(db->aDb[i].pSchema);
+        db->mDbFlags &= ~DBFLAG_SchemaKnownOk;
       }
     }
   }
@@ -701,10 +703,41 @@ void sqlite3ColumnSetExpr(
   }
 }
 
+#ifndef SQLITE_OMIT_AUTHORIZATION
+/*
+** If the expression contains any TK_FUNCTION, send it to the authorizer
+** and if the authorization fails then raise an error.
+*/
+static int authFunctions(Walker *pWalker, Expr *p){
+  if( p->op==TK_FUNCTION ){
+    Parse *pParse = pWalker->pParse;
+    int rc = sqlite3AuthCheck(pParse, SQLITE_FUNCTION, 0, p->u.zToken, 0);
+    if( rc ){
+      sqlite3ErrorMsg(pParse, "not authorized to use function: %#T", p);
+      return WRC_Abort;
+    }
+  }
+  return WRC_Continue;
+}
+static void sqlite3FuncAuth(Parse *pParse, Expr *pExpr){
+  Walker w;
+  memset(&w, 0, sizeof(w));
+  w.xExprCallback = authFunctions;
+  w.pParse = pParse;
+  sqlite3WalkExpr(&w,pExpr);
+}
+#endif /* SQLITE_OMIT_AUTHORIZATION */
+
 /*
 ** Return the expression associated with a column.  The expression might be
 ** the DEFAULT clause or the AS clause of a generated column.
 ** Return NULL if the column has no associated expression.
+**
+** There are two variants of this routine.  sqlite3ColumnExpr() just
+** returns the expression with no side effects.  sqlite3ColumnExprAuth()
+** takes the extra step of invoking the authorizer (if one is defined)
+** and raising an error if the returned expression uses any unauthorized
+** SQL function.
 */
 Expr *sqlite3ColumnExpr(Table *pTab, Column *pCol){
   if( pCol->iDflt==0 ) return 0;
@@ -713,6 +746,28 @@ Expr *sqlite3ColumnExpr(Table *pTab, Column *pCol){
   if( NEVER(pTab->u.tab.pDfltList->nExpr<pCol->iDflt) ) return 0;
   return pTab->u.tab.pDfltList->a[pCol->iDflt-1].pExpr;
 }
+Expr *sqlite3ColumnExprAuth(Table *pTab, Column *pCol, Parse *pParse){
+  Expr *pExpr = sqlite3ColumnExpr(pTab,pCol);
+#ifndef SQLITE_OMIT_AUTHORIZATION
+  if( pParse->db->xAuth!=0 ){
+    sqlite3FuncAuth(pParse, pExpr);
+  }
+#endif
+  return pExpr;
+}
+
+/*
+** Suppress false-positive warning message generated with -O3 in GCC
+** on the second call to sqlite3Strlen30() in the sqlite3ColumnSetColl()
+** function below.  See the forum thread beginning on 2026-05-10T01:11:22Z.
+**
+** See also the "pop" pragma to undo this warning suppression immediately
+** after the function.
+*/
+#if defined(__GNUC__) && __GNUC__>=11
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
 
 /*
 ** Set the collating sequence name for a column.
@@ -738,6 +793,11 @@ void sqlite3ColumnSetColl(
     pCol->colFlags |= COLFLAG_HASCOLL;
   }
 }
+
+/* Undo the false-positive warning suppression above. */
+#if defined(__GNUC__) && __GNUC__>=11
+# pragma GCC diagnostic pop
+#endif
 
 /*
 ** Return the collating sequence name for a column
@@ -1761,6 +1821,13 @@ void sqlite3AddDefaultValue(
       pDfltExpr = sqlite3ExprDup(db, &x, EXPRDUP_REDUCE);
       sqlite3DbFree(db, x.u.zToken);
       sqlite3ColumnSetExpr(pParse, p, pCol, pDfltExpr);
+#ifndef SQLITE_OMIT_AUTHORIZATION
+      /* Reject unauthorized functions from DEFAULT clauses */
+      if( db->init.busy==0 && db->xAuth!=0 ){
+        sqlite3FuncAuth(pParse, pExpr);
+      }
+#endif /* SQLITE_OMIT_AUTHORIZER */
+
     }
   }
   if( IN_RENAME_OBJECT ){
@@ -2217,6 +2284,23 @@ static int resizeIndexObject(Parse *pParse, Index *pIdx, int N){
 }
 
 /*
+** Return true if the index pIdx can support a Bloom filter on its
+** first N columns.  Specifically, return true if all of the first N
+** columns have the BINARY collating sequence or no collating sequence
+** at all, and return false if there are any non-BINARY collating
+** seqeuences on any of the first N columns.  tag-202607231411
+*/
+int sqlite3IndexBloomable(const Index *pIdx, int N){
+  int i;
+  assert( pIdx!=0 );
+  assert( N <= pIdx->nColumn );
+  for(i=0; i<N; i++){
+    if( sqlite3StrICmp(pIdx->azColl[i],"BINARY")!=0 ) return 0;
+  }
+  return 1;
+}
+
+/*
 ** Estimate the total row width for a table.
 */
 static void estimateTableWidth(Table *pTab){
@@ -2567,14 +2651,11 @@ void sqlite3MarkAllShadowTablesOf(sqlite3 *db, Table *pTab){
 /*
 ** Return true if zName is a shadow table name in the current database
 ** connection.
-**
-** zName is temporarily modified while this routine is running, but is
-** restored to its original value prior to this routine returning.
 */
 int sqlite3ShadowTableName(sqlite3 *db, const char *zName){
   const char *zTail;            /* Pointer to the last "_" in zName */
   Table *pTab;                  /* Table that zName is a shadow of */
-  char *zCopy;
+  char *zCopy;                  /* Transient copy of zName after last "_" */
   zTail = strrchr(zName, '_');
   if( zTail==0 ) return 0;
   zCopy = sqlite3DbStrNDup(db, zName, (int)(zTail-zName));
@@ -2612,7 +2693,6 @@ static void markExprListImmutable(ExprList *pList){
 #else
 #define markExprListImmutable(X)  /* no-op */
 #endif /* SQLITE_DEBUG */
-
 
 /*
 ** This routine is called to report the final ")" that terminates
@@ -4086,8 +4166,9 @@ void sqlite3CreateIndex(
       if( sqlite3FindIndex(db, zName, pDb->zDbSName)!=0 ){
         if( !ifNotExist ){
           sqlite3ErrorMsg(pParse, "index %s already exists", zName);
+        }else if( db->init.busy ){
+          sqlite3ErrorMsg(pParse,"");  /* corruptSchema() will do the error */
         }else{
-          assert( !db->init.busy );
           sqlite3CodeVerifySchema(pParse, iDb);
           sqlite3ForceNotReadOnly(pParse);
         }

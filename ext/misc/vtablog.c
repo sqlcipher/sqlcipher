@@ -361,7 +361,8 @@ static int vtablogColumn(
 
   if( i<26 ){
     sqlite3_snprintf(sizeof(zVal),zVal,"%c%d", 
-                     "abcdefghijklmnopqrstuvwyz"[i], pCur->iRowid);
+                     "abcdefghijklmnopqrstuvwxyz"[i], pCur->iRowid);
+                   /* 0123456789 123456789 12345 */
   }else{
     sqlite3_snprintf(sizeof(zVal),zVal,"{%d}%d", i, pCur->iRowid);
   }
@@ -421,6 +422,10 @@ static void vtablogQuote(sqlite3_value *p){
       int n = sqlite3_value_bytes(p);
       const unsigned char *z = (const unsigned char*)sqlite3_value_blob(p);
       int i;
+      if( z==0 ){
+        printf("/*OOM-fault*/");
+        break;
+      }
       printf("x'");
       for(i=0; i<n; i++) printf("%02x", z[i]);
       printf("'");
@@ -430,6 +435,7 @@ static void vtablogQuote(sqlite3_value *p){
       const char *z = (const char*)sqlite3_value_text(p);
       int i;
       char c;
+      if( z==0 ) z = "";
       for(i=0; (c = z[i])!=0 && c!='\''; i++){}
       if( c==0 ){
         printf("'%s'",z);

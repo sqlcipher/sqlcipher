@@ -91,7 +91,7 @@ if( !vfsName ){
    VFS or both the "opfs" and "opfs-wl" VFSes.
 */
 const workerId = (Math.random() * 10000000) | 0;
-const isWebLocker = 'opfs-wl'===urlParams.get('vfs');
+const isWebLocker = 'opfs-wl'===vfsName;
 const wPost = (type,...args)=>postMessage({type, payload:args});
 const installAsyncProxy = function(){
   const toss = function(...args){throw new Error(args.join(' '))};
@@ -112,7 +112,7 @@ const installAsyncProxy = function(){
      copies in the synchronous and async halves. This side does not
      load the SQLite library, so does not have access to that copy. */
 //#define opfs-async-proxy
-//#include api/opfs-common-inline.c-pp.js
+//#include "api/opfs-common-inline.c-pp.js"
 //#undef opfs-async-proxy
 
   /**

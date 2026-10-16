@@ -130,13 +130,17 @@ static void lengthFunc(
     case SQLITE_TEXT: {
       const unsigned char *z = sqlite3_value_text(argv[0]);
       const unsigned char *z0;
-      unsigned char c;
       if( z==0 ) return;
       z0 = z;
-      while( (c = *z)!=0 ){
-        z++;
-        if( c>=0xc0 ){
-          while( (*z & 0xc0)==0x80 ){ z++; z0++; }
+      while( 1 /*exit-by-break*/ ){
+                      /*  vvvvvv----  See tag-20260418-01 */
+        if( (u8)(z[0]-1)<(0x80-1) ){
+          z++;
+        }else if( z[0]==0 ){
+          break;
+        }else{
+          z++;
+          while( (z[0]&0xc0)==0x80 ){ z++; z0++; }
         }
       }
       sqlite3_result_int(context, (int)(z-z0));
@@ -316,7 +320,6 @@ static void printfFunc(
   PrintfArguments x;
   StrAccum str;
   const char *zFormat;
-  int n;
   sqlite3 *db = sqlite3_context_db_handle(context);
 
   if( argc>=1 && (zFormat = (const char*)sqlite3_value_text(argv[0]))!=0 ){
@@ -326,18 +329,7 @@ static void printfFunc(
     sqlite3StrAccumInit(&str, db, 0, 0, db->aLimit[SQLITE_LIMIT_LENGTH]);
     str.printfFlags = SQLITE_PRINTF_SQLFUNC;
     sqlite3_str_appendf(&str, zFormat, &x);
-    if( str.accError==SQLITE_OK ){
-      n = str.nChar;
-      sqlite3_result_text(context, sqlite3StrAccumFinish(&str), n,
-                          SQLITE_DYNAMIC);
-    }else{
-      if( str.accError==SQLITE_NOMEM ){
-        sqlite3_result_error_nomem(context);
-      }else{
-        sqlite3_result_error_toobig(context);
-      }
-      sqlite3_str_reset(&str);
-    }
+    sqlite3_result_str(context, &str, SQLITE_XFER);
   }
 }
 
@@ -386,7 +378,7 @@ static void substrFunc(
     p2 = sqlite3_value_int64(argv[2]);
     if( p2==0 && sqlite3_value_type(argv[2])==SQLITE_NULL ) return;
   }else{
-    p2 = sqlite3_context_db_handle(context)->aLimit[SQLITE_LIMIT_LENGTH];
+    p2 = LARGEST_INT64;
   }
   if( p1==0 ){
 #ifdef SQLITE_SUBSTR_COMPATIBILITY
@@ -424,12 +416,25 @@ static void substrFunc(
   }
   assert( p1>=0 && p2>=0 );
   if( p0type!=SQLITE_BLOB ){
-    while( *z && p1 ){
-      SQLITE_SKIP_UTF8(z);
-      p1--;
+    for( ; p1>0; p1--){
+                    /*  vvvvvv----  See tag-20260418-01 */
+      if( (u8)(z[0]-1)<(0x80-1) ){
+        z++;
+      }else if( z[0]==0 ){
+        break;
+      }else{
+        do{ z++; }while( (z[0]&0xc0)==0x80 );
+      }
     }
-    for(z2=z; *z2 && p2; p2--){
-      SQLITE_SKIP_UTF8(z2);
+    for(z2=z; p2>0; p2--){
+                     /*  vvvvvv----  See tag-20260418-01 */
+      if( (u8)(z2[0]-1)<(0x80-1) ){
+        z2++;
+      }else if( z2[0]==0 ){
+        break;
+      }else{
+        do{ z2++; }while( (z2[0]&0xc0)==0x80 );
+      }
     }
     sqlite3_result_text64(context, (char*)z, z2-z, SQLITE_TRANSIENT,
                           SQLITE_UTF8);
@@ -1271,12 +1276,7 @@ static void quoteFunc(sqlite3_context *context, int argc, sqlite3_value **argv){
   UNUSED_PARAMETER(argc);
   sqlite3StrAccumInit(&str, db, 0, 0, db->aLimit[SQLITE_LIMIT_LENGTH]);
   sqlite3QuoteValue(&str,argv[0],SQLITE_PTR_TO_INT(sqlite3_user_data(context)));
-  sqlite3_result_text(context, sqlite3StrAccumFinish(&str), str.nChar,
-                      SQLITE_DYNAMIC);
-  if( str.accError!=SQLITE_OK ){
-    sqlite3_result_null(context);
-    sqlite3_result_error_code(context, str.accError);
-  }
+  sqlite3_result_str(context, &str, SQLITE_XFER);
 }
 
 /*
@@ -1496,7 +1496,7 @@ static void replaceFunc(
   int nRep;                /* Size of zRep */
   i64 nOut;                /* Maximum size of zOut */
   int loopLimit;           /* Last zStr[] that might match zPattern[] */
-  int i, j;                /* Loop counters */
+  i64 i, j;                /* Loop counters */
   unsigned cntExpand;      /* Number zOut expansions */
   sqlite3 *db = sqlite3_context_db_handle(context);
 
@@ -1816,6 +1816,21 @@ static void soundexFunc(
   }
 }
 #endif /* SQLITE_SOUNDEX */
+
+#if defined(SQLITE_DEBUG) || defined(SQLITE_BUILTIN_OOM_FUNCTION)
+/*
+** This SQL function just invokes sqlite3OomFault() and then returns
+** NULL.  Used for testing only.
+*/
+static void oomFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  sqlite3 *db = sqlite3_context_db_handle(context);
+  sqlite3OomFault(db);
+}
+#endif /* SQLITE_DEBUG || SQLITE_BUILTIN_OOM_FUNCTION */
 
 #ifndef SQLITE_OMIT_LOAD_EXTENSION
 /*
@@ -2309,7 +2324,7 @@ static void groupConcatFinalize(sqlite3_context *context){
   GroupConcatCtx *pGCC
     = (GroupConcatCtx*)sqlite3_aggregate_context(context, 0);
   if( pGCC ){
-    sqlite3ResultStrAccum(context, &pGCC->str);
+    sqlite3_result_str(context, &pGCC->str, SQLITE_XFER);
 #ifndef SQLITE_OMIT_WINDOWFUNC
     sqlite3_free(pGCC->pnSepLengths);
 #endif
@@ -2319,18 +2334,8 @@ static void groupConcatFinalize(sqlite3_context *context){
 static void groupConcatValue(sqlite3_context *context){
   GroupConcatCtx *pGCC
     = (GroupConcatCtx*)sqlite3_aggregate_context(context, 0);
-  if( pGCC ){
-    StrAccum *pAccum = &pGCC->str;
-    if( pAccum->accError==SQLITE_TOOBIG ){
-      sqlite3_result_error_toobig(context);
-    }else if( pAccum->accError==SQLITE_NOMEM ){
-      sqlite3_result_error_nomem(context);
-    }else if( pGCC->nAccum>0 && pAccum->nChar==0 ){
-      sqlite3_result_text(context, "", 1, SQLITE_STATIC);
-    }else{   
-      const char *zText = sqlite3_str_value(pAccum);
-      sqlite3_result_text(context, zText, pAccum->nChar, SQLITE_TRANSIENT);
-    }
+  if( pGCC && pGCC->nAccum>0 ){
+    sqlite3_result_str(context, &pGCC->str, SQLITE_COPY);
   }
 }
 #else
@@ -2950,14 +2955,28 @@ static void percentStep(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
 **    (1)  To avoid a dependency on qsort()
 **    (2)  To avoid the function call to the comparison routine for each
 **         comparison.
+**
+** If parameter iReq is non-negative, then the caller will only access
+** elements a[iReq] and a[iReq+1] (if it exists) of the sorted array and
+** so it is not necessary to position any other elements. Or if iReq is
+** negative, then the final array must be fully sorted.
 */
-static void percentSort(double *a, unsigned int n){
-  int iLt;  /* Entries before a[iLt] are less than rPivot */
-  int iGt;  /* Entries at or after a[iGt] are greater than rPivot */
+static void percentSort(
+  double *a,                      /* Array to sort */
+  unsigned int n,                 /* Number of elements in array a[] */
+  int iReq                        /* Element caller cares about (or -ve) */
+){
+  int iLt;       /* Entries before a[iLt] are less than or equal to rPivot */
+  int iGt;       /* Entries a[iGt] and after are greater or equal to rPivot */
   int i;         /* Loop counter */
   double rPivot; /* The pivot value */
 
-  while( n>=2 ){
+  assert( n>=2 );
+  do{
+    /* Put the first, middle, and last elements in sorted order.
+    ** After doing so, return immediately if the array contains
+    ** three or fewer elements as there is nothing more to do.
+    */
     if( a[0]>a[n-1] ){
       SWAP_DOUBLE(a[0],a[n-1])
     }
@@ -2970,6 +2989,11 @@ static void percentSort(double *a, unsigned int n){
       SWAP_DOUBLE(a[i],a[iGt])
     }
     if( n==3 ) return;
+
+    /* Take the value of the middle element as the pivot.  Shuffle
+    ** values around so that all elements less than the pivot come
+    ** before all elements greater than the pivot.
+    */
     rPivot = a[i];
     iLt = i = 1;
     do{
@@ -2986,15 +3010,48 @@ static void percentSort(double *a, unsigned int n){
         i++;
       }
     }while( i<iGt );
-    if( iLt>(int)(n/2) ){
-      if( n-iGt>=2 ) percentSort(a+iGt, n-iGt);
-      n = iLt;
+
+    assert( iLt>0 && iLt<iGt && (unsigned)iGt<n );
+    testcase( iGt>iLt+1 );
+    assert( a[iLt]==rPivot );
+    assert( a[iLt-1]<=rPivot );
+    assert( a[iGt]>=rPivot );
+    assert( a[iLt+1]>=rPivot );
+
+    if( iReq>=0 ){
+      /* In this case, the only elements that the caller requires sorted into 
+      ** the correct positions are elements a[iReq] and a[iReq+1]. At this
+      ** point we know that element a[iLt] is in the correct position and
+      ** all elements smaller than a[iLt] are in the left-hand partition.
+      ** So if (iReq<iLt), then it is only necessary to sort the left
+      ** partition.
+      **
+      ** If (iReq>=iLt), then elements iReq and iReq+1 are either in the
+      ** right partition or the equal partition (elements for which 
+      ** iLt<=iElem<iGt). Therefore it is always sufficient to sort only
+      ** the right partition in this case.  */
+      if( iReq<iLt ){
+        n = iLt;
+      }else{
+        a += iGt;
+        n -= iGt;
+        iReq = MAX(0, iReq-iGt);
+      }
     }else{
-      if( iLt>=2 ) percentSort(a, iLt);
-      a += iGt;
-      n -= iGt;
+      /* Recurse on the smaller partition only.  The smaller partition
+      ** will hold n/2 or fewer entries, which assures that the stack
+      ** depth will not exceed O(log(n)), even for pathological cases.
+      ** Loop without recursion for the larger partition. */
+      if( iLt>(int)(n/2) ){
+        if( n-iGt>=2 ) percentSort(a+iGt, n-iGt, -1);
+        n = iLt;
+      }else{
+        if( iLt>=2 ) percentSort(a, iLt, -1);
+        a += iGt;
+        n -= iGt;
+      }
     }
-  }
+  }while( n>=2 );
 }
 
 /*
@@ -3029,7 +3086,7 @@ static void percentInverse(sqlite3_context *pCtx,int argc,sqlite3_value **argv){
   }
   if( p->bSorted==0 ){
     assert( p->nUsed>1 );
-    percentSort(p->a, p->nUsed);
+    percentSort(p->a, p->nUsed, -1);
     p->bSorted = 1;
   }
   p->bKeepSorted = 1;
@@ -3058,13 +3115,17 @@ static void percentCompute(sqlite3_context *pCtx, int bIsFinal){
   if( p==0 ) return;
   if( p->a==0 ) return;
   if( p->nUsed ){
-    if( p->bSorted==0 ){
-      assert( p->nUsed>1 );
-      percentSort(p->a, p->nUsed);
-      p->bSorted = 1;
-    }
     ix = p->rPct*(p->nUsed-1);
     i1 = (unsigned)ix;
+    if( p->bSorted==0 ){
+      /* In cases where bIsFinal is non-zero, setting Percentile.bSorted 
+      ** after the percentSort() call here is not technically correct, as 
+      ** the array is not fully sorted. But in this case the object will be 
+      ** freed below anyway, so it doesn't matter.  */
+      assert( p->nUsed>1 );
+      percentSort(p->a, p->nUsed, (bIsFinal ? (int)i1 : -1));
+      p->bSorted = 1;
+    }
     if( settings & 1 ){
       vx = p->a[i1];
     }else{
@@ -3119,7 +3180,7 @@ static void filestatFunc(
     assert( pPager!=0 );
     fd = sqlite3PagerFile(pPager);
     pStr = sqlite3_str_new(db);
-    if( pStr==0 ){
+    if( sqlite3_str_errcode(pStr) ){
       sqlite3_result_error_nomem(context);
     }else{
       sqlite3_str_append(pStr, "{\"db\":", 6);
@@ -3132,8 +3193,7 @@ static void filestatFunc(
         if( rc ) sqlite3_str_append(pStr, "null", 4);
       }
       sqlite3_str_append(pStr, "}", 1);
-      sqlite3_result_text(context, sqlite3_str_finish(pStr), -1,
-                          sqlite3_free);
+      sqlite3_result_str(context, pStr, SQLITE_FINISH);
     }
     sqlite3BtreeLeave(pBtree);
   }else{
@@ -3141,6 +3201,48 @@ static void filestatFunc(
   }
 }
 #endif /* SQLITE_DEBUG || SQLITE_ENABLE_FILESTAT */
+
+#if defined(SQLITE_DEBUG) || defined(SQLITE_ENABLE_WALSTAT)
+/*
+** Implementation of sqlite_walstat(SCHEMA).
+**
+** Return JSON text that describes the current state of a WAL file.
+** This function is for debugging and analysis only.  It is not part
+** of production builds.  This function is not part of the SQLite API
+** and is likely to change or be removed in future versions of SQLite.
+*/
+static void walstatFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  sqlite3 *db = sqlite3_context_db_handle(context);
+  const char *zDbName;
+  sqlite3_str *pStr;
+  Btree *pBtree;
+
+  zDbName = (const char*)sqlite3_value_text(argv[0]);
+  pBtree = sqlite3DbNameToBtree(db, zDbName);
+  if( pBtree ){
+    Pager *pPager;
+    sqlite3BtreeEnter(pBtree);
+    pPager = sqlite3BtreePager(pBtree);
+    assert( pPager!=0 );
+    pStr = sqlite3_str_new(db);
+    if( sqlite3_str_errcode(pStr) ){
+      sqlite3_result_error_nomem(context);
+    }else{
+      sqlite3_str_append(pStr, "{", 1);
+      sqlite3PagerWalStat(pPager, pStr);
+      sqlite3_str_append(pStr, "}", 1);
+      sqlite3_result_str(context, pStr, SQLITE_FINISH);
+    }
+    sqlite3BtreeLeave(pBtree);
+  }else{
+    sqlite3_result_text(context, "{}", 2, SQLITE_STATIC);
+  }
+}
+#endif /* SQLITE_DEBUG || SQLITE_ENABLE_WALSTAT */
 
 #ifdef SQLITE_DEBUG
 /*
@@ -3222,7 +3324,7 @@ static void parseuriFunc(
   flgs = (unsigned int)sqlite3_value_int(argv[1]);
   rc = sqlite3ParseUri(zVfs, zUri, &flgs, &pVfs, &zFile, &zErr);
   pResult = sqlite3_str_new(0);
-  if( pResult ){
+  if( !sqlite3_str_errcode(pResult) ){
     int i;
     sqlite3_str_appendf(pResult, "rc=%d", rc);
     sqlite3_str_appendf(pResult, ", flags=0x%x", flgs);
@@ -3249,8 +3351,8 @@ static void parseuriFunc(
         }
       }
     }
-    sqlite3_result_text(ctx, sqlite3_str_finish(pResult), -1, sqlite3_free);
   }
+  sqlite3_result_str(ctx, pResult, SQLITE_FINISH);
   sqlite3_free_filename(zFile);
   sqlite3_free(zErr);
 }
@@ -3302,6 +3404,7 @@ void sqlite3RegisterBuiltinFunctions(void){
 #endif
 #if defined(SQLITE_DEBUG) || defined(SQLITE_ENABLE_FILESTAT)
     FUNCTION(sqlite_filestat,    1, 0, 0, filestatFunc     ),
+    FUNCTION(sqlite_walstat,     1, 0, 0, walstatFunc      ),
 #endif
     FUNCTION(ltrim,              1, 1, 0, trimFunc         ),
     FUNCTION(ltrim,              2, 1, 0, trimFunc         ),
@@ -3330,6 +3433,9 @@ void sqlite3RegisterBuiltinFunctions(void){
     FUNCTION(fpdecode,           3, 0, 0, fpdecodeFunc     ),
     FUNCTION(parseuri,          -1, 0, 0, parseuriFunc     ),
 #endif
+#if defined(SQLITE_DEBUG) || defined(SQLITE_BUILTIN_OOM_FUNCTION)
+    FUNCTION(oom,               -1, 0, 0, oomFunc          ),
+#endif
 #ifndef SQLITE_OMIT_FLOATING_POINT
     FUNCTION(round,              1, 0, 0, roundFunc        ),
     FUNCTION(round,              2, 0, 0, roundFunc        ),
@@ -3347,7 +3453,7 @@ void sqlite3RegisterBuiltinFunctions(void){
     FUNCTION(nullif,             2, 0, 1, nullifFunc       ),
     DFUNCTION(sqlite_version,    0, 0, 0, versionFunc      ),
     DFUNCTION(sqlite_source_id,  0, 0, 0, sourceidFunc     ),
-    FUNCTION(sqlite_log,         2, 0, 0, errlogFunc       ),
+    SFUNCTION(sqlite_log,        2, 0, 0, errlogFunc       ),
     FUNCTION(unistr,             1, 0, 0, unistrFunc       ),
     FUNCTION(quote,              1, 0, 0, quoteFunc        ),
     FUNCTION(unistr_quote,       1, 1, 0, quoteFunc        ),

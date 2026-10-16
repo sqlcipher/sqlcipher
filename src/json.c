@@ -398,6 +398,7 @@ struct JsonParse {
 */
 #define JSON_EDITABLE  0x01   /* Generate a writable JsonParse object */
 #define JSON_KEEPERROR 0x02   /* Return non-NULL even if there is an error */
+#define JSON_NOCACHE   0x04   /* Do not use the JSON cache */
 
 /**************************************************************************
 ** Forward references
@@ -1150,7 +1151,7 @@ static void jsonWrongNumArgs(
 **
 ** Return the number of errors.
 */
-static int jsonBlobExpand(JsonParse *pParse, u32 N){
+static int jsonBlobExpand(JsonParse *pParse, u64 N){
   u8 *aNew;
   u64 t;
   assert( N>pParse->nBlobAlloc );
@@ -1178,7 +1179,7 @@ static int jsonBlobExpand(JsonParse *pParse, u32 N){
 */
 static int jsonBlobMakeEditable(JsonParse *pParse, u32 nExtra){
   u8 *aOld;
-  u32 nSize;
+  u64 nSize;
   assert( !pParse->bReadOnly );
   if( pParse->oom ) return 0;
   if( pParse->nBlobAlloc>0 ) return 1;
@@ -1199,7 +1200,7 @@ static SQLITE_NOINLINE void jsonBlobExpandAndAppendOneByte(
   JsonParse *pParse,
   u8 c
 ){
-  jsonBlobExpand(pParse, pParse->nBlob+1);
+  jsonBlobExpand(pParse, (u64)pParse->nBlob+1);
   if( pParse->oom==0 ){
     assert( pParse->nBlob+1<=pParse->nBlobAlloc );
     pParse->aBlob[pParse->nBlob++] = c;
@@ -1226,7 +1227,7 @@ static SQLITE_NOINLINE void jsonBlobExpandAndAppendNode(
   u64 szPayload,
   const void *aPayload
 ){
-  if( jsonBlobExpand(pParse, pParse->nBlob+szPayload+9) ) return;
+  if( jsonBlobExpand(pParse, (u64)pParse->nBlob+(u64)szPayload+9) ) return;
   jsonBlobAppendNode(pParse, eType, szPayload, aPayload);
 }
 
@@ -1316,7 +1317,7 @@ static int jsonBlobChangePayloadSize(
   }
   delta = nNeeded - nExtra;
   if( delta ){
-    u32 newSize = pParse->nBlob + delta;
+    u64 newSize = (u64)pParse->nBlob + delta;
     if( delta>0 ){
       if( newSize>pParse->nBlobAlloc && jsonBlobExpand(pParse, newSize) ){
         return 0;  /* OOM error.  Error state recorded in pParse->oom. */
@@ -2115,12 +2116,125 @@ static void jsonReturnStringAsBlob(JsonString *pStr){
   }
 }
 
-/* The byte at index i is a node type-code.  This routine
+/*
+** This a helper routine for jsonbPayloadSize() and
+** jsonbPayloadSizeSemiInline().  This routine is called using tail
+** recursion to handle the (relatively uncommon) cases where the
+** the payload size is a 2, 4, or 8 byte integer.
+*/
+static u32 jsonbPayloadSizeWide(
+  const JsonParse *pParse,   /* JSON parsing context */
+  u32 i,                     /* Index of the node type-code */
+  u32 *pSz,                  /* Write payload size here */
+  u8 x                       /* pParse->aBlob[i]>>4 */
+){
+  u32 sz;
+  u32 n;
+  assert( i<pParse->nBlob );
+  assert( x==(pParse->aBlob[i]>>4) );
+  assert( x>=13 );
+  if( x==13 ){
+    if( i+2>=pParse->nBlob ){
+      *pSz = 0;
+      return 0;
+    }
+    sz = (pParse->aBlob[i+1]<<8) + pParse->aBlob[i+2];
+    n = 3;
+  }else if( x==14 ){
+    if( i+4>=pParse->nBlob ){
+      *pSz = 0;
+      return 0;
+    }
+    sz = ((u32)pParse->aBlob[i+1]<<24) + (pParse->aBlob[i+2]<<16) +
+         (pParse->aBlob[i+3]<<8) + pParse->aBlob[i+4];
+    n = 5;
+  }else{
+    if( i+8>=pParse->nBlob
+     || pParse->aBlob[i+1]!=0
+     || pParse->aBlob[i+2]!=0
+     || pParse->aBlob[i+3]!=0
+     || pParse->aBlob[i+4]!=0
+    ){
+      *pSz = 0;
+      return 0;
+    }
+    sz = ((u32)pParse->aBlob[i+5]<<24) + (pParse->aBlob[i+6]<<16) +
+         (pParse->aBlob[i+7]<<8) + pParse->aBlob[i+8];
+    n = 9;
+  }
+  testcase( (i64)i+sz+n > pParse->nBlob );
+  testcase( (i64)i+sz+n > pParse->nBlob-pParse->delta
+         && (i64)i+sz+n > pParse->nBlob );
+  testcase( pParse->delta>0 );
+  testcase( pParse->delta<0 );
+  /* Quirks with -Os and gcov cause the NO_TEST line below to show up as
+  ** false-positive coverage miss.  The testcases() macros above are
+  ** sufficient to prove that the branch is in fact covered */
+  if( (i64)i+sz+n > pParse->nBlob
+   && (i64)i+sz+n > pParse->nBlob-pParse->delta  /*NO_TEST*/
+  ){
+    *pSz = 0;
+    return 0;
+  }
+  *pSz = sz;
+  return n;
+}
+
+/*
+** This is the main routine for determining the size of a node in JSONB.
+** The jsonbPayloadSizeWide() above is a helper.  The two routines
+** jsonbPayloadSizeInline() and jsonbPayloadSizeSemiInline() below are
+** optional optimizations.  It is important to keep all these routines in
+** sync.  Agents reading this code:  Help us humans to remember that!
+**
+** The byte at index i is a node type-code.  This routine
 ** determines the payload size for that node and writes that
 ** payload size in to *pSz.  It returns the offset from i to the
 ** beginning of the payload.  Return 0 on error.
 */
-static u32 jsonbPayloadSize(const JsonParse *pParse, u32 i, u32 *pSz){
+static u32 jsonbPayloadSize(
+  const JsonParse *pParse,   /* JSON parsing context */
+  u32 i,                     /* Index of the node type-code */
+  u32 *pSz                   /* Write payload size here */
+){
+  u8 x;
+  u32 sz;
+  u32 n;
+  if( i>=pParse->nBlob ){
+    *pSz = 0;
+    return 0;
+  }else if( (x = pParse->aBlob[i]>>4)<=11 ){
+    sz = x;
+    n = 1;
+  }else if( x==12 ){
+    if( i+1>=pParse->nBlob ){
+      *pSz = 0;
+      return 0;
+    }
+    sz = pParse->aBlob[i+1];
+    n = 2;
+  }else{
+    return jsonbPayloadSizeWide(pParse, i, pSz, x);
+  }
+  if( (i64)i+sz+n > pParse->nBlob
+   && (i64)i+sz+n > pParse->nBlob-pParse->delta
+  ){
+    *pSz = 0;
+    return 0;
+  }
+  *pSz = sz;
+  return n;
+}
+
+#if SQLITE_USES_INLINE
+/* A separate inline version of jsonbPayloadSize(), used in one particulary
+** performance-critical place.
+*/
+static SQLITE_INLINE u32 jsonbPayloadSizeInline(
+  const JsonParse *pParse,   /* JSON parsing context */
+  u32 i,                     /* Index of the node type-code */
+  u32 *pSz                   /* Write payload size here */
+){
   u8 x;
   u32 sz;
   u32 n;
@@ -2175,7 +2289,61 @@ static u32 jsonbPayloadSize(const JsonParse *pParse, u32 i, u32 *pSz){
   *pSz = sz;
   return n;
 }
+#else /* if !SQLITE_USES_INLINE */
+  /* On compilers that do not support in-lining, just call the original
+  ** jsonbPayloadSize().  It's slower, but it gets the right answer. */
+# define jsonbPayloadSizeInline(a,b,c) jsonbPayloadSize(a,b,c)
+#endif
 
+
+#if SQLITE_USES_INLINE
+/* A separate inline version of jsonbPayloadSize() that implements the more
+** common paths inline but then calls out to a subroutine for the uncommon
+** paths.
+**
+**    *   It is guaranteed that the i parameter is a valid index for
+**        pParse->aBlob[].  There is no possibility of running of the end
+**        of the allocation.
+**
+**    *   Large sizes (greater than 255) are uncommon and are handled
+**        by a subroutine call to the jsonbPayloadSizeWide().
+*/
+static SQLITE_INLINE u32 jsonbPayloadSizeSemiInline(
+  const JsonParse *pParse,   /* JSON parsing context */
+  u32 i,                     /* Index of the node type-code */
+  u32 *pSz                   /* Write payload size here */
+){
+  u8 x;
+  u32 sz;
+  u32 n;
+  assert( i<pParse->nBlob );
+  if( (x = pParse->aBlob[i]>>4)<=11 ){
+    sz = x;
+    n = 1;
+  }else if( x==12 ){
+    if( i+1>=pParse->nBlob ){
+      *pSz = 0;
+      return 0;
+    }
+    sz = pParse->aBlob[i+1];
+    n = 2;
+  }else{
+    return jsonbPayloadSizeWide(pParse,i,pSz,x);
+  }
+  if( (i64)i+sz+n > pParse->nBlob
+   && (i64)i+sz+n > pParse->nBlob-pParse->delta
+  ){
+    *pSz = 0;
+    return 0;
+  }
+  *pSz = sz;
+  return n;
+}
+#else /* if !SQLITE_USES_INLINE */
+  /* On compilers that do not support in-lining, just call the original
+  ** jsonbPayloadSize().  It's slower, but it gets the right answer. */
+# define jsonbPayloadSizeSemiInline(a,b,c) jsonbPayloadSize(a,b,c)
+#endif
 
 /*
 ** Translate the binary JSONB representation of JSON beginning at
@@ -2197,7 +2365,7 @@ static u32 jsonTranslateBlobToText(
 ){
   u32 sz, n, j, iEnd;
 
-  n = jsonbPayloadSize(pParse, i, &sz);
+  n = jsonbPayloadSizeInline(pParse, i, &sz);
   if( n==0 ){
     pOut->eErr |= JSTRING_MALFORMED;
     return pParse->nBlob+1;
@@ -2342,7 +2510,7 @@ static u32 jsonTranslateBlobToText(
             break;
           case 0xe2:
             /* '\' followed by either U+2028 or U+2029 is ignored as
-            ** whitespace.  Not that in UTF8, U+2028 is 0xe2 0x80 0x29.
+            ** whitespace.  Note that in UTF8, U+2028 is 0xe2 0x80 0x29.
             ** U+2029 is the same except for the last byte */
             if( sz2<4
              || 0x80!=(u8)zIn[2]
@@ -2477,7 +2645,10 @@ static u32 jsonTranslateBlobToPrettyText(
         while( pOut->eErr==0 ){
           jsonPrettyIndent(pPretty);
           j = jsonTranslateBlobToPrettyText(pPretty, j);
-          if( j>=iEnd ) break;
+          if( j>=iEnd ){
+            if( j>iEnd ) pOut->eErr |= JSTRING_MALFORMED;
+            break;
+          }
           jsonAppendRawNZ(pOut, ",\n", 2);
         }
         jsonAppendChar(pOut, '\n');
@@ -2537,7 +2708,7 @@ static u32 jsonbArrayCount(JsonParse *pParse, u32 iRoot){
   n = jsonbPayloadSize(pParse, iRoot, &sz);
   iEnd = iRoot+n+sz;
   for(i=iRoot+n; n>0 && i<iEnd; i+=sz+n, k++){
-    n = jsonbPayloadSize(pParse, i, &sz);
+    n = jsonbPayloadSizeSemiInline(pParse, i, &sz);
   }
   return k;
 }
@@ -2664,7 +2835,7 @@ static void jsonBlobEdit(
   }
   if( d!=0 ){
     if( pParse->nBlob + d > pParse->nBlobAlloc ){
-      jsonBlobExpand(pParse, pParse->nBlob+d);
+      jsonBlobExpand(pParse, (u64)pParse->nBlob+d);
       if( pParse->oom ) return;
     }
     memmove(&pParse->aBlob[iDel+nIns],
@@ -3047,7 +3218,7 @@ static u32 jsonLookupStep(
       const char *zLabel;
       x = pParse->aBlob[j] & 0x0f;
       if( x<JSONB_TEXT || x>JSONB_TEXTRAW ) return JSON_LOOKUP_ERROR;
-      n = jsonbPayloadSize(pParse, j, &sz);
+      n = jsonbPayloadSizeSemiInline(pParse, j, &sz);
       if( n==0 ) return JSON_LOOKUP_ERROR;
       k = j+n;  /* k is the index of the label text */
       if( k+sz>=iEnd ) return JSON_LOOKUP_ERROR;
@@ -3069,7 +3240,7 @@ static u32 jsonLookupStep(
       }
       j = k+sz;
       if( ((pParse->aBlob[j])&0x0f)>JSONB_OBJECT ) return JSON_LOOKUP_ERROR;
-      n = jsonbPayloadSize(pParse, j, &sz);
+      n = jsonbPayloadSizeSemiInline(pParse, j, &sz);
       if( n==0 ) return JSON_LOOKUP_ERROR;
       j += n+sz;
     }
@@ -3158,7 +3329,7 @@ static u32 jsonLookupStep(
         return rc;
       }
       kk--;
-      n = jsonbPayloadSize(pParse, j, &sz);
+      n = jsonbPayloadSizeSemiInline(pParse, j, &sz);
       if( n==0 ) return JSON_LOOKUP_ERROR;
       j += n+sz;
     }
@@ -3451,8 +3622,7 @@ static int jsonFunctionArgToBlob(
       break;
     }
     case SQLITE_FLOAT: {
-      double r = sqlite3_value_double(pArg);
-      if( NEVER(sqlite3IsNaN(r)) ){
+      if( NEVER(sqlite3IsNaN(sqlite3_value_double(pArg))) ){
         jsonBlobAppendNode(pParse, JSONB_NULL, 0, 0);
       }else{
         int n = sqlite3_value_bytes(pArg);
@@ -3672,7 +3842,9 @@ static JsonParse *jsonParseFuncArg(
   if( eType==SQLITE_NULL ){
     return 0;
   }
-  pFromCache = jsonCacheSearch(ctx, pArg);
+  if( (flgs & JSON_NOCACHE)==0 ){
+    pFromCache = jsonCacheSearch(ctx, pArg);
+  }
   if( pFromCache ){
     pFromCache->nJPRef++;
     if( (flgs & JSON_EDITABLE)==0 ){
@@ -4747,7 +4919,7 @@ static void jsonValidFunc(
       if( (flags & 0x3)==0 ) break;
       memset(&px, 0, sizeof(px));
      
-      p = jsonParseFuncArg(ctx, argv[0], JSON_KEEPERROR);
+      p = jsonParseFuncArg(ctx, argv[0], JSON_KEEPERROR|JSON_NOCACHE);
       if( p ){
         if( p->oom ){
           sqlite3_result_error_nomem(ctx);
@@ -5258,6 +5430,15 @@ static void jsonAppendPathName(JsonEachCursor *p){
   }
 }
 
+/* Report a "malformed JSON" or OOM error against the cursor.
+*/
+static int jsonEachMalformedInput(sqlite3_vtab_cursor *cur){
+  sqlite3_free(cur->pVtab->zErrMsg);
+  cur->pVtab->zErrMsg = sqlite3_mprintf("malformed JSON");
+  jsonEachCursorReset((JsonEachCursor*)cur);
+  return cur->pVtab->zErrMsg ? SQLITE_ERROR : SQLITE_NOMEM;
+}
+
 /* Advance the cursor to the next element for json_tree() */
 static int jsonEachNext(sqlite3_vtab_cursor *cur){
   JsonEachCursor *p = (JsonEachCursor*)cur;
@@ -5269,6 +5450,7 @@ static int jsonEachNext(sqlite3_vtab_cursor *cur){
     u32 i = jsonSkipLabel(p);
     x = p->sParse.aBlob[i] & 0x0f;
     n = jsonbPayloadSize(&p->sParse, i, &sz);
+    if( n==0 )return jsonEachMalformedInput(cur);
     if( x==JSONB_OBJECT || x==JSONB_ARRAY ){
       JsonParent *pParent;
       if( p->nParent>=p->nParentAlloc ){
@@ -5314,6 +5496,7 @@ static int jsonEachNext(sqlite3_vtab_cursor *cur){
     u32 n, sz = 0;
     u32 i = jsonSkipLabel(p);
     n = jsonbPayloadSize(&p->sParse, i, &sz);
+    if( n==0 )return jsonEachMalformedInput(cur);
     p->i = i + n + sz;
   }
   if( p->eType==JSONB_ARRAY && p->nParent ){
@@ -5427,7 +5610,7 @@ static int jsonEachColumn(
       break;
     }
     default: {
-      sqlite3_result_text(ctx, p->path.zBuf, p->nRoot, SQLITE_STATIC);
+      sqlite3_result_text(ctx, p->path.zBuf, p->nRoot, SQLITE_TRANSIENT);
       break;
     }
     case JEACH_JSON: {
@@ -5550,7 +5733,7 @@ static int jsonEachFilter(
       if( p->sParse.oom ){
         return SQLITE_NOMEM;
       }
-      goto json_each_malformed_input;
+      return jsonEachMalformedInput(cur);
     }
   }
   if( idxNum==3 ){
@@ -5611,12 +5794,6 @@ static int jsonEachFilter(
     p->aParent[0].iValue = i;
   }
   return SQLITE_OK;
-
-json_each_malformed_input:
-  sqlite3_free(cur->pVtab->zErrMsg);
-  cur->pVtab->zErrMsg = sqlite3_mprintf("malformed JSON");
-  jsonEachCursorReset(p);
-  return cur->pVtab->zErrMsg ? SQLITE_ERROR : SQLITE_NOMEM;
 }
 
 /* The methods of the json_each virtual table */

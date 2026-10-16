@@ -754,7 +754,7 @@ static int lookupName(
   ** cnt>1 means there were two or more matches.
   **
   ** cnt==0 is always an error.  cnt>1 is often an error, but might
-  ** be multiple matches for a NATURAL LEFT JOIN or a LEFT JOIN USING.
+  ** be multiple matches for a NATURAL OUTER JOIN or a OUTER JOIN USING.
   */
   assert( pFJMatch==0 || cnt>0 );
   assert( !ExprHasProperty(pExpr, EP_xIsSelect|EP_IntValue) );
@@ -837,11 +837,20 @@ lookupname_end:
   if( cnt==1 ){
     assert( pNC!=0 );
 #ifndef SQLITE_OMIT_AUTHORIZATION
-    if( pParse->db->xAuth
-     && (pExpr->op==TK_COLUMN || pExpr->op==TK_TRIGGER)
-    ){
-      sqlite3AuthRead(pParse, pExpr, pSchema, pNC->pSrcList);
-    }
+    if( db->xAuth ){
+      if( pFJMatch ){
+        assert( pExpr->op==TK_FUNCTION );
+        assert( sqlite3_stricmp(pExpr->u.zToken,"coalesce")==0 );
+        assert( pExpr->x.pList==pFJMatch );
+        assert( pFJMatch->nExpr>0 );
+        for(i=0; i<pFJMatch->nExpr; i++){
+          assert( pFJMatch->a[i].pExpr->op==TK_COLUMN );
+          sqlite3AuthRead(pParse,pFJMatch->a[i].pExpr,pSchema,pNC->pSrcList);
+        }
+      }else if( pExpr->op==TK_COLUMN || pExpr->op==TK_TRIGGER ){
+        sqlite3AuthRead(pParse, pExpr, pSchema, pNC->pSrcList);
+      }
+    } 
 #endif
     /* Increment the nRef value on all name contexts from TopNC up to
     ** the point where the name matched. */
@@ -1246,8 +1255,13 @@ static int resolveExprStep(Walker *pWalker, Expr *pExpr){
           /* Internal-use-only functions are disallowed unless the
           ** SQL is being compiled using sqlite3NestedParse() or
           ** the SQLITE_TESTCTRL_INTERNAL_FUNCTIONS test-control has be
-          ** used to activate internal functions for testing purposes */
-          no_such_func = 1;
+          ** used to activate internal functions for testing purposes.
+          **
+          ** The 2 value for no_such_func means that the function is
+          ** an internal-use-only function which should be treated as a
+          ** non-existant function for name resolution purposes.
+          */
+          no_such_func = 2;
           pDef = 0;
         }else
         if( (pDef->funcFlags & (SQLITE_FUNC_DIRECT|SQLITE_FUNC_UNSAFE))!=0
@@ -1291,9 +1305,16 @@ static int resolveExprStep(Walker *pWalker, Expr *pExpr){
           is_agg = 0;
         }
 #endif
-        else if( no_such_func && pParse->db->init.busy==0
+        else if( no_such_func
+              && (pParse->db->init.busy==0 ||
+                  (no_such_func==2 && pParse->db->init.busy==2))
+              /* Suppress "no such function" errors when reading
+              ** the sqlite_schema table.  Except, do raise the error
+              ** if init.busy is 2, meaning the schema parse is due
+              ** to an ALTER TABLE ADD COLUMN statement, and the function
+              ** is an internal-use-only function (no_such_func==2). */
 #ifdef SQLITE_ENABLE_UNKNOWN_SQL_FUNCTION
-                  && pParse->explain==0
+              && pParse->explain==0
 #endif
         ){
           sqlite3ErrorMsg(pParse, "no such function: %#T", pExpr);
@@ -1550,7 +1571,7 @@ static int resolveOrderByTermToExprList(
   int rc;            /* Return code from subprocedures */
   u8 savedSuppErr;   /* Saved value of db->suppressErr */
 
-  assert( sqlite3ExprIsInteger(pE, &i, 0)==0 );
+  assert( sqlite3ExprIsInteger(pE, &i, 0, 0)==0 );
   pEList = pSelect->pEList;
 
   /* Resolve all names in the ORDER BY term expression
@@ -1649,7 +1670,7 @@ static int resolveCompoundOrderBy(
       if( pItem->fg.done ) continue;
       pE = sqlite3ExprSkipCollateAndLikely(pItem->pExpr);
       if( NEVER(pE==0) ) continue;
-      if( sqlite3ExprIsInteger(pE, &iCol, 0) ){
+      if( sqlite3ExprIsInteger(pE, &iCol, 0, 0) ){
         if( iCol<=0 || iCol>pEList->nExpr ){
           resolveOutOfRangeError(pParse, "ORDER", i+1, pEList->nExpr, pE);
           return 1;
@@ -1832,7 +1853,7 @@ static int resolveOrderGroupBy(
         continue;
       }
     }
-    if( sqlite3ExprIsInteger(pE2, &iCol, 0) ){
+    if( sqlite3ExprIsInteger(pE2, &iCol, 0, 0) ){
       /* The ORDER BY term is an integer constant.  Again, set the column
       ** number so that sqlite3ResolveOrderGroupBy() will convert the
       ** order-by term to a copy of the result-set expression */
