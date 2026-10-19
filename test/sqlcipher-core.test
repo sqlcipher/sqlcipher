@@ -1235,7 +1235,7 @@ do_test init-failure-blocks-db-use {
   }]
 
   lappend rc [catchsql {
-    SELECT * FROM sqlite_master;
+    CREATE TABLE t2(a,b);
   }]
 
   db close
@@ -1246,7 +1246,7 @@ do_test init-failure-blocks-db-use {
   }
 
   set rc
-} {{1 {An error occurred with PRAGMA key or rekey.}} {1 {attempt to write a readonly database}} {1 {disk I/O error}}}
+} "{1 {An error occurred with PRAGMA key or rekey.}} {1 {attempt to write a readonly database}} {1 {attempt to write a readonly database}}"
 db close
 file delete -force test.db
 
@@ -1267,7 +1267,7 @@ foreach mode {delete wal} {
     }]
 
     lappend rc [catchsql {
-      SELECT * FROM sqlite_master;
+      CREATE TABLE t2(a,b);
     }]
 
     db close
@@ -1277,7 +1277,7 @@ foreach mode {delete wal} {
       PRAGMA cipher_default_page_size = 8192;
     }
     set rc
-  } {{1 {An error occurred with PRAGMA key or rekey.}} {1 {disk I/O error}} {1 {disk I/O error}}}
+  } "{1 {An error occurred with PRAGMA key or rekey.}} $init_err $init_err"
   db close
   file delete -force test.db
 }
@@ -1326,6 +1326,10 @@ file delete -force test.db
 # restors the database to the consistant state
 foreach mode {delete wal} {
 
+  # expected error will differ between VFS and CODEC, and additional in CODEC
+  # betwen WAL and delete
+  set expected_commit_err [expr {$mode == "wal" ? $commit_err : {{1 {cannot commit - no transaction is active}}} }]
+
   do_test post-init-failure-blocks-db-use-txn-$mode {
     sqlite_orig db test.db
     set rc {}
@@ -1363,7 +1367,7 @@ foreach mode {delete wal} {
     "]
 
     set rc
-  } "{0 {}} {1 {disk I/O error}} {1 {cannot commit - no transaction is active}} {ok 1 ok}"
+  } "{0 {}} $deferred_err $expected_commit_err {ok 1 ok}"
   db close
   file delete -force test.db
 }
@@ -1397,7 +1401,7 @@ file delete -force test.db
 # test cipher_status does not return any result
 # if the SQLCipher VFS is not being used
 setup test.db "'testkey'"
-do_test cipher-status-no-vfs {
+if_sqlciphervfs cipher-status-no-vfs {
   sqlite_orig db file:test.db?vfs=unix
 
   execsql {
@@ -1405,7 +1409,7 @@ do_test cipher-status-no-vfs {
   }
 
 } {}
-db close
+catch {db close}
 file delete -force test.db
 
 # test cipher_fips_status reports 0
@@ -1446,7 +1450,7 @@ file delete -force test.db
 
 # open a database and specify a non-sqlcipher vfs, verify
 # that calling pragma key will return an misuse error
-do_test non-sqlcipher-vfs {
+if_sqlciphervfs non-sqlcipher-vfs {
   sqlite_orig db file:test.db?vfs=unix
 
   catchsql "
@@ -1454,7 +1458,7 @@ do_test non-sqlcipher-vfs {
   "
 
 } {1 {An error occurred with PRAGMA key or rekey.}}
-db close
+catch {db close}
 file delete -force test.db
 
 # WAL is refused and writes succeed when the VFS under sqlciphervfs has no shared memory
@@ -1467,7 +1471,7 @@ foreach vfs {unix-dotfile unix-none} {
     plaintext {} {delete 1 0} \
     encrypted "PRAGMA key = $hexkey;" {ok delete 1 0} \
   ] {
-    do_test wal-refused-without-shm-$vfs-$name {
+    if_sqlciphervfs wal-refused-without-shm-$vfs-$name {
       sqlite_orig db :memory:
       execsql "PRAGMA cipher_test_vfs = '$vfs';"
       db close

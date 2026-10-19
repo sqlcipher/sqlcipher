@@ -241,6 +241,12 @@ void sqlite3PagerTruncateImage(Pager*,Pgno);
 
 void sqlite3PagerRekey(DbPage*, Pgno, u16);
 
+/* BEGIN SQLCIPHER */
+#if !defined(OMIT_SQLCIPHER) && !defined(SQLITE_OMIT_WAL)
+void *sqlcipher_pager_codec(DbPage*, int*);
+#endif
+/* END SQLCIPHER */
+
 /* Functions to support testing and debugging. */
 #if !defined(NDEBUG) || defined(SQLITE_TEST)
   Pgno sqlite3PagerPagenumber(DbPage*);

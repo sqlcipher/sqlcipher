@@ -869,4 +869,22 @@ do_test rekey-fail-in-transaction {
 db close
 file delete -force test.db
 
+# rekey encrypted database without keying
+do_test rekey-encrypted-without-keying {
+  sqlite_orig db test.db
+  execsql "
+    PRAGMA key = $hexkey;
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1(a,b) VALUES (1,2);
+  "
+  db close
+
+  sqlite_orig db test.db
+  catchsql "
+    PRAGMA rekey = $hexkey2;
+  "
+} {1 {An error occurred with PRAGMA key or rekey.}}
+db close
+file delete -force test.db
+
 finish_test

@@ -36,8 +36,8 @@
 
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
-source $testdir/sqlcipher.tcl
 source $testdir/permutations.test
+source $testdir/sqlcipher.tcl
 
 set pretests ""
 

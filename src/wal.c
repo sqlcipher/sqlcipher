@@ -3969,7 +3969,13 @@ static int walWriteOneFrame(
   int rc;                         /* Result code from subfunctions */
   void *pData;                    /* Data actually written */
   u8 aFrame[WAL_FRAME_HDRSIZE];   /* Buffer to assemble frame-header in */
+/* BEGIN SQLCIPHER */
+#if !defined(OMIT_SQLCIPHER)
+  if( (pData = sqlcipher_pager_codec(pPage, &rc))==0 ) return rc;
+#else
   pData = pPage->pData;
+#endif
+/* END SQLCIPHER */
   walEncodeFrame(p->pWal, pPage->pgno, nTruncate, pData, aFrame);
   rc = walWriteToLog(p, aFrame, sizeof(aFrame), iOffset);
   if( rc ) return rc;
@@ -4154,7 +4160,13 @@ static int walFrames(
         if( pWal->iReCksum==0 || iWrite<pWal->iReCksum ){
           pWal->iReCksum = iWrite;
         }
+/* BEGIN SQLCIPHER */
+#if !defined(OMIT_SQLCIPHER)
+        if( (pData = sqlcipher_pager_codec(p, &rc))==0 ) return rc;
+#else
         pData = p->pData;
+#endif
+/* END SQLCIPHER */
         rc = sqlite3OsWrite(pWal->pWalFd, pData, szPage, iOff);
         if( rc ) return rc;
         p->flags &= ~PGHDR_WAL_APPEND;
@@ -4641,17 +4653,5 @@ int sqlite3WalFramesize(Wal *pWal){
 sqlite3_file *sqlite3WalFile(Wal *pWal){
   return pWal->pWalFd;
 }
-
-/* BEGIN SQLCIPHER */
-#if !defined(OMIT_SQLCIPHER)
-
-u32 sqlcipher_wal_salt(Wal *pWal, int i) {
-  if(!pWal) return 0;
-  return pWal->hdr.aSalt[i == 0 ? 0 : 1]; 
-}
-
-#endif
-/* END SQLCIPHER */
-
 
 #endif /* #ifndef SQLITE_OMIT_WAL */

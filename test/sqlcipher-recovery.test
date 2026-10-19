@@ -438,6 +438,7 @@ forcedelete test2.db test2.db-journal test2.db-wal test2.db-shm
 # simulate a crash with committed but un-checkpointed frames in the WAL with the next
 # reopen using a bad key and closes. The wal should remain
 # after the close and open with the right key
+
 do_test recover-bad-key-close-wal {
   sqlite_orig db test.db
   set rc {}
@@ -462,6 +463,7 @@ do_test recover-bad-key-close-wal {
   "]
   db close
 
+  # file will only exist under VFS
   lappend rc [file exists test2.db-wal]
 
   sqlite_orig db test2.db
@@ -469,7 +471,7 @@ do_test recover-bad-key-close-wal {
     PRAGMA key = $hexkey;
     SELECT count(*) FROM t1;
   "]
-} {{1 {file is not a database}} 1 {ok 2}}
+} "{1 {file is not a database}} $sqlcipherVfs {ok 2}"
 db close
 forcedelete test.db test.db-journal test.db-wal test.db-shm
 forcedelete test2.db test2.db-journal test2.db-wal test2.db-shm
@@ -477,6 +479,8 @@ forcedelete test2.db test2.db-journal test2.db-wal test2.db-shm
 # similar to above, crash leaves a hot rollback journal for a transaction that 
 # rewrote pages. If the next connection opens with an incorrect key the journal
 # should survive. The following open after that should see original data.
+# note that in the latter half of the test, test2.db-journal will only exist
+# if SQLCipher VFS is being used, recover runs do not require the correct key 
 do_test recover-bad-key-retry-delete {
   sqlite_orig db test.db
   set rc {}
@@ -511,6 +515,7 @@ do_test recover-bad-key-retry-delete {
   }]
   db close
 
+  # file will only exist under VFS
   lappend rc [file exists test2.db-journal]
 
   sqlite_orig db test2.db
@@ -519,7 +524,7 @@ do_test recover-bad-key-retry-delete {
     PRAGMA integrity_check;
     SELECT sum(length(b)), count(*) FROM t1;
   "]
-} {{1 {file is not a database}} {1 {file is not a database}} 1 {ok ok 100000 50}}
+} "{1 {file is not a database}} {1 {file is not a database}} $sqlcipherVfs {ok ok 100000 50}"
 db close
 forcedelete test.db test.db-journal test.db-wal test.db-shm
 forcedelete test2.db test2.db-journal test2.db-wal test2.db-shm
@@ -528,6 +533,7 @@ forcedelete test2.db test2.db-journal test2.db-wal test2.db-shm
 # pointer which isn't summed. likewise a if page fails to decrypt sqlcipher zeros the buffer
 # so its computed checksum would actually match the the stored one the code in the
 # sqlcipher VFS manually forces a mismatch.
+
 do_test recover-corrupt-journal-zero-cksum-delete {
   sqlite_orig db test.db
   set rc {}
@@ -547,7 +553,13 @@ do_test recover-corrupt-journal-zero-cksum-delete {
 
   # 512 byte header, a record for page 2, then overflow page 3
   lappend rc [file size test2.db-journal]
-  hexio_write test2.db-journal [expr {512 + 8200 + 4 + 1000}] 0123456789abcdef0123456789abcdef
+
+  # in order for a journal record to be interpreted as corrup for both VFS and the CODEC
+  #  the corruption must affect bytes that will be used to caclulate the checksum itself
+  # which would be page_sz - a multiple of 200
+  for {set i 1} {$i <= 3} {incr i} {
+    hexio_write test2.db-journal [expr {512 + 8200 + 4 + (8192 - (200*$i)) }] 00
+  }
 
   sqlite_orig db test2.db
   lappend rc [execsql "
@@ -653,7 +665,13 @@ do_test recover-corrupt-first-record-delete {
 
   # 512 byte header and one record
   lappend rc [file size test2.db-journal]
-  hexio_write test2.db-journal [expr {512 + 4 + 1000}] 0123456789abcdef0123456789abcdef
+
+  # in order for a journal record to be interpreted as corrup for both VFS and the CODEC
+  #  the corruption must affect bytes that will be used to caclulate the checksum itself
+  # which would be page_sz - a multiple of 200
+  for {set i 1} {$i <= 3} {incr i} {
+    hexio_write test2.db-journal [expr {512 + 4 + (8192 - (200*$i)) }] 0000
+  }
 
   sqlite_orig db test2.db
   lappend rc [execsql "

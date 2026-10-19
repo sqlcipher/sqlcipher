@@ -37,6 +37,26 @@
 set hexkey  {"x'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01010101010101010101010101010101'"}
 set hexkey2 {"x'fedcba9876543210fedcba9876543210fedcba9876543210fedcba987654321010101010101010101010101010101010'"}
 
+sqlite_orig db test.db
+set defaultVfs [file_control_vfsname db]
+set sqlcipherVfs [expr {$defaultVfs == "sqlciphervfs" ? 1 : 0}]
+db close
+file delete -force test.db
+
+# a general case deferred error will bubble up as an I/O error
+#set deferred_err  [expr {$sqlcipherVfs ? {{1 {disk I/O error}}} : {{1 {out of memory}}}}]
+set deferred_err {{1 {disk I/O error}}}
+
+# a deferred write failure in transaction surfaces as IOERR so the transaction is rolled back
+set commit_err {{1 {cannot commit - no transaction is active}}}
+
+# initialization errors are normalized to I/O error to prevent issues with recovery
+set init_err      {{1 {disk I/O error}}}
+
+# invalid plaintext header errors return a generic error
+set hdr_err {{1 {SQL logic error}}}
+
+
 set testdir [file dirname $argv0]
 set sampleDir [file normalize [file dirname [file dirname $argv0]]]/sqlcipher-resources
 
@@ -109,3 +129,9 @@ proc trace_proc sql {
   lappend TRACE_OUT [string trim $sql]
 }
 
+proc if_sqlciphervfs {name cmd expected} {
+  global sqlcipherVfs
+  if {$sqlcipherVfs} {
+    do_test $name $cmd $expected
+  }
+}

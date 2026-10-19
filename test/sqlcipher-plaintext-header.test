@@ -208,7 +208,7 @@ do_test test-invalid-plaintext-header-sizes {
     PRAGMA cipher_plaintext_header_size = 24; 
     CREATE TABLE t1(a,b);
   "]
-} {{1 {SQL logic error}} {1 {SQL logic error}} {1 {SQL logic error}}}
+} "$hdr_err $hdr_err $hdr_err"
 db close
 file delete -force test.db
 
@@ -547,7 +547,7 @@ do_test test-plaintext-header-larger-than-later-page-size {
     CREATE TABLE t1(a,b);
     INSERT INTO t1(a,b) VALUES (1,2);
   "]
-} {{1 {SQL logic error}} {1 {SQL logic error}} {1 {SQL logic error}} ok ok}
+} "$hdr_err $hdr_err $hdr_err ok ok"
 db close
 file delete -force test.db
 
