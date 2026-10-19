@@ -195,6 +195,9 @@ m,n,o
 END
 SELECT * FROM t3;
 .check <<END
+╭───┬───┬───╮
+│ g │ h │ i │
+╘═══╧═══╧═══╛
 END
 
 .testcase 200 --error-prefix ERROR:

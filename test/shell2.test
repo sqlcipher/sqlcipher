@@ -51,7 +51,7 @@ do_test shell2-1.2.1 {
 
 # Test a problem reported on the mailing list. The shell was at one point
 # returning the generic SQLITE_ERROR message ("SQL error or missing database")
-# instead of the "too many levels..." message in the test below.
+# instead of the "triggers nested too deep" message in the test below.
 #
 do_test shell2-1.3 {
   catchcmd "-batch test.db" {
@@ -64,7 +64,7 @@ do_test shell2-1.3 {
 
     UPDATE OR REPLACE t5 SET a = 4 WHERE a = 1;
   }
-} {1 {Error near line 9: too many levels of trigger recursion}}
+} {1 {Error near line 9: triggers nested too deep}}
 
 
 
@@ -210,7 +210,9 @@ do_test shell2-1.4.8 {
 do_test shell2-1.4.9 {
   catchcmd "-safe :memory:" {
  SELECT writefile('DoNotCare', x'');}
-} {1 {line 2: cannot use the writefile() function in safe mode}}
+} {1 {Parse error near line 2: no such function: writefile
+  SELECT writefile('DoNotCare', x'');
+         ^--- error here}}
 
 # Verify that .clone handles sequence table.
 # See https://sqlite.org/forum/forumpost/71ff9e6c4c
@@ -311,6 +313,9 @@ do_test shell2-1.4.10b {
 │    -1 │
 │    -2 │
 ╰───────╯
+╭───────╮
+│ value │
+╘═══════╛
 ╭───────╮
 │ value │
 ╞═══════╡

@@ -306,7 +306,7 @@ static void qpvtabStrAppendValue(
       const char *a = (const char*)sqlite3_value_text(pVal);
       int n = sqlite3_value_bytes(pVal);
       sqlite3_str_append(pStr, "'", 1);
-      for(i=0; i<n; i++){
+      for(i=0; i<n && a[i]!=0; i++){
         char c = a[i];
         if( c=='\n' ) c = ' ';
         sqlite3_str_append(pStr, &c, 1);
@@ -363,7 +363,7 @@ static int qpvtabBestIndex(
     }
     sqlite3_str_appendf(pStr,"aConstraint,%d,%s,%d,%d,",
        i,
-       azColname[iCol],
+       iCol>=0 ? azColname[iCol] : "rowid",
        op,
        pIdxInfo->aConstraint[i].usable);
     pVal = 0;

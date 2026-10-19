@@ -191,10 +191,11 @@ verify its integrity, there are hints on how to do that in the
 
 ## Contacting The SQLite Developers
 
-The preferred way to ask questions or make comments about SQLite or to
-report bugs against SQLite is to visit the 
-[SQLite Forum](https://sqlite.org/forum) at <https://sqlite.org/forum/>.
-Anonymous postings are permitted.
+The preferred way to ask questions or make comments about SQLite is to
+visit the [SQLite Forum](https://sqlite.org/forum) at
+<https://sqlite.org/forum/>.  Anonymous postings are permitted. For
+bug reports, please use the [SQLite bugs
+forum](https://sqlite.org/bugs) at <https://sqlite.org/bugs>.
 
 If you think you have found a bug that has security implications and
 you do not want to report it on the public forum, you can send a private
@@ -238,8 +239,8 @@ Then run commands like this:
         fossil open https://sqlite.org/src
 
 The initial "fossil open" command will take two or three minutes.  Afterwards,
-you can do fast, bandwidth-efficient updates to the whatever versions
-of SQLite you like.  Some examples:
+you can do fast, bandwidth-efficient updates to whatever versions of SQLite you
+like.  Some examples:
 
         fossil update trunk             ;# latest trunk check-in
         fossil update release           ;# latest official release
@@ -270,7 +271,7 @@ For example:
         make sqldiff                  ;#  The "sqldiff" command-line tool
         #### Targets below require tcl-dev ####
         make tclextension-install     ;#  Install the SQLite TCL extension
-        make devtest                  ;#  Run development tests
+        make test                     ;#  Run development tests
         make releasetest              ;#  Run full release tests
         make sqlite3_analyzer         ;#  Builds the "sqlite3_analyzer" tool
 
@@ -334,7 +335,7 @@ file:
         make sqldiff.exe
         #### Targets below require TCL development libraries ####
         make tclextension-install
-        make devtest
+        make test
         make releasetest
         make sqlite3_analyzer.exe
  

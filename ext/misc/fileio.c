@@ -97,8 +97,6 @@ SQLITE_EXTENSION_INIT1
 #  define STRUCT_STAT struct _stat
 #  define chmod(path,mode) fileio_chmod(path,mode)
 #  define mkdir(path,mode) fileio_mkdir(path)
-   extern LPWSTR sqlite3_win32_utf8_to_unicode(const char*);
-   extern char *sqlite3_win32_unicode_to_utf8(LPCWSTR);
 #endif
 #include <time.h>
 #include <errno.h>
@@ -125,13 +123,69 @@ SQLITE_EXTENSION_INIT1
 #define FSDIR_COLUMN_PATH     5     /* Path to top of search */
 #define FSDIR_COLUMN_DIR      6     /* Path is relative to this directory */
 
+#ifdef _WIN32
+/*
+** Convert a UTF-8 string to Microsoft Unicode.
+**
+** Space to hold the returned string is obtained from sqlite3_malloc().
+*/
+static wchar_t *winUtf8To16(const char *zText){
+  int nChar;
+  wchar_t *zWideText;
+
+  nChar = MultiByteToWideChar(CP_UTF8, 0, zText, -1, NULL, 0);
+  if( nChar==0 ){
+    return 0;
+  }
+  zWideText = sqlite3_malloc64(nChar*sizeof(WCHAR) );
+  if( zWideText==0 ){
+    return 0;
+  }
+  nChar = MultiByteToWideChar(CP_UTF8, 0, zText, -1, zWideText,
+                                nChar);
+  if( nChar==0 ){
+    sqlite3_free(zWideText);
+    zWideText = 0;
+  }
+  return zWideText;
+}
+#endif /* _WIN32 */
+
+#ifdef _WIN32
+/*
+** Convert a Microsoft Unicode string to UTF-8.
+**
+** Space to hold the returned string is obtained from sqlite3_malloc().
+*/
+static char *winUtf16To8(wchar_t *zWideText){
+  int nByte;
+  char *zText;
+
+  nByte = WideCharToMultiByte(CP_UTF8, 0, zWideText, -1, 0, 0, 0, 0);
+  if( nByte == 0 ){
+    return 0;
+  }
+  zText = sqlite3_malloc64( nByte );
+  if( zText==0 ){
+    return 0;
+  }
+  nByte = WideCharToMultiByte(CP_UTF8, 0, zWideText, -1, zText, nByte,
+                                0, 0);
+  if( nByte == 0 ){
+    sqlite3_free(zText);
+    zText = 0;
+  }
+  return zText;
+}
+#endif /* _WIN32 */
+
 /*
 ** UTF8 chmod() function for Windows
 */
 #if defined(_WIN32) || defined(WIN32)
 static int fileio_chmod(const char *zPath, int pmode){
   int rc;
-  wchar_t *b1 = sqlite3_win32_utf8_to_unicode(zPath);
+  wchar_t *b1 = winUtf8To16(zPath);
   if( b1==0 ) return -1;
   rc = _wchmod(b1, pmode);
   sqlite3_free(b1);
@@ -145,7 +199,7 @@ static int fileio_chmod(const char *zPath, int pmode){
 #if defined(_WIN32) || defined(WIN32)
 static int fileio_mkdir(const char *zPath){
   int rc;
-  wchar_t *b1 = sqlite3_win32_utf8_to_unicode(zPath);
+  wchar_t *b1 = winUtf8To16(zPath);
   if( b1==0 ) return -1;
   rc = _wmkdir(b1);
   sqlite3_free(b1);
@@ -272,7 +326,7 @@ static int fileStat(
 ){
 #if defined(_WIN32)
   int rc;
-  wchar_t *b1 = sqlite3_win32_utf8_to_unicode(zPath);
+  wchar_t *b1 = winUtf8To16(zPath);
   if( b1==0 ) return 1;
   rc = _wstat(b1, pStatBuf);
   if( rc==0 ){
@@ -425,14 +479,13 @@ static int writeFile(
     LONGLONG intervals;
     HANDLE hFile;
     LPWSTR zUnicodeName;
-    extern LPWSTR sqlite3_win32_utf8_to_unicode(const char*);
 
     GetSystemTime(&currentTime);
     SystemTimeToFileTime(&currentTime, &lastAccess);
     intervals = (mtime*10000000) + 116444736000000000;
     lastWrite.dwLowDateTime = (DWORD)intervals;
     lastWrite.dwHighDateTime = intervals >> 32;
-    zUnicodeName = sqlite3_win32_utf8_to_unicode(zFile);
+    zUnicodeName = winUtf8To16(zFile);
     if( zUnicodeName==0 ){
       return 1;
     }
@@ -1094,12 +1147,12 @@ static char *portable_realpath(const char *zPath){
 
   if( zPath==0 ) return 0;
 
-  zPath16 = sqlite3_win32_utf8_to_unicode(zPath);
+  zPath16 = winUtf8To16(zPath);
   if( zPath16==0 ) return 0;
   z = _wfullpath(NULL, zPath16, 0);
   sqlite3_free(zPath16);
   if( z ){
-    zOut = sqlite3_win32_unicode_to_utf8(z);
+    zOut = winUtf16To8(z);
     free(z);
   }
   return zOut;
@@ -1116,6 +1169,9 @@ static char *portable_realpath(const char *zPath){
 ** The file or directory X is not required to exist.  The answer is formed
 ** by calling system realpath() on the prefix of X that does exist and
 ** appending the tail of X that does not (yet) exist.
+**
+** FIXME:  This routine sometimes returns NULL rather than raising
+** an SQLITE_NOMEM error if an OOM is encountered.
 */
 static void realpathFunc(
   sqlite3_context *context,
@@ -1138,6 +1194,7 @@ static void realpathFunc(
   if( zPath==0 ) return;
   if( zPath[0]==0 ) zPath = ".";
   zCopy = sqlite3_mprintf("%s",zPath);
+  if( zCopy==0 ) return;
   len = strlen(zCopy);
   while( len>1 && (zCopy[len-1]=='/' || (isWin && zCopy[len-1]=='\\')) ){
     len--;

@@ -96,6 +96,7 @@ foreach f [glob -nocomplain            \
     $testdir/../ext/recover/*.test     \
     $testdir/../ext/rbu/*.test         \
     $testdir/../ext/intck/*.test       \
+    $testdir/../ext/vec1/test/*.test   \
 ] {
   lappend alltests $f 
 }
@@ -143,6 +144,7 @@ set allquicktests [test_set $alltests -exclude {
 
   writecrash.test view3.test 
   fts5dlidx.test fts5ac.test fts4merge3.test fts5prefix.test
+  fts5bigtok2.test fts5secure7.test
   sessionB.test
 }]
 if {[info exists ::env(QUICKTEST_INCLUDE)]} {
@@ -1099,7 +1101,7 @@ test_suite "sorterref" -prefix "" -description {
 ] -initialize {
   catch {db close}
   sqlite3_shutdown
-  sqlite3_config_sorterref 0
+  sqlite3_config_sorterref 50
   sqlite3_initialize
   autoinstall_test_functions
 } -shutdown {

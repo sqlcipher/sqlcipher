@@ -267,3 +267,38 @@
 #ifndef SQLITE_MAX_TRIGGER_DEPTH
 # define SQLITE_MAX_TRIGGER_DEPTH 1000
 #endif
+
+/*
+** Maximum number of objects defined by a single database schema.
+** Objects include:
+**
+**   *  tables (including the sqlite_schema table)
+**   *  virtual tables
+**   *  named indexes
+**   *  indexes created automatically by UNIQUE and PRIMARY KEY constraints
+**   *  triggers
+**   *  views
+**
+** The total of all of the above is the number of objects in the schema,
+** and that number may not exceed this value.
+**
+** The maximum number of objects is restricted to forestall theoretical
+** signed integer overflow attacks using databases with billions of
+** schema objects.  Such attacks are "theoretical" because memory and
+** disk space constraints would be reached long before billions of schema
+** objects could be created.  Even so, it seems good to have a well defined
+** upper limit on the complexity of the schema, for defense in depth.
+** No real-world application should ever get anywhere close to hitting
+** this limit.
+*/
+#ifndef SQLITE_MAX_SCHEMA
+# define SQLITE_MAX_SCHEMA 10000000
+#endif
+
+/*
+** Maximum number of SQL statements allowed in the body of a single
+** trigger.
+*/
+#ifndef SQLITE_MAX_TRIGGER_STEPS
+# define SQLITE_MAX_TRIGGER_STEPS 65000
+#endif

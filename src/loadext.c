@@ -528,11 +528,14 @@ static const sqlite3_api_routines sqlite3Apis = {
   sqlite3_str_free,
 #ifdef SQLITE_ENABLE_CARRAY
   sqlite3_carray_bind,
-  sqlite3_carray_bind_v2
+  sqlite3_carray_bind_v2,
 #else
   0,
-  0
+  0,
 #endif
+  /* Version 3.54.0 and later */
+  sqlite3_incomplete,
+  sqlite3_result_str
 };
 
 /* True if x is the directory separator character

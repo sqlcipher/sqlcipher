@@ -78,7 +78,7 @@ static u8 getSafetyLevel(const char *z, int omitFull, u8 dflt){
                             /* on no off false yes true extra full */
   int i, n;
   if( sqlite3Isdigit(*z) ){
-    return (u8)sqlite3Atoi(z);
+    return sqlite3Atoi(z)!=0;
   }
   n = sqlite3Strlen30(z);
   for(i=0; i<ArraySize(iLength); i++){
@@ -215,7 +215,7 @@ static void setPragmaResultColumnNames(
 ** Generate code to return a single integer value.
 */
 static void returnSingleInt(Vdbe *v, i64 value){
-  sqlite3VdbeAddOp4Dup8(v, OP_Int64, 0, 1, 0, (const u8*)&value, P4_INT64);
+  sqlite3VdbeAddInt64(v, 1, value);
   sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
 }
 
@@ -1146,7 +1146,13 @@ void sqlite3Pragma(
         sqlite3ErrorMsg(pParse,
             "Safety level may not be changed inside a transaction");
       }else if( iDb!=1 ){
-        int iLevel = (getSafetyLevel(zRight,0,1)+1) & PAGER_SYNCHRONOUS_MASK;
+        int iLevel;
+        if( sqlite3Isdigit(zRight[0]) ){
+          iLevel = sqlite3Atoi(zRight);
+        }else{
+          iLevel = getSafetyLevel(zRight,0,1);
+        }
+        iLevel = (iLevel+1) & PAGER_SYNCHRONOUS_MASK;
         if( iLevel==0 ) iLevel = 1;
         pDb->safety_level = iLevel;
         pDb->bSyncSet = 1;
@@ -1760,10 +1766,9 @@ void sqlite3Pragma(
       for(cnt=0, x=sqliteHashFirst(pTbls); x; x=sqliteHashNext(x)){
         Table *pTab = sqliteHashData(x);  /* Current table */
         Index *pIdx;                      /* An index on pTab */
-        int nIdx;                         /* Number of indexes on pTab */
         if( tableSkipIntegrityCheck(pTab,pObjTab) ) continue;
         if( HasRowid(pTab) ) cnt++;
-        for(nIdx=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, nIdx++){ cnt++; }
+        for(pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext){ cnt++; }
       }
       if( cnt==0 ) continue;
       if( pObjTab ) cnt++;
@@ -1943,8 +1948,8 @@ void sqlite3Pragma(
           }else{
             if( pCol->iDflt ){
               sqlite3_value *pDfltValue = 0;
-              sqlite3ValueFromExpr(db, sqlite3ColumnExpr(pTab,pCol), ENC(db),
-                                   pCol->affinity, &pDfltValue);
+              sqlite3ValueFromExpr(db, sqlite3ColumnExprAuth(pTab,pCol,pParse),
+                                   ENC(db), pCol->affinity, &pDfltValue);
               if( pDfltValue ){
                 p4 = sqlite3_value_type(pDfltValue);
                 sqlite3ValueFree(pDfltValue);
@@ -2658,9 +2663,10 @@ void sqlite3Pragma(
   ** disables the timeout.
   */
   /*case PragTyp_BUSY_TIMEOUT*/ default: {
+    int n = 0;
     assert( pPragma->ePragTyp==PragTyp_BUSY_TIMEOUT );
-    if( zRight ){
-      sqlite3_busy_timeout(db, sqlite3Atoi(zRight));
+    if( zRight && sqlite3GetInt32(zRight,&n) ){
+      sqlite3_busy_timeout(db, n);
     }
     returnSingleInt(v, db->busyTimeout);
     break;

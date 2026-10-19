@@ -518,6 +518,7 @@ static int sqlite3ProcessJoin(Parse *pParse, Select *p){
   int i, j;                       /* Loop counters */
   SrcItem *pLeft;                 /* Left table being joined */
   SrcItem *pRight;                /* Right table being joined */
+  int bSeenTFunc = 0;             /* True if have seen table-valued function */
 
   pSrc = p->pSrc;
   pLeft = &pSrc->a[0];
@@ -660,7 +661,18 @@ static int sqlite3ProcessJoin(Parse *pParse, Select *p){
       p->selFlags |= SF_OnToWhere;
     }
 
-    if( IsVirtual(pRightTab) && joinType==EP_OuterON && pRight->u1.pFuncArg ){
+    if( bSeenTFunc==0 ){
+      bSeenTFunc = (pLeft->fg.isTabFunc && pLeft->u1.pFuncArg);
+    }
+
+    /* We also need to call sqlite3SelectCheckOnClauses() to verify that
+    ** table-valued function arguments do not illegally refer to any tables to
+    ** their right. This test is required if either (a) there is a RIGHT JOIN
+    ** in the SrcList, or (b) there is a LEFT JOIN to the right of a 
+    ** table-valued function.  */
+    if( (pRight->fg.isTabFunc && joinType==EP_OuterON && pRight->u1.pFuncArg)
+     || (bSeenTFunc && joinType==EP_OuterON)
+    ){
       p->selFlags |= SF_OnToWhere;
     }
   }
@@ -1127,6 +1139,48 @@ static void selectExprDefer(
 }
 #endif
 
+#ifdef SQLITE_DEBUG
+/*
+** This is a byte-code validation check that only runs when SQLITE_DEBUG
+** is defined.  This routine looks backwards through the bytecode
+** for the definition of cursor with index iCur.  It extracts the KeyInfo from
+** that cursor (it must be an index cursor) and verifies that the cursor
+** does not use any collating seqeuences other than BINARY for its first
+** nCol columns.
+**
+** This routine is used inside of an assert().  So it should return true
+** on success and false if the invariant is not satisfied.
+**
+** tag-202607231411
+*/
+static int sqlite3CursorBloomable(Parse *pParse, int iCur, int nCol){
+  int i,k;
+  Vdbe *v = pParse->pVdbe;
+  if( pParse->nErr ) return 1;
+  assert( v );
+  for(k=sqlite3VdbeCurrentAddr(v)-1; k>0; k--){
+    const VdbeOp *pOp = sqlite3VdbeGetOp(v, k);
+    const KeyInfo *pKeyInfo;
+    if( pOp->p1!=iCur ) continue;
+    if( pOp->opcode!=OP_OpenRead
+     && pOp->opcode!=OP_OpenWrite
+     && pOp->opcode!=OP_OpenEphemeral
+    ){
+      continue;
+    }
+    assert( pOp->p4type==P4_KEYINFO );
+    pKeyInfo = (const KeyInfo*)pOp->p4.pKeyInfo;
+    assert( pKeyInfo!=0 );
+    for(i=0; i<nCol; i++){
+      assert( sqlite3IsBinary(pKeyInfo->aColl[i]) );
+    }
+    return 1;
+  }
+  return 0;
+}
+#endif /* SQLITE_DEBUG */
+
+
 /*
 ** This routine generates the code for the inside of the inner loop
 ** of a SELECT.
@@ -1397,6 +1451,7 @@ static void selectInnerLoop(
             r1, pDest->zAffSdst, nResultCol);
         sqlite3VdbeAddOp4Int(v, OP_IdxInsert, iParm, r1, regResult, nResultCol);
         if( pDest->iSDParm2 ){
+          assert( sqlite3CursorBloomable(pParse,iParm,nResultCol) );
           sqlite3VdbeAddOp4Int(v, OP_FilterAdd, pDest->iSDParm2, 0,
                                regResult, nResultCol);
           ExplainQueryPlan((pParse, 0, "CREATE BLOOM FILTER"));
@@ -1726,6 +1781,9 @@ static void generateSortTail(
     Table *pTab = pSort->aDefer[i].pTab;
     int iDb = sqlite3SchemaToIndex(pParse->db, pTab->pSchema);
     sqlite3OpenTable(pParse, pSort->aDefer[i].iCsr, iDb, pTab, OP_OpenRead);
+    sqlite3VdbeAddOp2(v, OP_Rewind, pSort->aDefer[i].iCsr,
+                      sqlite3VdbeCurrentAddr(v)+1);
+    VdbeCoverage(v);
     nRefKey = MAX(nRefKey, pSort->aDefer[i].nKey);
   }
 #endif
@@ -2433,6 +2491,20 @@ void sqlite3SubqueryColumnTypes(
 }
 
 /*
+** Check the current subquery nesting depth.  Return true and set an
+** error if it has gone too deep.
+*/
+static int checkSubqueryNestingDepth(Parse *pParse){
+#if SQLITE_MAX_EXPR_DEPTH>0
+  if( pParse->nNestSel >= pParse->db->aLimit[SQLITE_LIMIT_EXPR_DEPTH] ){
+    sqlite3ErrorMsg(pParse, "VIEWs and/or subqueries nested too deep");
+    return 1;
+  }
+#endif
+  return 0;
+}
+
+/*
 ** Given a SELECT statement, generate a Table structure that describes
 ** the result set of that SELECT.
 */
@@ -2442,12 +2514,7 @@ Table *sqlite3ResultSetOfSelect(Parse *pParse, Select *pSelect, char aff){
   u64 savedFlags;
 
   pParse->nNestSel++;
-#if SQLITE_MAX_EXPR_DEPTH>0
-  if( pParse->nNestSel >= db->aLimit[SQLITE_LIMIT_EXPR_DEPTH] ){
-    sqlite3ErrorMsg(pParse, "VIEWs and/or subqueries nested too deep");
-    return 0;
-  }
-#endif
+  if( checkSubqueryNestingDepth(pParse) ) return 0;
   savedFlags = db->flags;
   db->flags &= ~(u64)SQLITE_FullColNames;
   db->flags |= SQLITE_ShortColNames;
@@ -2482,9 +2549,7 @@ Vdbe *sqlite3GetVdbe(Parse *pParse){
   if( pParse->pVdbe ){
     return pParse->pVdbe;
   }
-  if( pParse->pToplevel==0
-   && OptimizationEnabled(pParse->db,SQLITE_FactorOutConst)
-  ){
+  if( pParse->pToplevel==0 ){
     pParse->okConstFactor = 1;
   }
   return sqlite3VdbeCreate(pParse);
@@ -2535,7 +2600,7 @@ static void computeLimitRegisters(Parse *pParse, Select *p, int iBreak){
     p->iLimit = iLimit = ++pParse->nMem;
     v = sqlite3GetVdbe(pParse);
     assert( v!=0 );
-    if( sqlite3ExprIsInteger(pLimit->pLeft, &n, pParse) ){
+    if( sqlite3ExprIsInteger(pLimit->pLeft, &n, pParse, 0) ){
       sqlite3VdbeAddOp2(v, OP_Integer, n, iLimit);
       VdbeComment((v, "LIMIT counter"));
       if( n==0 ){
@@ -2548,6 +2613,7 @@ static void computeLimitRegisters(Parse *pParse, Select *p, int iBreak){
       sqlite3ExprCode(pParse, pLimit->pLeft, iLimit);
       sqlite3VdbeAddOp1(v, OP_MustBeInt, iLimit); VdbeCoverage(v);
       VdbeComment((v, "LIMIT counter"));
+      sqlite3MayAbort(pParse);
       sqlite3VdbeAddOp2(v, OP_IfNot, iLimit, iBreak); VdbeCoverage(v);
     }
     if( pLimit->pRight ){
@@ -2555,6 +2621,7 @@ static void computeLimitRegisters(Parse *pParse, Select *p, int iBreak){
       pParse->nMem++;   /* Allocate an extra register for limit+offset */
       sqlite3ExprCode(pParse, pLimit->pRight, iOffset);
       sqlite3VdbeAddOp1(v, OP_MustBeInt, iOffset); VdbeCoverage(v);
+      sqlite3MayAbort(pParse);
       VdbeComment((v, "OFFSET counter"));
       sqlite3VdbeAddOp3(v, OP_OffsetLimit, iLimit, iOffset+1, iOffset);
       VdbeComment((v, "LIMIT+OFFSET"));
@@ -2902,11 +2969,33 @@ static int hasAnchor(Select *p){
 }
 
 /*
-** This routine is called to process a compound query form from
+** Return TRUE if p is a UNION with a LIMIT of exactly 1 and no OFFSET
+** clause.  This is a precondition for a couple of related optimizations.
+**
+** False negatives are harmless (apart from resulting in a slower query).
+** False positives can result in incorrect answers, however.  To provoke
+** false negatives for testing purposes, disable the SQLITE_UnionLimit
+** optimization.
+*/
+static int unionWithLimitOne(sqlite3 *db, Select *p){
+  int v;
+  if( p->op!=TK_UNION ) return 0;
+  if( p->pLimit==0 ) return 0;
+  if( p->pLimit->pRight ) return 0;  /* No OFFSET */
+  v = 0;
+  assert( p->pLimit->pLeft!=0 );
+  if( sqlite3ExprIsInteger(p->pLimit->pLeft, &v, 0, 0)==0 ) return 0;
+  if( v!=1 ) return 0;
+  if( OptimizationDisabled(db, SQLITE_UnionLimit) ) return 0;
+  return 1;
+}
+
+/*
+** This routine is called to process a compound query formed from
 ** two or more separate queries using UNION, UNION ALL, EXCEPT, or
 ** INTERSECT
 **
-** "p" points to the right-most of the two queries.  the query on the
+** "p" points to the right-most of the two queries.  The query on the
 ** left is p->pPrior.  The left query could also be a compound query
 ** in which case this routine will be called recursively.
 **
@@ -2990,7 +3079,7 @@ static int multiSelect(
     /* If the compound has an ORDER BY clause, then always use the merge
     ** algorithm. */
     return multiSelectByMerge(pParse, p, pDest);
-  }else if( p->op!=TK_ALL ){
+  }else if( p->op!=TK_ALL && !unionWithLimitOne(db,p) ){
     /* If the compound is EXCEPT, INTERSECT, or UNION (anything other than
     ** UNION ALL) then also always use the merge algorithm.  However, the
     ** multiSelectByMerge() routine requires that the compound have an
@@ -3002,7 +3091,8 @@ static int multiSelect(
     p->pOrderBy->a[0].u.x.iOrderByCol = 1;
     return multiSelectByMerge(pParse, p, pDest);
   }else{
-    /* For a UNION ALL compound without ORDER BY, simply run the left
+    /* For a UNION ALL compound without ORDER BY, or for a UNION with a 
+    ** LIMIT of exactly 1 and no OFFSET and no ORDER BY, simply run the left
     ** query, then run the right query */
     int addr = 0;
     int nLimit = 0;  /* Initialize to suppress harmless compiler warning */
@@ -3043,7 +3133,7 @@ static int multiSelect(
     p->pPrior = pPrior;
     p->nSelectRow = sqlite3LogEstAdd(p->nSelectRow, pPrior->nSelectRow);
     if( p->pLimit
-     && sqlite3ExprIsInteger(p->pLimit->pLeft, &nLimit, pParse)
+     && sqlite3ExprIsInteger(p->pLimit->pLeft, &nLimit, pParse, 0)
      && nLimit>0 && p->nSelectRow > sqlite3LogEst((u64)nLimit)
     ){
       p->nSelectRow = sqlite3LogEst((u64)nLimit);
@@ -3206,6 +3296,7 @@ static int generateOutputSubroutine(
       sqlite3VdbeAddOp4Int(v, OP_IdxInsert, pDest->iSDParm, r1,
                            pIn->iSdst, pIn->nSdst);
       if( pDest->iSDParm2>0 ){
+        assert( sqlite3CursorBloomable(pParse, pDest->iSDParm, pIn->nSdst) );
         sqlite3VdbeAddOp4Int(v, OP_FilterAdd, pDest->iSDParm2, 0,
                              pIn->iSdst, pIn->nSdst);
         ExplainQueryPlan((pParse, 0, "CREATE BLOOM FILTER"));
@@ -3552,7 +3643,7 @@ static int multiSelectByMerge(
 
   /* Compute the limit registers */
   computeLimitRegisters(pParse, p, labelEnd);
-  if( p->iLimit && op==TK_ALL ){
+  if( p->iLimit && (op==TK_ALL || unionWithLimitOne(db,p)) ){
     regLimitA = ++pParse->nMem;
     regLimitB = ++pParse->nMem;
     sqlite3VdbeAddOp2(v, OP_Copy, p->iOffset ? p->iOffset+1 : p->iLimit,
@@ -4033,7 +4124,9 @@ static int renumberCursorsCb(Walker *pWalker, Expr *pExpr){
   if( op==TK_COLUMN || op==TK_IF_NULL_ROW ){
     renumberCursorDoMapping(pWalker, &pExpr->iTable);
   }
-  if( ExprHasProperty(pExpr, EP_OuterON) ){
+  if( ExprHasProperty(pExpr, (EP_OuterON|EP_InnerON)) ){
+    testcase( ExprHasProperty(pExpr, EP_OuterON) );
+    testcase( ExprHasProperty(pExpr, EP_InnerON) );
     renumberCursorDoMapping(pWalker, &pExpr->w.iJoin);
   }
   return WRC_Continue;
@@ -4580,7 +4673,7 @@ static int flattenSubquery(
   pSub = pSub1;
   for(pParent=p; pParent; pParent=pParent->pPrior, pSub=pSub->pPrior){
     int nSubSrc;
-    u8 jointype = pSubitem->fg.jointype;
+    u8 jointype = pParent->pSrc->a[iFrom].fg.jointype;
     assert( pSub!=0 );
     pSubSrc = pSub->pSrc;     /* FROM clause of subquery */
     nSubSrc = pSubSrc->nSrc;  /* Number of terms in subquery FROM clause */
@@ -4605,7 +4698,6 @@ static int flattenSubquery(
       pSrc = sqlite3SrcListEnlarge(pParse, pSrc, nSubSrc-1,iFrom+1);
       if( pSrc==0 ) break;
       pParent->pSrc = pSrc;
-      pSubitem = &pSrc->a[iFrom];
     }
 
     /* Transfer the FROM clause terms from the subquery into the
@@ -4623,7 +4715,7 @@ static int flattenSubquery(
       pItem->fg.jointype |= (jointype & JT_LTORJ);
       memset(&pSubSrc->a[i], 0, sizeof(pSubSrc->a[i]));
     }
-    pSubitem->fg.jointype |= jointype;
+    pSrc->a[iFrom].fg.jointype |= jointype;
  
     /* Begin substituting subquery result set expressions for
     ** references to the iParent in the outer query.
@@ -4738,12 +4830,21 @@ struct WhereConst {
 };
 
 /*
-** Add a new entry to the pConst object.  Except, do not add duplicate
-** pColumn entries.  Also, do not add if doing so would not be appropriate.
+** Add a new entry to the pConst object, if appropriate.
 **
-** The caller guarantees the pColumn is a column and pValue is a constant.
-** This routine has to do some additional checks before completing the
-** insert.
+**    *   Do not add if pValue is not constant.  (This is enforced by
+**        the caller)
+**
+**    *   Do not add duplicate pColumn entries
+**
+**    *   Do not add if pValue has an affinity
+**
+**    *   Do not add if the comparison uses a collating sequence other
+**        than binary.
+**
+**    *   Do not add if pValue is a function that might return a subtype
+**
+** The caller guarantees the pColumn is a column.
 */
 static void constInsert(
   WhereConst *pConst,  /* The WhereConst into which we are inserting */
@@ -4754,12 +4855,12 @@ static void constInsert(
   int i;
   assert( pColumn->op==TK_COLUMN );
   assert( sqlite3ExprIsConstant(pConst->pParse, pValue) );
-
   if( ExprHasProperty(pColumn, EP_FixedCol) ) return;
   if( sqlite3ExprAffinity(pValue)!=0 ) return;
   if( !sqlite3IsBinary(sqlite3ExprCompareCollSeq(pConst->pParse,pExpr)) ){
     return;
   }
+  if( sqlite3ExprCanReturnSubtype(pConst->pParse, pValue) ) return;
 
   /* 2018-10-25 ticket [cf5ed20f]
   ** Make sure the same pColumn is not inserted more than once */
@@ -4905,7 +5006,7 @@ static int propagateConstantExprRewrite(Walker *pWalker, Expr *pExpr){
 **
 ** If the WHERE clause contains terms of the form COLUMN=CONSTANT or
 ** CONSTANT=COLUMN that are top-level AND-connected terms that are not
-** part of a ON clause from a LEFT JOIN, then throughout the query
+** part of a ON clause from an OUTER JOIN, then throughout the query
 ** replace all other occurrences of COLUMN with CONSTANT.
 **
 ** For example, the query:
@@ -5663,14 +5764,13 @@ With *sqlite3WithPush(Parse *pParse, With *pWith, u8 bFree){
 }
 
 /*
-** This function checks if argument pFrom refers to a CTE declared by
+** This function checks to see if argument pFrom refers to a CTE declared by
 ** a WITH clause on the stack currently maintained by the parser (on the
-** pParse->pWith linked list).  And if currently processing a CTE
-** CTE expression, through routine checks to see if the reference is
-** a recursive reference to the CTE.
+** pParse->pWith linked list).  And if currently processing a CTE expression,
+** it also checks to see if the reference is a recursive reference to the CTE.
 **
-** If pFrom matches a CTE according to either of these two above, pFrom->pSTab
-** and other fields are populated accordingly.
+** If pFrom matches a CTE, pFrom->pSTab and other fields are populated
+** accordingly.
 **
 ** Return 0 if no match is found.
 ** Return 1 if a match is found.
@@ -5799,6 +5899,18 @@ static int resolveFromTermToCte(
       pRecTerm = pRecTerm->pPrior;
     }
 
+#if SQLITE_MAX_EXPR_DEPTH>0
+    if( pParse->nTab>=db->aLimit[SQLITE_LIMIT_EXPR_DEPTH] ){
+      /* Bug 2026-10-04T05:35:14Z: Prevent nested CTEs from generating
+      ** an exponential number of cursors.  The error message here will
+      ** be "Nested too deep", which isn't exactly correct, but it is
+      ** sufficient, and we don't want to use extra code space for more
+      ** detail on such an obscure error. */
+      pParse->nNestSel = pParse->nTab;
+    }
+    pParse->nNestSel++;
+    if( checkSubqueryNestingDepth(pParse) ) return 2;
+#endif
     pCte->zCteErr = "circular reference: %s";
     pSavedWith = pParse->pWith;
     pParse->pWith = pWith;
@@ -5823,6 +5935,10 @@ static int resolveFromTermToCte(
       }
     }
     pParse->pWith = pWith;
+#if SQLITE_MAX_EXPR_DEPTH>0
+    pParse->nNestSel--;
+    assert( pParse->nNestSel>=0 );
+#endif
 
     for(pLeft=pSel; pLeft->pPrior; pLeft=pLeft->pPrior);
     pEList = pLeft->pEList;
@@ -6269,6 +6385,7 @@ static int selectExpander(Walker *pWalker, Select *p){
             pRight = sqlite3Expr(db, TK_ID, zName);
             if( (pTabList->nSrc>1
                  && (  (pFrom->fg.jointype & JT_LTORJ)==0
+                     || zTName!=0
                      || (selFlags & SF_NestedFrom)!=0
                      || !inAnyUsingClause(zName,pFrom,pTabList->nSrc-i-1)
                     )
@@ -7155,7 +7272,8 @@ static int countOfViewOptimization(Parse *pParse, Select *p){
   if( p->pSrc->nSrc!=1 ) return 0;                  /* One table in FROM  */
   if( ExprHasProperty(pExpr, EP_WinFunc) ) return 0;/* Not a window function */
   pFrom = p->pSrc->a;
-  if( pFrom->fg.isSubquery==0 ) return 0;    /* FROM is a subquery */
+  if( pFrom->fg.isSubquery==0 ) return 0;           /* FROM is a subquery */
+  if( (p->selFlags & SF_Correlated)!=0 ) return 0;  /* Not a correlated subq */
   pSub = pFrom->u4.pSubq->pSelect;
   if( pSub->pPrior==0 ) return 0;                   /* Must be a compound */
   if( pSub->selFlags & SF_CopyCte ) return 0;       /* Not a CTE */
@@ -7197,6 +7315,10 @@ static int countOfViewOptimization(Parse *pParse, Select *p){
       pExpr = pTerm;
     }else{
       pExpr = sqlite3PExpr(pParse, TK_PLUS, pTerm, pExpr);
+    }
+    if( pParse->nErr ){
+      sqlite3ExprDelete(db, pExpr);
+      pExpr = 0;
     }
     pSub = pPrior;
   }
@@ -7374,6 +7496,7 @@ static SQLITE_NOINLINE void existsToJoin(
         }
         pSub->pSrc = 0;
         sqlite3ParserAddCleanup(pParse, sqlite3SelectDeleteGeneric, pSub);
+        recomputeColumnsUsed(p, &p->pSrc->a[p->pSrc->nSrc-1]);
 #if TREETRACE_ENABLED
         if( sqlite3TreeTrace & 0x100000 ){
           TREETRACE(0x100000,pParse,p,
@@ -7391,10 +7514,10 @@ static SQLITE_NOINLINE void existsToJoin(
 */
 typedef struct CheckOnCtx CheckOnCtx;
 struct CheckOnCtx {
-  SrcList *pSrc;                  /* SrcList for this context */
-  int iJoin;                      /* Cursor numbers must be =< than this */
-  int bFuncArg;                   /* True for table-function arg */
-  CheckOnCtx *pParent;            /* Parent context */
+  SrcList *pSrc;       /* SrcList for this context */
+  int iJoin;           /* Cursors must be left of this one, if not negative */
+  int bFuncArg;        /* True for table-function arg */
+  CheckOnCtx *pParent; /* Parent context */
 };
 
 /*
@@ -7425,11 +7548,11 @@ static int selectCheckOnClausesExpr(Walker *pWalker, Expr *pExpr){
     ** set it to the cursor number of the RHS of the join to which this
     ** ON expression was attached and then iterate through the entire 
     ** expression.  */
-    assert( pCtx->iJoin==0 || pCtx->iJoin==pExpr->w.iJoin );
-    if( pCtx->iJoin==0 ){
+    assert( pCtx->iJoin<0 || pCtx->iJoin==pExpr->w.iJoin );
+    if( pCtx->iJoin<0 ){
       pCtx->iJoin = pExpr->w.iJoin;
       sqlite3WalkExprNN(pWalker, pExpr);
-      pCtx->iJoin = 0;
+      pCtx->iJoin = -1;
       return WRC_Prune;
     }
   }
@@ -7439,19 +7562,25 @@ static int selectCheckOnClausesExpr(Walker *pWalker, Expr *pExpr){
     ** Then, if CheckOnCtx.iJoin indicates that this expression is part of an
     ** ON clause from that SrcList (i.e. if iJoin is non-zero), check that it
     ** does not refer to a table to the right of CheckOnCtx.iJoin. */
+    int iTab = pExpr->iTable;
     do {
       SrcList *pSrc = pCtx->pSrc;
       int nSrc = pSrc->nSrc;
-      int iTab = pExpr->iTable;
       int ii;
       for(ii=0; ii<nSrc && pSrc->a[ii].iCursor!=iTab; ii++){}
       if( ii<nSrc ){
-        if( pCtx->iJoin && iTab>pCtx->iJoin ){
-          sqlite3ErrorMsg(pWalker->pParse, 
-              "%s references tables to its right",
-              (pCtx->bFuncArg ? "table-function argument" : "ON clause")
-          );
-          return WRC_Abort;
+        /* pSrc is the FROM clause that contains iTab */
+        if( pCtx->iJoin>=0 ){
+          for(ii--; ii>=0 && pSrc->a[ii].iCursor!=pCtx->iJoin; ii--){}
+          if( ii>=0 ){
+            /* Table iJoin appears to the left of table iTab in the SrcList.
+            ** Therefore the expression refers to a table to its right. */
+            sqlite3ErrorMsg(pWalker->pParse, 
+                "%s references tables to its right",
+                (pCtx->bFuncArg ? "table-function argument" : "ON clause")
+            );
+            return WRC_Abort;
+          }
         }
         break;
       }
@@ -7473,6 +7602,7 @@ static int selectCheckOnClausesSelect(Walker *pWalker, Select *pSelect){
     memset(&sCtx, 0, sizeof(sCtx));
     sCtx.pSrc = pSelect->pSrc;
     sCtx.pParent = pCtx;
+    sCtx.iJoin = -1;
     pWalker->u.pCheckOnCtx = &sCtx;
     sqlite3WalkSelect(pWalker, pSelect);
     pWalker->u.pCheckOnCtx = pCtx;
@@ -7498,20 +7628,41 @@ void sqlite3SelectCheckOnClauses(Parse *pParse, Select *pSelect){
   w.u.pCheckOnCtx = &sCtx;
   memset(&sCtx, 0, sizeof(sCtx));
   sCtx.pSrc = pSelect->pSrc;
+  sCtx.iJoin = -1;
   sqlite3WalkExpr(&w, pSelect->pWhere);
   pSelect->selFlags &= ~SF_OnToWhere;
 
   /* Check for any table-function args that are attached to virtual tables 
-  ** on the RHS of an outer join. They are subject to the same constraints
-  ** as ON clauses. */
+  ** on the RHS of an outer join. They are subject to similar constraints
+  ** as ON clauses. Specifically:
+  **
+  ** * If the table-valued function is to the left of any RIGHT JOIN, or if
+  **   it is the RHS of a RIGHT JOIN, then the table-valued function arguments
+  **   may not refer to any tables to the right of this one.
+  **
+  ** * If the table-valued function is to the left of a LEFT JOIN, then it
+  **   may not refer to any table that occurs to the right of the LEFT JOIN.
+  */
   sCtx.bFuncArg = 1;
   for(ii=0; ii<pSelect->pSrc->nSrc; ii++){
     SrcItem *pItem = &pSelect->pSrc->a[ii];
-    if( pItem->fg.isTabFunc
-     && (pItem->fg.jointype & JT_OUTER)
-    ){
-      sCtx.iJoin = pItem->iCursor;
-      sqlite3WalkExprList(&w, pItem->u1.pFuncArg);
+    if( pItem->fg.isTabFunc ){
+      sCtx.iJoin = -1;
+      if( (pItem->fg.jointype & (JT_LTORJ|JT_RIGHT)) ){
+        sCtx.iJoin = pItem->iCursor;
+      }else{
+        int jj;
+        for(jj=ii+1; jj<pSelect->pSrc->nSrc; jj++){
+          SrcItem *pItem2 = &pSelect->pSrc->a[jj];
+          if( pItem2->fg.jointype & JT_OUTER ){
+            sCtx.iJoin = pItem2[-1].iCursor;
+            break;
+          }
+        }
+      }
+      if( sCtx.iJoin>=0 ){
+        sqlite3WalkExprList(&w, pItem->u1.pFuncArg);
+      }
     }
   }
 }

@@ -1587,6 +1587,7 @@ TESTEXT = \
   $(TOP)\ext\misc\closure.c \
   $(TOP)\ext\misc\csv.c \
   $(TOP)\ext\misc\decimal.c \
+  $(TOP)\ext\misc\diskused.c\
   $(TOP)\ext\misc\eval.c \
   $(TOP)\ext\misc\explain.c \
   $(TOP)\ext\misc\fileio.c \
@@ -1606,6 +1607,7 @@ TESTEXT = \
   $(TOP)\ext\misc\series.c \
   $(TOP)\ext\misc\spellfix.c \
   $(TOP)\ext\misc\stmtrand.c \
+  $(TOP)\ext\misc\strdup.c \
   $(TOP)\ext\misc\totype.c \
   $(TOP)\ext\misc\unionvtab.c \
   $(TOP)\ext\misc\wholenumber.c \
@@ -1683,7 +1685,6 @@ TESTPROGS = \
   testfixture.exe \
   $(SQLITE3EXE) \
   sqlite3_analyzer.exe \
-  sqlite3_checker.exe \
   sqldiff.exe \
   dbhash.exe \
   sqltclsh.exe
@@ -1775,6 +1776,7 @@ FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\base64.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\base85.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\completion.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\decimal.c
+FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\diskused.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\ieee754.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\randomjson.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\regexp.c
@@ -1782,6 +1784,7 @@ FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\series.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\shathree.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\sha1.c
 FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\stmtrand.c
+FUZZCHECK_SRC = $(FUZZCHECK_SRC) $(TOP)\ext\misc\strdup.c
 
 OSSSHELL_SRC = $(TOP)\test\ossshell.c $(TOP)\test\ossfuzz.c
 DBFUZZ_COMPILE_OPTS = -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION
@@ -1890,6 +1893,7 @@ dbhash.exe:	$(TOP)\tool\dbhash.c $(SQLITE3C) $(SQLITE3H)
 
 RSYNC_SRC = \
   $(TOP)\tool\sqlite3_rsync.c \
+  $(TOP)\tool\winmain.c \
   $(SQLITE3C)
 
 RSYNC_OPT = \
@@ -2349,6 +2353,7 @@ SHELL_DEP = \
     $(TOP)\ext\misc\base85.c \
     $(TOP)\ext\misc\completion.c \
     $(TOP)\ext\misc\decimal.c \
+    $(TOP)\ext\misc\diskused.c \
     $(TOP)\ext\misc\fileio.c \
     $(TOP)\ext\misc\ieee754.c \
     $(TOP)\ext\misc\memtrace.c \
@@ -2475,6 +2480,36 @@ fts5_ext.lo:	fts5.c $(HDR) $(EXTHDR)
 fts5.dll:	fts5_ext.lo
 	$(LD) $(LDFLAGS) $(LTLINKOPTS) $(LTLIBPATHS) /DLL /OUT:$@ fts5_ext.lo
 
+# vec1 loadable extension.
+#
+# If VEC1_AVX2 is non-zero (the default, except when targeting ARM),
+# vec1.c is compiled twice - once with scalar code and once with AVX2 -
+# and both objects linked into a single DLL that picks one at runtime
+# based on the CPU. Otherwise a single scalar-only build is done.
+#
+!IFNDEF VEC1_AVX2
+!IF "$(PLATFORM)"=="arm" || "$(PLATFORM)"=="ARM" || "$(PLATFORM)"=="arm64" || "$(PLATFORM)"=="ARM64"
+VEC1_AVX2 = 0
+!ELSEIF "$(VSCMD_ARG_TGT_ARCH)"=="arm" || "$(VSCMD_ARG_TGT_ARCH)"=="arm64"
+VEC1_AVX2 = 0
+!ELSE
+VEC1_AVX2 = 1
+!ENDIF
+!ENDIF
+
+VEC1_SRC = $(TOP)\ext\vec1\vec1.c
+
+!IF $(VEC1_AVX2)!=0
+vec1.dll:	$(VEC1_SRC) $(SQLITE3H)
+	$(TCC) -DVEC1SIMD=SCALAR -Fovec1scalar.lo -Fdvec1.pdb -c $(VEC1_SRC)
+	$(TCC) -DVEC1SIMD=AVX2 -arch:AVX2 -Fovec1avx2.lo -Fdvec1.pdb -c $(VEC1_SRC)
+	$(LD) $(LDFLAGS) $(LTLINKOPTS) $(LTLIBPATHS) /DLL /OUT:$@ vec1scalar.lo vec1avx2.lo
+!ELSE
+vec1.dll:	$(VEC1_SRC) $(SQLITE3H)
+	$(TCC) -Fovec1.lo -Fdvec1.pdb -c $(VEC1_SRC)
+	$(LD) $(LDFLAGS) $(LTLINKOPTS) $(LTLIBPATHS) /DLL /OUT:$@ vec1.lo
+!ENDIF
+
 sqlite3rbu.lo:	$(TOP)\ext\rbu\sqlite3rbu.c $(HDR) $(EXTHDR)
 	$(LTCOMPILE) -DSQLITE_CORE -c $(TOP)\ext\rbu\sqlite3rbu.c
 
@@ -2585,7 +2620,7 @@ testrunner:	testfixture.exe
 # Probably other tests too, but at least this one.
 #
 devtest:	srctree-check sourcetest
-	$(TCLSH_CMD) $(TOP)\test\testrunner.tcl mdevtest
+	$(TCLSH_CMD) $(TOP)\test\testrunner.tcl mdevtest --stop-on-error
 
 mdevtest:
 	$(TCLSH_CMD) $(TOP)\test\testrunner.tcl mdevtest
@@ -2593,7 +2628,7 @@ mdevtest:
 # Rerun test cases that failed on the previous testrunner invocation
 #
 retest:
-	$(TCLSH_CMD) $(TOP)\test\testrunner.tcl retest
+	$(TCLSH_CMD) $(TOP)\test\testrunner.tcl retest --stop-on-error
 
 # Show all errors from the most reason testrunner invocation
 #
@@ -2743,6 +2778,9 @@ rbu.exe:	$(TOP)\ext\rbu\rbu.c $(TOP)\ext\rbu\sqlite3rbu.c $(SQLITE3C) $(SQLITE3H
 	$(LTLINK) $(NO_WARN) -DSQLITE_ENABLE_RBU \
 		$(TOP)\ext\rbu\rbu.c $(SQLITE3C) /link $(LDFLAGS) $(LTLINKOPTS)
 
+$(AUXTEST).exe:	$(TOP)\test\c\$(AUXTEST).c
+	$(LTLINK) $(NO_WARN) $(TOP)\test\c\$(AUXTEST).c sqlite3.lo /link $(LDFLAGS) $(LTLINKOPTS)
+
 THREADTEST3_SRC = \
   $(TOP)\test\threadtest3.c \
   $(TOP)\test\tt3_checkpoint.c \
@@ -2753,6 +2791,21 @@ THREADTEST3_SRC = \
 
 threadtest3.exe: $(THREADTEST3_SRC) $(TOP)\src\test_multiplex.c $(SQLITE3C) $(SQLITE3H)
 	$(LTLINK) $(NO_WARN) $(TOP)\test\threadtest3.c $(TOP)\src\test_multiplex.c $(SQLITE3C) /link $(LDFLAGS) $(LTLINKOPTS)
+
+# Convenienced targets for common executables that omit
+# the .exe suffix
+#
+sqldiff:	sqldiff.exe
+sqlite3_rsync: sqlite3_rsync.exe
+fuzzcheck: fuzzcheck.exe
+testfixture: testfixture.exe
+sqlite3: $(SQLITE3EXE)
+showdb: showdb.exe
+LogEst: LogEst.exe
+wordcount: wordcount.exe
+speedtest1: speedtest1.exe
+kvtest: kvtest.exe
+jimsh0: jimsh0.exe
 
 # Display key variables that control which version of TCL is to be used.
 #
@@ -2937,6 +2990,8 @@ clean:
 	del /Q kvtest.exe ossshell.exe scrub.exe 2>NUL
 	del /Q showshm.exe sqlite3_checker.* sqlite3_expert.exe 2>NUL
 	del /Q fts5.* fts5parse.* 2>NUL
+	del /Q vec1.* 2>NUL
 	del /q src-verify.exe 2>NUL
 	del /q jimsh.exe jimsh0.exe 2>NUL
+	-$(TCLSH_CMD) test/testrunner.tcl clean
 # <</mark>>

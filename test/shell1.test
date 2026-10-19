@@ -386,7 +386,7 @@ do_test shell1-3.7.4 {
 # .header(s) ON|OFF      Turn display of headers on or off
 do_test shell1-3.9.1 {
   catchcmd "test.db" ".header"
-} {1 {Usage: .headers on|off}}
+} {1 {Usage: .headers off|on|always}}
 do_test shell1-3.9.2 {
   catchcmd "test.db" ".header ON"
 } {0 {}}
@@ -396,11 +396,11 @@ do_test shell1-3.9.3 {
 do_test shell1-3.9.4 {
   # too many arguments
   catchcmd "test.db" ".header OFF BAD"
-} {1 {Usage: .headers on|off}}
+} {1 {Usage: .headers off|on|always}}
 
 do_test shell1-3.9.5 {
   catchcmd "test.db" ".headers"
-} {1 {Usage: .headers on|off}}
+} {1 {Usage: .headers off|on|always}}
 do_test shell1-3.9.6 {
   catchcmd "test.db" ".headers ON"
 } {0 {}}
@@ -410,7 +410,7 @@ do_test shell1-3.9.7 {
 do_test shell1-3.9.8 {
   # too many arguments
   catchcmd "test.db" ".headers OFF BAD"
-} {1 {Usage: .headers on|off}}
+} {1 {Usage: .headers off|on|always}}
 
 # .help                  Show this message
 do_test shell1-3.10.1 {
@@ -563,7 +563,8 @@ do_test shell1-3.17.3 {
 do_test shell1-3.17.4 {
   # too many arguments
   catchcmd "test.db" ".prompt FOO BAR BAD"
-} {0 {}}
+} {1 {line 1: .prompt FOO BAR BAD
+line 1:                 ^--- extra argument}}
 
 # .quit                  Exit this program
 do_test shell1-3.18.1 {
@@ -625,10 +626,10 @@ do_test shell1-3.21.4 {
   }
   catchcmd "test.db" ".schema"
 } {0 {CREATE TABLE t1(x);
-CREATE VIEW v2 AS SELECT x+1 AS y FROM t1
-/* v2(y) */;
-CREATE VIEW v1 AS SELECT y+1 FROM v2
-/* v1("y+1") */;}}
+CREATE VIEW v2 AS SELECT x+1 AS y FROM t1;
+/* v2(y) */
+CREATE VIEW v1 AS SELECT y+1 FROM v2;
+/* v1("y+1") */}}
 
   catch {db eval {DROP VIEW v1; DROP VIEW v2; DROP TABLE t1;}}
 }
@@ -646,6 +647,16 @@ do_test shell1-3.21.6 {
    {DROP TABLE t2;} \
    {.schema -indent t2}
 } {}
+do_test shell1-3.21.7 {
+  catchcmd "test7.db" {
+     CREATE TABLE t7(x);
+     CREATE VIEW v7("a*/;SELECT 12345;/*") AS SELECT 234;
+  }
+  catchcmd "test7.db" ".schema"
+} {0 {CREATE TABLE t7(x);
+CREATE VIEW v7("a*/;SELECT 12345;/*") AS SELECT 234;
+/* v7("a**;SELECT 12345;/*") */}}
+forcedelete test7.db
 
 # .separator STRING  Change column separator used by output and .import
 do_test shell1-3.22.1 {
@@ -694,7 +705,8 @@ do_test shell1-3.23b.3 {
 do_test shell1-3.23b.4 {
   # too many arguments
   catchcmd "test.db" ".stats OFF BAD"
-} {1 {Usage: .stats ?on|off|stmt|vmstep?}}
+} {1 {line 1: .stats OFF BAD
+line 1:        ^--- unknown argument}}
 
 # Ticket 7be932dfa60a8a6b3b26bcf7623ec46e0a403ddb 2018-06-07
 # Adverse interaction between .stats and .eqp
@@ -1346,7 +1358,8 @@ do_test shell1-8.4b {
     {SELECT ieee754_mantissa(47.49) AS M, ieee754_exponent(47.49) AS E;}
 } {0 {        M         |  E
 ------------------+-----
- 6683623321994527 | -47}}
+ 6683623321994527 | -47
+(1 row)}}
 do_test_with_ansi_output shell1-8.5 {
   catchcmd ":memory: --box" {
 create table t(a text, b int);

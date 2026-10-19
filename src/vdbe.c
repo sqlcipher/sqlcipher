@@ -437,10 +437,12 @@ int sqlite3_value_numeric_type(sqlite3_value *pVal){
   int eType = sqlite3_value_type(pVal);
   if( eType==SQLITE_TEXT ){
     Mem *pMem = (Mem*)pVal;
-    assert( pMem->db!=0 );
-    sqlite3_mutex_enter(pMem->db->mutex);
+#if SQLITE_THREADSAFE>0
+    sqlite3_mutex *pMutex = pMem->db ? pMem->db->mutex : 0;
+#endif
+    sqlite3_mutex_enter(pMutex);
     applyNumericAffinity(pMem, 0);
-    sqlite3_mutex_leave(pMem->db->mutex);
+    sqlite3_mutex_leave(pMutex);
     eType = sqlite3_value_type(pVal);
   }
   return eType;
@@ -686,6 +688,10 @@ static Mem *out2Prerelease(Vdbe *p, VdbeOp *pOp){
 /*
 ** Compute a bloom filter hash using pOp->p4.i registers from aMem[] beginning
 ** with pOp->p3.  Return the hash.
+**
+** IMPORTANT RESTRICTION (tag-202607231411):  This hash is only valid if the
+** collating sequence for TEXT is BINARY. Hence, Bloom filters that use this
+** hash will not work for look-ups that use any other collating sequence.
 */
 static u64 filterHash(const Mem *aMem, const Op *pOp){
   int i, mx;
@@ -698,16 +704,32 @@ static u64 filterHash(const Mem *aMem, const Op *pOp){
       h += p->u.i;
     }else if( p->flags & MEM_Real ){
       h += sqlite3VdbeIntValue(p);
-    }else if( p->flags & (MEM_Str|MEM_Blob) ){
-      /* All strings have the same hash and all blobs have the same hash,
-      ** though, at least, those hashes are different from each other and
-      ** from NULL. */
-      h += 4093 + (p->flags & (MEM_Str|MEM_Blob));
+    }else if( p->flags & MEM_Str ){
+      u64 x;
+      h += p->n;
+      if( p->n >= (int)sizeof(x) ){
+        memcpy(&x, p->z, sizeof(x));
+        h += x;
+        memcpy(&x, p->z + p->n - sizeof(x), sizeof(x));
+        h += x;
+      }else{
+        x = 0;
+        memcpy(&x, p->z, p->n);
+        h += x;
+      }
+    }else if( p->flags & MEM_Blob ){
+      int n = p->n;
+      u64 x = 0;
+      if( n ){
+        memcpy(&x, p->z, MIN(n, (int)sizeof(x)));
+        h += x;
+      }
+      h += n;
+      if( p->flags & MEM_Zero ) h += p->u.nZero;
     }
   }
   return h;
 }
-
 
 /*
 ** For OP_Column, factor out the case where content is loaded from
@@ -780,6 +802,7 @@ static SQLITE_NOINLINE int vdbeColumnFromOverflow(
     }else{
       rc = sqlite3VdbeMemSetStr(pDest, pBuf, len, 0,
                                 sqlite3RCStrUnref);
+      pDest->enc = encoding;
     }
   }else{
     rc = sqlite3VdbeMemFromBtree(pC->uc.pCursor, iOffset, len, pDest);
@@ -792,6 +815,40 @@ static SQLITE_NOINLINE int vdbeColumnFromOverflow(
   }
   pDest->flags &= ~MEM_Ephem;
   return rc;
+}
+
+/*
+** Memory cell pMem may contain a blob or a NULL value. Cursor pCsr is
+** open on an index. If the current index entry matches the blob value in
+** pMem byte-for-byte, set pMem to NULL and return 1. Otherwise, return 0.
+**
+** If an error occurs, set (*pRc) to an SQLite error code. Return 1 in this
+** case as well.
+*/
+static SQLITE_NOINLINE int vdbeIndexKeyCompare(
+  BtCursor *pCsr,                 /* Cursor to compare key to */
+  Mem *pMem,
+  int *pRc
+){
+  int ret = 0;
+  u32 nKey = 0;
+
+  assert( pMem->flags & (MEM_Blob|MEM_Null) );
+  nKey = sqlite3BtreePayloadSize(pCsr);
+  if( nKey==(u32)pMem->n && ALWAYS((pMem->flags & MEM_Blob)!=0) ){
+    /* This code could just use sqlite3BtreePayloadFetch(). But calling that
+    ** function here apparently prevents compilers from inlining it in other,
+    ** more performance critical, places. So this code uses
+    ** MemFromBtreeZeroOffset(), which is just as fast in most cases, but also
+    ** handles the case where the index record uses overflow pages. */
+    Mem m;
+    memset(&m, 0, sizeof(m));
+    *pRc = sqlite3VdbeMemFromBtreeZeroOffset(pCsr, nKey, &m);
+    ret = (*pRc!=SQLITE_OK || 0==memcmp(pMem->z, m.z, nKey));
+    sqlite3VdbeMemReleaseMalloc(&m);
+  }
+
+  return ret;
 }
 
 /*
@@ -1374,31 +1431,35 @@ case OP_Integer: {         /* out2 */
   break;
 }
 
-/* Opcode: Int64 * P2 * P4 *
-** Synopsis: r[P2]=P4
+/* Opcode: Int64 P1 P2 P3 * *
+** Synopsis: r[P2]=PINT13
 **
-** P4 is a pointer to a 64-bit integer value.
-** Write that value into register P2.
+** Combine P1 and P3 into a signed 64-bit integer.  P1 is the least
+** significant 32 bits and P3 is the most significant.  Store the
+** result in register P2.
 */
 case OP_Int64: {           /* out2 */
   pOut = out2Prerelease(p, pOp);
-  assert( pOp->p4.pI64!=0 );
-  pOut->u.i = *pOp->p4.pI64;
+  pOut->u.i = INT32_TO_64(pOp->p1,pOp->p3);
   break;
 }
 
 #ifndef SQLITE_OMIT_FLOATING_POINT
-/* Opcode: Real * P2 * P4 *
-** Synopsis: r[P2]=P4
+/* Opcode: Real P1 P2 P3 * *
+** Synopsis: r[P2]=PDBL13
 **
-** P4 is a pointer to a 64-bit floating point value.
-** Write that value into register P2.
+** P1 and P3 are combined to 64 bits with P1 being the lower the P3
+** the upper.  The result is interpreted as a 64-bit floating-point
+** and stored in register P2.
 */
 case OP_Real: {            /* same as TK_FLOAT, out2 */
+  u64 ii;
   pOut = out2Prerelease(p, pOp);
   pOut->flags = MEM_Real;
-  assert( !sqlite3IsNaN(*pOp->p4.pReal) );
-  pOut->u.r = *pOp->p4.pReal;
+  ii = (u64)INT32_TO_64(pOp->p1,pOp->p3);
+  swapMixedEndianFloat(ii);
+  memcpy(&pOut->u.r, &ii, 8);
+  assert( !sqlite3IsNaN(pOut->u.r) );
   break;
 }
 #endif
@@ -2105,7 +2166,18 @@ case OP_AddImm: {            /* in1 */
 case OP_MustBeInt: {            /* jump0, in1 */
   pIn1 = &aMem[pOp->p1];
   if( (pIn1->flags & MEM_Int)==0 ){
-    applyAffinity(pIn1, SQLITE_AFF_NUMERIC, encoding);
+    if( (pIn1->flags & MEM_Real)!=0 ){
+      sqlite3_int64 ix;
+      if( pIn1->u.r>=-9223372036854775808.0
+       && pIn1->u.r<+9223372036854775808.0
+       && (double)(ix = sqlite3RealToI64(pIn1->u.r))==pIn1->u.r
+      ){
+        pIn1->u.i = ix;
+        MemSetTypeFlag(pIn1, MEM_Int);
+      }
+    }else{
+      applyAffinity(pIn1, SQLITE_AFF_NUMERIC, encoding);
+    }
     if( (pIn1->flags & MEM_Int)==0 ){
       VdbeBranchTaken(1, 2);
       if( pOp->p2==0 ){
@@ -3191,30 +3263,91 @@ op_column_restart:
   assert( t==pC->aType[p2] );
   if( pC->szRow>=aOffset[p2+1] ){
     /* This is the common case where the desired content fits on the original
-    ** page - where the content is not on an overflow page */
+    ** page - where the content is not on an overflow page.
+    **
+    ** The big switch() is an in-line variant of sqlite3VdbeSerialGet() that
+    ** has been optimized for the OP_Column opcode.
+    */
     zData = pC->aRow + aOffset[p2];
-    if( t<12 ){
-      sqlite3VdbeSerialGet(zData, t, pDest);
-    }else{
-      /* If the column value is a string, we need a persistent value, not
-      ** a MEM_Ephem value.  This branch is a fast short-cut that is equivalent
-      ** to calling sqlite3VdbeSerialGet() and sqlite3VdbeDeephemeralize().
-      */
-      static const u16 aFlag[] = { MEM_Blob, MEM_Str|MEM_Term };
-      pDest->n = len = (t-12)/2;
-      pDest->enc = encoding;
-      if( pDest->szMalloc < len+2 ){
-        if( len>db->aLimit[SQLITE_LIMIT_LENGTH] ) goto too_big;
+    switch( t ){
+      case 0:
+      case 11:
         pDest->flags = MEM_Null;
-        if( sqlite3VdbeMemGrow(pDest, len+2, 0) ) goto no_mem;
-      }else{
-        pDest->z = pDest->zMalloc;
+        break;
+      case 1:
+        pDest->u.i = ONE_BYTE_INT(zData);
+        pDest->flags = MEM_Int;
+        testcase( pDest->u.i<0 );
+        break;
+      case 2:
+        pDest->u.i = TWO_BYTE_INT(zData);
+        pDest->flags = MEM_Int;
+        testcase( pDest->u.i<0 );
+        break;
+      case 3:
+        pDest->u.i = THREE_BYTE_INT(zData);
+        pDest->flags = MEM_Int;
+        testcase( pDest->u.i<0 );
+        break;
+      case 4:
+        pDest->u.i = FOUR_BYTE_INT(zData);
+        pDest->flags = MEM_Int;
+        testcase( pDest->u.i<0 );
+        break;
+      case 5:
+        pDest->u.i = SIX_BYTE_INT(zData);
+        pDest->flags = MEM_Int;
+        testcase( pDest->u.i<0 );
+        break;
+      case 6: {
+        pDest->u.i = (i64)sqlite3Get8byte(zData);
+        pDest->flags = MEM_Int;
+        testcase( pDest->u.i<0 );
+        break;
       }
-      memcpy(pDest->z, zData, len);
-      pDest->z[len] = 0;
-      pDest->z[len+1] = 0;
-      pDest->flags = aFlag[t&1];
-    }
+      case 7: {
+        u64 x = sqlite3Get8byte(zData);
+        swapMixedEndianFloat(x);
+        pDest->flags = IsNaN(x) ? MEM_Null : MEM_Real;
+        memcpy(&pDest->u.r, &x, sizeof(x));
+        testcase( pDest->u.r<0 );
+        break;
+      }
+      case 8:
+      case 9: {
+        pDest->u.i = t-8;
+        pDest->flags = MEM_Int;
+        break;
+      }
+      case 10:
+        /* Internal use only: NULL with virtual table
+        ** UPDATE no-change flag set */
+        pDest->flags = MEM_Null|MEM_Zero;
+        pDest->u.nZero = 0;
+        pDest->n = 0;
+        break;
+      default: {
+        /* If the column value is a string or blob, we need a persistent
+        ** value, not a MEM_Ephem value.  This case is a fast short-cut
+        ** that is equivalent to calling sqlite3VdbeSerialGet() and
+        ** sqlite3VdbeDeephemeralize().
+        */
+        static const u16 aFlag[] = { MEM_Blob, MEM_Str|MEM_Term };
+        pDest->n = len = (t-12)/2;
+        pDest->enc = encoding;
+        if( pDest->szMalloc < len+2 ){
+          if( len>db->aLimit[SQLITE_LIMIT_LENGTH] ) goto too_big;
+          pDest->flags = MEM_Null;
+          if( sqlite3VdbeMemGrow(pDest, len+2, 0) ) goto no_mem;
+        }else{
+          pDest->z = pDest->zMalloc;
+        }
+        memcpy(pDest->z, zData, len);
+        pDest->z[len] = 0;
+        pDest->z[len+1] = 0;
+        pDest->flags = aFlag[t&1];
+      }
+    } /* End of switch */
   }else{
     u8 p5;
     pDest->enc = encoding;
@@ -3414,22 +3547,9 @@ case OP_Affinity: {
     assert( zAffinity[0]==SQLITE_AFF_NONE || memIsValid(pIn1) );
     applyAffinity(pIn1, zAffinity[0], encoding);
     if( zAffinity[0]==SQLITE_AFF_REAL && (pIn1->flags & MEM_Int)!=0 ){
-      /* When applying REAL affinity, if the result is still an MEM_Int
-      ** that will fit in 6 bytes, then change the type to MEM_IntReal
-      ** so that we keep the high-resolution integer value but know that
-      ** the type really wants to be REAL. */
-      testcase( pIn1->u.i==140737488355328LL );
-      testcase( pIn1->u.i==140737488355327LL );
-      testcase( pIn1->u.i==-140737488355328LL );
-      testcase( pIn1->u.i==-140737488355329LL );
-      if( pIn1->u.i<=140737488355327LL && pIn1->u.i>=-140737488355328LL ){
-        pIn1->flags |= MEM_IntReal;
-        pIn1->flags &= ~MEM_Int;
-      }else{
-        pIn1->u.r = (double)pIn1->u.i;
-        pIn1->flags |= MEM_Real;
-        pIn1->flags &= ~(MEM_Int|MEM_Str);
-      }
+      pIn1->u.r = (double)pIn1->u.i;
+      pIn1->flags |= MEM_Real;
+      pIn1->flags &= ~(MEM_Int|MEM_Str);
     }
     REGISTER_TRACE((int)(pIn1-aMem), pIn1);
     zAffinity++;
@@ -3682,12 +3802,24 @@ case OP_MakeRecord: {
   }
   nByte = nHdr+nData;
 
+  /* If we are able to put an over-run area of 7 bytes on the end of the
+  ** memory allocation into which the record is being constructed, then
+  ** the encoding of integer values can go faster. This is only possible
+  ** if SQLITE_MAX_LENGTH is no with 7 of INT32_MAX and if the host CPU
+  ** byte-order is known at compile-time.
+  */
+#if SQLITE_MAX_LENGTH<=2147483640 && SQLITE_BYTEORDER>0
+# define OVERRUN 7   /* We are able to allocate an overrun of 7 bytes */
+#else
+# define OVERRUN 0   /* No overrun will be available */
+#endif
+
   /* Make sure the output register has a buffer large enough to store
   ** the new record. The output register (pOp->p3) is not allowed to
   ** be one of the input registers (because the following call to
   ** sqlite3VdbeMemClearAndResize() could clobber the value before it is used).
   */
-  if( nByte+nZero<=pOut->szMalloc ){
+  if( nByte+nZero<=pOut->szMalloc-OVERRUN ){
     /* The output register is already large enough to hold the record.
     ** No error checks or buffer enlargement is required */
     pOut->z = pOut->zMalloc;
@@ -3697,7 +3829,7 @@ case OP_MakeRecord: {
     if( nByte+nZero>db->aLimit[SQLITE_LIMIT_LENGTH] ){
       goto too_big;
     }
-    if( sqlite3VdbeMemClearAndResize(pOut, (int)nByte) ){
+    if( sqlite3VdbeMemClearAndResize(pOut, (int)nByte+OVERRUN) ){
       goto no_mem;
     }
   }
@@ -3740,6 +3872,27 @@ case OP_MakeRecord: {
         }
         len = sqlite3SmallTypeSizes[serial_type];
         assert( len>=1 && len<=8 && len!=5 && len!=7 );
+#if SQLITE_BYTEORDER==1234
+        v = sqlite3BSwap64(v);
+        if( OVERRUN ){
+          static const u8 aShift[] = { 0, 56, 48, 40, 32, 16, 0, 0 };
+          v >>= aShift[serial_type];
+          memcpy(zPayload, &v, 8);
+        }else{
+          /* Test this limb by compiling with -DSQLITE_MAX_LENGTH=2147483647 */
+          memcpy(zPayload, (u8*)&v + 8 - len, len);
+        }
+#elif SQLITE_BYTEORDER==4321
+        if( OVERRUN ){
+          static const u8 aShift[] = { 0, 56, 48, 40, 32, 16, 0, 0 };
+          v <<= aShift[serial_type];
+          memcpy(zPayload, &v, 8);
+        }else{
+          /* Test this limb by compiling with -DSQLITE_MAX_LENGTH=2147483647 */
+          memcpy(zPayload, (u8*)&v + 8 - len, len);
+        }
+#else
+        /* Test this limb by compiling with -DSQLITE_BYTEORDER=0 */
         switch( len ){
           default: zPayload[7] = (u8)(v&0xff); v >>= 8;
                    zPayload[6] = (u8)(v&0xff); v >>= 8;
@@ -3755,6 +3908,8 @@ case OP_MakeRecord: {
                    /* no break */ deliberate_fall_through
           case 1:  zPayload[0] = (u8)(v&0xff);
         }
+#endif
+#undef OVERRUN  /* We are done with the OVERRUN macro now */
         zPayload += len;
       }
     }else if( serial_type<0x80 ){
@@ -4712,21 +4867,21 @@ case OP_Close: {             /* ncycle */
 }
 
 #ifdef SQLITE_ENABLE_COLUMN_USED_MASK
-/* Opcode: ColumnsUsed P1 * * P4 *
+/* Opcode: ColumnsUsed P1 P2 P3 * *
+** Synopsis: Cursor P1 uses columns PHEX23
 **
 ** This opcode (which only exists if SQLite was compiled with
 ** SQLITE_ENABLE_COLUMN_USED_MASK) identifies which columns of the
-** table or index for cursor P1 are used.  P4 is a 64-bit integer
-** (P4_INT64) in which the first 63 bits are one for each of the
-** first 63 columns of the table or index that are actually used
-** by the cursor.  The high-order bit is set if any column after
-** the 64th is used.
+** table or index for cursor P1 are used.  P2 and P3 combine to give
+** a 64-bit unsigned integer mask.  P2 stores the lower 32 bits and
+** P3 stores the upper 32 bits.  If the high-order bit of P3 is set
+** that means that and 64-th or some later column is used.
 */
 case OP_ColumnsUsed: {
   VdbeCursor *pC;
   pC = p->apCsr[pOp->p1];
   assert( pC->eCurType==CURTYPE_BTREE );
-  pC->maskUsed = *(u64*)pOp->p4.pI64;
+  pC->maskUsed = INT32_TO_64(pOp->p2,pOp->p3);
   break;
 }
 #endif
@@ -5237,24 +5392,6 @@ case OP_SeekHit: {           /* ncycle */
   break;
 }
 
-/* Opcode: IfNotOpen P1 P2 * * *
-** Synopsis: if( !csr[P1] ) goto P2
-**
-** If cursor P1 is not open or if P1 is set to a NULL row using the
-** OP_NullRow opcode, then jump to instruction P2. Otherwise, fall through.
-*/
-case OP_IfNotOpen: {        /* jump */
-  VdbeCursor *pCur;
-
-  assert( pOp->p1>=0 && pOp->p1<p->nCursor );
-  pCur = p->apCsr[pOp->p1];
-  VdbeBranchTaken(pCur==0 || pCur->nullRow, 2);
-  if( pCur==0 || pCur->nullRow ){
-    goto jump_to_p2_and_check_for_interrupt;
-  }
-  break;
-}
-
 /* Opcode: Found P1 P2 P3 P4 *
 ** Synopsis: key=r[P3@P4]
 **
@@ -5496,7 +5633,7 @@ case OP_SeekRowid: {        /* jump0, in3, ncycle */
   VdbeCursor *pC;
   BtCursor *pCrsr;
   int res;
-  u64 iKey;
+  i64 iKey;
 
   pIn3 = &aMem[pOp->p3];
   testcase( pIn3->flags & MEM_Int );
@@ -5510,9 +5647,21 @@ case OP_SeekRowid: {        /* jump0, in3, ncycle */
     ** changing the datatype of pIn3, however, as it is used by other
     ** parts of the prepared statement. */
     Mem x = pIn3[0];
-    applyAffinity(&x, SQLITE_AFF_NUMERIC, encoding);
-    if( (x.flags & MEM_Int)==0 ) goto jump_to_p2;
-    iKey = x.u.i;
+    if( x.flags & MEM_Str ){
+      applyNumericAffinity(&x, 1);
+    }
+    if( x.flags & MEM_Int ){
+      iKey = x.u.i;
+    }else
+    if( (x.flags & MEM_Real)==0
+     || x.u.r < -9223372036854775808.0
+     || x.u.r > 9223372036854774784.0
+           /*   ^^^^^^^^^^^^^^^^^^^^^-- same value as every other double
+           **   between 9223372036854774263.0 and 923372036854775295.0 */
+     || (double)(iKey = sqlite3RealToI64(x.u.r))!=x.u.r
+    ){
+      goto jump_to_p2;
+    }
     goto notExistsWithKey;
   }
   /* Fall through into OP_NotExists */
@@ -6192,14 +6341,17 @@ case OP_Rowid: {                 /* out2, ncycle */
   break;
 }
 
-/* Opcode: NullRow P1 * * * *
+/* Opcode: NullRow P1 P2 * * *
 **
-** Move the cursor P1 to a null row.  Any OP_Column operations
+** Move the cursor P1 to a null row if P2 is 0.  Any OP_Column operations
 ** that occur while the cursor is on the null row will always
 ** write a NULL.
 **
 ** If cursor P1 is not previously opened, open it now to a special
 ** pseudo-cursor that always returns NULL for every column.
+**
+** If P2 is not 0, then the nullRow flag on the pseudo-cursor is
+** turned off.
 */
 case OP_NullRow: {
   VdbeCursor *pC;
@@ -6216,7 +6368,7 @@ case OP_NullRow: {
     pC->noReuse = 1;
     pC->uc.pCursor = sqlite3BtreeFakeValidCursor();
   }
-  pC->nullRow = 1;
+  pC->nullRow = (pOp->p2==0);
   pC->cacheStatus = CACHE_STALE;
   if( pC->eCurType==CURTYPE_BTREE ){
     assert( pC->uc.pCursor!=0 );
@@ -6622,14 +6774,19 @@ case OP_SorterInsert: {     /* in2 */
   break;
 }
 
-/* Opcode: IdxDelete P1 P2 P3 P4 *
-** Synopsis: key=r[P2@P3]
+/* Opcode: IdxDelete P1 P2 P3 P4 P5
+** Synopsis: key=r[P2@P5]
 **
-** The content of P3 registers starting at register P2 form
+** The content of P5 registers starting at register P2 form
 ** an unpacked index key. This opcode removes that entry from the
 ** index opened by cursor P1.
 **
 ** P4 is a pointer to an Index structure.
+**
+** If P3 is non-zero, it is the register number of a register holding
+** a record that will be inserted into this index. If that record is
+** identical to the one that would be deleted by this instruction, 
+** skip the delete and set register P3 to NULL.
 **
 ** Raise an SQLITE_CORRUPT_INDEX error if no matching index entry is found
 ** and not in writable_schema mode.
@@ -6640,8 +6797,8 @@ case OP_IdxDelete: {
   int res;
   UnpackedRecord r;
 
-  assert( pOp->p3>0 );
-  assert( pOp->p2>0 && pOp->p2+pOp->p3<=(p->nMem+1 - p->nCursor)+1 );
+  assert( pOp->p5>0 );
+  assert( pOp->p2>0 && pOp->p2+pOp->p5<=(p->nMem+1 - p->nCursor)+1 );
   assert( pOp->p1>=0 && pOp->p1<p->nCursor );
   pC = p->apCsr[pOp->p1];
   assert( pC!=0 );
@@ -6650,7 +6807,7 @@ case OP_IdxDelete: {
   pCrsr = pC->uc.pCursor;
   assert( pCrsr!=0 );
   r.pKeyInfo = pC->pKeyInfo;
-  r.nField = (u16)pOp->p3;
+  r.nField = pOp->p5;
   r.default_rc = 0;
   r.aMem = &aMem[pOp->p2];
   rc = sqlite3BtreeIndexMoveto(pCrsr, &r, &res);
@@ -6669,6 +6826,13 @@ case OP_IdxDelete: {
       break;
     }
   }
+
+  if( pOp->p3 && vdbeIndexKeyCompare(pCrsr, &aMem[pOp->p3], &rc) ){
+    if( rc ) goto abort_due_to_error;
+    sqlite3VdbeMemSetNull(&aMem[pOp->p3]);
+    break;
+  }
+
   rc = sqlite3BtreeDelete(pCrsr, BTREE_AUXDELETE);
   if( rc ) goto abort_due_to_error;
   assert( pC->deferredMoveto==0 );
@@ -6742,6 +6906,11 @@ case OP_IdxRowid: {           /* out2, ncycle */
       assert( pTabCur->eCurType==CURTYPE_BTREE );
       assert( pTabCur->uc.pCursor!=0 );
       assert( pTabCur->isTable );
+#if defined(SQLITE_ENABLE_CURSOR_HINTS) && defined(SQLITE_DEBUG)
+      assert( 
+          sqlite3BtreeCursorHintTblCsr(pC->uc.pCursor)==pTabCur->uc.pCursor 
+      );
+#endif
       pTabCur->nullRow = 0;
       pTabCur->movetoTarget = rowid;
       pTabCur->deferredMoveto = 1;
@@ -7102,11 +7271,18 @@ case OP_SqlExec: {
   break;
 }
 
-/* Opcode: ParseSchema P1 * * P4 *
+/* Opcode: ParseSchema P1 * * P4 P5
 **
 ** Read and parse all entries from the schema table of database P1
 ** that match the WHERE clause P4.  If P4 is a NULL pointer, then the
 ** entire schema for P1 is reparsed.
+**
+** When P4 is NULL, the P5 value is used as the mFlags argument
+** to sqlite3InitOne().  In other words, P5 should be a mask composed
+** of INITFLAG_* values.
+**
+** The P4==0 case is only used by ALTER TABLE and P5!=0 for all such
+** cases.  For uses other than ALTER TABLE, P4<>0 and P5==0.
 **
 ** This opcode invokes the parser to create a new virtual machine,
 ** then runs the new virtual machine.  It is thus a re-entrant opcode.
@@ -7135,6 +7311,7 @@ case OP_ParseSchema: {
 
 #ifndef SQLITE_OMIT_ALTERTABLE
   if( pOp->p4.z==0 ){
+    assert( pOp->p5!=0 );
     sqlite3SchemaClear(db->aDb[iDb].pSchema);
     db->mDbFlags &= ~DBFLAG_SchemaKnownOk;
     rc = sqlite3InitOne(db, iDb, &p->zErrMsg, pOp->p5);
@@ -7143,6 +7320,7 @@ case OP_ParseSchema: {
   }else
 #endif
   {
+    assert( pOp->p5==0 );
     zSchema = LEGACY_SCHEMA_TABLE;
     initData.db = db;
     initData.iDb = iDb;
@@ -7504,7 +7682,7 @@ case OP_Program: {        /* jump0 */
 
   if( p->nFrame>=db->aLimit[SQLITE_LIMIT_TRIGGER_DEPTH] ){
     rc = SQLITE_ERROR;
-    sqlite3VdbeError(p, "too many levels of trigger recursion");
+    sqlite3VdbeError(p, "triggers nested too deep");
     goto abort_due_to_error;
   }
 
@@ -9115,23 +9293,37 @@ case OP_Init: {          /* jump0 */
 }
 
 #ifdef SQLITE_ENABLE_CURSOR_HINTS
-/* Opcode: CursorHint P1 * * P4 *
+/* Opcode: CursorHint P1 * P3 P4 *
 **
-** Provide a hint to cursor P1 that it only needs to return rows that
-** satisfy the Expr in P4.  TK_REGISTER terms in the P4 expression refer
-** to values currently held in registers.  TK_COLUMN terms in the P4
+** Provide a hint to cursor P1. 
+**
+** If P4 is of type P4_EXPR, then the hint is that the cursor need only return
+** rows that satisfy the Expr in P4. TK_REGISTER terms in the P4 expression
+** refer to values currently held in registers.  TK_COLUMN terms in the P4
 ** expression refer to columns in the b-tree to which cursor P1 is pointing.
+** P3 is ignore in this case.
+**
+** Or, if P4 is P4_NOTUSED, then the hint is that cursor P1 is an index cursor
+** used to drive table cursor P3. In other words, that this VM may execute
+** OP_DeferredSeek instructions to lazily position P3 based on current 
+** position of P1.
 */
 case OP_CursorHint: {
   VdbeCursor *pC;
+  pC = p->apCsr[pOp->p1];
 
   assert( pOp->p1>=0 && pOp->p1<p->nCursor );
-  assert( pOp->p4type==P4_EXPR );
-  pC = p->apCsr[pOp->p1];
+
   if( pC ){
     assert( pC->eCurType==CURTYPE_BTREE );
-    sqlite3BtreeCursorHint(pC->uc.pCursor, BTREE_HINT_RANGE,
-                           pOp->p4.pExpr, aMem);
+    if( pOp->p4type==P4_EXPR ){
+      sqlite3BtreeCursorHint(pC->uc.pCursor, BTREE_HINT_RANGE,
+          pOp->p4.pExpr, aMem);
+    }else if( p->apCsr[pOp->p3] ){
+      sqlite3BtreeCursorHint(
+          pC->uc.pCursor, BTREE_HINT_TABLECURSOR, p->apCsr[pOp->p3]->uc.pCursor
+      );
+    }
   }
   break;
 }

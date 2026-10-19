@@ -23,6 +23,8 @@
 **    *  No support for ZIP archives spanning multiple files
 **    *  No support for zip64 extensions
 **    *  Only the "inflate/deflate" (zlib) compression method is supported
+**    *  No support for transactions.  ROLLBACK is the same as COMMIT.
+**       A crash mid-transaction can leave the ZIP archive in a corrupt state.
 */
 #include "sqlite3ext.h"
 SQLITE_EXTENSION_INIT1
@@ -1654,10 +1656,10 @@ static int zipfileUpdate(
       }
     }
     for(pOld=pTab->pFirstEntry; 1; pOld=pOld->pNext){
+      if( pOld==0 ) return SQLITE_OK;
       if( zipfileComparePath(pOld->cds.zFile, zDelete, nDelete)==0 ){
         break;
       }
-      assert( pOld->pNext );
     }
   }
 

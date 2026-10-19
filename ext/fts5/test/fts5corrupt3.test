@@ -15362,7 +15362,6 @@ do_test 79.0 {
 | end sql053282.txt.db 
 }]} {}
 
-breakpoint
 do_execsql_test 79.1 {
   CREATE VIRTUAL TABLE temp.t2 USING fts5vocab(main, 't1','row');
 }

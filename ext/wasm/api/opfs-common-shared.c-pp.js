@@ -1,4 +1,4 @@
-//#if not target:node
+//#if not target:node and (not omit-opfs or not omit-opfs-wl)
 /*
   2026-03-04
 
@@ -363,11 +363,15 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
      called this way, the resolved value of the returned Promise is
      the number of bytes written to the target file.
 
-     It very specifically requires the input to be an SQLite3
-     database and throws if that's not the case.  It does so in
-     order to prevent this function from taking on a larger scope
-     than it is specifically intended to. i.e. we do not want it to
-     become a convenience for importing arbitrary files into OPFS.
+     It very specifically requires the input to be an SQLite3 database
+     and throws if that's not the case.  It does so in order to
+     prevent this function from taking on a larger scope than it is
+     specifically intended to. i.e. we do not want it to become a
+     convenience for importing arbitrary files into OPFS.  Caveat: as
+     of 3.54 in SEE builds, the "is this a db?" check is necessarily
+     lax to account for SEE-encrypted databases not having a legible
+     header. In such builds, only the db size is relevant for the
+     check.
 
      This routine rewrites the database header bytes in the output
      file (not the input array) to force disabling of WAL mode.
@@ -849,6 +853,8 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
            so would need to pass it to the async proxy. That would
            make it inordinately expensive considering that it's
            just a hint.
+
+           See: forum:a2f573b00cda1372
         */
         wasm.poke(pOut, 0, 'i32');
         return 0;
@@ -1065,8 +1071,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
     }
 
 //#define vfs.metrics.enable
-//#// import initS11n()
-//#include api/opfs-common-inline.c-pp.js
+//#include "api/opfs-common-inline.c-pp.js"
 //#undef vfs.metrics.enable
     opfsVfs.initS11n = initS11n;
 
@@ -1108,7 +1113,6 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
         const W = opfsVfs.worker =
 //#if target:es6-bundler-friendly
               (()=>{
-                /* _Sigh_... */
                 /* Discussion explaining this formulation:
                    https://github.com/sqlite/sqlite-wasm/pull/159 */
                 const url = new URL('sqlite3-opfs-async-proxy.js', import.meta.url);
@@ -1167,7 +1171,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
             //| capi.SQLITE_OPEN_DELETEONCLOSE
                   | capi.SQLITE_OPEN_MAIN_DB;
             const pOut = wasm.scopedAlloc(8);
-            const dbFile = "/sanity/check/file"+randomFilename(8);
+            const dbFile = "/sanity/check/file"+opfsUtil.randomFilename(8);
             const zDbFile = wasm.scopedAllocCString(dbFile);
             let rc;
             state.s11n.serialize("This is ä string.");
@@ -1256,7 +1260,7 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
                 state.sabFileBufView = new Uint8Array(state.sabIO, 0, state.fileBufferSize);
                 state.sabS11nView = new Uint8Array(state.sabIO, state.sabS11nOffset, state.sabS11nSize);
                 opfsVfs.initS11n();
-                delete opfsVfs.initS11n;
+                opfsVfs.initS11n = null;
                 if(options.sanityChecks){
                   warn("Running sanity checks because of opfs-sanity-check URL arg...");
                   sanityCheck();
@@ -1299,4 +1303,4 @@ globalThis.sqlite3ApiBootstrap.initializers.push(function(sqlite3){
   }/*createVfsState()*/;
 
 }/*sqlite3ApiBootstrap.initializers*/);
-//#/if target:node
+//#/if /* global snip */

@@ -303,6 +303,30 @@ static void sqlite3ErrorIfNotEmpty(
 }
 
 /*
+** zCol is a column name used in an ALTER TABLE DROP, ADD or RENAME COLUMN
+** operation. zOp identifies the specific operation - "drop", "add", "rename
+** to" or "rename from". pTab is the table being altered.
+**
+** If pTab has a rowid and zCol is a rowid alias, then SQLITE_ERROR is 
+** returned and an error message left in pParse. Or, if zCol is not an alias 
+** for "rowid" or pTab is not an intkey table, then SQLITE_OK is returned.
+*/
+static int isRowidAlias(
+  Parse *pParse, 
+  Table *pTab, 
+  const char *zCol, 
+  const char *zOp
+){
+  if( HasRowid(pTab) && sqlite3IsRowid(zCol) ){
+    sqlite3ErrorMsg(pParse, "cannot %s rowid alias: %s", zOp, zCol);
+    return SQLITE_ERROR;
+  }
+  return SQLITE_OK;
+}
+
+
+
+/*
 ** This function is called after an "ALTER TABLE ... ADD" statement
 ** has been parsed. Argument pColDef contains the text of the new
 ** column definition.
@@ -347,9 +371,9 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
 #endif
 
 
-  /* Check that the new column is not specified as PRIMARY KEY or UNIQUE.
-  ** If there is a NOT NULL constraint, then the default value for the
-  ** column must not be NULL.
+  /* Check that the new column is not specified as PRIMARY KEY or UNIQUE,
+  ** or a rowid alias. If there is a NOT NULL constraint, then the default
+  ** value for the column must not be NULL.
   */
   if( pCol->colFlags & COLFLAG_PRIMKEY ){
     sqlite3ErrorMsg(pParse, "Cannot add a PRIMARY KEY column");
@@ -360,6 +384,7 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
          "Cannot add a UNIQUE column");
     return;
   }
+  if( isRowidAlias(pParse, pTab, pCol->zCnName, "add") ) return;
   if( (pCol->colFlags & COLFLAG_GENERATED)==0 ){
     /* If the default value for the new column was specified with a
     ** literal NULL, then set pDflt to 0. This simplifies checking
@@ -448,6 +473,7 @@ void sqlite3AlterFinishAddColumn(Parse *pParse, Token *pColDef){
      || (pCol->notNull && (pCol->colFlags & COLFLAG_GENERATED)!=0)
      || (pTab->tabFlags & TF_Strict)!=0
     ){
+      pParse->colNamesSet = 1;
       sqlite3NestedParse(pParse,
         "SELECT CASE WHEN quick_check GLOB 'CHECK*'"
         " THEN raise(ABORT,'CHECK constraint failed')"
@@ -652,6 +678,8 @@ void sqlite3AlterRenameColumn(
   sqlite3MayAbort(pParse);
   zNew = sqlite3NameFromToken(db, pNew);
   if( !zNew ) goto exit_rename_column;
+  if( isRowidAlias(pParse, pTab, zOld, "rename from") ) goto exit_rename_column;
+  if( isRowidAlias(pParse, pTab, zNew, "rename to") ) goto exit_rename_column;
   assert( pNew->n>0 );
   bQuote = sqlite3Isquote(pNew->z[0]);
   sqlite3NestedParse(pParse,
@@ -2278,6 +2306,7 @@ void sqlite3AlterDropColumn(Parse *pParse, SrcList *pSrc, const Token *pName){
     sqlite3ErrorMsg(pParse, "no such column: \"%T\"", pName);
     goto exit_drop_column;
   }
+  if( isRowidAlias(pParse, pTab, zCol, "drop") ) goto exit_drop_column;
 
   /* Do not allow the user to drop a PRIMARY KEY column or a column
   ** constrained by a UNIQUE constraint.  */
@@ -2409,15 +2438,37 @@ static int getWhitespace(const u8 *z){
 /*
 ** Argument z points into the body of a constraint - specifically the 
 ** second token of the constraint definition.  For a named constraint,
-** z points to the first token past the CONSTRAINT keyword.  For an
-** unnamed NOT NULL constraint, z points to the first byte past the NOT
+** z points to the second token of the constraint definition. For an 
+** unnamed NOT NULL constraint, z points to the first byte past the NOT 
 ** keyword.
+**
+** Argument eTok may be the token value of the first token of the constraint
+** (e.g. TK_CHECK or TK_REFERENCES) or zero. If it is either TK_REFERENCES
+** or TK_FOREIGN, special parsing is enabled to find the end of the foreign-key
+** constraint definition.
 **
 ** Return the number of bytes until the end of the constraint. 
 */
-static int getConstraint(const u8 *z){
+static int getConstraint(const u8 *z, int eTok){
   int iOff = 0;
   int t = 0;
+
+#ifndef SQLITE_OMIT_FOREIGN_KEY
+  if( eTok==TK_FOREIGN ){
+    /* For a FOREIGN KEY constraint, use getConstraint() to parse everything
+    ** up to the REFERENCES keyword. Then getConstraintToken() to consume
+    ** the TK_REFERENCES token itself. Then fall through to the special
+    ** handling for TK_REFERENCES below.  */
+    iOff = getConstraint(z, 0);
+    iOff += getConstraintToken(&z[iOff], &eTok);
+  }
+
+  if( eTok==TK_REFERENCES ){
+    /* REFERENCES is followed by a table name. Gobble this up here in
+    ** case the table name is a fallback token like TK_GENERATED. */
+    iOff += getConstraintToken(&z[iOff], &t);
+  }
+#endif
 
   /* Now, the current constraint proceeds until the next occurence of one 
   ** of the following tokens: 
@@ -2590,11 +2641,11 @@ static void dropConstraintFunc(
           t = TK_CHECK;
         }else{
           iOff += nTok;
-          iOff += getConstraint(&zSql[iOff]);
+          iOff += getConstraint(&zSql[iOff], t);
         }
 
         if( cmp==0 || (iNotNull>=0 && t==TK_NOT) ){
-          if( t!=TK_NOT && t!=TK_CHECK ){
+          if( t!=TK_NOT && t!=TK_CHECK && t!=TK_REFERENCES && t!=TK_FOREIGN ){
             errorMPrintf(ctx, "constraint may not be dropped: %s", zCons);
             return;
           }
@@ -2603,7 +2654,7 @@ static void dropConstraintFunc(
         }
 
       }else if( t==TK_NOT && iNotNull==ii ){
-        iEnd = iOff + getConstraint(&zSql[iOff]);
+        iEnd = iOff + getConstraint(&zSql[iOff], 0);
         break;
       }else if( t==TK_RP || t==TK_ILLEGAL ){
         iEnd = -1;
@@ -2661,9 +2712,8 @@ static void addConstraintFunc(
   int iCol = sqlite3_value_int(argv[2]);
   int iOff = 0;
   int ii;
-  char *zNew = 0;
+  sqlite3_str *pNew;
   int t = 0;
-  sqlite3 *db;
   UNUSED_PARAMETER(NotUsed);
 
   if( skipCreateTable(ctx, zSql, &iOff) ) return;
@@ -2683,13 +2733,11 @@ static void addConstraintFunc(
 
   iOff += getWhitespace(&zSql[iOff]);
 
-  db = sqlite3_context_db_handle(ctx);
-  if( iCol<0 ){
-    zNew = sqlite3MPrintf(db, "%.*s, %s%s", iOff, zSql, zCons, &zSql[iOff]);
-  }else{
-    zNew = sqlite3MPrintf(db, "%.*s %s%s", iOff, zSql, zCons, &zSql[iOff]);
-  }
-  sqlite3_result_text(ctx, zNew, -1, SQLITE_DYNAMIC);
+  pNew = sqlite3_str_new(sqlite3_context_db_handle(ctx));
+  sqlite3_str_append(pNew, (const char*)zSql, iOff);
+  if( iCol<0 ) sqlite3_str_append(pNew, ",", 1);
+  sqlite3_str_appendf(pNew, " %s%s", zCons, &zSql[iOff]);
+  sqlite3_result_str(ctx, pNew, SQLITE_FINISH);
 }
 
 /*
@@ -3031,7 +3079,7 @@ void sqlite3AlterAddConstraint(
   /* Search for a constraint violation. Throw an exception if one is found. */
   sqlite3NestedParse(pParse,
       "SELECT sqlite_fail('constraint failed', %d) "
-      "FROM %Q.%Q WHERE (%.*s) IS NOT TRUE", 
+      "FROM %Q.%Q WHERE (%.*s) IS FALSE", 
       SQLITE_CONSTRAINT, zDb, pTab->zName, nExpr, zExpr
   );
 
