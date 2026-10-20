@@ -6851,6 +6851,9 @@ int sqlite3_key_v2(
 ** encrypted, this routine will encrypt it.  If pNew==0 or nNew==0, the
 ** database is decrypted.
 **
+** This routine returns SQLITE_MISUSE inside a transaction or while a
+** statement on the database is still running.
+**
 ** The code to implement this API is not available in the public release
 ** of SQLite.
 */

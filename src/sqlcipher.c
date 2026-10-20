@@ -4567,11 +4567,6 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     return SQLITE_MISUSE;
   }
 
-  if(!db->autoCommit) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: rekey can't be run inside a transaction", __func__);
-    return SQLITE_MISUSE;
-  }
-
   db_index = sqlcipher_find_db_index(db, zDb);
   if(!(db_index >= 0 && db_index < db->nDb)) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: invalid database zDb=%p", __func__, zDb);
@@ -4620,6 +4615,12 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entering database mutex %p", __func__, db->mutex);
   sqlite3_mutex_enter(db->mutex);
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: entered database mutex %p", __func__, db->mutex);
+
+  if(!db->autoCommit || sqlite3BtreeTxnState(pDb->pBt) != SQLITE_TXN_NONE) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: rekey can't be run inside a transaction", __func__);
+    rc = SQLITE_MISUSE;
+    goto cleanup;
+  }
 
   /* determine what mode to operate in */
   if(!ctx) {
@@ -4902,8 +4903,10 @@ cleanup:
         break; 
     }
 
-    if(sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK, 0) != SQLITE_OK) { 
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to rollback transaction on rekey %d", __func__, rc);
+    if(rekey_mode != REKEY_NONE) {
+      if(sqlite3BtreeRollback(pDb->pBt, SQLITE_ABORT_ROLLBACK, 0) != SQLITE_OK) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to rollback transaction on rekey %d", __func__, rc);
+      }
     }
 
     /* after rollbak on the the plaintext-to-encrypted, free the context to switch back to unencrypted database */

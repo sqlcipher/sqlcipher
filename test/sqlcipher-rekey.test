@@ -869,6 +869,120 @@ do_test rekey-fail-in-transaction {
 db close
 file delete -force test.db
 
+do_test rekey-inside-savepoint {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    INSERT INTO t1 VALUES(1,2);
+    SAVEPOINT s1;
+    INSERT INTO t1 VALUES(2,3);
+  }
+
+  set rc {}
+  lappend rc [catchsql { PRAGMA rekey = 'test456'; }]
+  lappend rc [sqlite3_get_autocommit db]
+  lappend rc [execsql { SELECT count(*) FROM t1; }]
+  execsql { ROLLBACK TO s1; RELEASE s1; }
+  lappend rc [execsql { SELECT count(*) FROM t1; }]
+
+  set rc
+} {{1 {An error occurred with PRAGMA key or rekey.}} 0 2 1}
+db close
+file delete -force test.db
+
+# and for an attached schema, since autocommit is per connection
+do_test rekey-inside-transaction-attached {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    ATTACH DATABASE 'aux.db' AS aux;
+    PRAGMA aux.key = 'auxkey';
+    CREATE TABLE aux.t2(a);
+    INSERT INTO aux.t2 VALUES(1);
+    BEGIN;
+    INSERT INTO aux.t2 VALUES(2);
+  }
+
+  set rc {}
+  lappend rc [catchsql { PRAGMA aux.rekey = 'auxkey2'; }]
+  lappend rc [sqlite3_get_autocommit db]
+  lappend rc [execsql { SELECT count(*) FROM aux.t2; }]
+  execsql { ROLLBACK; }
+  lappend rc [execsql { SELECT count(*) FROM aux.t2; }]
+
+  set rc
+} {{1 {An error occurred with PRAGMA key or rekey.}} 0 2 1}
+db close
+file delete -force test.db
+file delete -force aux.db
+
+# rekey from a function of a running INSERT fails and keeps the INSERT atomic
+do_test rekey-inside-statement {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a);
+    INSERT INTO t1 VALUES(1),(2),(2);
+    CREATE TABLE t2(a UNIQUE);
+  }
+
+  set ::rekey_calls 0
+  set ::rekey_rc {}
+  proc rekey_once {a} {
+    if {[incr ::rekey_calls]==2} {
+      set ::rekey_rc [catchsql { PRAGMA rekey = 'test456'; }]
+    }
+    return $a
+  }
+  db function rekey_once rekey_once
+
+  set rc {}
+  lappend rc [catchsql { INSERT INTO t2 SELECT rekey_once(a) FROM t1 ORDER BY rowid; }]
+  lappend rc $::rekey_rc
+  lappend rc [sqlite3_get_autocommit db]
+  lappend rc [execsql { SELECT count(*) FROM t2; }]
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [execsql { PRAGMA key = 'test123'; SELECT count(*) FROM t2; }]
+
+  set rc
+} {{1 {UNIQUE constraint failed: t2.a}} {1 {An error occurred with PRAGMA key or rekey.}} 1 0 {ok 0}}
+db close
+file delete -force test.db
+
+# rekey while a SELECT is stepping fails and the reader completes
+do_test rekey-with-active-reader {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a);
+    INSERT INTO t1 VALUES(1),(2),(3);
+  }
+
+  set rc {}
+  set rows 0
+  db eval { SELECT a FROM t1 } {
+    if {[incr rows]==1} {
+      lappend rc [catchsql { PRAGMA rekey = 'test456'; }]
+    }
+  }
+  lappend rc $rows
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [execsql { PRAGMA key = 'test123'; SELECT count(*) FROM t1; }]
+
+  set rc
+} {{1 {An error occurred with PRAGMA key or rekey.}} 3 {ok 3}}
+db close
+file delete -force test.db
+
 # rekey encrypted database without keying
 do_test rekey-encrypted-without-keying {
   sqlite_orig db test.db
