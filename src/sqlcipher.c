@@ -138,7 +138,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_READWRITE_CTX 2
 
 #ifndef PBKDF2_ITER
-#define PBKDF2_ITER 512000
+#define PBKDF2_ITER 256000
 #endif
 
 #define SQLCIPHER_FLAG_GET(FLAG,BIT) ((FLAG & BIT) != 0)
@@ -3813,7 +3813,7 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
             if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA512);
             if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
-            rc = sqlcipher_ctx_set_kdf_iter(ctx, 512000); 
+            rc = sqlcipher_ctx_set_kdf_iter(ctx, 256000);
             if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
             rc = sqlcipher_ctx_set_aead(ctx, 1);
             if (rc != SQLITE_OK) sqlcipher_ctx_set_error(db, pDb, ctx, SQLITE_ERROR);
@@ -3877,7 +3877,7 @@ int sqlcipher_pragma(sqlite3* db, const char *zDb, int iDb, Parse *pParse, const
           default_page_size = 8192;
           default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
           default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
-          default_kdf_iter = 512000;
+          default_kdf_iter = 256000;
           sqlcipher_set_default_aead(1);
           sqlcipher_set_default_use_hmac(0);
           sqlcipher_set_default_hmac_fast_kdf(0);

@@ -103,13 +103,13 @@ db close
 file delete -force test.db
 
 # verify the pragma default_cipher_kdf_iter
-# is set to 512000 by default
+# is set to 256000 by default
 do_test verify-pragma-cipher-default-kdf-iter-default {
     sqlite_orig db test.db
     execsql {
         PRAGMA cipher_default_kdf_iter;
     }
-} {512000}
+} {256000}
 db close
 file delete -force test.db
 
@@ -121,7 +121,7 @@ do_test verify-pragma-cipher-default-use-hmac-off {
     execsql {
         PRAGMA cipher_default_kdf_iter = 1000;
         PRAGMA cipher_default_kdf_iter;
-        PRAGMA cipher_default_kdf_iter = 512000;
+        PRAGMA cipher_default_kdf_iter = 256000;
     }
 } {1000}
 db close
@@ -135,7 +135,7 @@ do_test verify-pragma-kdf-iter-reports-default {
         PRAGMA key = 'test';
         PRAGMA kdf_iter;
     }
-} {ok 512000}
+} {ok 256000}
 db close
 file delete -force test.db
 
@@ -371,7 +371,7 @@ do_test verify-cipher_settings_default {
         PRAGMA key = 'test';
         PRAGMA cipher_settings;
     }
-} {ok {PRAGMA kdf_iter = 512000;} {PRAGMA cipher_page_size = 8192;} {PRAGMA cipher_aead = 1;} {PRAGMA cipher_use_hmac = 0;} {PRAGMA cipher_hmac_fast_kdf = 0;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
+} {ok {PRAGMA kdf_iter = 256000;} {PRAGMA cipher_page_size = 8192;} {PRAGMA cipher_aead = 1;} {PRAGMA cipher_use_hmac = 0;} {PRAGMA cipher_hmac_fast_kdf = 0;} {PRAGMA cipher_plaintext_header_size = 0;} {PRAGMA cipher_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
 db close
 file delete -force test.db
 
@@ -402,7 +402,7 @@ do_test verify-cipher_default_settings_default {
     execsql {
         PRAGMA cipher_default_settings;
     }
-} {{PRAGMA cipher_default_kdf_iter = 512000;} {PRAGMA cipher_default_page_size = 8192;} {PRAGMA cipher_default_aead = 1;} {PRAGMA cipher_default_use_hmac = 0;} {PRAGMA cipher_default_hmac_fast_kdf = 0;} {PRAGMA cipher_default_plaintext_header_size = 0;} {PRAGMA cipher_default_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
+} {{PRAGMA cipher_default_kdf_iter = 256000;} {PRAGMA cipher_default_page_size = 8192;} {PRAGMA cipher_default_aead = 1;} {PRAGMA cipher_default_use_hmac = 0;} {PRAGMA cipher_default_hmac_fast_kdf = 0;} {PRAGMA cipher_default_plaintext_header_size = 0;} {PRAGMA cipher_default_hmac_algorithm = HMAC_SHA512;} {PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_SHA512;}}
 db close
 file delete -force test.db
 
