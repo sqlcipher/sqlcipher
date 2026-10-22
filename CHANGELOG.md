@@ -1,7 +1,27 @@
 # SQLCipher Change Log
 Notable changes to this project are documented in this file.
 
-## [5.0.0-beta] - (? 2026 - [5.0.0-beta changes])
+## [5.0.0-beta.1] - (Oct 2026 - [5.0.0-beta.1 changes])
+
+***WARNING***: This beta includes major functional, API, and  behavioral changes that are NOT COMPATIBLE
+with SQLCipher 4 and earlier by default. Migration and backwards-compatibility options are available
+but require application code changes. This should only be used for beta testing at this time, not in
+production releases.
+
+- Changes architecture to use codec
+- Adjusts KDF iteration back to 256K
+- Rekey support for databases in WAL mode with concurrent connections
+- Journal spill behavior is now locked down to prevent plaintext writes
+- Fixed a bug where `cipher_hmac_fast_kdf` could write the page HMAC past the reserved area
+- Improved error handling and reporting for rekey failures
+- Fixed shared cache connections for encrypted databases
+- Added `PRAGMA cipher_selftest` for verifying internal implementations
+
+**IMPORTANT NOTE**: This release contains API, ABI, and library behavioral changes.
+Library integrators that manage `SONAME` are advised to update the version at build time
+using `-soname` or `./configure --soname` for this release.
+
+## [5.0.0-beta] - (Sep 2026 - [5.0.0-beta changes])
 
 ***WARNING***: This beta includes major functional, API, and  behavioral changes that are NOT COMPATIBLE
 with SQLCipher 4 and earlier by default. Migration and backwards-compatibility options are available
@@ -407,6 +427,8 @@ using `-soname` or `./configure --soname` for this release.
 ### Security
 - Change KDF iteration length from 4,000 to 64,000
 
+[5.0.0-beta.1]: https://github.com/sqlcipher/sqlcipher/tree/v5.0.0-beta.1
+[5.0.0-beta.1 changes]: https://github.com/sqlcipher/sqlcipher/compare/v5.0.0-beta...v5.0.0-beta.1
 [5.0.0-beta]: https://github.com/sqlcipher/sqlcipher/tree/v5.0.0-beta
 [5.0.0-beta changes]: https://github.com/sqlcipher/sqlcipher/compare/v4.19.0...v5.0.0-beta
 [4.20.0]: https://github.com/sqlcipher/sqlcipher/tree/v4.20.0
