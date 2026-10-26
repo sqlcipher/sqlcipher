@@ -1,7 +1,10 @@
 # SQLCipher Change Log
 Notable changes to this project are documented in this file.
 
-## [4.20.0] - (? 2026 - [4.20.0 changes])
+## [4.20.0] - (October 2026 - [4.20.0 changes])
+- Update SQLite baseline to 3.54.1
+- Avoid deferred error when `PRAGMA cipher_migrate` fails before migrating
+- Skip the `.fini_array` finalizer on WebAssembly
 
 ## [4.19.0] - (September 2026 - [4.19.0 changes])
 - Report an error if a database is opened with an invalid hexkey URI parameter 
