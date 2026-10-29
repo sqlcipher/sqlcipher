@@ -1720,6 +1720,8 @@ foreach mode {delete truncate persist} {
   file delete -force test.db
 }
 
+ifcapable !shared_cache { finish_test ; return }
+
 foreach mode {delete persist wal} {
   # open up a shared cache connection to a database, key it
   # and create a schema. Then, open a second shared cache

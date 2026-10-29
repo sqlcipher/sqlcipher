@@ -1707,12 +1707,14 @@ static void sqlcipher_ctx_set_error(sqlite3 *db, Db *pDb, sqlcipher_ctx *ctx, in
      * the flag. Minimally, the caller must hold SQLCIPHER_MUTEX_SHAREDCACHE. If the BtShared is
      * active, then the caller should also hold that mutex. It is possible for the BtShared to be unused
      * (i.e. pBt->nRef < 1) if an error occurs during init that blocks setup. */
+#ifndef SQLITE_OMIT_SHARED_CACHE
     assert(
       !ctx->shared || (
         sqlite3_mutex_held(sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE))
         && (ctx->pBt->nRef < 1 || sqlite3_mutex_held(ctx->pBt->mutex))
       )
     );
+#endif
     if(ctx->pBt->inTransaction != TRANS_WRITE) {
         ctx->pBt->btsFlags |= BTS_READ_ONLY;
     }
@@ -2571,6 +2573,7 @@ static int sqlcipher_ctx_migrate(sqlite3 *db, sqlcipher_ctx *ctx) {
     goto cleanup;
   }
 
+#ifndef SQLITE_OMIT_SHARED_CACHE
   /* if shared cache is enabled block migrate if there is more than 1 open connection because
    * concurrent access is not safe. Similar to rekey, count is read without a lock, but that is low risk */
   if(ctx->shared && ctx->pBt->nRef > 1) {
@@ -2578,6 +2581,7 @@ static int sqlcipher_ctx_migrate(sqlite3 *db, sqlcipher_ctx *ctx) {
     rc = SQLITE_MISUSE;
     goto cleanup;
   }
+#endif
 
   if(!(pass = sqlcipher_malloc(pass_sz+1))) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate key material storage", __func__);
