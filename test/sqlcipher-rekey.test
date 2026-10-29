@@ -571,28 +571,30 @@ foreach version {1 2 3 4 5} {
 
 # rekey may not be used if shared cache is enabled because
 # application on one connection could not safely block others
-do_test connection-shared-cache-no-rekey {
-  sqlite_orig db file:test.db?cache=shared
-  sqlite_orig db2 file:test.db?cache=shared
-  
-  set rc {}
- 
-  execsql {
-    PRAGMA key = 'testkey';
-    CREATE TABLE t1(a,b);
-  }
+ifcapable shared_cache {
+  do_test connection-shared-cache-no-rekey {
+    sqlite_orig db file:test.db?cache=shared
+    sqlite_orig db2 file:test.db?cache=shared
 
-  lappend rc [execsql {
-    SELECT count(*) FROM sqlite_master;
-  } db2]
+    set rc {}
 
-  lappend rc [catchsql {
-    PRAGMA rekey = 'testkey2';
-  }]
-} {1 {1 {An error occurred with PRAGMA key or rekey.}}}
-db close
-db2 close
-file delete -force test.db
+    execsql {
+      PRAGMA key = 'testkey';
+      CREATE TABLE t1(a,b);
+    }
+
+    lappend rc [execsql {
+      SELECT count(*) FROM sqlite_master;
+    } db2]
+
+    lappend rc [catchsql {
+      PRAGMA rekey = 'testkey2';
+    }]
+  } {1 {1 {An error occurred with PRAGMA key or rekey.}}}
+  db close
+  db2 close
+  file delete -force test.db
+}
 
 foreach mode {delete wal} {
   # create an encrypted database, rekey it, and verify results. The
