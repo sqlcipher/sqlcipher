@@ -1576,6 +1576,19 @@ do_test migrate-quote-in-filename {
 db close
 file delete -force {"a test'ing--db".db} {"a test'ing--db".db-migrated}
 
+# verify that cipher migrate keeps the URI parameters of the main database
+do_test migrate-uri-filename {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+  sqlite_orig db file:test.db?psow=0
+  list [execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_migrate;
+    SELECT count(*) FROM t1;
+  }] [file_control_powersafe_overwrite db -1]
+} {{ok 0 78536} {0 0}}
+db close
+file delete -force test.db
+
 # verify escaping of database alias names in sqlcipher_export
 do_test export-alias-quoting-1 {
   sqlite_orig db test.db
