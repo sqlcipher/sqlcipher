@@ -2218,6 +2218,13 @@ static int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
 /* everything above exits through cleanup, nothing here has touched the database */
 migrate:
 
+  /* the btree also sees URI mode=ro and immutable=1, which openFlags miss */
+  if(sqlite3BtreeIsReadonly(db->aDb[0].pBt)) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: cannot migrate a read-only database", __func__);
+    rc = SQLITE_READONLY;
+    goto cleanup;
+  }
+
   if(!(temp = sqlite3_mprintf("%s-migrated", db_filename))) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format temp filename", __func__);
     rc = SQLITE_NOMEM;

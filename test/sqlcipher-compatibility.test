@@ -1232,6 +1232,44 @@ do_test migrate-current-format-noop {
 db close
 file delete -force test.db 
 
+# a read-only connection refuses to migrate and leaves the file untouched
+foreach {tn name opts} {
+  uri-mode-ro    file:test.db?mode=ro      {}
+  uri-immutable  file:test.db?immutable=1  {}
+  open-readonly  test.db                   {-readonly 1}
+} {
+  do_test migrate-readonly-$tn {
+    file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+    set orig [hexio_read test.db 0 [file size test.db]]
+    sqlite_orig db $name {*}$opts
+    set rc {}
+    lappend rc [execsql {
+      PRAGMA key = 'testkey';
+      PRAGMA cipher_migrate;
+      PRAGMA cipher_compatibility = 3;
+      SELECT count(*) FROM sqlite_schema;
+    }]
+    db close
+    lappend rc [file exists test.db-migrated]
+    lappend rc [string equal $orig [hexio_read test.db 0 [file size test.db]]]
+  } {{ok 8 1} 0 1}
+  file delete -force test.db
+}
+
+# a read-only connection on a current-format database reports OK
+do_test migrate-readonly-current-format-noop {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  sqlite_orig db file:test.db?mode=ro
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_migrate;
+    SELECT count(*) FROM sqlite_schema;
+  }
+} {ok 0 1}
+db close
+file delete -force test.db
+
 # migrate should fail after key derivation occurs
 # key database, then force key derivation by touching schema
 # shoudl report SQLITE_MISUSE
