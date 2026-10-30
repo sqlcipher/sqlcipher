@@ -2797,7 +2797,7 @@ migrate:
   }
 
   /* re-open the file handle to the main database */
-  rc = sqlite3OsOpen(db->pVfs, db_filename, destfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_MAIN_DB, &oflags);
+  rc = sqlite3OsOpen(db->pVfs, db_filename, destfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_MAIN_DB|SQLITE_OPEN_URI, &oflags);
   if(rc != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: failed to reopen main database %s: %d", __func__, db_filename, rc);
     goto handle_error;
@@ -2825,7 +2825,7 @@ handle_error:
    * so reopen it and re-initialize the sqlcipher_ctx so cleanup is not run against a closed file */
   destfile = sqlite3PagerFile(sqlite3BtreePager(db->aDb[0].pBt));
   if(destfile->pMethods == 0) { /* file is closed */
-    if((rc_cleanup = sqlite3OsOpen(db->pVfs, db_filename, destfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_MAIN_DB, &oflags)) != SQLITE_OK) {
+    if((rc_cleanup = sqlite3OsOpen(db->pVfs, db_filename, destfile, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_MAIN_DB|SQLITE_OPEN_URI, &oflags)) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to re-open database file in error handler %s: %d", __func__, db_filename, rc_cleanup);
       if(rc == SQLITE_OK) rc = rc_cleanup;
       goto cleanup;

@@ -1057,6 +1057,20 @@ do_test migrate-failure-closed {
 db close
 file delete -force test.db 
 
+# the error handler keeps the URI parameters of the main database
+do_test migrate-failure-closed-uri-filename {
+  file copy -force $sampleDir/sqlcipher-3.0-testkey.db test.db
+  sqlite_orig db file:test.db?psow=0
+  list [execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_test_on = fail_migrate_closed;
+    PRAGMA cipher_migrate;
+    PRAGMA cipher_test_off = fail_migrate_closed;
+  }] [file_control_powersafe_overwrite db -1]
+} {{ok 1} {0 0}}
+db close
+file delete -force test.db
+
 # if a cipher_migrate that fails after the database migration has started
 # should place the connection in a permanent error state
 do_test migrate-failure-not-readable {
@@ -1479,6 +1493,21 @@ do_test migrate-quote-in-filename {
 } {ok 0}
 db close
 file delete -force {"a test'ing--db".db} {"a test'ing--db".db-migrated}
+
+# verify that cipher migrate keeps the URI parameters of the main database
+foreach version {3.0 4.0} {
+  do_test migrate-uri-filename-$version {
+    file copy -force $sampleDir/sqlcipher-$version-testkey.db test.db
+    sqlite_orig db file:test.db?psow=0
+    list [execsql {
+      PRAGMA key = 'testkey';
+      PRAGMA cipher_migrate;
+      SELECT count(*) FROM t1;
+    }] [file_control_powersafe_overwrite db -1]
+  } {{ok 0 78536} {0 0}}
+  db close
+  file delete -force test.db
+}
 
 # verify escaping of database alias names in sqlcipher_export
 do_test export-alias-quoting-1 {
