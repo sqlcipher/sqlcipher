@@ -1484,7 +1484,7 @@ static void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   ctx->error = error;
 }
 
-static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
+static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx, int read_header) {
   sqlite3_file *fd = sqlite3PagerFile(sqlite3BtreePager(ctx->pBt));
 
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
@@ -1493,7 +1493,7 @@ static int sqlcipher_codec_ctx_init_kdf_salt(codec_ctx *ctx) {
 
   /* read salt from header, if present, otherwise generate a new random salt */
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_init_kdf_salt: obtaining salt");
-  if(fd == NULL || fd->pMethods == 0 || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
+  if(!read_header || fd == NULL || fd->pMethods == 0 || sqlite3OsRead(fd, ctx->kdf_salt, ctx->kdf_salt_sz, 0) != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_init_kdf_salt: unable to read salt from file header, generating random");
     if(ctx->provider->random(ctx->provider_ctx, ctx->kdf_salt, ctx->kdf_salt_sz) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_init_kdf_salt: error retrieving random bytes from provider");
@@ -1519,7 +1519,7 @@ static int sqlcipher_codec_ctx_set_kdf_salt(codec_ctx *ctx, unsigned char *salt,
 static int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
   int rc = SQLITE_OK;
   if(!SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
-    if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
+    if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx, 1)) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_get_kdf_salt: error %d from sqlcipher_codec_ctx_init_kdf_salt", rc);
     }
   }
@@ -1867,7 +1867,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
 
   /* if necessary, initialize the salt from the header or random source */
   if(!SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_HAS_KDF_SALT)) {
-    if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx)) != SQLITE_OK) {
+    if((rc = sqlcipher_codec_ctx_init_kdf_salt(ctx, 1)) != SQLITE_OK) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: error %d from sqlcipher_codec_ctx_init_kdf_salt", __func__, rc);
       goto error;
     }
@@ -3520,6 +3520,12 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
       sqlcipher_memset(pData, 0, ctx->page_sz);
       out = pData;
     }
+    goto cleanup;
+  }
+
+  /* encrypting before the salt is known means no page was read, so the file has no header yet */
+  if((mode == CODEC_WRITE_OP || mode == CODEC_JOURNAL_OP) && (rc = sqlcipher_codec_ctx_init_kdf_salt(ctx, 0)) != SQLITE_OK) {
+    sqlcipher_codec_ctx_set_error(ctx, rc);
     goto cleanup;
   }
 
