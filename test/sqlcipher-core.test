@@ -153,6 +153,20 @@ do_test test-sqlcipher-header-overwrite {
 } {0}
 file delete -force test.db
 
+# verify that a new database gets a random salt when the VFS preallocates on SQLITE_FCNTL_SIZE_HINT
+do_test test-sqlcipher-salt-chunk-size {
+  sqlite_orig db test.db
+  execsql { PRAGMA key = 'test'; }
+  file_control_chunksize_test db main 65536
+  execsql { CREATE TABLE t1(a,b); INSERT INTO t1 VALUES (1, 2); }
+  db close
+  set rc [string equal [hexio_read test.db 0 16] [string repeat 0 32]]
+  sqlite_orig db test.db
+  lappend rc [execsql { PRAGMA key = 'test'; SELECT * FROM t1; }]
+} {0 {ok 1 2}}
+db close
+file delete -force test.db
+
 # open the database and try to read from it without
 # providing a passphrase. verify that the 
 # an error is returned from the library
