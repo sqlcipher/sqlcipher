@@ -4622,6 +4622,9 @@ int sqlite3_rekey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) {
     goto cleanup;
   }
 
+  /* re-read every page through the codec instead of trusting the cache */
+  sqlite3BtreeClearCache(pDb->pBt);
+
   /* determine what mode to operate in */
   if(!ctx) {
     /* no attached sqlcipher context means plaintext database conversion to encrypted */
