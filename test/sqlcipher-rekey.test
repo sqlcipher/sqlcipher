@@ -1001,4 +1001,62 @@ do_test rekey-encrypted-without-keying {
 db close
 file delete -force test.db
 
+proc rekey_flip_byte {file off} {
+  set fd [open $file r+]
+  fconfigure $fd -translation binary
+  seek $fd $off
+  binary scan [read $fd 1] c v
+  seek $fd $off
+  puts -nonewline $fd [binary format c [expr {$v ^ 1}]]
+  close $fd
+}
+
+# a page tampered on disk while cached must make the rekey fail
+do_test rekey-detects-page-tampered-while-cached {
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'test123';
+    CREATE TABLE t1(a,b);
+    BEGIN;
+  }
+  for {set i 1} {$i<=2000} {incr i} {
+    execsql "INSERT INTO t1 VALUES($i, 'row value number $i with padding to spread rows across pages');"
+  }
+  execsql { COMMIT; }
+
+  execsql { SELECT count(*), sum(length(b)) FROM t1; }
+
+  set pgsz [lindex [execsql {PRAGMA page_size;}] 0]
+  set pgcount [lindex [execsql {PRAGMA page_count;}] 0]
+  set off [expr {($pgcount-1)*$pgsz + 100}]
+
+  rekey_flip_byte test.db $off
+
+  set rc {}
+  lappend rc [catchsql { PRAGMA rekey = 'test321'; }]
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [catchsql { PRAGMA key = 'test321'; SELECT count(*) FROM t1; }]
+  db close
+
+  sqlite_orig db test.db
+  lappend rc [catchsql { PRAGMA key = 'test123'; SELECT name FROM sqlite_schema; }]
+  db close
+
+  rekey_flip_byte test.db $off
+
+  sqlite_orig db test.db
+  lappend rc [catchsql {
+    PRAGMA key = 'test123';
+    SELECT count(*) FROM t1;
+    PRAGMA integrity_check;
+    PRAGMA cipher_integrity_check;
+  }]
+  set rc
+} {{1 {An error occurred with PRAGMA key or rekey.}} {1 {file is not a database}} {0 {ok t1}} {0 {ok 2000 ok}}}
+db close
+file delete -force test.db
+
 finish_test
