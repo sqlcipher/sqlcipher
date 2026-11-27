@@ -613,7 +613,8 @@ db close
 file delete -force test.db
 
 # open the database with the default page size
-## and verfiy that it is not readable 
+# and verify that it is readable: the page size
+# actually used is detected
 do_test custom-pagesize-must-match {
   sqlite_orig db test.db
   execsql {
@@ -629,7 +630,217 @@ do_test custom-pagesize-must-match {
     PRAGMA key = 'testkey';
     SELECT name FROM sqlite_schema WHERE type='table';
   }
+} {0 {ok t1}}
+db close
+file delete -force test.db
+
+# the detected page size stays in use for writes, and the database
+# remains readable when opened with its page size set explicitly
+do_test custom-pagesize-detected-write {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 16384;
+    CREATE table t1(a,b);
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    BEGIN;
+  }
+  for {set i 1} {$i<=1000} {incr i} {
+    execsql "INSERT INTO t1 VALUES($i, randomblob(100));"
+  }
+  execsql {
+    COMMIT;
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 16384;
+    PRAGMA integrity_check;
+    PRAGMA cipher_integrity_check;
+    SELECT count(*) FROM t1;
+  }
+} {ok ok 1000}
+db close
+file delete -force test.db
+
+# a database with the smallest page size is detected when the
+# default is larger, so no particular default is assumed
+do_test custom-pagesize-detected-smaller {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES(1, 'one');
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA cipher_default_page_size = 32768;
+    PRAGMA key = 'testkey';
+    SELECT b FROM t1;
+    PRAGMA cipher_page_size;
+    PRAGMA cipher_default_page_size = 4096;
+  }
+} {ok one 4096}
+db close
+file delete -force test.db
+
+# a legacy page size below the default is detected
+do_test custom-pagesize-detected-1024 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 1024;
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES(1, 'one');
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT b FROM t1;
+    PRAGMA cipher_page_size;
+  }
+} {ok one 1024}
+db close
+file delete -force test.db
+
+# the largest page size is detected
+do_test custom-pagesize-detected-65536 {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 65536;
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES(1, 'one');
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT b FROM t1;
+    PRAGMA cipher_page_size;
+  }
+} {ok one 65536}
+db close
+file delete -force test.db
+
+# without HMAC, page 1 decrypts with any page size, so the
+# header's page size decides whether the guess was right
+do_test custom-pagesize-detected-no-hmac {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_use_hmac = OFF;
+    PRAGMA cipher_page_size = 8192;
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES(1, 'one');
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_use_hmac = OFF;
+    SELECT b FROM t1;
+    PRAGMA cipher_page_size;
+  }
+} {ok one 8192}
+db close
+file delete -force test.db
+
+# an explicitly set page size is used as is: a wrong one is not
+# second-guessed, and the database is not readable
+do_test custom-pagesize-explicit-wrong {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 8192;
+    CREATE table t1(a,b);
+  }
+  db close
+
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 4096;
+    SELECT name FROM sqlite_schema WHERE type='table';
+  }
 } {1 {file is not a database}}
+db close
+file delete -force test.db
+
+# cipher_compatibility sets defaults, so its page size is only
+# the first one tried
+do_test custom-pagesize-detected-compatibility {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 8192;
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES(1, 'one');
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_compatibility = 4;
+    SELECT b FROM t1;
+    PRAGMA cipher_page_size;
+  }
+} {ok one 8192}
+db close
+file delete -force test.db
+
+# a wrong key is still rejected after all page sizes are tried
+do_test custom-pagesize-wrong-key {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 8192;
+    CREATE table t1(a,b);
+  }
+  db close
+
+  sqlite_orig db test.db
+  catchsql {
+    PRAGMA key = 'wrongkey';
+    SELECT name FROM sqlite_schema WHERE type='table';
+  }
+} {1 {file is not a database}}
+db close
+file delete -force test.db
+
+# a WAL database with a non-default page size is detected
+do_test custom-pagesize-detected-wal {
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_page_size = 8192;
+    PRAGMA journal_mode = WAL;
+    CREATE table t1(a,b);
+    INSERT INTO t1 VALUES(1, 'one');
+  }
+  db close
+
+  sqlite_orig db test.db
+  execsql {
+    PRAGMA key = 'testkey';
+    SELECT b FROM t1;
+    PRAGMA cipher_page_size;
+  }
+} {ok one 8192}
 db close
 file delete -force test.db
 

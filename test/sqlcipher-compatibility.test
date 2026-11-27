@@ -1284,7 +1284,7 @@ do_test migrate-unknown-format-connection-readable {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_page_size = 8192;
+    PRAGMA kdf_iter = 1000;
     CREATE TABLE t1(a, b);
     INSERT INTO t1(a, b) VALUES ('foo', 'bar');
   }
@@ -1293,7 +1293,7 @@ do_test migrate-unknown-format-connection-readable {
   sqlite_orig db test.db
   execsql {
     PRAGMA key = 'testkey';
-    PRAGMA cipher_page_size = 8192;
+    PRAGMA kdf_iter = 1000;
     PRAGMA cipher_migrate;
     SELECT a, b FROM t1;
   }
