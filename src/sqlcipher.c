@@ -121,6 +121,7 @@ void sqlite3pager_reset(Pager *pPager);
 #define CIPHER_FLAG_BE_PGNO       (1 << 2)
 #define CIPHER_FLAG_KEY_USED      (1 << 3)
 #define CIPHER_FLAG_HAS_KDF_SALT  (1 << 4)
+#define CIPHER_FLAG_PAGE_SZ_SET   (1 << 5) /* page size set explicitly, never probed */
 
 
 #ifndef DEFAULT_CIPHER_FLAGS
@@ -295,6 +296,10 @@ static int sqlcipher_get_test_fail() {
 static volatile unsigned int default_flags = DEFAULT_CIPHER_FLAGS;
 static volatile unsigned char hmac_salt_mask = HMAC_SALT_MASK;
 static volatile int default_kdf_iter = PBKDF2_ITER;
+/* the range of valid page sizes, which are powers of 2 */
+#define SQLCIPHER_MIN_PAGE_SZ 512
+#define SQLCIPHER_MAX_PAGE_SZ SQLITE_MAX_PAGE_SIZE
+
 static volatile int default_page_size = 4096;
 static volatile int default_plaintext_header_size = 0;
 static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
@@ -1531,8 +1536,8 @@ static int sqlcipher_codec_ctx_get_kdf_salt(codec_ctx *ctx, void** salt) {
 static int sqlcipher_codec_ctx_set_pagesize(codec_ctx *ctx, int size) {
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
 
-  if(!((size != 0) && ((size & (size - 1)) == 0)) || size < 512 || size > 65536) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "cipher_page_size not a power of 2 and between 512 and 65536 inclusive");
+  if(!((size != 0) && ((size & (size - 1)) == 0)) || size < SQLCIPHER_MIN_PAGE_SZ || size > SQLCIPHER_MAX_PAGE_SZ) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "cipher_page_size not a power of 2 and between %d and %d inclusive", SQLCIPHER_MIN_PAGE_SZ, SQLCIPHER_MAX_PAGE_SZ);
     return SQLITE_ERROR;
   }
   /* attempt to free the existing page buffer */
@@ -3016,6 +3021,7 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
         int size = atoi(zRight);
         rc = sqlcipher_codec_ctx_set_pagesize(ctx, size);
         if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
+        else SQLCIPHER_FLAG_SET(ctx->flags, CIPHER_FLAG_PAGE_SZ_SET);
         rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
         if(rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, rc);
       } else {
@@ -3487,6 +3493,77 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
 #define CODEC_JOURNAL_OP 7
 
 /*
+ * Page 1 of an existing database failed to decrypt with ctx->page_sz. Before
+ * the key has ever been used successfully, the cause may simply be a page
+ * size other than the default one (from cipher_default_page_size, or from
+ * cipher_compatibility, which sets the defaults of a SQLCipher version). A
+ * page size set with cipher_page_size or page_size is used as is, and this
+ * function is not called for it. Read page 1 from the database file with
+ * each other valid page size and try to decrypt it. The sizes above the
+ * default one are tried first, then those below it, and sizes that do not
+ * evenly divide the file are skipped. A candidate is accepted only if the decrypted
+ * header (offset 16) records that same page size.
+ *
+ * On success the start of the decrypted page 1 is copied into out (out_sz
+ * bytes, the size the pager read). Its header names the actual page size, so
+ * lockBtree() switches the pager to it and reads page 1 again. The codec
+ * adopts that size only then, in sqlite3Codec(), since lockBtree() may first
+ * restart for other reasons (such as opening the WAL).
+ *
+ * Returns SQLITE_OK if a page size was found, SQLITE_NOTADB if none was.
+ */
+/* the next page size to probe after sz: double it, wrapping around to the smallest */
+#define SQLCIPHER_NEXT_PAGE_SZ(sz) ((sz) < SQLCIPHER_MAX_PAGE_SZ ? (sz) << 1 : SQLCIPHER_MIN_PAGE_SZ)
+
+static int sqlcipher_codec_probe_pagesize(codec_ctx *ctx, unsigned char *out, int out_sz, int offset) {
+  sqlite3_file *fd = sqlite3PagerFile(sqlite3BtreePager(ctx->pBt));
+  unsigned char *in = NULL, *page = NULL;
+  i64 file_sz;
+  int sz, found = 0, rc;
+
+  if(fd == NULL || fd->pMethods == NULL) return SQLITE_NOTADB;
+  if(sqlite3OsFileSize(fd, &file_sz) != SQLITE_OK || file_sz <= 0) return SQLITE_NOTADB;
+
+  in = sqlcipher_malloc(SQLCIPHER_MAX_PAGE_SZ);
+  page = sqlcipher_malloc(SQLCIPHER_MAX_PAGE_SZ);
+  if(in == NULL || page == NULL) {
+    rc = SQLITE_NOMEM;
+    goto cleanup;
+  }
+
+  for(sz = SQLCIPHER_NEXT_PAGE_SZ(ctx->page_sz); sz != ctx->page_sz; sz = SQLCIPHER_NEXT_PAGE_SZ(sz)) {
+    if(file_sz % sz != 0) continue;
+    if(sqlite3OsRead(fd, in, sz, 0) != SQLITE_OK) continue;
+
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: trying page size %d", __func__, sz);
+    memcpy(page, ctx->plaintext_header_sz ? in : (unsigned char *) SQLITE_FILE_HEADER, offset);
+    if(sqlcipher_page_cipher(ctx, CIPHER_READ_CTX, 1, SQLCIPHER_DECRYPT, sz - offset, in + offset, page + offset) != SQLITE_OK) continue;
+
+    /* the page size is stored big-endian at offset 16, with 1 meaning 65536 */
+    if(((page[16] << 8) | (page[17] << 16)) == sz) {
+      found = sz;
+      break;
+    }
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: page size %d decrypted, but the header disagrees", __func__, sz);
+  }
+
+  if(!found) {
+    rc = SQLITE_NOTADB;
+    goto cleanup;
+  }
+
+  sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_CORE, "%s: database uses page size %d, not %d", __func__, found, ctx->page_sz);
+  memcpy(out, page, found < out_sz ? found : out_sz);
+  if(found < out_sz) sqlcipher_memset(out + found, 0, out_sz - found);
+  rc = SQLITE_OK;
+
+cleanup:
+  if(in) sqlcipher_free(in, SQLCIPHER_MAX_PAGE_SZ);
+  if(page) sqlcipher_free(page, SQLCIPHER_MAX_PAGE_SZ);
+  return rc;
+}
+
+/*
  * sqlite3Codec can be called in multiple modes.
  * encrypt mode - expected to return a pointer to the 
  *   encrypted data without altering pData.
@@ -3539,6 +3616,20 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
     goto cleanup;
   }
 
+  /* before the key is first used, lockBtree() may have switched the page size to
+   * the one sqlcipher_codec_probe_pagesize() found: follow it, as the pager now
+   * reads pages of that size */
+  if(pgno == 1 && mode == CODEC_READ_OP && !SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)
+     && sqlite3BtreeGetPageSize(ctx->pBt) != ctx->page_sz) {
+    sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: adopting page size %d", __func__, sqlite3BtreeGetPageSize(ctx->pBt));
+    if((rc = sqlcipher_codec_ctx_set_pagesize(ctx, sqlite3BtreeGetPageSize(ctx->pBt))) != SQLITE_OK) {
+      sqlcipher_codec_ctx_set_error(ctx, rc);
+      sqlcipher_memset(pData, 0, sqlite3BtreeGetPageSize(ctx->pBt));
+      out = pData;
+      goto cleanup;
+    }
+  }
+
   if(pgno == 1) /* adjust starting pointers in data page for header offset on first page*/   
     offset = ctx->plaintext_header_sz ? ctx->plaintext_header_sz : FILE_HEADER_SZ; 
   
@@ -3556,6 +3647,21 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
         sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_CORE, "sqlite3Codec: simulating decryption failure for pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
       }
 #endif
+      /* page 1 failing to decrypt, or decrypting to a header that records a
+       * different page size (as happens without HMAC), may just mean that the
+       * database uses another page size than the default one. If one is
+       * found, hand the pager the start of page 1, whose header makes
+       * lockBtree() switch to that size. An explicitly set size is final. */
+      if(pgno == 1 && !SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)
+         && !SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_PAGE_SZ_SET)
+         && ctx->plaintext_header_sz != ctx->page_sz - ctx->reserve_sz) {
+        unsigned char *hdr = (unsigned char *) ctx->buffer;
+        if((rc != SQLITE_OK || ((hdr[16] << 8) | (hdr[17] << 16)) != ctx->page_sz)
+           && sqlcipher_codec_probe_pagesize(ctx, pData, ctx->page_sz, offset) == SQLITE_OK) {
+          out = pData;
+          goto cleanup;
+        }
+      }
       if(rc != SQLITE_OK) {
         /* failure to decrypt a page is considered a permanent error and will render the pager unusable
          * in order to prevent inconsistent data being loaded into page cache. The only exception here is when a database is being "recovered",
